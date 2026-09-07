@@ -18,6 +18,17 @@ from trading.portfolio import PortfolioState
 from trading.constants import PRIMARY_CHAIN
 from trading.opportunity import OpportunitySignal
 
+try:
+    from services.symbol_edge_gate import refusal_reason as _symbol_edge_refusal
+except Exception:  # noqa: BLE001 - a missing gate must not narrow the funnel
+    def _symbol_edge_refusal(_symbol: str, _strategy_id=None):  # type: ignore[misc]
+        return None
+try:
+    from services.strategy_edge_gate import refusal_reason as _strategy_edge_refusal
+except Exception:  # noqa: BLE001 - a missing gate must not narrow the funnel
+    def _strategy_edge_refusal(_strategy_id: str):  # type: ignore[misc]
+        return None
+
 HORIZON_DEFAULTS: List[Tuple[str, int]] = [
     ("5m", 5 * 60),
     ("15m", 15 * 60),
@@ -442,6 +453,110 @@ class BusScheduler:
     # Public API
     # ------------------------------------------------------------------
 
+    def _drop_banned_enters(
+        self, candidates: List[Dict[str, Any]], symbol: str
+    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, str]]]:
+        """Remove enter candidates the entry gate will certainly refuse.
+
+        A tick produces many candidates and spends exactly one of them: the
+        trident picks a single directive and everything else is discarded.
+        When the winner is a proposal that ``trading/bot.py`` refuses on sight,
+        the tick buys nothing -- not a trade, not a refusal that teaches
+        anything new, and not the candidate that was standing right behind it.
+
+        Measured 2026-09-07 over 238 decision cycles in 2h of
+        ``organism_snapshots``, 153 of which carried an ``enter`` directive:
+
+            obv_accumulation@1w  CLANKER-USDC  22  entry-refused-strategy-edge
+            obv_accumulation@3d  AERO/JITOSOL  22  entry-refused-strategy-edge
+            donchian_breakout@5d COMP-USDC     19  entry-refused-symbol-edge
+            atf_static           AERO-USDC     17  entry-refused-symbol-edge
+                                               --
+                                               84  of 153 (54.9%)
+
+        Both ``obv_accumulation`` variants carry an UNCONDITIONAL
+        ``strategy_edge_gate`` ban -- ``refusal_reason`` there takes no symbol,
+        so those 44 directives could not have entered on any symbol whatsoever.
+        The other 40 are ``(strategy, symbol)`` bans that were equally knowable
+        before the directive was built.
+
+        The cost of that lands on the one thing between here and a live trade.
+        ``atf_static`` is the only strategy with a live branch, and re-arming
+        it needs 20 tradeable ghost round trips gathered since its demotion; it
+        has 1. In those 2h it emitted 33 enter directives and **31 were on
+        AERO-USDC, which it is banned from** -- exactly one entry landed
+        anywhere else (CBZEC-USDC, ghost-entry). Its evidence rate is not
+        limited by the market or by the bar; it is limited by 99 of 238 ticks
+        being won by a proposal that dies at a gate.
+
+        This does not relax, move or reorder a gate. Both verdicts are read
+        from the same functions ``trading/bot.py:7707`` and ``:7758`` consult,
+        and the gates there still run on whatever survives. It only stops a
+        condemned proposal from taking the tick away from an eligible one.
+
+        EXITS ARE NEVER DROPPED. An edge ban says "do not open this", never
+        "do not close this" -- a strategy that must not buy still has to be
+        able to sell what it holds, and this repo has already stranded a live
+        position by disarming its holder.
+
+        Fails OPEN, per candidate: a candidate whose verdict cannot be read is
+        kept. Both gates already fail open for the same reason, and the failure
+        mode this exists to prevent is a narrower funnel, not a wider one.
+
+        Returns ``(kept, dropped)`` where each dropped entry is
+        ``{"strategy_id": ..., "reason": ...}``.
+        """
+        kept: List[Dict[str, Any]] = []
+        dropped: List[Dict[str, str]] = []
+        pair = str(symbol or "")
+        for cand in candidates:
+            directive = cand.get("directive") if isinstance(cand, dict) else None
+            if str(getattr(directive, "action", "") or "") != "enter":
+                kept.append(cand)
+                continue
+            strategy_id = str(getattr(directive, "strategy_id", "") or "")
+            try:
+                reason = (
+                    _strategy_edge_refusal(strategy_id)
+                    or _symbol_edge_refusal(pair, strategy_id or None)
+                )
+            except Exception:  # noqa: BLE001 - unreadable verdict keeps the candidate
+                reason = None
+            if reason:
+                dropped.append({"strategy_id": strategy_id, "reason": str(reason)})
+                continue
+            kept.append(cand)
+        return kept, dropped
+
+    def _log_predropped(self, symbol: str, chain: str, dropped: List[Dict[str, str]],
+                        survivors: int) -> None:
+        """Keep the drop visible in ``trading_ops``.
+
+        Without this the refusal simply disappears from the census: the rows
+        that made the 84-of-153 measurement above possible are written by the
+        entry gate, and a candidate dropped here never reaches it. One row per
+        tick that dropped something, which is the same order of volume as the
+        refusal rows it replaces (99 of 238 cycles).
+        """
+        if not dropped:
+            return
+        try:
+            self.db.log_trade(
+                wallet="ghost",
+                chain=str(chain or PRIMARY_CHAIN),
+                symbol=str(symbol or ""),
+                action="hold",
+                status="entry-predropped-edge-ban",
+                details={
+                    "symbol": str(symbol or ""),
+                    "reason": "candidate_carries_a_standing_edge_ban",
+                    "dropped": dropped,
+                    "surviving_enter_candidates": int(survivors),
+                },
+            )
+        except Exception:  # noqa: BLE001 - diagnostics must never stop a tick
+            pass
+
     def evaluate(
         self,
         sample: Dict[str, float],
@@ -808,17 +923,36 @@ class BusScheduler:
                         }
                     )
 
+        # Applied BEFORE last_enter_candidates is published, not just before
+        # the trident runs: the PortfolioRotator shops that map on every
+        # sell-high exit, so a banned pair left in it would be re-proposed on
+        # the rotation path too, where no entry gate has yet had a say.
+        candidates, predropped = self._drop_banned_enters(candidates, state.symbol)
         enter_candidates = [
             cand for cand in candidates
             if getattr(cand.get("directive"), "action", "") == "enter"
         ]
+        if predropped:
+            self._log_predropped(
+                state.symbol, chain_name, predropped, len(enter_candidates)
+            )
         if enter_candidates:
             self.last_enter_candidates[state.symbol] = {
                 "ts": time.time(),
                 "candidates": enter_candidates,
             }
         if not candidates:
-            state.last_filter_reason = "no_candidates (thresholds not met)"
+            if predropped:
+                # Distinct from "thresholds not met": the strategies DID want
+                # to trade and the book has already condemned every one of
+                # them. Saying so is what tells the next reader the funnel is
+                # short of eligible strategies rather than short of signal.
+                state.last_filter_reason = (
+                    "no_candidates (every enter candidate carries a standing "
+                    f"edge ban: {', '.join(d['strategy_id'] for d in predropped)})"
+                )
+            else:
+                state.last_filter_reason = "no_candidates (thresholds not met)"
             return None
         chosen = self._trident.select(candidates, context)
         if chosen:

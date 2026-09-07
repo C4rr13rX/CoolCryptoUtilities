@@ -433,3 +433,47 @@ result, pick a different one.
   price_vol_input has NO normalisation before the Conv1D stack while
   tech_input gets LayerNormalization first thing, and the price channel spans
   9e-08..123,429 across the corpus.
+
+2026-09-07 03:5x | Reed | hypothesis: no strategy is armed because the ONE
+  live-capable strategy cannot gather evidence -- its ticks are being spent on
+  proposals a gate provably refuses |
+  did: censused `organism_snapshots` over 2h (238 decision cycles) and
+  `trading_ops` over the same window, joined directive.strategy_id x symbol x
+  decision.status. Then traced the scheduler's single-directive selection at
+  trading/scheduler.py:823 (`self._trident.select`) and found the two edge
+  gates are consulted only AFTER selection, in trading/bot.py:7707 and :7758 |
+  result: 153 of the 238 cycles carried an `enter` directive and 84 of those
+  (54.9%) died at an edge gate whose verdict was available before the directive
+  was built:
+      obv_accumulation@1w  CLANKER-USDC  22  entry-refused-strategy-edge
+      obv_accumulation@3d  AERO/JITOSOL  22  entry-refused-strategy-edge
+      donchian_breakout@5d COMP-USDC     19  entry-refused-symbol-edge
+      atf_static           AERO-USDC     17  entry-refused-symbol-edge
+  Both obv variants carry an UNCONDITIONAL strategy_edge_gate ban --
+  `refusal_reason` there takes no symbol -- so those 44 could not have entered
+  on anything. The cost lands exactly on the arming path: the whole 41-strategy
+  ledger holds 2 tradeable ghost round trips (atf_static 1, rsi_reversal 1)
+  against a re-arm bar of 20, and in those 2h atf_static emitted 33 enter
+  directives of which 31 were on AERO-USDC, a pair it is banned from. Exactly
+  one entry landed anywhere else (CBZEC-USDC, ghost-entry). 99 of 238 ticks
+  (41.6%) were won by a condemned proposal. SHIPPED: the scheduler now drops
+  enter candidates under a standing ban BEFORE selection and before publishing
+  last_enter_candidates (the PortfolioRotator shops that map with no entry gate
+  behind it); exits are never dropped; fails open per candidate; the drop is
+  logged as `entry-predropped-edge-ban` so the census stays readable. No gate
+  moved, no threshold changed -- the same two functions bot.py calls are the
+  ones consulted. 5 tests, 4 verified failing against the pre-fix path by
+  neutralising `_drop_banned_enters` to the identity (the 5th, "an edge ban
+  never drops an exit", passes both ways by design -- it guards this change,
+  not the old bug). Gate 289 passed / 0 failed. profit_logic_audit: NO KNOWN
+  LOSING SHAPES |
+  next: re-measure the same 2h census after the restart. The number to watch is
+  enter directives dying at an edge gate (84/153 before) and atf_static's
+  ghost-entry count (1 per 2h before). If atf_static's rate does NOT rise, the
+  answer is that no eligible candidate existed on those ticks either -- read
+  the `surviving_enter_candidates` field on the new `entry-predropped-edge-ban`
+  rows, which records it per tick. If it is 0 on most rows then the funnel is
+  short of ELIGIBLE STRATEGIES, not of ticks, and the next move is
+  atf_static_scout's missing live branch (233 ghost trades / 79% / +6.5595,
+  graduation_blocked 'ghost-only executor: no live branch exists') rather than
+  anything further upstream.

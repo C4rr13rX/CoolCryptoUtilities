@@ -132,6 +132,16 @@ GATE_TESTS = (
     # switched off, and it starves the ghost evidence that is the only way to
     # graduate a replacement for the demoted live strategy.
     "test_a_confusion_refresh_does_not_freeze_the_feed.py",
+    # The scheduler returns ONE directive per tick and everything else is
+    # discarded, so a candidate the entry gate provably refuses does not merely
+    # fail -- it takes the tick away from the candidate behind it. Measured
+    # 2026-09-07 over 238 decision cycles in 2h: 84 of the 153 enter directives
+    # (54.9%) died at an edge gate whose verdict was available before the
+    # directive was built, and 31 of the 33 emitted by `atf_static` -- the only
+    # strategy with a live branch, and the one whose ghost round-trip rate is
+    # the sole thing between here and a re-armed live lane -- were on a symbol
+    # it is banned from.
+    "test_a_banned_strategy_does_not_take_the_tick.py",
 )
 
 
