@@ -47,3 +47,48 @@ result, pick a different one.
   four prior instances: news crawl, backfill, live-gate confusion refresh,
   scheduler thread leak. Also: production must be RESTARTED for this fix to
   take effect -- it is running the old code.
+
+2026-09-07 05:05 | Wren | hypothesis: the ledger is DROPPING atf_static's ghost
+  outcomes (the JSON-store concurrency loss) |
+  did: counted ghost-exits in trading_ops since demoted_ts and compared them
+  row for row against the ledger's fresh window.
+  result: NEGATIVE, and worth not repeating -- the books are EXACT.
+  trading_ops 8 exits / 3 wins / +0.5811 against ledger fresh_trades 8 /
+  wins 3 / +0.5811. There is no accounting loss on this path.
+  next: independently reached Tor's conclusion -- the binding constraint is
+  the RATE of ghost evidence.
+
+2026-09-07 05:05 | Wren | hypothesis: the selector sees only a fraction of the
+  candidate window, because SIGNAL_KEY is overwritten wholesale each cycle
+  while latest_signals() filters on a 1800s age |
+  did: compared latest_signals(1800) against distinct candidate symbols in
+  trading_ops over the same 1800s.
+  result: NEGATIVE -- 3 symbols against 4, i.e. 75% complete, not the 1/6th
+  the overwrite implied. Killed before shipping a fix. Do not retry.
+
+2026-09-07 05:30 | Wren | hypothesis: atf_static's candidate slots are spent on
+  symbols it CANNOT ENTER, so the evidence rate is self-inflicted |
+  did: 6h refusal census from trading_ops, split by strategy AND reason.
+  result: CONFIRMED. atf_static was refused 57 times: 25 duplicate +
+  17 slot-busy = 42, **74%**, and 40 of those on AERO-USDC alone against a
+  position it had itself been holding for up to 3169s -- versus 11 symbol-edge
+  + 3 motion + 1 stop, which is the ONLY 15 that `_drop_already_refused`
+  pre-filters. That helper's own docstring makes this exact argument ("a slot
+  spent re-proposing a standing refusal is a slot an eligible symbol did not
+  get") and was aimed at the rarest third of the census. Rate context:
+  8 fresh ghost trades in 31.3h = 0.26/h against a bar of 20, so ~47h.
+  SHIPPED: `_certainly_refused_as_held` in services/atf_static_strategy.py.
+  Drops candidates the position book will refuse with CERTAINTY, mirroring
+  bot.py rather than approximating it -- a live-approved strategy drops
+  NOTHING (the ghost->live upgrade at bot.py:6807 is link 6, worth 7 of 9
+  live-capable symbols on 2026-09-02), and a position past MAX_HOLD_SECONDS,
+  one with no strategy_id, or another strategy's LIVE position all stay
+  enterable. The skip sits AFTER `pairs.append` so a held symbol keeps the
+  stream feed that is the only thing able to close it. 8 tests; all 5 guards
+  verified by mutating the real code and confirming the matching test fails.
+  Verified against the live book: correctly flags CBMEGA-USDC (rsi_reversal,
+  ghost, 1123s) and nothing else.
+  next: SAME CAVEAT AS TOR'S -- production is running the old code and must be
+  restarted for this to take effect. Then re-measure the census. The two
+  numbers to watch: atf_static ghost round trips/hour (0.26 now) and the
+  duplicate+slot-busy share of its refusals (74% now).

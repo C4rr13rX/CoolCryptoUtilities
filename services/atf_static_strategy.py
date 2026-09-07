@@ -1186,6 +1186,86 @@ def _drop_already_refused(candidates: List[Any], *, quote_token: str) -> List[An
     return kept or list(candidates)
 
 
+def _certainly_refused_as_held(*, quote_token: str, strategy_id: str = "atf_static") -> set:
+    """Pair symbols whose entry the book will refuse before any gate runs.
+
+    ``_drop_already_refused`` above pre-filters the three GATE refusals, on the
+    argument that a candidate slot spent re-proposing a standing refusal is a
+    slot an eligible symbol did not get. That argument is right and it was
+    aimed at the rarest third of the census. Measured 2026-09-07 over 6h from
+    ``trading_ops``, ``atf_static`` -- the only executor that can spend real
+    money -- was refused 57 times:
+
+        entry-refused-duplicate           25   <- held by atf_static itself
+        entry-refused-slot-busy           17   <- held by another strategy
+        entry-refused-symbol-edge         11   } the 15 the pre-filter
+        entry-refused-symbol-motion        3   } already catches
+        entry-refused-stop-survivability   1   }
+
+    So 42 of 57 (74%) were "the symbol is already held", 40 of them on
+    AERO-USDC alone, against a position atf_static had been holding for up to
+    3169s. Unlike a gate verdict, that is not an estimate: it is read off the
+    position book, and the entry site will refuse it with certainty. Each one
+    still cost a 0x quote probe on a feed that is already rate-limited.
+
+    This matters because the ONLY thing between here and a live trade is
+    atf_static's evidence rate. Re-arming needs 20 ghost round trips gathered
+    since its demotion; it had 8 in 31.3h (0.26/h), while three quarters of
+    its candidate slots were being spent on symbols it already held.
+
+    Mirrors ``TradingBot._interpret_predictions`` exactly rather than
+    approximating it, because both of its carve-outs are load-bearing:
+
+      * A LIVE-APPROVED strategy drops NOTHING. Its entry may be live, and a
+        live entry deliberately displaces a ghost position -- including its
+        own, the ghost->live upgrade at bot.py:6807. Pre-filtering that away
+        would silently re-close link 6, which cost 7 of 9 live-capable symbols
+        on 2026-09-02. The waste this fixes only exists while the strategy is
+        ghost-only, which is precisely when it is trying to earn its licence.
+      * A position past ``MAX_HOLD_SECONDS``, one held with no ``strategy_id``,
+        or another strategy's LIVE position is still enterable at the entry
+        site, so none of those are dropped here.
+
+    Returns an empty set on any failure: a book that cannot be read leaves the
+    candidate list exactly as it was.
+    """
+    try:
+        from trading.strategies.ledger import StrategyLedger
+
+        if strategy_id in set(StrategyLedger().approved_ids() or ()):
+            return set()          # its entries may be live, and live displaces
+    except Exception:  # noqa: BLE001 - never narrow the funnel on an error
+        return set()
+
+    try:
+        state = get_db().load_state()
+        positions = ((state or {}).get("ghost_trading") or {}).get("positions") or {}
+        if not isinstance(positions, dict):
+            return set()
+        max_hold_sec = float(os.getenv("MAX_HOLD_SECONDS", "3600"))
+        now = _now()
+        held: set = set()
+        for symbol, position in positions.items():
+            if not isinstance(position, dict):
+                continue
+            pair = str(symbol or "").strip().upper()
+            if not pair:
+                continue
+            held_strategy = str(position.get("strategy_id") or "")
+            if not held_strategy:
+                continue      # books as "unclassified"; bot.py does not refuse
+            age = now - float(position.get("entry_ts", position.get("ts", 0.0)) or 0.0)
+            if age >= max_hold_sec:
+                continue      # evictable -- the stale-slot escape hatch
+            if held_strategy == strategy_id:
+                held.add(pair)                       # entry-refused-duplicate
+            elif str(position.get("mode") or "") != "live":
+                held.add(pair)                       # entry-refused-slot-busy
+        return held
+    except Exception:  # noqa: BLE001
+        return set()
+
+
 def _add_streamed_candidates(candidates: List[Any], *, max_positions: int) -> List[Any]:
     """Append symbols we already stream and have already proven can pay.
 
@@ -1324,6 +1404,9 @@ def build_static_strategy_signals(
     candidates = select_candidates(budget_usd=effective_budget, max_positions=max_positions)
     candidates = _add_streamed_candidates(candidates, max_positions=max_positions)
     candidates = _drop_already_refused(candidates, quote_token=quote_token)
+    # Read ONCE per cycle, not per candidate: the book does not move while we
+    # iterate, and load_state() is not free.
+    held_pairs = _certainly_refused_as_held(quote_token=quote_token)
     feedback = refresh_feedback_scores() if _bool_env("ATF_STATIC_FEEDBACK_ENABLED", "1") else {}
     signals: List[Dict[str, Any]] = []
     bus_actions: List[Dict[str, Any]] = []
@@ -1335,6 +1418,14 @@ def build_static_strategy_signals(
             continue
         pair_symbol = f"{symbol}-{quote_token.upper()}"
         pairs.append(pair_symbol)
+        # The skip goes AFTER pairs.append, deliberately. `pairs` becomes the
+        # stream watchlist below, and a symbol we HOLD is the last thing that
+        # may lose its feed: every exit rule hangs off a market sample, so a
+        # held position with no stream is never closed at all. Dropping the
+        # candidate must cost the quote probe, the ghost_candidate row and the
+        # bus action -- never the price feed keeping the position exitable.
+        if pair_symbol in held_pairs:
+            continue
         outcome = _feedback_for(pair_symbol, feedback)
         feedback_multiplier = max(0.25, min(1.75, _float(outcome.get("allocation_multiplier"), 1.0)))
         expected_return = max(0.0, min(0.15, (_float(candidate.price_change_m5) / 100.0) * 0.35 + (_float(candidate.score) * 0.04)))
