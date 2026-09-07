@@ -295,6 +295,22 @@ GATE_TESTS = (
     # frame coarse enough to be shared costs recall, and one fine enough to be
     # unique cannot generalise.
     "test_a_low_entropy_stream_cannot_outvote_the_sharp_ones.py",
+    # The forecast horizon crossed a boundary without its unit. The omen
+    # generalisation harness took --horizons in BARS and picked its corpus by
+    # FILE SIZE; that corpus mixes 300s and 3600s cadences, so a single
+    # "--horizons 12" row averaged a 119.6-minute forecast on cbBTC with a
+    # 720.0-minute one on SHIB. Every omen number this repo has published was
+    # measured at a horizon nobody chose, and never once inside the 5-30 minute
+    # window R3V3N!R actually trades. Horizons are minutes now, converted per
+    # symbol.
+    "test_a_horizon_in_bars_is_six_different_forecasts.py",
+    # And the statistic was wrong for the question. A rule that CHOOSES when to
+    # fire is not described by the mean over the bars it admits, but the
+    # threshold search could not look past the 95th percentile and refused any
+    # cut below --min-trades, so the top 1% never reached a reported number.
+    # With peak edge at +0.0916% against a 0.6500% round trip, a score that
+    # ranks MAGNITUDE is the only shape that closes a 7x gap.
+    "test_the_mean_over_admitted_bars_hides_the_tail.py",
 )
 
 

@@ -86,6 +86,24 @@ def bar_seconds(bars: Sequence[Mapping[str, Any]]) -> int:
     return int(sorted(gaps)[len(gaps) // 2]) if gaps else 3600
 
 
+def horizon_bars(minutes: float, cadence_seconds: int) -> int:
+    """A wall-clock horizon in this symbol's own bars, never fewer than one.
+
+    The horizon is the thing the strategy promises -- "I will be out in twenty
+    minutes" -- and it is a wall-clock promise. Expressing it in bars makes it
+    mean six different things across a corpus whose cadences run 300s to 3600s,
+    which is how a single run came to average a 120-minute forecast on cbBTC
+    with a 720-minute forecast on SHIB.
+
+    Rounds to nearest so a 10-minute horizon on 600s bars is 1 bar rather than
+    0; a zero-bar horizon would compare a bar's close against itself and report
+    a flawless, free, entirely fictional edge.
+    """
+    if cadence_seconds <= 0:
+        raise ValueError("cadence must be positive")
+    return max(1, int(round(minutes * 60.0 / cadence_seconds)))
+
+
 def extract_once(bars: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     """Every scalar row for the corpus, computed once.
 
@@ -208,6 +226,44 @@ def sequential_pnl(rows: Sequence[Mapping[str, Any]], taken: Sequence[bool],
     return trades, total
 
 
+#: Score quantiles the tail profile reports, as "keep the top q fraction".
+#: A rule that gets to CHOOSE when to fire is not described by the mean over
+#: every bar it admits; it is described by what it earns at the tightest cut
+#: it can still trade. ``choose_threshold`` only searches to the 95th
+#: percentile and refuses any cut holding fewer than ``--min-trades`` bars, so
+#: the top 1% has never appeared in an omen number.
+TAIL_QUANTILES: Tuple[float, ...] = (0.50, 0.25, 0.10, 0.05, 0.02, 0.01)
+
+
+def tail_profile(rows: Sequence[Mapping[str, Any]], scores: Sequence[float],
+                 cost: float) -> Dict[float, Tuple[int, float, int]]:
+    """Out-of-sample forward return by score quantile, per symbol.
+
+    Returns ``{quantile: (bars, summed_forward, bars_clearing_cost)}``. Sums
+    rather than means so the caller can aggregate symbols by bar count without
+    letting a symbol that contributed nine bars outvote one that contributed
+    nine hundred.
+
+    Scores are ranked WITHIN the symbol: the score is a shrunk deviation from
+    that symbol's own training base rate, so a score of 0.002 means something
+    different on SHIB than on cbBTC and a pooled ranking would compare them.
+    """
+    if not rows:
+        return {}
+    ordered = sorted(zip(scores, (row["forward"] for row in rows)),
+                     key=lambda pair: pair[0], reverse=True)
+    out: Dict[float, Tuple[int, float, int]] = {}
+    for quantile in TAIL_QUANTILES:
+        keep = int(len(ordered) * quantile)
+        if keep < 1:
+            continue
+        head = ordered[:keep]
+        out[quantile] = (keep,
+                         sum(forward for _, forward in head),
+                         sum(1 for _, forward in head if forward > cost))
+    return out
+
+
 def evaluate(model: BinnedForward, rows: Sequence[Mapping[str, Any]],
              threshold: float, horizon: int, cost: float,
              scores: Optional[Sequence[float]] = None) -> Dict[str, Any]:
@@ -320,18 +376,24 @@ def run_symbol(bars: Sequence[Mapping[str, Any]],
     model = BinnedForward(table, prior_strength=prior).fit(
         train, [row["forward"] for row in train])
     valid_scores = [model.score(row) for row in valid]
+    test_scores = [model.score(row) for row in test]
+    # The tail is measured whether or not a threshold cleared the trade floor:
+    # "this configuration does not trade" is a statement about the threshold
+    # search, not about whether the score ranks the forward move.
+    tail = tail_profile(test, test_scores, cost)
     threshold = choose_threshold(valid, valid_scores, cost, min_trades)
     if threshold is None:
         return {"traded": False, "distinct_ratio": distinct / len(train),
-                "train_rows": len(train), "test_rows": len(test)}
+                "train_rows": len(train), "test_rows": len(test), "tail": tail}
 
-    result = evaluate(model, test, threshold, horizon, cost)
+    result = evaluate(model, test, threshold, horizon, cost, scores=test_scores)
     result.update({
         "traded": True,
         "threshold": threshold,
         "distinct_ratio": distinct / len(train),
         "train_rows": len(train), "valid_rows": len(valid),
         "test_rows": len(test),
+        "tail": tail,
     })
     return result
 
@@ -342,11 +404,25 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--corpus-dir", default="data/historical_ohlcv/base")
     parser.add_argument("--symbols", type=int, default=12)
-    parser.add_argument("--horizons", default="12",
-                        help="comma-separated forecast horizons, in bars. The "
-                             "lattice's chaos layer measures a usable horizon "
-                             "per symbol (~230 min on AERO-USDC); a horizon "
-                             "past it is a forecast the data cannot support.")
+    parser.add_argument("--horizons", default="120",
+                        help="comma-separated forecast horizons in MINUTES of "
+                             "wall clock, converted to bars per symbol. Bars, "
+                             "the old unit, are not comparable across this "
+                             "corpus: it mixes 300s and 3600s cadences, so one "
+                             "'--horizons 12' run forecast 120 minutes on "
+                             "cbBTC and 720 on SHIB and averaged them into one "
+                             "row. The lattice's chaos layer measures a usable "
+                             "horizon per symbol (~230 min on AERO-USDC); a "
+                             "horizon past it is a forecast the data cannot "
+                             "support.")
+    parser.add_argument("--max-bar-seconds", type=int, default=None,
+                        help="skip symbols coarser than this cadence. A "
+                             "10-minute forecast cannot be measured on hourly "
+                             "bars, and the corpus is 63%% hourly by file "
+                             "count while the LARGEST files -- which is how "
+                             "symbols get picked -- are hourly too.")
+    parser.add_argument("--min-bar-seconds", type=int, default=None,
+                        help="skip symbols finer than this cadence.")
     parser.add_argument("--bins", default="2,3,4,5,8,20")
     parser.add_argument("--prior", type=float, default=50.0)
     parser.add_argument("--min-trades", type=int, default=25)
@@ -358,12 +434,15 @@ def main() -> int:
 
     cost = ROUND_TRIP_COST if args.cost is None else args.cost
     bin_settings = [int(v) for v in args.bins.split(",") if v.strip()]
-    horizons = [int(v) for v in args.horizons.split(",") if v.strip()]
+    horizon_minutes = [int(v) for v in args.horizons.split(",") if v.strip()]
 
     corpus_dir = ROOT / args.corpus_dir
     candidates = sorted(p for p in corpus_dir.glob("*.json"))
-    chosen: List[Tuple[str, List[Dict[str, Any]]]] = []
+    # (symbol, bars, bar_seconds). The cadence travels WITH the symbol because
+    # the horizon is a wall-clock quantity and every symbol converts it itself.
+    chosen: List[Tuple[str, List[Dict[str, Any]], int]] = []
     seen_symbols = set()
+    skipped_cadence = 0
     for path in sorted(candidates, key=lambda p: -p.stat().st_size):
         if len(chosen) >= args.symbols:
             break
@@ -376,54 +455,86 @@ def main() -> int:
             continue
         if len(bars) < args.min_bars:
             continue
+        cadence = bar_seconds(bars)
+        if args.max_bar_seconds is not None and cadence > args.max_bar_seconds:
+            skipped_cadence += 1
+            continue
+        if args.min_bar_seconds is not None and cadence < args.min_bar_seconds:
+            skipped_cadence += 1
+            continue
         seen_symbols.add(symbol)
-        chosen.append((symbol, bars))
+        chosen.append((symbol, bars, cadence))
 
     if not chosen:
-        print(f"no corpus in {corpus_dir} with >= {args.min_bars} bars")
+        print(f"no corpus in {corpus_dir} with >= {args.min_bars} bars"
+              + (f" at the requested cadence ({skipped_cadence} skipped)"
+                 if skipped_cadence else ""))
         return 2
 
-    print(f"round-trip cost {cost:.4%}, horizons {horizons} bars, "
-          f"bins {bin_settings}")
+    print(f"round-trip cost {cost:.4%}, horizons {horizon_minutes} MINUTES, "
+          f"bins {bin_settings}"
+          + (f", {skipped_cadence} symbols skipped on cadence"
+             if skipped_cadence else ""))
     print(f"{len(chosen)} symbols: " + ", ".join(
-        f"{s}({len(b)}@{bar_seconds(b)}s)" for s, b in chosen))
+        f"{s}({len(b)}@{c}s)" for s, b, c in chosen))
+    for minutes in horizon_minutes:
+        spread = sorted({horizon_bars(minutes, c) for _, _, c in chosen})
+        print(f"  {minutes:>5} min -> {spread} bars across the set")
 
     started = time.time()
     cache: Dict[str, List[Dict[str, Any]]] = {}
-    for symbol, bars in chosen:
+    for symbol, bars, _cadence in chosen:
         cache[symbol] = extract_once(bars)
     print(f"features: {sum(len(v) for v in cache.values())} rows in "
           f"{time.time() - started:.0f}s\n", flush=True)
 
     report: Dict[str, Any] = {
-        "cost": cost, "horizons": horizons, "bins": bin_settings,
+        "cost": cost, "horizon_minutes": horizon_minutes, "bins": bin_settings,
         "prior_strength": args.prior, "min_trades": args.min_trades,
-        "symbols": [s for s, _ in chosen], "settings": [],
+        "symbols": [s for s, _, _ in chosen],
+        "bar_seconds": {s: c for s, _, c in chosen}, "settings": [],
     }
 
-    header = (f"{'horiz':>6} {'bins':>5} {'shuf':>5} {'uniq-key':>9} "
+    header = (f"{'minutes':>8} {'bins':>5} {'shuf':>5} {'uniq-key':>9} "
               f"{'syms':>5} {'trades':>7} {'per-trade':>10} {'every-bar':>10} "
               f"{'EDGE':>9} {'seq/trade':>10} {'won':>7}")
     print(header)
     print("-" * len(header))
 
-    for horizon in horizons:
+    for minutes in horizon_minutes:
         for bins in bin_settings:
             for shuffle in (False, True):
                 rows_out, distinct_ratios = [], []
-                for symbol, bars in chosen:
+                tails: Dict[float, List[float]] = {}
+                for symbol, bars, cadence in chosen:
+                    horizon = horizon_bars(minutes, cadence)
                     result = run_symbol(bars, cache[symbol], horizon, bins,
                                         cost, random.Random(args.seed),
                                         args.prior, args.min_trades, shuffle)
                     if result is None:
                         continue
                     distinct_ratios.append(result["distinct_ratio"])
+                    for quantile, (n, total, clearing) in result.get("tail", {}).items():
+                        bucket = tails.setdefault(quantile, [0.0, 0.0, 0.0])
+                        bucket[0] += n
+                        bucket[1] += total
+                        bucket[2] += clearing
                     if result.get("traded"):
                         rows_out.append(result)
+                tail_rows = {
+                    q: {"bars": int(v[0]),
+                        "mean_forward": v[1] / v[0] if v[0] else 0.0,
+                        "clearing_cost": v[2] / v[0] if v[0] else 0.0}
+                    for q, v in sorted(tails.items(), reverse=True) if v[0]
+                }
                 if not rows_out:
-                    print(f"{horizon:>6} {bins:>5} {str(shuffle):>5} "
+                    print(f"{minutes:>8} {bins:>5} {str(shuffle):>5} "
                           f"{'-':>9} {0:>5}  nothing cleared the "
                           f"{args.min_trades}-trade floor", flush=True)
+                    report["settings"].append({
+                        "horizon_minutes": minutes, "bins": bins,
+                        "shuffled": shuffle, "traded": False, "tail": tail_rows,
+                    })
                     continue
                 trades = sum(r["trades"] for r in rows_out)
                 # Trade-weighted, so a symbol that fired twice cannot outvote
@@ -438,19 +549,30 @@ def main() -> int:
                 won = sum(1 for r in rows_out
                           if r["per_trade"] > r["every_bar_per_trade"])
                 uniq = sum(distinct_ratios) / len(distinct_ratios)
-                print(f"{horizon:>6} {bins:>5} {str(shuffle):>5} {uniq:>8.1%} "
+                print(f"{minutes:>8} {bins:>5} {str(shuffle):>5} {uniq:>8.1%} "
                       f"{len(rows_out):>5} {trades:>7} {per_trade:>+9.4%} "
                       f"{every:>+9.4%} {per_trade - every:>+8.4%} "
                       f"{(seq_total / seq_trades if seq_trades else 0.0):>+9.4%} "
                       f"{won:>3}/{len(rows_out):<3}", flush=True)
+                if tail_rows and not shuffle:
+                    # GROSS forward return by score quantile, cost NOT
+                    # subtracted: the question this answers is whether the
+                    # score ranks the size of the move, and subtracting a
+                    # constant from every row cannot change a ranking.
+                    print("           tail  " + "  ".join(
+                        f"top{q:.0%}:{v['mean_forward']:+.4%}"
+                        f"/{v['clearing_cost']:.0%}pay(n={v['bars']})"
+                        for q, v in tail_rows.items()), flush=True)
                 report["settings"].append({
-                    "horizon_bars": horizon, "bins": bins, "shuffled": shuffle,
+                    "horizon_minutes": minutes, "bins": bins,
+                    "shuffled": shuffle, "traded": True,
                     "distinct_key_ratio": uniq, "symbols_traded": len(rows_out),
                     "trades": trades, "per_trade": per_trade,
                     "every_bar_per_trade": every, "edge": per_trade - every,
                     "sequential_trades": seq_trades,
                     "sequential_per_trade": (seq_total / seq_trades) if seq_trades else 0.0,
                     "symbols_beating_every_bar": won,
+                    "tail": tail_rows,
                 })
 
     report_dir = ROOT / args.report_dir
