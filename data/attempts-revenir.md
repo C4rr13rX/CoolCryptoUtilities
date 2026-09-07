@@ -604,3 +604,48 @@ result, pick a different one.
   a restart: atf_static/AERO pre-drops should fall to ~0 and its ghost entries
   on pair-clear symbols should rise from ~0.28/h. If they do not, the limiter is
   candidate SUPPLY, not slot waste.
+
+2026-09-07 04:5x | Gale | hypothesis: no strategy is armed because the ghost
+  book that gates graduation is NEGATIVE on the symbols the live lane can
+  actually trade, and the reason is the exit rule rather than the entries |
+  did: measured the re-arm blocker end to end. atf_static (the only strategy
+  with a live branch) is demoted, needs 20 fresh TRADEABLE ghost round trips
+  and has 1. It has closed 10 since its demotion, 8 of them on tradeable
+  symbols -- but at 3 wins and net -0.253131, so the bar is refusing it
+  CORRECTLY, not wrongly. Every other strategy's fresh tradeable evidence is
+  net negative too. Backfilling Echo's tradeable sub-book (dcb7517, 02:03,
+  which is why the counter reads 1 -- it is 2h old, not broken) would have
+  taken it to 8/20 and it would still have failed on win rate. So the bar is
+  not the blocker; the book is. Then measured WHY the book loses, over the 117
+  closed round trips of the last 7d on tradeable symbols:
+      whole tradeable book              n=117   net -0.234002
+      closed on |gross| < the fee paid  n= 58   net -0.749246
+      the rest                          n= 59   net +0.515244
+  Those 58 moved -0.003928 of gross BETWEEN THEM and paid 0.745317 in fees.
+  They are not losing trades, they are the fee booked 58 times, and they are
+  the whole of the loss and more. By exit reason: confidence_drop 29, timed 17,
+  negative_margin 5. Mechanism, trading/bot.py held-position chain: timed-exit
+  ALREADY tests cost (pnl_pct_held < fees) but waits for stale_exit_secs=900s;
+  confidence_drop/negative_margin fire at MIN_HOLD_SECONDS=300s and test no
+  cost at all, so the cost-blind rule pre-empted the cost-aware one by ten
+  minutes on every held position. And its condition was near-constant, not an
+  opinion: over 1050 decisions/24h median direction_prob 0.2560 with 68.6%
+  below the 0.45 bearish floor (the last hour, after Pike's 0e5adb5 and Vale's
+  6b44fd6, already reads median 0.5392 / 33.3%).
+  result: SHIPPED. The two model-opinion exits now defer while the position is
+  inside +/-fees, bounded above by the stale clock. Justified by a replay of
+  879 real ghost entries walked forward on their own market_stream prices:
+  73.9% (650) are still inside the +/-0.386% cost band at 300s; of those, by
+  900s 102 (15.7%) escape UP past cost, 36 (5.5%) escape DOWN, 512 stay in and
+  are released by timed-exit as before. 102 decidable winners to 36 losers,
+  2.8:1, out of trades all being closed flat today for a certain -0.386%.
+  The deferral bound was found by its own test: without `held_secs <=
+  stale_exit_secs` the elif CONSUMED the tick and swallowed timed-exit, so a
+  bearish model would have pinned the position open forever.
+  Gate 296 passed / 0 failed; profit_logic_audit NO KNOWN LOSING SHAPES.
+  next: this changes the GHOST book, which is the evidence graduation reads --
+  measure the fee-burn share again in 6-12h. It was 49.6% of tradeable round
+  trips; if it drops toward the ~21% that genuinely never leave the band, the
+  tradeable book turns positive and atf_static's re-arm becomes reachable on
+  its own record instead of unreachable. Do NOT touch STRATEGY_GRADUATION_MIN_
+  TRADES: the bar is measuring correctly, it is the book that was wrong.

@@ -142,6 +142,18 @@ GATE_TESTS = (
     # the sole thing between here and a re-armed live lane -- were on a symbol
     # it is banned from.
     "test_a_banned_strategy_does_not_take_the_tick.py",
+    # Half the book was decided by the fee rather than by the market. Measured
+    # 2026-09-07 over the 117 closed round trips of the last 7 days on symbols
+    # the live lane could actually have traded -- the same population
+    # graduation scores -- 58 of them (49.6%) closed on a move smaller than the
+    # fee they paid: -0.003928 of gross BETWEEN THEM against 0.745317 in fees.
+    # The book is -0.234002 with them and +0.515244 without. `confidence_drop`
+    # and `negative_margin` fire at MIN_HOLD_SECONDS (300s) and asked nothing
+    # about cost, pre-empting `timed-exit` -- which does ask -- by ten minutes.
+    # The guard tests here are the load-bearing half: the stop must still
+    # outrank the deferral and the stale clock must still release an in-band
+    # position, or a bearish model pins it open forever.
+    "test_an_opinion_cannot_spend_a_round_trip_the_move_never_earned.py",
 )
 
 

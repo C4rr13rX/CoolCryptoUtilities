@@ -7268,6 +7268,14 @@ class TradingBot:
             target_price_held = float(pos.get("target_price") or 0.0)
             held_secs = time.time() - float(pos.get("entry_ts", pos.get("ts", 0)) or 0)
             pnl_pct_held = ((price - entry_price_held) / entry_price_held) if entry_price_held > 0 else 0.0
+            # Has this position moved far enough for closing it to mean
+            # anything? `fees` is the size-aware ROUND-TRIP rate, the same
+            # fraction `target_hit` and `timed-exit` measure against, so all
+            # three ends of the bracket now price the trade the same way. See
+            # the model-opinion branches below for the measurement.
+            moved_enough_to_pay_the_exit = (
+                entry_price_held <= 0 or abs(pnl_pct_held) >= fees
+            )
             min_hold = float(os.getenv("MIN_HOLD_SECONDS", "300"))
             stop_loss_pct = float(os.getenv("GHOST_STOP_LOSS_PCT", "0.02"))
             # Rule 4's clock. GHOST_NEG_EXIT_SECONDS is the name it had while
@@ -7309,6 +7317,96 @@ class TradingBot:
             elif pnl_pct_held <= -stop_loss_pct:
                 should_exit = True
                 reason = f"stop_loss:{pnl_pct_held:.4f}"
+            # AN OPINION MAY NOT SPEND THE ROUND TRIP A MOVE HAS NOT EARNED.
+            #
+            # The two rules below close a position because the MODEL changed
+            # its mind. Neither asked whether the position had moved far enough
+            # to pay for the closing. `timed-exit`, 90 lines down, asks exactly
+            # that (`pnl_pct_held < fees`) -- but it waits for
+            # `stale_exit_secs` (900s), while these fire at `min_hold` (300s).
+            # So the cost-blind rule pre-empted the cost-aware one by ten
+            # minutes on every held position, and the book paid for it.
+            #
+            # Measured 2026-09-07 over the 117 closed round trips of the last
+            # 7 days on symbols the live lane could actually have traded
+            # (`stop_is_unenforceable` False -- the same population graduation
+            # scores):
+            #
+            #   whole tradeable book                 n=117   net -0.234002
+            #   closed on |gross| < the fee paid     n= 58   net -0.749246
+            #   the rest                             n= 59   net +0.515244
+            #
+            # Those 58 moved -0.003928 of gross BETWEEN THEM -- the market did
+            # nothing at all -- and paid 0.745317 in fees to find out. They are
+            # not losing trades; they are the fee, booked 58 times. By reason:
+            # confidence_drop 29, timed 17, negative_margin 5. Removing them
+            # turns the book that gates graduation from -0.23 to +0.52.
+            #
+            # `direction_prob < bearish_floor` was not an opinion either. Over
+            # 1050 decisions in 24h the median direction_prob was 0.2560 and
+            # 68.6% sat below the 0.45 floor, so for any position past 300s the
+            # condition was very nearly a constant -- the model half of that is
+            # 0e5adb5 and 6b44fd6 today, and the last hour already reads median
+            # 0.5392 with 33.3% below. This rule must not be the thing that
+            # spends the account while a model is wrong.
+            #
+            # THE DEFERRAL IS WHAT PAYS, and it is measured rather than
+            # assumed. 879 ghost entries of the last 7 days, each walked
+            # forward on its own `market_stream` prices:
+            #
+            #   still inside +/-fees at 300s     650 of 879   73.9%
+            #   ...of those, by 900s:
+            #       escaped UP past +fees        102          15.7%   decidable winner
+            #       escaped DOWN past -fees       36           5.5%   real loss to cut
+            #       still inside the band        512          78.8%   -> timed-exit
+            #
+            # 102 winners to 36 losers, 2.8:1, out of trades that today are all
+            # closed flat at 300s for a certain -0.386%. The 512 that never
+            # leave the band are released by `timed-exit` on its own clock, so
+            # nothing here can become immortal -- this defers a cost-blind exit
+            # by ten minutes, it does not remove one.
+            #
+            # Both directions, deliberately. A move DOWN through -fees is a
+            # real loss and these rules should cut it; the band is symmetric
+            # because what it measures is "has this position moved enough for
+            # its closing to mean anything", not "is it winning".
+            #
+            # An unknown cost basis (`entry_price_held <= 0`) cannot be judged
+            # and is NOT deferred -- `pnl_pct_held` reads 0.0 there, which would
+            # otherwise pin such a position inside the band forever, and
+            # `timed-exit` also requires a price so it could not release it.
+            #
+            # LIVE is unaffected in cost terms and was already right: the
+            # live-exit margin gate refuses a non-protective close that cannot
+            # cover its own gas (`hold-negative`, pinned by
+            # test_a_close_must_cover_its_own_gas.py). Which is the real
+            # indictment -- the ghost book that gates graduation has been
+            # scored on 58 exits the live lane's own gate would have refused.
+            #
+            # BOUNDED BY THE STALE CLOCK, and this is not a detail. An `elif`
+            # that fires CONSUMES the tick, so a deferral with no upper bound
+            # would sit above `timed-exit` and swallow it on every sample --
+            # the position would be held for as long as the model stayed
+            # bearish, which is the immortal-position failure this repo has
+            # already paid for twice. Past `stale_exit_secs` the deferral stops
+            # applying and the chain resolves exactly as it does today.
+            elif (
+                (not model_neutral)
+                and held_secs >= min_hold
+                and held_secs <= stale_exit_secs
+                and not moved_enough_to_pay_the_exit
+                and (direction_prob < bearish_floor or margin <= -fees)
+            ):
+                decision["exit_deferred_inside_cost"] = {
+                    "pnl_pct": float(pnl_pct_held),
+                    "round_trip_fee_rate": float(fees),
+                    "held_secs": float(held_secs),
+                    "would_have_been": (
+                        "confidence_drop"
+                        if direction_prob < bearish_floor
+                        else "negative_margin"
+                    ),
+                }
             elif (not model_neutral) and held_secs >= min_hold and direction_prob < bearish_floor:
                 should_exit = True
                 reason = "confidence_drop"
