@@ -16,6 +16,11 @@ def _pipeline_stub() -> TrainingPipeline:
     pipeline.min_ghost_win_rate = 0.55
     pipeline.min_realized_margin = 0.0
     pipeline._last_candidate_feedback = {}
+    # Staleness telemetry, set by __init__ which __new__ skips. Without it the
+    # whole readiness report died on AttributeError at the confusion_age line
+    # and four tests in this file failed for a reason that had nothing to do
+    # with what they assert.
+    pipeline._last_confusion_refresh = 0.0
     return pipeline
 
 
@@ -287,9 +292,86 @@ def test_ready_pipeline_waits_for_funds_alerts_and_auto_resumes(monkeypatch: pyt
     assert any(action["action"] == "notify_add_funds" for action in blocked["bus_swap_actions"])
     assert pipeline.db.recorded[-1]["topic"] == "live_trading_funding"
 
-    wallet.update({"stable_usd": 1.0, "capital_total_usd": 1.1, "sparse": False,
-                   "sparse_reasons": [], "stable_deficit_usd": 0.0})
+    # Refund it PAST BREAK-EVEN, not merely past min_capital_usd.
+    #
+    # This used to top the wallet up to a flat $1.00, and had been failing ever
+    # since the plan started raising min_clip_usd to services.roundtrip_cost's
+    # break-even notional: measured 2026-09-07 that floor is $2.2322, so a $1.00
+    # wallet cannot afford ONE viable clip and the plan halts with
+    # halt_reason="min_clip". The assertion below then read as "auto-resume is
+    # broken" when auto-resume was fine and the wallet was simply too small.
+    #
+    # Derived from the same function the plan calls rather than hardcoded: the
+    # floor moves with gas, and a literal here would rot back to red the next
+    # time base gets expensive. The clip-floor block itself is pinned
+    # separately by test_a_wallet_below_break_even_halts_with_min_clip.
+    from services.roundtrip_cost import min_viable_notional_usd
+
+    funded_usd = max(1.0, float(min_viable_notional_usd()) * 2.0)
+    wallet.update({"stable_usd": funded_usd, "capital_total_usd": funded_usd + 0.1,
+                   "sparse": False, "sparse_reasons": [], "stable_deficit_usd": 0.0})
     resumed = pipeline._build_transition_plan()
     assert resumed["capital_plan"]["funding_gate"]["needs_funding"] is False
-    assert resumed["risk_flags"]["halt_live"] is False
+    assert resumed["risk_flags"]["halt_live"] is False, resumed["risk_flags"].get("halt_reason")
     assert resumed["capital_plan"]["recommended_live_usd"] > 0.0
+
+
+def test_a_wallet_below_break_even_halts_with_min_clip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A wallet that clears min_capital_usd but cannot pay for one round trip.
+
+    The behaviour that silently changed underneath
+    test_ready_pipeline_waits_for_funds_alerts_and_auto_resumes and left it red
+    for hours while the pass gate reported 0 failures. Every risk gate passes
+    and the funding gate is satisfied; the ONLY thing wrong is that deployable
+    stable is below `min_viable_notional_usd()`, so the recommendation cannot be
+    rounded up to a clip that pays for itself.
+
+    The named reason matters as much as the block: trading/bot.py:2036 reads
+    halt_live first and every diagnostic prints halt_reason, so a clip-floor
+    stall that reported "" would be indistinguishable from a risk stop.
+    """
+    from services.roundtrip_cost import min_viable_notional_usd
+
+    floor = float(min_viable_notional_usd())
+    assert floor > 0.0, "break-even notional must be positive for this test to mean anything"
+
+    monkeypatch.setenv("LIVE_MIN_CLIP_USD", "0.01")
+    pipeline = _pipeline_stub()
+    pipeline._last_confusion_summary = {"horizons": {"5m": {"precision": 0.8, "samples": 140}}}
+    pipeline._last_confusion_report = {}
+    pipeline.live_readiness_report = lambda: {
+        "ready": True, "ghost_collection_ready": True, "horizon": "5m", "threshold": 0.3
+    }
+    pipeline._ghost_validation = lambda: {
+        "ready": True, "reason": "", "samples": 100, "win_rate": 0.7,
+        "avg_profit": 0.01, "total_net_profit": 1.0,
+        "tail_risk": 0.0, "tail_guardrail": 0.08,
+        "max_drawdown": 0.0, "drawdown_guardrail": 0.1,
+        "min_trades": 50, "min_win_rate": 0.55,
+        "profit_factor": 1.2, "min_profit_factor": 0.95,
+        "loss_rate": 0.2, "loss_rate_guardrail": 0.6,
+        "max_loss_streak": 1, "loss_streak_guardrail": 5,
+    }
+    # Half a clip: funded enough to clear min_capital_usd, not enough to trade.
+    starved = floor / 2.0
+    pipeline._wallet_state = lambda: {
+        "wallet": "guardian", "stable_usd": starved, "native_usd": 0.10,
+        "capital_total_usd": starved + 0.1, "sparse": False, "fragmented": False,
+        "min_capital_usd": starved / 2.0, "native_buffer_gap_usd": 0.0,
+        "native_buffer_target_usd": 0.1, "sparse_reasons": [],
+        "stable_deficit_usd": 0.0, "focus_chain": "base",
+    }
+
+    class DB:
+        def record_advisory(self, **kwargs):
+            return 1
+
+    pipeline.db = DB()
+    plan = pipeline._build_transition_plan()
+
+    assert plan["capital_plan"]["funding_gate"]["needs_funding"] is False
+    assert plan["capital_plan"]["min_clip_block"] is True
+    assert plan["capital_plan"]["min_clip_usd"] == pytest.approx(floor)
+    assert plan["risk_flags"]["halt_live"] is True
+    assert plan["risk_flags"]["halt_reason"] == "min_clip"
+    assert plan["capital_plan"]["recommended_live_usd"] == 0.0

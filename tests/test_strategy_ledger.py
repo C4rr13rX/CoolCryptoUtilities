@@ -15,6 +15,22 @@ def ledger(tmp_path, monkeypatch):
     return StrategyLedger(path=tmp_path / "ledger.json")
 
 
+# A symbol the live lane could actually have placed a round trip in.
+#
+# Graduation stopped scoring the pooled ghost book and started scoring
+# `ghost["tradeable"]` -- see trading/strategies/ledger._live_tradeable. A
+# `record()` with no symbol is NOT live-tradeable evidence (deliberately: a
+# trade whose symbol cannot be established is not proof the live lane could
+# have placed it), so the graduation tests below stopped exercising graduation
+# at all and simply asserted that a symbol-less book never approves. They were
+# red for hours while scripts/pass_gate.py --check reported 0 failures.
+#
+# Checked against trading.pipeline.stop_is_unenforceable, the same predicate
+# _live_tradeable calls: AERO-USDC False (tradeable), BSTONK-USDC True (not).
+TRADEABLE = "AERO-USDC"
+UNTRADEABLE = "BSTONK-USDC"
+
+
 def test_starts_unapproved(ledger):
     assert not ledger.is_live_approved("mean_reversion")
     assert not ledger.any_live_approved()
@@ -22,9 +38,11 @@ def test_starts_unapproved(ledger):
 
 def test_graduates_on_profitable_ghost_record(ledger):
     for _ in range(4):
-        ledger.record("mean_reversion", profit=1.0, mode="ghost", confidence=0.7)
+        ledger.record("mean_reversion", profit=1.0, mode="ghost", confidence=0.7,
+                      symbol=TRADEABLE)
     assert not ledger.is_live_approved("mean_reversion")  # 4 < 5 trades
-    ledger.record("mean_reversion", profit=1.0, mode="ghost", confidence=0.7)
+    ledger.record("mean_reversion", profit=1.0, mode="ghost", confidence=0.7,
+                  symbol=TRADEABLE)
     assert ledger.is_live_approved("mean_reversion")
     assert ledger.any_live_approved()
     assert "mean_reversion" in ledger.approved_ids()
@@ -47,10 +65,10 @@ def test_unprofitable_never_graduates(ledger):
 
 def test_live_loss_streak_demotes_and_snapshots_ghost(ledger):
     for _ in range(5):
-        ledger.record("rsi_reversal", profit=1.0, mode="ghost")
+        ledger.record("rsi_reversal", profit=1.0, mode="ghost", symbol=TRADEABLE)
     assert ledger.is_live_approved("rsi_reversal")
     for _ in range(3):
-        ledger.record("rsi_reversal", profit=-0.5, mode="live")
+        ledger.record("rsi_reversal", profit=-0.5, mode="live", symbol=TRADEABLE)
     assert not ledger.is_live_approved("rsi_reversal")
     stats = ledger.stats("rsi_reversal")
     assert stats["demotions"] == 1
@@ -82,13 +100,60 @@ def test_persistence_across_instances(tmp_path, monkeypatch):
     monkeypatch.setenv("STRATEGY_GRADUATION_MIN_WINRATE", "0.5")
     path = tmp_path / "ledger.json"
     first = StrategyLedger(path=path)
-    first.record("momentum_breakout", profit=1.0, mode="ghost")
-    first.record("momentum_breakout", profit=1.0, mode="ghost")
+    first.record("momentum_breakout", profit=1.0, mode="ghost", symbol=TRADEABLE)
+    first.record("momentum_breakout", profit=1.0, mode="ghost", symbol=TRADEABLE)
     assert first.is_live_approved("momentum_breakout")
 
     second = StrategyLedger(path=path)
     assert second.is_live_approved("momentum_breakout")
     assert second.stats("momentum_breakout")["ghost"]["trades"] == 2
+
+
+def test_an_untradeable_ghost_book_never_graduates(ledger):
+    """A flawless record on a symbol the live lane refuses buys nothing.
+
+    Measured 2026-09-07 on atf_static, the only live-capable strategy: its 9
+    fresh ghost closes read 4 wins / +0.584 pooled, of which the ONLY two wins
+    were BSTONK-USDC -- a symbol with no enforceable stop, which the live lane
+    will not touch. On the symbols it can place, the same window was 2/7 and
+    -0.271. The entire profit case for spending real money stood on trades that
+    could never have been placed.
+    """
+    for _ in range(20):
+        ledger.record("bstonk_only", profit=1.0, mode="ghost", symbol=UNTRADEABLE)
+    assert ledger.stats("bstonk_only")["ghost"]["trades"] == 20
+    assert ledger.stats("bstonk_only")["ghost"]["wins"] == 20
+    assert not ledger.is_live_approved("bstonk_only")
+
+
+def test_a_symbolless_ghost_book_never_graduates(ledger):
+    """Evidence whose symbol cannot be established is not evidence of tradeability.
+
+    Note `stop_is_unenforceable("")` returns False -- an empty symbol reads as
+    "no stop problem" -- so the emptiness has to be caught before that call or
+    a book with no symbols at all would graduate as fully tradeable. This is the
+    test that would have caught the fixture drift in this file: every
+    graduation test here recorded without a symbol, so they were asserting
+    against a book that could never approve.
+    """
+    for _ in range(20):
+        ledger.record("no_symbol", profit=1.0, mode="ghost")
+    assert ledger.stats("no_symbol")["ghost"]["trades"] == 20
+    assert not ledger.is_live_approved("no_symbol")
+
+
+def test_only_the_tradeable_subset_counts_toward_the_bar(ledger):
+    """Mixed book: 20 trades, 5 of them placeable. The bar is 5 placeable."""
+    for _ in range(15):
+        ledger.record("mixed", profit=1.0, mode="ghost", symbol=UNTRADEABLE)
+    assert not ledger.is_live_approved("mixed")  # 15 trades, 0 tradeable
+    for _ in range(4):
+        ledger.record("mixed", profit=1.0, mode="ghost", symbol=TRADEABLE)
+    assert not ledger.is_live_approved("mixed")  # 19 trades, 4 tradeable
+    ledger.record("mixed", profit=1.0, mode="ghost", symbol=TRADEABLE)
+    assert ledger.is_live_approved("mixed")  # 20 trades, 5 tradeable
+    assert ledger.stats("mixed")["ghost"]["trades"] == 20
+    assert ledger.stats("mixed")["ghost"]["tradeable"]["trades"] == 5
 
 
 def test_blank_strategy_id_maps_to_unclassified(ledger):

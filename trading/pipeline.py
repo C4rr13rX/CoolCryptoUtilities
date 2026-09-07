@@ -5278,7 +5278,15 @@ class TrainingPipeline:
         # How old the evidence is, published with the verdict. A gate that
         # refuses on a ten-hour-old measurement should say so in the same
         # breath, so staleness is readable without diffing 16-digit floats.
-        confusion_age_sec = max(0.0, time.time() - float(self._last_confusion_refresh or 0.0))
+        #
+        # getattr, not attribute access: this line decides nothing, it only
+        # publishes how old the evidence is -- but it sits AFTER the gate's
+        # early-return fallbacks and before the verdict, so an AttributeError
+        # here takes the whole live-readiness report down and no strategy can
+        # arm. A telemetry field must never be able to veto the money path.
+        confusion_age_sec = max(
+            0.0, time.time() - float(getattr(self, "_last_confusion_refresh", 0.0) or 0.0)
+        )
 
         anchor_label, anchor = self._select_confusion_anchor(report)
         if anchor is None:

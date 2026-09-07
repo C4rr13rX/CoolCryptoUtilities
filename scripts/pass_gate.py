@@ -207,6 +207,27 @@ GATE_TESTS = (
     # locate a rolling window it cannot prove -- which it cannot for both
     # live-relevant strategies.
     "test_graduation_reads_one_trade_of_a_174_trade_record.py",
+    # THE TWO FILES THAT PIN GRADUATION ITSELF, AND THEY WERE NOT IN THIS LIST.
+    #
+    # Everything above guards a rule ABOUT promotion. These two are the rule:
+    # test_strategy_ledger.py owns graduate/demote/re-arm and the tradeable
+    # sub-book the bar reads; test_readiness_report.py owns
+    # live_readiness_report and _build_transition_plan, which decide whether
+    # live is armed at all and publish halt_live.
+    #
+    # Measured 2026-09-07 07:24 at c8537d1: this gate reported 346 passed / 0
+    # failed while SEVEN tests in these two files were red on main, and had
+    # been since dcb7517 at 02:03 changed the promotion rule without updating
+    # its own tests. Five passes were signed off by a green gate in that
+    # window. One of the seven was a real defect -- an AttributeError on
+    # `_last_confusion_refresh` that takes the entire live-readiness report
+    # down -- and nothing outside those files could see it.
+    #
+    # A gate that cannot see the promotion tests is not a gate. Both files run
+    # in ~12s combined, so the "kept narrow so it runs in seconds" rule above
+    # is not strained by including them.
+    "test_strategy_ledger.py",
+    "test_readiness_report.py",
 )
 
 
