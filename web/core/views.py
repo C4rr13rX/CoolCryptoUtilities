@@ -628,6 +628,44 @@ class ProfitLogicAuditView(LoginRequiredMixin, View):
                 status=200)
 
 
+class LiveGateMapView(LoginRequiredMixin, View):
+    """Which gate is standing between a graduated strategy and a live trade.
+
+    The chain has been shut at various times by a tail guardrail, a loss
+    streak, a profit-factor floor, a model precision gate and a single
+    poisoned row in a 24-row book. The map names the gate and shows the
+    distance to its limit, which is the difference between "nothing is
+    trading" and "this one number is 8 against a limit of 5".
+
+    A BLOCK is a state, not a bug. Measured 2026-09-06 the tail guardrail was
+    blocking at ES95 0.1241 against 0.10 and it was RIGHT -- the whole breach
+    was one MOONBASE-USDC trade at -12.41%, and it cleared on its own. Reading
+    a blocking gate as a threshold to raise switches off the guard doing its
+    job.
+
+    ``?live=0`` returns only the reference chain, which is cheap. The default
+    evaluates the live gates, which constructs the training pipeline.
+    """
+
+    login_url = "core:index"
+
+    def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
+        include_live = str(request.GET.get("live", "1")).strip().lower() not in {
+            "0", "false", "no", "off"}
+        try:
+            from services.live_gate_map import gate_map
+
+            return JsonResponse(gate_map(include_live=include_live), status=200)
+        except Exception as exc:  # noqa: BLE001
+            # A diagnostic that 500s is a diagnostic nobody can read at the
+            # moment they most need it.
+            return JsonResponse(
+                {"verdict": "UNAVAILABLE",
+                 "error": f"{type(exc).__name__}: {exc}",
+                 "stages": [], "live": None},
+                status=200)
+
+
 class CodeGraphRepositoryView(LoginRequiredMixin, View):
     login_url = "core:index"
 

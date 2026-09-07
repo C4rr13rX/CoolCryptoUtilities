@@ -792,6 +792,16 @@ export async function revealIntegrationValue(name: string) {
   return data;
 }
 
+export async function fetchLiveGateMap(includeLive = true) {
+  // The live half constructs the training pipeline, which is slow enough that
+  // the default 10s used elsewhere times out on a cold cache.
+  const { data } = await api.get('/live-gate-map/', {
+    params: includeLive ? {} : { live: '0' },
+    timeout: 60000,
+  });
+  return data;
+}
+
 export async function fetchCodeGraph(refresh = false, repository = '') {
   const params: Record<string, string> = {};
   if (refresh) params.refresh = '1';

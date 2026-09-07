@@ -837,6 +837,7 @@ const navItems = computed(() => {
     { route: 'guardian', path: '/guardian', label: t('nav.guardian'), icon: 'guardian' },
     { route: 'cron', path: '/cron', label: t('nav.cron'), icon: 'activity' },
     { route: 'codegraph', path: '/codegraph', label: t('nav.codegraph'), icon: 'activity' },
+    { route: 'gate-map', path: '/gate-map', label: t('nav.gate_map'), icon: 'shield' },
     { route: 'integrations', path: '/integrations', label: t('nav.integrations'), icon: 'link' },
     { route: 'settings', path: '/settings', label: t('nav.settings'), icon: 'settings' },
     { route: 'audiolab', path: '/audiolab', label: t('nav.audiolab'), icon: 'radar' },

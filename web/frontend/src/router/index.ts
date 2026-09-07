@@ -11,6 +11,7 @@ import ModelLabView from '@/views/ModelLabView.vue';
 import DataLabView from '@/views/DataLabView.vue';
 import GuardianView from '@/views/GuardianView.vue';
 import CodeGraphView from '@/views/CodeGraphView.vue';
+import LiveGateMapView from '@/views/LiveGateMapView.vue';
 import SecureSettingsView from '@/views/SecureSettingsView.vue';
 import ApiIntegrationsView from '@/views/ApiIntegrationsView.vue';
 import BrandDozerView from '@/views/BrandDozerView.vue';
@@ -91,6 +92,11 @@ const routes: RouteRecordRaw[] = [
     path: '/codegraph',
     name: 'codegraph',
     component: CodeGraphView,
+  },
+  {
+    path: '/gate-map',
+    name: 'gate-map',
+    component: LiveGateMapView,
   },
   {
     path: '/settings',
