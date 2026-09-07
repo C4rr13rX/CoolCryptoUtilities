@@ -538,3 +538,69 @@ result, pick a different one.
   organism_snapshots once decisions resume after 03:38:29; it was +0.157 and
   should collapse toward 0. If the sixteen sub-$0.06 symbols start producing
   direction_prob above 0.58, the candidate pool roughly doubles.
+
+2026-09-07 04:36 | Hollow | hypothesis: the gate failure is a code regression in
+  Reed's 322702f scheduler pre-drop | did: ran the 5 failing tests and traced
+  evaluate() | result: NOT a code regression. `_scheduler` stubs `_forecast` to
+  [] so the forecast lane cannot add competing candidates, but
+  BusScheduler.evaluate short-circuits at "no_forecast_signals"
+  (trading/scheduler.py:595) and returns BEFORE strategy_registry.evaluate_all,
+  so all 5 tests died ~300 lines above the ban they claimed to test:
+  directive None, last_filter_reason 'no_forecast_signals',
+  last_enter_candidates {}. Confirmed the guard is not a production constraint
+  before touching the test rather than the code: over 1038 organism_snapshots
+  in 24h, no_forecast_signals is 9 route-rows against 603 no_candidates and 425
+  clear (0.9%). Fixed the TEST -- stub now returns a FLAT HorizonSignal
+  (expected_return 0.0, predicted price == last sample), which clears the guard
+  and still generates no tf_forecast candidate because every forecast candidate
+  downstream is gated on a margin a flat signal lacks; plus
+  ATF_STATIC_GHOST_SCOUT_ENABLED=0 so the candidate set stops depending on what
+  the live scout wrote a moment earlier. Proved it binds: with
+  _drop_banned_enters neutered to pre-322702f behaviour 4 of 5 fail (the 5th,
+  "an edge ban never drops an exit", passes both ways by design -- exits were
+  never dropped and it is a regression guard). trading/scheduler.py left
+  byte-identical to HEAD. SHIPPED c-repair; gate 284 passed/5 failed -> 289/0.
+  next: nothing here; the guard is correct and measured.
+
+2026-09-07 04:36 | Hollow | hypothesis: atf_static's ghost evidence rate is
+  rationed by candidate slots spent on symbols it is banned from | did: measured
+  the re-arm arithmetic and the entry funnel end to end | result: CONFIRMED and
+  SHIPPED 31e74bb. The re-arm needs 20 fresh ghost round trips on live-tradeable
+  symbols; atf_static has 1. Its actual rate is 10 pooled ghost closes in the
+  35.3h since demoted_ts (0.28/h), so the bar is ~100h away -- that is the
+  mechanical reason there is no live trade today or tomorrow. Note the
+  `tradeable` sub-book only shipped at 02:03 (dcb7517) so those counters are
+  YOUNG, not a rejecting predicate: verified the predicate admits 14 of the 20
+  symbols in the ghost book. What rations the rate: 75.3% of 588 decision cycles
+  in 6h land on a symbol where atf_static is refused by at least one instrument
+  gate (COMP 21.6% banned, AERO 15.3% pair-banned, CBETH 11.9% banned,
+  CBETH-CBBTC 8.7%, CLANKER 8.5% stop-banned), leaving ~19.6% open. And
+  `_drop_already_refused` -- the pre-filter whose whole job is to stop a
+  candidate slot being spent on a refusal already on file -- asked
+  symbol_edge_gate the POOLED question while bot.py:7707 asks the
+  (strategy, symbol) one, a gap opened by Lark's 0c58807. AERO-USDC is pooled
+  ALLOW (n=46 mean +1.805%) and atf_static BAN (n=17 mean -0.992%, t=-6.24), so
+  every AERO candidate cleared the pre-filter and died downstream: 16 scheduler
+  pre-drops + 17 entry-gate refusals in ONE hour, against 1 ghost entry and 1
+  ghost exit in that same hour across ALL strategies. Against the real gates the
+  filter now returns ['VVV','CBZEC','CBADA'] where it returned
+  ['AERO','VVV','CBZEC','CBADA']. Shipped WITH its hazard fixed in the same
+  commit, because half of it alone strands a position: `pairs` is built only
+  from survivors and `pairs` IS the stream/ghost watchlist, so dropping a
+  candidate takes its price feed, and every scout exit rule needs a corroborated
+  tick -- the scout was holding AERO-USDC at 2.57h. `_scout_held_pairs` reads
+  GHOST_POSITIONS_KEY (the scout's own book -- a DIFFERENT store from the
+  ghost_trading.positions that _certainly_refused_as_held reads; neither sees
+  the other's positions). Both halves proved load-bearing by reverting each.
+  Gate 289/0, profit_logic_audit NO KNOWN LOSING SHAPES. NOT restarted: prod
+  10204 booted 03:32:53 so 31e74bb is inert, but trading/bot.py and
+  trading/scheduler.py were uncommitted (Gale mid-edit) and prod reads the
+  working tree -- handed the restart to Gale.
+  next: the 75.3% cycle skew is the bigger half and is still OPEN. atf_static's
+  proposals follow whatever symbol the feed hands the tick, so it proposes AERO
+  16x/h and VVV/CBZEC/CBMEGA/CBADA almost never. Ration decision cycles by
+  whether ANY strategy may act on the symbol -- but exits must keep their
+  cycles, so never starve a held symbol. Re-measure the pre-drop census after
+  a restart: atf_static/AERO pre-drops should fall to ~0 and its ghost entries
+  on pair-clear symbols should rise from ~0.28/h. If they do not, the limiter is
+  candidate SUPPLY, not slot waste.
