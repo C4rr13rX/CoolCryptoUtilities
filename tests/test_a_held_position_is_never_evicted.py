@@ -229,5 +229,75 @@ def test_a_held_symbol_with_no_bot_is_still_added(monkeypatch):
     )
 
 
+def test_the_condemned_bot_is_evicted_before_an_eligible_one(monkeypatch):
+    """A bot slot is the decision cycle -- spend the useless one first.
+
+    The backwards scan takes the LAST replaceable bot, which is blind to
+    whether its symbol can ever produce an entry. Measured 2026-09-07 over 6h,
+    379 of 596 decision cycles landed on symbols carrying a SYMBOL-level
+    standing refusal (COMP-USDC 136, CBETH-USDC 90, CLANKER-USDC 74,
+    CBETH-CBBTC 45), and not one of them could become an entry. With a full
+    pool the old scan evicted an ELIGIBLE symbol and left those slots alone.
+
+    ELIGIBLE-USDC sits at the end of the pool, which is where the scan looks
+    first, so this fails against the pre-change order.
+    """
+    import services.symbol_edge_gate as edge
+
+    monkeypatch.setattr(
+        edge,
+        "refusal_reason",
+        lambda symbol, strategy_id=None: (
+            "-4.333% over 16 round trips" if symbol == "COMP-USDC" else None
+        ),
+    )
+    result, bots = _reconcile(
+        monkeypatch,
+        pool=["COMP-USDC", "ELIGIBLE-USDC"],
+        held=[],
+        atf=["NEW-USDC"],
+        pair_limit=2,
+    )
+
+    by_symbol = {b.primary_symbol: b for b in bots}
+    assert by_symbol["COMP-USDC"].stopped is True, (
+        "the slot nothing may enter should have been the one spent"
+    )
+    assert by_symbol["ELIGIBLE-USDC"].stopped is False
+    assert result["replaced_bots"] == [{"old": "COMP-USDC", "new": "NEW-USDC"}]
+
+
+def test_a_condemned_bot_holding_a_position_is_still_not_evicted(monkeypatch):
+    """The held-position exemption outranks the new preference.
+
+    A symbol can be both condemned for ENTRY and holding an open position --
+    that is precisely how BASECAT-USDC and CBETH-USDC look right now. An edge
+    ban says "do not open this", never "do not close this", and the bot is the
+    only place its position can ever be sold.
+    """
+    import services.symbol_edge_gate as edge
+
+    monkeypatch.setattr(
+        edge,
+        "refusal_reason",
+        lambda symbol, strategy_id=None: (
+            "banned" if symbol == "BASECAT-USDC" else None
+        ),
+    )
+    result, bots = _reconcile(
+        monkeypatch,
+        pool=["SPARE-USDC", "BASECAT-USDC"],
+        held=["BASECAT-USDC"],
+        atf=["NEW-USDC"],
+        pair_limit=2,
+    )
+
+    by_symbol = {b.primary_symbol: b for b in bots}
+    assert by_symbol["BASECAT-USDC"].stopped is False, (
+        "a held position lost the only bot that could sell it"
+    )
+    assert by_symbol["SPARE-USDC"].stopped is True
+
+
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-v"])

@@ -751,3 +751,74 @@ result, pick a different one.
   a few times an hour in prod while `.venv` imports TF 2.20.0 fine in 60s --
   so the confusion refresh is "judging on the cached report, which may be
   stale" and the model precision gate may be reading a stale number.
+
+2026-09-07 06:10 | Kite | hypothesis: no strategy is armed because the ONE
+  live-capable strategy cannot gather evidence, and the reason is upstream of
+  every gate -- the bot POOL hands its scarce decision-cycle slots to symbols
+  nothing may enter |
+  did: measured the re-arm blocker to its root, then the slot allocation.
+  atf_static is the only executor with a live branch; it is demoted
+  (demoted_ts 1788642158, 36.7h ago), pl_ref/trades_ref are already re-based
+  so _licence_net is 0 and the P/L clause does NOT block it, and
+  _fresh_tradeable_delta reads {trades: 1, wins: 1, +0.018323} against a bar
+  of 20 at 55%. atf_static_scout holds 233 ghost trades at 79.4% and is
+  graduation_blocked FOREVER and correctly -- services/atf_static_strategy.py
+  has no live branch, so its record is about a different executor. So the
+  whole distance to a live trade is atf_static's tradeable ghost round trips,
+  and they are produced by decision cycles. Then the census, 596
+  organism_snapshots cycles over 6h joined to 2968 market_stream ticks and to
+  the four standing gates:
+      COMP-USDC      136 cycles   symbol_edge pooled  -4.333% over 16 trips
+      AERO-USDC      116          atf_static only -- pooled ALLOW, kept
+      CBETH-USDC      90          symbol_edge + symbol_motion
+      CLANKER-USDC    74          stop_survivability  p99 jump 46.11% vs 4%
+      CBETH-CBBTC     45          stop_survivability + symbol_motion
+      BASECAT/JITOSOL/CBBTC/VIRTUAL-WETH  34
+                                  ---
+                                  379 of 596 (63.6%)
+  Not one of those could ever become an entry: the refusals are SYMBOL-level
+  and unconditional. Meanwhile the 8 symbols atf_static may actually enter
+  carried 43.7% of the TICKS and got 15.6% of the cycles -- COMP 0.37 cycles
+  per tick against CBZEC-USDC's 0.018, a 20x skew toward symbols nothing may
+  buy. Mechanism: a bot slot is not a subscription, it IS the decision cycle
+  (every entry rule, every exit rule and every ghost round trip hangs off
+  TradingBot._handle_sample and only a bot calls it; a data-only stream
+  publishes prices and decides nothing). trading/selector.py ranks the
+  non-priority tail of its candidate list with select_pairs -- volume and
+  volatility -- and never asks whether anything is allowed to trade the
+  symbol. _free_bot_slot_for then evicts the LAST replaceable bot, equally
+  blind, so an ATF signal evicts an eligible symbol while COMP keeps its slot.
+  result: SHIPPED. _no_strategy_may_enter + _sink_condemned, applied in
+  build() and reconcile_pairs(), and the eviction scan now spends a condemned
+  slot first. A RANKING, NOT A GATE: a condemned symbol sinks below the
+  eligible ones and still takes a slot when there is nothing better, so a pool
+  larger than the candidate list behaves exactly as before. Three carve-outs,
+  each with its own test: held positions and ATF priorities are never ranked
+  (a held symbol with no bot is a position nothing can sell -- 362.9h here
+  once); the POOLED symbol_edge question, never the per-strategy one (AERO is
+  atf_static-BAN and pooled ALLOW at n=46 mean +1.805%, so it keeps its rank
+  and its 116 cycles); fails open on any unreadable verdict.
+  Simulated on the REAL select_pairs output at the resolved pair_limit of 18:
+  5 of the top 18 slots change hands --
+      LOST   COMP-USDC, CLANKER-USDC, JITOSOL-USDC, CBBTC-USDC, PEPE-USDC
+      GAINED DEGEN-USDC, DOGE-USDC, DRB-USDC, KEYCAT-USDC, PUMP-USDC
+  Joined to the cycle census that is 228 of 594 cycles/6h (38.4%) moved off
+  symbols where every entry is condemned. CBETH-USDC's 90 are NOT in that
+  number: it reaches the pool as a held/priority symbol and is protected.
+  Gate 322 passed / 0 failed (was 308, +14 new; both files added to
+  GATE_TESTS). profit_logic_audit NO KNOWN LOSING SHAPES. Both halves proved
+  by reverting each: with _sink_condemned as identity the sink tests fail, and
+  with _no_strategy_may_enter pinned to None the eviction test evicts
+  ELIGIBLE-USDC.
+  next: this is INERT until a restart -- prod 13252/21308 booted 05:27:28.
+  After the restart, re-run the same join and watch two numbers: cycles landing
+  on a condemned symbol (63.6% now, should fall toward CBETH's protected 15%)
+  and ghost entries/h (1.5/h now). If entries/h does NOT rise, the limiter is
+  not slot waste but the serialised cycle itself -- _handle_sample holds
+  _processing_sample for the whole cycle and drains ONE sample from an 8-deep
+  queue afterwards, so at 8.2 ticks/min arriving against 1.66 cycles/min, 80%
+  of ticks never produce a decision at all. That queue is FIFO and drops the
+  OLDEST on overflow; making its drain prefer held-then-eligible symbols is
+  the same fix one layer down and is the obvious follow-on. Do NOT re-audit
+  the re-arm bar: it is measuring correctly, and Gale's 65d5374 (fee-burn
+  exits) is the lever on the win-rate half.

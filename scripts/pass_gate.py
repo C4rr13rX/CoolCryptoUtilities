@@ -165,6 +165,17 @@ GATE_TESTS = (
     # timescale this loop targets, no stop can bind, and the ghost round trips
     # that re-arm a demoted strategy accrue too slowly to reach the bar.
     "test_a_stalled_batch_is_re_asked_not_discarded.py",
+    # A bot slot IS the decision cycle -- every entry rule, every exit rule and
+    # every ghost round trip hangs off TradingBot._handle_sample, and only a bot
+    # calls it. The pool handed those slots out on volume and volatility alone.
+    # Measured 2026-09-07 over 6h: 379 of 596 decision cycles (63.6%) landed on
+    # a symbol carrying a SYMBOL-level standing refusal, so no strategy could
+    # have entered any of them. Against the live select_pairs ranking, 5 of the
+    # top 18 slots were COMP/CLANKER/JITOSOL/CBBTC/PEPE. The second file pins
+    # the eviction half: a held position must keep its bot however its symbol
+    # is judged, because that bot is the only thing that can sell it.
+    "test_a_bot_slot_is_not_spent_on_a_symbol_nothing_may_enter.py",
+    "test_a_held_position_is_never_evicted.py",
 )
 
 

@@ -76,6 +76,118 @@ def _can_denominate_pnl_in_usd(symbol: str) -> bool:
         return True
     return is_usd_accounting_symbol(symbol)
 
+
+#: Rank a symbol DOWN when no strategy may open a position in it.
+#:
+#: A bot slot is not a subscription, it is the decision cycle. Every entry
+#: rule, every exit rule and every ghost round trip in this system hangs off
+#: `TradingBot._handle_sample`, and only a bot calls it -- a data-only stream
+#: publishes prices and decides nothing. So the pool's slot assignment IS the
+#: allocation of decision cycles, and it was made on volume and volatility
+#: alone: `select_pairs` ranks the tail of the candidate list by market
+#: activity and never asks whether anything is allowed to trade the symbol.
+#:
+#: MEASURED 2026-09-07 over 6h, joining 596 `organism_snapshots` cycles to
+#: 2968 `market_stream` ticks and to the four standing gates:
+#:
+#:     COMP-USDC       136 cycles   symbol_edge     -4.333% over 16 trips
+#:     AERO-USDC       116          (atf_static only -- KEPT, see below)
+#:     CBETH-USDC       90          symbol_edge + symbol_motion
+#:     CLANKER-USDC     74          stop_survivability
+#:     CBETH-CBBTC      45          stop_survivability + symbol_motion
+#:     BASECAT/JITOSOL/CBBTC/VIRTUAL-WETH  34
+#:                                  --
+#:                                  379 of 596 (63.6%)
+#:
+#: Those 379 cycles produced zero entries. They cannot: the refusals above are
+#: SYMBOL-level and unconditional, so every strategy dies on them. Meanwhile
+#: the eight symbols `atf_static` -- the only executor with a live branch --
+#: may actually enter carried 43.7% of the ticks and got 15.6% of the cycles:
+#: COMP 0.37 cycles per tick against CBZEC-USDC's 0.018, a 20x skew toward
+#: symbols nothing may buy. The whole distance to a live trade is atf_static's
+#: fresh tradeable ghost round trips (1, against a re-arm bar of 20), and they
+#: are produced by decision cycles.
+#:
+#: THIS IS A RANKING, NOT A GATE. A condemned symbol sinks below the eligible
+#: ones and still takes a slot when there is nothing better to give it to, so
+#: a pool larger than the candidate list behaves exactly as before and no
+#: symbol is switched off. The three carve-outs are load-bearing:
+#:
+#:   * HELD POSITIONS AND ATF PRIORITIES ARE NEVER RANKED. They are promoted
+#:     ahead of this list by the callers and never reach it. A held symbol
+#:     without a bot is a position nothing can sell -- this repo has stranded
+#:     one for 362.9h that way.
+#:   * The POOLED symbol_edge verdict, never the per-strategy one. AERO-USDC
+#:     is banned for atf_static (n=17, mean -0.992%) and ALLOWED pooled
+#:     (n=46, mean +1.805%), so some strategy may still enter it and it keeps
+#:     its rank. Asking the per-strategy question here would condemn a symbol
+#:     on one strategy's record.
+#:   * FAILS OPEN. A gate that cannot be imported, or that raises, leaves the
+#:     symbol unranked -- the failure this exists to prevent is a wasted
+#:     slot, never a narrower funnel.
+_DEPRIORITISE_CONDEMNED = os.getenv(
+    "SELECTOR_DEPRIORITISE_CONDEMNED", "1"
+).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _no_strategy_may_enter(symbol: str) -> Optional[str]:
+    """The standing, symbol-level refusal that condemns ``symbol``, or None.
+
+    Reads the same three functions ``trading/bot.py`` consults at the entry
+    gate (:7707 pooled symbol edge, :7957 stop survivability, and the symbol
+    motion gate beside them). Only refusals that take a SYMBOL and no strategy
+    are asked, because only those condemn every strategy at once.
+    """
+    if not _DEPRIORITISE_CONDEMNED:
+        return None
+    pair = str(symbol or "").strip().upper()
+    if not pair:
+        return None
+    try:
+        from services.symbol_edge_gate import refusal_reason as _edge
+    except Exception:  # noqa: BLE001 - unreadable verdict never condemns
+        def _edge(_symbol: str, _strategy_id=None):  # type: ignore[misc]
+            return None
+    try:
+        from services.stop_survivability_gate import refusal_reason as _stop
+    except Exception:  # noqa: BLE001
+        def _stop(_symbol: str):  # type: ignore[misc]
+            return None
+    try:
+        from services.symbol_motion_gate import refusal_reason as _motion
+    except Exception:  # noqa: BLE001
+        def _motion(_symbol: str):  # type: ignore[misc]
+            return None
+    try:
+        return _edge(pair, None) or _stop(pair) or _motion(pair) or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _sink_condemned(
+    candidates: List["PairCandidate"], *, protected: Optional[set] = None
+) -> Tuple[List["PairCandidate"], List[str]]:
+    """Move condemned candidates to the back, order preserved within groups.
+
+    Returns ``(reordered, condemned_symbols)``. ``protected`` names symbols
+    that keep their place however they are judged -- held positions, which
+    the callers also promote to the front.
+    """
+    keep = {str(s or "").strip().upper() for s in (protected or set())}
+    eligible: List["PairCandidate"] = []
+    condemned: List["PairCandidate"] = []
+    names: List[str] = []
+    for candidate in candidates:
+        symbol_u = str(getattr(candidate, "symbol", "") or "").upper()
+        if symbol_u and symbol_u not in keep and _no_strategy_may_enter(symbol_u):
+            condemned.append(candidate)
+            names.append(symbol_u)
+        else:
+            eligible.append(candidate)
+    if not condemned:
+        return list(candidates), []
+    return eligible + condemned, names
+
 # Pair selection is blocking by nature -- live-price probes, CEX backfills,
 # `proc.wait()` on download2000 -- and `reconcile_pairs` used to run it inline
 # on the event loop that every market stream shares. That is the other half of
@@ -1173,6 +1285,20 @@ class GhostTradingSupervisor:
             )
         if not all_ordered:
             all_ordered = list(pairs)
+        # Slots go to symbols something may actually enter. `prioritized`
+        # (held + ATF signals + focus + genome seed) leads the list and is
+        # protected by `held_upper`; the rest is `select_pairs`' volume ranking,
+        # which is where the condemned symbols come from. See
+        # `_no_strategy_may_enter` for the 379-of-596 measurement.
+        all_ordered, _condemned = _sink_condemned(all_ordered, protected=held_upper)
+        if _condemned:
+            log_message(
+                "ghost-supervisor",
+                f"ranked {len(_condemned)} pair(s) below the eligible ones: no "
+                "strategy may open a position in them",
+                severity="info",
+                details={"symbols": _condemned[:16]},
+            )
         if atf_priority:
             log_message(
                 "ghost-supervisor",
@@ -1393,6 +1519,22 @@ class GhostTradingSupervisor:
             promoted_set = atf_priority_set | set(held_symbols)
             remainder = [pair for pair in candidates if pair.symbol.upper() not in promoted_set]
             candidates = promoted + remainder
+        # Same ranking as build(), applied here as well because a reconcile is
+        # what fills a freed slot mid-session and the pool that produced the
+        # 379-of-596 skew was assembled by THIS path, not by build(). Held
+        # symbols and ATF priorities are protected: they lead the list already,
+        # and `held_all` is the set that must never lose its bot.
+        candidates, _condemned = _sink_condemned(
+            candidates, protected=held_all | atf_priority_set
+        )
+        if _condemned:
+            log_message(
+                "ghost-supervisor",
+                f"ranked {len(_condemned)} pair(s) below the eligible ones: no "
+                "strategy may open a position in them",
+                severity="info",
+                details={"symbols": _condemned[:16]},
+            )
         readiness = self.pipeline.live_readiness_report()
         transition_plan = self.pipeline.ghost_live_transition_plan()
         added_bots: List[str] = []
@@ -1430,15 +1572,29 @@ class GhostTradingSupervisor:
             # the ATF signal simply waits. That is the right trade -- a skipped
             # entry costs an opportunity, a position nothing can sell costs
             # capital.
+            # SPEND THE CONDEMNED SLOT FIRST.
+            #
+            # The scan below picks the last replaceable bot, which is blind to
+            # whether its symbol can ever produce an entry. With a full pool
+            # that means an ATF signal evicts an ELIGIBLE symbol while COMP-USDC
+            # -- banned pooled at -4.333% over 16 round trips -- keeps its slot
+            # and its 136 decision cycles per 6h. Same predicate and same
+            # carve-outs as `_sink_condemned`; a bot whose symbol nothing may
+            # enter is the cheapest thing in the pool to stop.
             replace_idx = None
-            for idx in range(len(self.bots) - 1, -1, -1):
-                old_symbol = str(getattr(self.bots[idx], "primary_symbol", "") or "").upper()
-                if old_symbol in atf_priority_set:
-                    continue
-                if old_symbol in held_all:
-                    continue
-                replace_idx = idx
-                break
+            for eligible_pass in (False, True):
+                for idx in range(len(self.bots) - 1, -1, -1):
+                    old_symbol = str(getattr(self.bots[idx], "primary_symbol", "") or "").upper()
+                    if old_symbol in atf_priority_set:
+                        continue
+                    if old_symbol in held_all:
+                        continue
+                    if not eligible_pass and not _no_strategy_may_enter(old_symbol):
+                        continue
+                    replace_idx = idx
+                    break
+                if replace_idx is not None:
+                    break
             if replace_idx is None:
                 return False
             old_bot = self.bots.pop(replace_idx)
