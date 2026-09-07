@@ -4237,23 +4237,60 @@ class TrainingPipeline:
         # caught by drawdown_guard, and a streak of genuinely damaging losses
         # still trips this, since such a streak necessarily exceeds the cost
         # bound.
-        current_loss_streak_cost = 0.0
         max_loss_streak_cost = 0.0
         worst_costly_streak = 0
         streak_cost_guard = float(os.getenv("GHOST_MAX_LOSS_STREAK_COST", "0.25"))
+        losses = sum(1 for t in trades if float(getattr(t, "profit", 0.0)) <= 0)
+        # A losing STREAK is a property of one decision-maker's own sequence of
+        # bets. It was being measured over the POOLED book -- every strategy's
+        # trades concatenated into one list -- and a pooled book has no
+        # decision-maker whose experience that sequence describes.
+        #
+        # Measured 2026-09-06 on the 48h book the live gate reads (242 paired
+        # round trips, 36 strategies): the pooled sequence reported a 12-trade
+        # costly streak against a bar of 5, and that "streak" was
+        #
+        #     bus_schedule x4, atf_static_scout x4, obv_accumulation@5h,
+        #     obv_accumulation@1w, obv_accumulation@12h, rsi_reversal@1d
+        #
+        # across SEVEN symbols in five hours. Six independent strategies each
+        # losing once or twice in the same window is a market-wide down-hour,
+        # not a decision-maker on a losing run. No strategy in that window ran
+        # 12 losses: the worst any single one ran was 8 (atf_static_scout, on a
+        # book that netted +10.00 over 104 trades), and 30 of the 36 ran 2 or
+        # fewer.
+        #
+        # The bar of 5 is itself calibrated per-strategy -- the note above
+        # derives it from "the worst 7-loss streak" on atf_static's own trades
+        # -- so comparing it against a concatenation is an apples-to-oranges
+        # comparison whose left side grows with the number of strategies
+        # trading concurrently. With 36 strategies live, the pooled run length
+        # says more about how many strategies are running than about how any of
+        # them is behaving.
+        #
+        # So the streak is measured within each strategy's own trades and the
+        # WORST is reported. Grouping is a no-op for a single-strategy verdict
+        # (``strategy_id`` given), which is already one decision-maker's book.
+        # Trades with no attributed strategy form their own group rather than
+        # being merged into any strategy's record.
+        streak_books: Dict[str, List[Any]] = {}
         for trade in trades:
-            profit_val = float(getattr(trade, "profit", 0.0))
-            if profit_val <= 0:
-                losses += 1
-                current_loss_streak += 1
-                current_loss_streak_cost += abs(profit_val)
-                max_loss_streak = max(max_loss_streak, current_loss_streak)
-                max_loss_streak_cost = max(max_loss_streak_cost, current_loss_streak_cost)
-                if streak_cost_guard > 0 and current_loss_streak_cost > streak_cost_guard:
-                    worst_costly_streak = max(worst_costly_streak, current_loss_streak)
-            else:
-                current_loss_streak = 0
-                current_loss_streak_cost = 0.0
+            streak_books.setdefault(str(getattr(trade, "strategy_id", "") or ""), []).append(trade)
+        for book in streak_books.values():
+            current_loss_streak = 0
+            current_loss_streak_cost = 0.0
+            for trade in book:
+                profit_val = float(getattr(trade, "profit", 0.0))
+                if profit_val <= 0:
+                    current_loss_streak += 1
+                    current_loss_streak_cost += abs(profit_val)
+                    max_loss_streak = max(max_loss_streak, current_loss_streak)
+                    max_loss_streak_cost = max(max_loss_streak_cost, current_loss_streak_cost)
+                    if streak_cost_guard > 0 and current_loss_streak_cost > streak_cost_guard:
+                        worst_costly_streak = max(worst_costly_streak, current_loss_streak)
+                else:
+                    current_loss_streak = 0
+                    current_loss_streak_cost = 0.0
         # The value compared against loss_streak_guard: a long-but-cheap streak
         # reports as harmless, a costly one reports its true length.
         effective_loss_streak = (
@@ -4329,6 +4366,74 @@ class TrainingPipeline:
             and len(trades) >= max(5, min_trades)
             and net_profit_ex_top_symbol <= 0.0
         )
+        # ------------------------------------------------------------------
+        # The evidence must come from trades the live lane could actually place.
+        #
+        # Every statistic above is computed over the WHOLE ghost book, including
+        # symbols the entry path refuses. ``stop_survivability_gate`` refuses a
+        # symbol whose p99 single-tick jump exceeds the stop -- there is no stop
+        # worth the name to place -- so a ghost trade on such a symbol is not a
+        # rehearsal of anything the live lane can do.
+        #
+        # Measured 2026-09-06 on the 48h book (242 paired round trips):
+        #
+        #     BSTONK-USDC    34 trades  net +6.56649   REFUSED
+        #     BPAD-USDC       6 trades  net +2.12736   REFUSED
+        #     BASECAT-USDC   32 trades  net +1.93025   REFUSED
+        #     MOONBASE-USDC   7 trades  net +0.73003   REFUSED
+        #     ------------------------------------------------------------
+        #     refused symbols            net +11.35993 over  82 trades
+        #     tradeable symbols          net  +0.15181 over 160 trades
+        #
+        # 98.7% of the book's net profit is on symbols that can no longer be
+        # entered. The pooled book reports profit_factor 2.567, payoff 2.698 and
+        # expectancy +$0.04757/trade -- every expectancy-path threshold cleared
+        # comfortably -- while the same measures over the tradeable subset are
+        # profit_factor 1.070, payoff 1.784 and +$0.00095/trade against a
+        # $0.02317 round trip. The gate was one streak-fix away from
+        # authorising real money on a rehearsal it cannot repeat.
+        #
+        # ``single_symbol_dependence`` does not catch this: it jackknifes the ONE
+        # top symbol, and net-ex-BSTONK is +4.9453 because BASECAT, BPAD and
+        # MOONBASE carry it -- all three equally unenterable.
+        #
+        # So the expectancy path's own criteria are re-applied to the tradeable
+        # subset. No new constant is introduced: the thresholds are the ones
+        # already calibrated for that path. A book that clears them only by
+        # including untradeable symbols is refused, and the reason names it.
+        #
+        # FAILS OPEN only when the subset is too thin to judge -- with fewer
+        # than ``GHOST_TRADEABLE_MIN_TRADES`` tradeable round trips there is
+        # nothing to measure, and refusing on an unmeasured subset would shut
+        # the lane on the absence of evidence rather than on evidence.
+        tradeable_enabled = (
+            os.getenv("GHOST_REQUIRE_TRADEABLE_EDGE", "1") or "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        tradeable_min_trades = int(os.getenv("GHOST_TRADEABLE_MIN_TRADES", "30"))
+        tradeable_trades = [
+            t for t in trades if not stop_is_unenforceable(str(getattr(t, "symbol", "") or ""))
+        ]
+        tradeable_profits = [float(getattr(t, "profit", 0.0)) for t in tradeable_trades]
+        tradeable_net = float(sum(tradeable_profits))
+        tradeable_expectancy = (
+            tradeable_net / len(tradeable_profits) if tradeable_profits else 0.0
+        )
+        _t_wins = [p for p in tradeable_profits if p > 0]
+        _t_losses = [p for p in tradeable_profits if p <= 0]
+        tradeable_win_rate = (
+            len(_t_wins) / len(tradeable_profits) if tradeable_profits else 0.0
+        )
+        _t_avg_win = float(sum(_t_wins) / len(_t_wins)) if _t_wins else 0.0
+        _t_avg_loss = float(sum(_t_losses) / len(_t_losses)) if _t_losses else 0.0
+        tradeable_payoff = (_t_avg_win / abs(_t_avg_loss)) if _t_avg_loss < 0 else 0.0
+        _t_gross_loss = abs(float(sum(_t_losses)))
+        tradeable_profit_factor = (
+            (float(sum(_t_wins)) / _t_gross_loss)
+            if _t_gross_loss > 0
+            else (999.0 if _t_wins else 0.0)
+        )
+        tradeable_share = (len(tradeable_trades) / len(trades)) if trades else 0.0
+        tradeable_measurable = len(tradeable_trades) >= max(1, tradeable_min_trades)
         win_headroom = 1.0 if min_win_rate <= 0 else max(0.0, min(1.0, win_rate / max(min_win_rate, 1e-9)))
         profit_headroom = 1.0 if min_profit_factor <= 0 else max(0.0, min(1.0, profit_factor / max(min_profit_factor, 1e-9)))
         tail_headroom = 1.0 if tail_guard <= 0 else max(0.0, 1.0 - min(1.0, tail_risk / max(tail_guard, 1e-9)))
@@ -4453,6 +4558,18 @@ class TrainingPipeline:
         payoff_ratio = (avg_win / abs(avg_loss)) if avg_loss < 0 else 0.0
         # Expectancy per trade, already net of fees, in USD.
         net_expectancy = avg_profit - expectancy_margin_usd
+        # The same criteria, over the trades the live lane could actually place.
+        # Thresholds are this path's own -- nothing new is calibrated here.
+        tradeable_edge_block = bool(
+            tradeable_enabled
+            and tradeable_measurable
+            and not (
+                tradeable_expectancy > 0.0
+                and tradeable_net > 0.0
+                and tradeable_profit_factor >= expectancy_min_profit_factor
+                and tradeable_payoff >= expectancy_min_payoff
+            )
+        )
         expectancy_ready = bool(
             expectancy_enabled
             and len(trades) >= expectancy_min_trades
@@ -4468,6 +4585,7 @@ class TrainingPipeline:
             and not stale_samples
             and not concentration_block
             and not single_symbol_dependence
+            and not tradeable_edge_block
         )
         if not (cold_start and cold_start_allowed):
             reason = ""
@@ -4484,6 +4602,15 @@ class TrainingPipeline:
                 reason = "insufficient_samples"
             elif wins <= 0:
                 reason = "no_wins"
+            elif tradeable_edge_block:
+                # Ranked above the pooled descriptive stats deliberately. This
+                # says the EVIDENCE is inadmissible -- the profit is on symbols
+                # that cannot be entered -- so reporting "low_win_rate" or
+                # "loss_streak" about that same book names a symptom of a
+                # measurement nobody should be acting on. Sample adequacy still
+                # outranks it: with no book at all there is nothing to call
+                # inadmissible.
+                reason = "no_tradeable_edge"
             elif win_rate < min_win_rate:
                 reason = "low_win_rate"
             elif avg_profit < min_margin:
@@ -4506,6 +4633,8 @@ class TrainingPipeline:
                 reason = "symbol_concentration"
             elif single_symbol_dependence:
                 reason = "single_symbol_dependence"
+            elif tradeable_edge_block:
+                reason = "no_tradeable_edge"
         return {
             "ready": ready,
             "reason": reason,
@@ -4520,6 +4649,18 @@ class TrainingPipeline:
             "expectancy_ready": expectancy_ready,
             "effective_loss_streak": effective_loss_streak,
             "max_loss_streak_cost": max_loss_streak_cost,
+            # The book the live lane could actually reproduce. Reported beside
+            # the pooled numbers so the two can never be mistaken for each
+            # other again: a profit_factor of 2.567 that becomes 1.070 once
+            # unenterable symbols are removed is not the same measurement.
+            "tradeable_samples": len(tradeable_trades),
+            "tradeable_share": tradeable_share,
+            "tradeable_net_profit": tradeable_net,
+            "tradeable_expectancy": tradeable_expectancy,
+            "tradeable_win_rate": tradeable_win_rate,
+            "tradeable_payoff_ratio": tradeable_payoff,
+            "tradeable_profit_factor": tradeable_profit_factor,
+            "tradeable_edge_block": tradeable_edge_block,
             "loss_streak_cost_guardrail": streak_cost_guard,
             "wilson_z": wilson_z,
             "avg_profit": avg_profit,
