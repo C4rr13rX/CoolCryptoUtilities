@@ -26,6 +26,7 @@ Demotion (mirrors the bot's live circuit breaker at strategy granularity):
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import threading
@@ -159,7 +160,105 @@ def _is_implausible(profit: float, *, relative_to: Optional[float]) -> bool:
     return value > relative_to * _RELATIVE_MAX_MULTIPLE
 
 
-def _blank_mode() -> Dict[str, float]:
+def _blank_tradeable() -> Dict[str, Any]:
+    """The subset of a mode's book the LIVE lane could actually have placed.
+
+    Same three fields the graduation bar reads, over the symbols only. See
+    ``_live_tradeable`` for why the distinction decides whether a licence to
+    spend real money means anything.
+    """
+    return {"trades": 0, "wins": 0, "losses": 0, "total_profit": 0.0}
+
+
+def _live_tradeable(symbol: str) -> bool:
+    """Could the live lane have placed a round trip in ``symbol``?
+
+    Graduation and re-arm both ask "has this strategy earned the right to
+    spend real money", and both used to answer it from the WHOLE ghost book --
+    including symbols the live lane refuses on sight. That makes the evidence
+    unspendable, and it is not a hypothetical:
+
+    Measured 2026-09-07 on atf_static, the only live-capable strategy, over
+    its 9 fresh ghost closes since ``demoted_ts``:
+
+        ALL fresh        9 trades  4 wins  0.4444  net +0.584094  <- what the
+                                                                     rule read
+        TRADEABLE fresh  7 trades  2 wins  0.2857  net -0.271454
+        UNTRADEABLE      2 trades  2 wins  1.0000  net +0.855548  <- BSTONK
+
+    Both untradeable rows are BSTONK-USDC, for which
+    ``trading.pipeline.stop_is_unenforceable`` is True -- no stop can bind on
+    it, so the live lane will not touch it. The entire profit case for putting
+    real money back behind atf_static stood on two trades it could never have
+    placed; on the symbols it CAN place, the same window loses money at a 29%
+    hit rate. The docstring at ``_evaluate_graduation_locked`` already records
+    the same shape in the LIVE book ("of which +0.2420 is a single BSTONK
+    exit"), so this is the third time one untradeable symbol has carried a
+    record that authorises spending.
+
+    The aggregate live gate has filtered exactly this since
+    ``GHOST_REQUIRE_TRADEABLE_EDGE`` landed (trading/pipeline.py:4530). This is
+    the same filter, at strategy granularity, using the same predicate -- no
+    new threshold is calibrated here.
+
+    Unknown or unjudgeable symbols are NOT counted as tradeable. This is a
+    population definition rather than a fail-open/fail-closed switch: the bar
+    asks for 20 round trips the live lane could have placed, and a trade whose
+    symbol cannot be established is not evidence that it could. Both production
+    callers of ``record()`` pass a symbol (services/atf_static_strategy.py:124
+    and trading/bot.py:9686), and the tradeable symbols are the ones the
+    strategies actually trade -- 5 of atf_static's 9 fresh rows were AERO-USDC
+    -- so this does not switch the gate off.
+    """
+    sym = str(symbol or "").strip()
+    if not sym:
+        return False
+    try:
+        from trading.pipeline import stop_is_unenforceable
+    except Exception:  # noqa: BLE001
+        # Cannot establish tradeability, so this trade cannot count as proof
+        # of it. Loud, because a permanent import failure here would quietly
+        # stall every re-arm.
+        log_message(
+            "strategy-ledger",
+            f"cannot import stop_is_unenforceable to judge {sym!r}; the trade "
+            "is not counted as live-tradeable evidence",
+            severity="warning",
+        )
+        return False
+    try:
+        return not bool(stop_is_unenforceable(sym))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _tradeable_of(stats: Any) -> Dict[str, Any]:
+    """The live-tradeable subset of a mode's stats, blank when absent."""
+    if isinstance(stats, dict):
+        sub = stats.get("tradeable")
+        if isinstance(sub, dict):
+            return sub
+    return _blank_tradeable()
+
+
+def _fresh_tradeable_delta(ghost: Any, at: Any) -> Dict[str, Any]:
+    """Tradeable evidence gathered SINCE the ``at`` snapshot.
+
+    Clamped at zero on trades because a ledger reset or a hand-edit can leave
+    a baseline above the current book, and a negative trade count would sail
+    through a ``>=`` bar.
+    """
+    now = _tradeable_of(ghost)
+    was = _tradeable_of(at)
+    trades = int(now.get("trades", 0)) - int(was.get("trades", 0))
+    wins = int(now.get("wins", 0)) - int(was.get("wins", 0))
+    profit = float(now.get("total_profit", 0.0)) - float(was.get("total_profit", 0.0))
+    if trades <= 0:
+        return {"trades": max(trades, 0), "wins": 0, "total_profit": 0.0}
+    return {"trades": trades, "wins": max(wins, 0), "total_profit": profit}
+
+
+def _blank_mode() -> Dict[str, Any]:
     return {
         "trades": 0,
         "wins": 0,
@@ -177,6 +276,9 @@ def _blank_mode() -> Dict[str, float]:
         "max_drawdown": 0.0,
         "consecutive_losses": 0,
         "last_ts": 0.0,
+        # The same book restricted to symbols the live lane could have traded.
+        # Graduation and re-arm read THIS, not the total above.
+        "tradeable": _blank_tradeable(),
     }
 
 
@@ -264,6 +366,18 @@ class StrategyLedger:
         ent = self._data.setdefault(strategy_id, {})
         ent.setdefault("ghost", _blank_mode())
         ent.setdefault("live", _blank_mode())
+        # Every entry written before the tradeable subset existed carries only
+        # the pooled totals. Baseline it at ZERO rather than seeding it from
+        # those totals: the pooled book is exactly the number that cannot be
+        # trusted to be spendable, so back-filling it would launder the
+        # untradeable evidence this counter exists to exclude. The effect is
+        # that the fresh-tradeable window starts now, which is the same
+        # fail-closed choice `_maybe_rearm_locked` already makes when
+        # `ghost_at_demotion` is missing.
+        for _mode in ("ghost", "live"):
+            _stats = ent.get(_mode)
+            if isinstance(_stats, dict) and not isinstance(_stats.get("tradeable"), dict):
+                _stats["tradeable"] = _blank_tradeable()
         ent.setdefault("live_approved", False)
         ent.setdefault("demotions", 0)
         ent.setdefault("demote_reason", None)
@@ -442,6 +556,21 @@ class StrategyLedger:
                 stats["losses"] = int(stats.get("losses", 0)) + 1
                 stats["consecutive_losses"] = int(stats.get("consecutive_losses", 0)) + 1
             stats["total_profit"] = float(stats.get("total_profit", 0.0)) + float(profit)
+            # Mirror the outcome into the live-tradeable subset when, and only
+            # when, the live lane could have placed this round trip. Bumped
+            # from the same values as the totals above so the two books can
+            # never disagree about a single trade.
+            if _live_tradeable(symbol):
+                sub = stats.get("tradeable")
+                if not isinstance(sub, dict):
+                    sub = _blank_tradeable()
+                    stats["tradeable"] = sub
+                sub["trades"] = int(sub.get("trades", 0)) + 1
+                if profit > 0:
+                    sub["wins"] = int(sub.get("wins", 0)) + 1
+                else:
+                    sub["losses"] = int(sub.get("losses", 0)) + 1
+                sub["total_profit"] = float(sub.get("total_profit", 0.0)) + float(profit)
             stats["peak_profit"] = max(float(stats.get("peak_profit", 0.0)), stats["total_profit"])
             stats["max_drawdown"] = max(
                 float(stats.get("max_drawdown", 0.0)),
@@ -506,10 +635,18 @@ class StrategyLedger:
         if ent.get("demote_reason"):
             self._maybe_rearm_locked(sid)
             return
+        # The FIRST licence is judged on the same population the re-arm rule
+        # uses: round trips the live lane could actually have placed. Reading
+        # the pooled ghost book here would let a strategy graduate on symbols
+        # it can never spend on -- the identical defect measured on
+        # atf_static's re-arm window, and the same shape this method's own
+        # docstring records in the live book ("of which +0.2420 is a single
+        # BSTONK exit"). See `_live_tradeable`.
         ghost = ent["ghost"]
-        trades = int(ghost.get("trades", 0))
-        wins = int(ghost.get("wins", 0))
-        profit = float(ghost.get("total_profit", 0.0))
+        sub = _tradeable_of(ghost)
+        trades = int(sub.get("trades", 0))
+        wins = int(sub.get("wins", 0))
+        profit = float(sub.get("total_profit", 0.0))
         min_trades = _env_int("STRATEGY_GRADUATION_MIN_TRADES", 20)
         min_winrate = _env_float("STRATEGY_GRADUATION_MIN_WINRATE", 0.55)
         min_profit = _env_float("STRATEGY_GRADUATION_MIN_PROFIT", 0.0)
@@ -861,14 +998,30 @@ class StrategyLedger:
             # Demoted before the snapshot existed, or by a hand-edit. Fail
             # CLOSED: baseline from here so the fresh window starts now, rather
             # than counting a pre-demotion book as evidence of recovery.
-            at = dict(ghost)
+            # deepcopy, not dict(): the snapshot now NESTS the tradeable
+            # subset, so a shallow copy leaves the baseline and the live book
+            # sharing one inner dict -- every later trade would bump both and
+            # hold the fresh delta at zero.
+            #
+            # Not a shipped bug today, and the honest reason is luck rather
+            # than design: `_save()` serialises the two to JSON and the next
+            # `_load()` reads them back as separate objects, so the file round
+            # trip breaks the aliasing before it can be observed. That is a
+            # property of the persistence layer, not of this rule, and a
+            # correctness invariant should not rest on it.
+            at = copy.deepcopy(ghost)
             ent["ghost_at_demotion"] = at
 
-        fresh_trades = int(ghost.get("trades", 0)) - int(at.get("trades", 0))
-        fresh_wins = int(ghost.get("wins", 0)) - int(at.get("wins", 0))
-        fresh_profit = float(ghost.get("total_profit", 0.0)) - float(
-            at.get("total_profit", 0.0)
-        )
+        # Fresh evidence, over the symbols the live lane could actually have
+        # traded. `_live_tradeable` carries the measurement; the short version
+        # is that atf_static's fresh window read +0.584094 pooled and
+        # -0.271454 over the symbols it can spend on, because two BSTONK rows
+        # carried it. A licence granted on the pooled number is a licence to
+        # spend real money on evidence that was never spendable.
+        fresh = _fresh_tradeable_delta(ghost, at)
+        fresh_trades = fresh["trades"]
+        fresh_wins = fresh["wins"]
+        fresh_profit = fresh["total_profit"]
         min_trades = _env_int("STRATEGY_GRADUATION_MIN_TRADES", 20)
         min_winrate = _env_float("STRATEGY_GRADUATION_MIN_WINRATE", 0.55)
         min_profit = _env_float("STRATEGY_GRADUATION_MIN_PROFIT", 0.0)
@@ -887,7 +1040,7 @@ class StrategyLedger:
             self._grant_live_licence(ent, ts_key="rearmed_ts")
             ent["demote_reason"] = None
             ent["rearms"] = int(ent.get("rearms", 0)) + 1
-            ent["ghost_at_demotion"] = dict(ghost)
+            ent["ghost_at_demotion"] = copy.deepcopy(ghost)
             try:
                 from services.logging_utils import log_message
 
@@ -924,7 +1077,10 @@ class StrategyLedger:
         # still needs the full bar (trades, win rate, profit), so a genuinely
         # bad strategy does not sneak back -- it simply is not asked to
         # re-earn evidence it already has.
-        ent["ghost_at_demotion"] = dict(ent.get("ghost") or {})
+        # deepcopy: the snapshot nests the tradeable subset. See the matching
+        # note in _maybe_rearm_locked -- a shallow copy is masked by the JSON
+        # round trip rather than being safe on its own terms.
+        ent["ghost_at_demotion"] = copy.deepcopy(ent.get("ghost") or {})
         ent["live"]["consecutive_losses"] = 0
 
         # RETIRE THE PEAK THAT CONVICTED IT, WITH THE LICENCE IT BELONGED TO.

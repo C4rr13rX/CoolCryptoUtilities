@@ -249,3 +249,60 @@ result, pick a different one.
   let Echo land ledger green, THEN restart, THEN re-measure the last-hour
   reason census -- scenario_spread should fall from 31.1% to roughly 8%, and
   strategy_edge becomes the top blocker.
+
+2026-09-07 02:02 | Echo |
+  hypothesis: (a) 113d862 is inert because production booted before it;
+  (b) once the funnel widens, the thing that still blocks a live trade is
+  atf_static's re-arm, and the reason is NOT the trade count everyone has been
+  counting |
+  did: (1) Verified prod PID 15940 booted 00:53:06 against 113d862 at 01:29,
+  captured the BEFORE from organism_snapshots, killed it, let scripts/
+  main_keeper.py relaunch (PID 3144 at 01:42:02, -X utf8 verified).
+  (2) Read the re-arm rule at trading/strategies/ledger.py and replayed
+  atf_static's fresh window against trading/pipeline.py's OWN tradeability
+  predicate (stop_is_unenforceable).
+  result:
+  RESTART, measured on organism_snapshots.decision.direction_prob --
+      before   median 0.1471 (1h) / 0.1695 (6h)  max 0.5036  >=0.58  0/569 = 0.00%
+      after    median 0.4901                     max 0.6170  >=0.58  5/50  = 10.0%
+  The first time the number has EVER crossed the 0.58 entry bar. Bay's replay
+  predicted median 0.5818 / 50%; the live sample is 50 snapshots on a
+  still-warming model, so it is lower, but the gate is no longer structurally
+  shut. 100% of scheduler evaluations still terminate at "no_candidates".
+  THE REAL RE-ARM BLOCKER, and it is not the count. The rule needs
+  fresh_trades>=20 AND fresh_winrate>=0.55 AND fresh_profit>0. atf_static:
+      ALL fresh        9 trades  4 wins  0.4444  net +0.584094  <- what it read
+      TRADEABLE fresh  7 trades  2 wins  0.2857  net -0.271454
+      UNTRADEABLE      2 trades  2 wins  1.0000  net +0.855548  <- both BSTONK
+  BSTONK-USDC is stop_is_unenforceable=True: no stop binds, so the live lane
+  will not place it. The ENTIRE profit case for putting real money back behind
+  the only live-capable strategy stood on two trades it could never have made;
+  where it can actually spend it is losing at a 29% hit rate. The 0.55 bar was
+  refusing it, but only by luck of the count -- BSTONK wins are fee-scraping
+  micro-wins (+0.014830 is a real row), and a few more of them clear the count,
+  the hit rate and the profit floor at once on a book that is -0.271454 where
+  it counts. Bay's fix raises the ghost rate, so that was getting MORE likely.
+  SHIPPED: graduation and re-arm now count evidence over the symbols the live
+  lane could actually have placed, using pipeline.py's own predicate -- the
+  same filter GHOST_REQUIRE_TRADEABLE_EDGE already applies to the AGGREGATE
+  gate (pipeline.py:4530), now at strategy granularity. NO threshold changed
+  anywhere; this TIGHTENS the gate. Legacy entries baseline the subset at zero
+  rather than inheriting pooled totals, because those totals are exactly the
+  number that cannot be trusted to be spendable.
+  9 tests. Verified failing against the old rule in-process (patching
+  _tradeable_of to return the pooled dict reproduces it exactly, with no source
+  edit and so no window for a concurrent agent): 4 fail, including the
+  discriminating one where the pooled book clears all three bars and is a lie.
+  Swapping copy.deepcopy for dict() fails 2 more. Gate 274 passed / 0 failed.
+  profit_logic_audit: NO KNOWN LOSING SHAPES.
+  Honest note: the deepcopy is hardening, not a shipped bug -- _save()/_load()
+  round-trips the snapshot through JSON, which breaks the aliasing before it
+  can be observed. That is luck from the persistence layer and the invariant
+  should not rest on it. Said so in the comments rather than claiming a fix.
+  next: atf_static now needs 20 fresh TRADEABLE ghost round trips at >=55% for
+  +profit, and its tradeable book is currently NEGATIVE, so the honest next
+  question is not "how do we reach 20" but "which symbol clears its round trip
+  most often" -- AERO is 5 of its 9 fresh rows and lost on 5 of 7. Re-measure
+  direction_prob over a few hundred post-boot snapshots before trusting the
+  10.0%; if it settles well under Bay's predicted 50%, the residual is the
+  graph_confidence damping path, not the calibration offset.

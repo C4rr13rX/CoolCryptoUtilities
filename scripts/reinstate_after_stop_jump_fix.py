@@ -65,6 +65,7 @@ Usage:
 
 from __future__ import annotations
 
+import copy
 import json
 import shutil
 import sqlite3
@@ -225,7 +226,11 @@ def main() -> int:
     live["consecutive_losses"] = 0
     # Baseline the fresh ghost window from here, so a later auto-re-arm asks
     # for evidence earned under THIS licence.
-    entry["ghost_at_demotion"] = dict(entry.get("ghost") or {})
+    # deepcopy, not dict(): the ghost book nests a "tradeable" subset, and a
+    # shallow copy would leave the baseline sharing that inner dict with the
+    # live book. Harmless here because this script serialises immediately
+    # below, but the invariant should hold without depending on that.
+    entry["ghost_at_demotion"] = copy.deepcopy(entry.get("ghost") or {})
 
     LEDGER.write_text(json.dumps(ledger, indent=2), encoding="utf-8")
     print(f"  APPLIED. backup: {backup.name}")

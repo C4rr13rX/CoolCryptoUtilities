@@ -79,14 +79,30 @@ def _demoted_entry(*, fresh_ghost_trades: int, fresh_ghost_wins: int,
     live = dict(LIVE_AT_DEMOTION)
     live["pl_ref"] = live["total_profit"]
     live["trades_ref"] = live["trades"]
+    # The re-arm rule counts evidence over the symbols the LIVE lane could
+    # actually have placed, so the fixture has to carry that subset -- see
+    # tests/test_a_licence_is_not_earned_on_symbols_the_live_lane_refuses.py.
+    # This file is about a different question (a lifetime loss must not veto
+    # the rule, and a re-arm must re-base the drawdown brake), so the whole
+    # book here is tradeable and the assertions are unchanged.
     return {
         "live": live,
         "ghost": {
             "trades": 20 + fresh_ghost_trades,
             "wins": 8 + fresh_ghost_wins,
             "total_profit": 1.0 + fresh_ghost_profit,
+            "tradeable": {
+                "trades": 20 + fresh_ghost_trades,
+                "wins": 8 + fresh_ghost_wins,
+                "total_profit": 1.0 + fresh_ghost_profit,
+            },
         },
-        "ghost_at_demotion": {"trades": 20, "wins": 8, "total_profit": 1.0},
+        "ghost_at_demotion": {
+            "trades": 20,
+            "wins": 8,
+            "total_profit": 1.0,
+            "tradeable": {"trades": 20, "wins": 8, "total_profit": 1.0},
+        },
         "live_approved": False,
         "demote_reason": "live P/L -0.1585 over 17 trades is not profitable",
         "demotions": 7,

@@ -123,6 +123,27 @@ class DemotionIsAPauseNotADeathSentenceTest(unittest.TestCase):
     re-graduation bar from zero and could never have returned within a session.
     """
 
+    @staticmethod
+    def _ghost(ent, trades, wins, profit):
+        """Set the pooled ghost book AND its live-tradeable subset.
+
+        Graduation and re-arm count evidence over the symbols the live lane
+        could actually have placed (see
+        tests/test_a_licence_is_not_earned_on_symbols_the_live_lane_refuses.py),
+        so a fixture that moves only the pooled totals is describing a book
+        with no spendable evidence in it. This file is about WHEN a demotion
+        may be undone, not about which symbols count, so every book here is
+        fully tradeable and the assertions are unchanged.
+
+        It also keeps the negative tests honest: a strategy that stays demoted
+        must stay demoted for the reason the test names -- a losing live
+        record, or a permanent block -- and not merely because its fixture
+        carried no tradeable evidence.
+        """
+        book = {"trades": trades, "wins": wins, "total_profit": profit}
+        ent["ghost"].update(book)
+        ent["ghost"]["tradeable"] = dict(book)
+
     def setUp(self):
         self._dir = tempfile.TemporaryDirectory()
         self.addCleanup(self._dir.cleanup)
@@ -132,7 +153,7 @@ class DemotionIsAPauseNotADeathSentenceTest(unittest.TestCase):
         led = StrategyLedger(self.path)
         ent = led._entry(sid)
         ent["live_approved"] = True
-        ent["ghost"].update({"trades": 30, "wins": 20, "total_profit": 0.9})
+        self._ghost(ent, 30, 20, 0.9)
         led._demote_locked(sid, "3 consecutive live losses with net -0.4135")
         return led, sid, led._entry(sid)
 
@@ -166,7 +187,7 @@ class DemotionIsAPauseNotADeathSentenceTest(unittest.TestCase):
         self.assertFalse(led._entry(sid)["live_approved"],
                          "a demotion must not be undone by evidence it already had")
         # And one fresh ghost trade is not a re-earned book either.
-        ent["ghost"].update({"trades": 31, "wins": 21, "total_profit": 0.91})
+        self._ghost(ent, 31, 21, 0.91)
         led._evaluate_graduation_locked(sid)
         self.assertFalse(led._entry(sid)["live_approved"])
 
@@ -176,7 +197,7 @@ class DemotionIsAPauseNotADeathSentenceTest(unittest.TestCase):
         ent["live"].update({"trades": 6, "total_profit": 0.2221})
         # A full graduation-grade book earned AFTER the demotion: the snapshot
         # taken at demotion time was 30 trades / 20 wins / +0.9.
-        ent["ghost"].update({"trades": 55, "wins": 40, "total_profit": 1.4})
+        self._ghost(ent, 55, 40, 1.4)
         led._evaluate_graduation_locked(sid)
         self.assertTrue(led._entry(sid)["live_approved"],
                         "a re-earned ghost book must trade again")
@@ -192,7 +213,7 @@ class DemotionIsAPauseNotADeathSentenceTest(unittest.TestCase):
         """
         led, sid, ent = self._demoted()
         ent["live"].update({"trades": 6, "total_profit": 0.14, "peak_profit": 0.2221})
-        ent["ghost"].update({"trades": 55, "wins": 40, "total_profit": 1.4})
+        self._ghost(ent, 55, 40, 1.4)
         led._evaluate_graduation_locked(sid)
         live = led._entry(sid)["live"]
         self.assertAlmostEqual(
@@ -205,7 +226,7 @@ class DemotionIsAPauseNotADeathSentenceTest(unittest.TestCase):
     def test_a_still_losing_strategy_stays_demoted(self):
         led, sid, ent = self._demoted()
         ent["live"].update({"trades": 6, "total_profit": -0.30})
-        ent["ghost"].update({"trades": 55, "wins": 40, "total_profit": 1.4})
+        self._ghost(ent, 55, 40, 1.4)
         led._evaluate_graduation_locked(sid)
         self.assertFalse(led._entry(sid)["live_approved"],
                          "ghost cannot excuse a live record that lost real money")
@@ -215,10 +236,10 @@ class DemotionIsAPauseNotADeathSentenceTest(unittest.TestCase):
         sid = "bad"
         ent = led._entry(sid)
         ent["live_approved"] = True
-        ent["ghost"].update({"trades": 30, "wins": 20, "total_profit": 0.9})
+        self._ghost(ent, 30, 20, 0.9)
         led._demote_locked(sid, "fabricated record", permanent=True)
         ent["live"].update({"trades": 9, "total_profit": 5.0})
-        ent["ghost"].update({"trades": 55, "wins": 40, "total_profit": 1.4})
+        self._ghost(ent, 55, 40, 1.4)
         led._evaluate_graduation_locked(sid)
         self.assertFalse(led._entry(sid)["live_approved"],
                          "a permanent block is a decision, not a bad stretch")
