@@ -5379,6 +5379,51 @@ class TrainingPipeline:
                 min_clip_usd = float(os.getenv("LIVE_MICRO_MIN_CLIP_USD", "0.05"))
             except Exception:
                 pass
+        # A CLIP BELOW BREAK-EVEN IS A LANE THAT CANNOT TRADE, NOT A SMALL ONE.
+        #
+        # `min_clip_usd` is the floor a live entry is raised to (bot.py's
+        # `_live_clip_usd`) and the clip the ghost book is priced at
+        # (services/roundtrip_cost.ghost_clip_usd). A round trip costs
+        # $0.004047 + 0.3187% of notional -- the fixed leg does not shrink --
+        # so publishing a small clip does not buy a small version of the trade,
+        # it buys a different game. Replaying all 18 live round trips this
+        # account has ever settled against that cost model, changing nothing but
+        # the size:
+        #
+        #     clip     gross$      cost$       net$
+        #     $ 0.75   +0.0770     0.1159     -0.0389
+        #     $ 1.00   +0.1026     0.1302     -0.0276
+        #     $ 2.00   +0.2053     0.1876     +0.0177
+        #     $ 6.00   +0.6158     0.4170     +0.1987
+        #
+        # Same fills, same direction calls; the book changes sign between $1 and
+        # $2. Those trades ran at a median notional of $0.750.
+        #
+        # The micro branch above publishes `LIVE_MICRO_MIN_CLIP_USD` -- .env sets
+        # it to 1.00 and the code default is 0.05, both below break-even. The
+        # entry gate downstream is already cost-proportional (bot.py's
+        # `_entry_profit_floor_ratio` demands gross >= 1.25x cost, which at the
+        # measured 0.576% edge implies a $2.85 notional), so a sub-viable clip
+        # does not produce small trades: it produces a live lane that refuses
+        # 100% of entries while every gate in front of it reads open. That is
+        # the same as being switched off, and it switches off precisely when the
+        # wallet is small enough for micro mode -- when every trade matters most.
+        #
+        # Raising the floor here rather than refusing later keeps the failure
+        # legible: `below_min_clip` either rounds the recommendation up to a clip
+        # that can pay for itself, or sets `min_clip_block` with a reason. Both
+        # beat a silent stream of refusals.
+        try:
+            from services.roundtrip_cost import min_viable_notional_usd
+
+            viable_clip_usd = float(min_viable_notional_usd())
+        except Exception:  # noqa: BLE001 - a costing import must not stop the plan
+            viable_clip_usd = 0.0
+        if viable_clip_usd > 0.0 and min_clip_usd < viable_clip_usd:
+            min_clip_raised_from_usd = min_clip_usd
+            min_clip_usd = viable_clip_usd
+        else:
+            min_clip_raised_from_usd = 0.0
         native_buffer_target = float(wallet_state.get("native_buffer_target_usd", os.getenv("LIVE_NATIVE_BUFFER_USD", "5")))
         native_buffer_gap = float(wallet_state.get("native_buffer_gap_usd", max(0.0, native_buffer_target - native_usd)))
         stable_deficit = float(wallet_state.get("stable_deficit_usd", max(0.0, min_live_capital - stable_usd)))
@@ -5649,6 +5694,11 @@ class TrainingPipeline:
             "sparse_reasons": wallet_sparse_reasons,
             "min_clip_usd": min_clip_usd,
             "min_clip_block": min_clip_block,
+            # 0.0 unless the configured clip was below break-even. A raise that
+            # leaves no trace reads as "the clip was always this" to the next
+            # reader, and the number that was overridden is the one worth
+            # seeing.
+            "min_clip_raised_from_usd": min_clip_raised_from_usd,
             "recommended_live_usd": recommended_live_usd,
             "stable_deficit_usd": stable_deficit,
         }

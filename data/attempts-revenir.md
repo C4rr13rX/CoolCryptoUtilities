@@ -92,3 +92,52 @@ result, pick a different one.
   restarted for this to take effect. Then re-measure the census. The two
   numbers to watch: atf_static ghost round trips/hour (0.26 now) and the
   duplicate+slot-busy share of its refusals (74% now).
+
+2026-09-07 01:05 | Fern | hypothesis: the live book lost money because of the
+  CLIP it was taken at, not the direction calls |
+  did: pulled all 18 settled live round trips from trade_outcomes, took
+  exit_price/entry_price-1 so the return is independent of the size each was
+  actually taken at, and replayed the whole book against
+  services/roundtrip_cost at a range of clips.
+  result: CONFIRMED, and it flips the sign. Same fills, same direction calls,
+  only the size differs:
+      $0.75 -> net -0.0389   (the clip actually taken: median notional $0.750)
+      $1.00 -> net -0.0276   (LIVE_MICRO_MIN_CLIP_USD)
+      $2.00 -> net +0.0177
+      $6.00 -> net +0.1987   (LIVE_MIN_CLIP_USD / the plan's min_clip_usd)
+      $19.66 -> net +0.8170  (deployable_stable_usd)
+  The round trip costs 0.004047 + 0.003187*n and the FIXED leg does not
+  shrink, so the cost rate is 0.858% at $0.75 against 0.386% at $6.00 -- 2.22x.
+  Gross return averaged +0.5702%/trade, putting break-even at $1.61. Every
+  live trade we have ever placed ran below it.
+  CHECKED BEFORE FIXING, and this is the part worth not repeating: the
+  EXECUTOR side is already fixed. bot.py:6580 raises a live entry to
+  _live_clip_usd() (the plan now publishes min_clip_usd 6.0,
+  deployable_stable_usd 19.659) and bot.py:7407 sets
+  profit_floor_usd = _entry_profit_floor_ratio() * estimated_cost_usd, a
+  cost-PROPORTIONAL floor that at the measured edge implies a $2.85 minimum
+  notional. A residual clip is already refused. Do not re-fix bot.py sizing.
+  SHIPPED where the hole actually is -- the PLAN, not the executor. The micro
+  branch at pipeline.py:5377 replaces min_clip_usd wholesale with
+  LIVE_MICRO_MIN_CLIP_USD (.env 1.00, code default 0.05), both below
+  break-even, so when micro mode engages the plan hands the live lane a clip
+  at which that cost-proportional gate MUST refuse 100% of entries while every
+  gate in front of it reads open -- switched off exactly when the wallet is
+  small enough to need every trade. Added
+  services/roundtrip_cost.min_viable_notional_usd() (inverts the cost model:
+  FIXED/(MAX_RATE-RATE) = $2.2322, where roundtrip_cost_rate == 0.5000%) and
+  clamped min_clip_usd up to it AFTER the micro branch, publishing
+  min_clip_raised_from_usd so the override is not silent. Inert today
+  (micro_mode 0.0, clip already 6.00); it binds the moment micro mode engages.
+  9 tests; 2 verified failing against the pre-change code by deleting the
+  clamp, and the ordering test is what stops the clamp being placed above the
+  micro assignment where it would read correct and do nothing.
+  ALSO THIS PASS: restarted production. PID 15316 (started 23:25) pre-dated
+  fc6ed07 and a02c73d, so both were inert; no supervisor was running at all.
+  Relaunched under scripts/main_keeper.py, -X utf8 verified on the command
+  line. Feed 31-35 ticks/10m -> **364 ticks/10m across 20 symbols**, newest
+  2s. 10x, and the biggest number moved this pass.
+  next: the live lane's real throughput cap is now live_capital_cap_usd 6.00
+  against a min_clip_usd of 6.00 -- that is ONE concurrent live position, and
+  the next entry sees zero headroom, while deployable_stable_usd is 19.659.
+  Measure how often headroom is the binding refusal before touching the ramp.
