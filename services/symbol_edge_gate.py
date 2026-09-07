@@ -44,8 +44,27 @@ experience.
 AND AGAINST COST, NOT AGAINST ZERO. "Does this symbol make money?" is the
 wrong null hypothesis; a symbol that returns +0.1% per round trip against a
 0.65% round-trip cost is a loser. The test is therefore whether the mean
-return clears ``ROUND_TRIP_COST``, measured as the median ``fee_cost /
-notional`` actually paid over the same book (0.650%).
+return clears the round trip, and the round trip is now MEASURED per verdict
+by ``services.round_trip_cost`` rather than read off a literal.
+
+That correction was itself a bug fix. This docstring used to say 0.650% was
+"the measured median of ``fee_cost / notional`` over the 143 closed round
+trips on 2026-09-04". It was not. Measured 2026-09-07 over the 196 rows then
+in ``trade_outcomes``, 105 of them carry a ratio of EXACTLY 0.650000% with
+min == max and zero variance: the constant written back into the book. The
+median was measuring its own default, and half a population of constants
+still looks like a statistic.
+
+The 82 rows that are real evidence have moved with the gas fixes -- real
+median 1.2259% on 2026-09-03/04, p75 of the last 20 real fees 0.4738% on
+2026-09-07. So the literal was never a conservative margin: it was 47% too
+LOW during the era it claimed to measure and 37% too HIGH afterwards. Too
+low passes losing symbols; too high bans symbols that genuinely pay, which
+blocks graduation while looking like caution.
+
+``ROUND_TRIP_COST`` below survives as the FALLBACK the measurement falls
+back to when the book cannot evidence a better number, and as the value
+whose echo is filtered out of the book.
 
 Both corrections were validated before shipping and neither changes today's
 verdicts: on the current book the dollar rule and the return-vs-cost rule
@@ -105,6 +124,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from services.logging_utils import log_message
+from services.round_trip_cost import round_trip_cost
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "storage" / "trading_cache.db"
@@ -127,10 +147,11 @@ SIGN_MAX_P = float(os.getenv("SYMBOL_EDGE_SIGN_MAX_P", "0.05"))
 #: answer that cannot have moved.
 CACHE_SEC = float(os.getenv("SYMBOL_EDGE_CACHE_SEC", "300"))
 
-#: What one round trip costs, as a fraction of notional. The null hypothesis
-#: is "this symbol clears its own costs", not "this symbol is above zero".
-#: 0.0065 is the fee rate both books charge and the measured median of
-#: ``fee_cost / notional`` over the 143 closed round trips on 2026-09-04.
+#: FALLBACK cost, used only when the book holds too few real fees to measure
+#: one. The live verdict calls ``round_trip_cost()`` instead -- see the
+#: docstring for why this literal must not be read directly: 105 of the 196
+#: rows in the book ARE this number, echoed back, so anything that averages
+#: the book without excluding them is quoting this constant to itself.
 ROUND_TRIP_COST = float(os.getenv("SYMBOL_EDGE_ROUND_TRIP_COST", "0.0065"))
 
 #: Smallest notional whose return is meaningful. Below this the division
@@ -296,8 +317,14 @@ def _verdict(values: List[float]) -> Optional[Tuple[float, str]]:
     """
     if len(values) < MIN_SAMPLES:
         return None
+    # Read the cost ONCE for the whole verdict. Calling the accessor per
+    # clause would let a cache expiry land mid-decision and compare the mean
+    # against one cost and the sign test against another -- two answers to
+    # one question, and the ordering argument above only holds if both
+    # stages are asked at the same bar.
+    cost = round_trip_cost(db_path=DB_PATH)
     mean = statistics.mean(values)
-    if mean >= ROUND_TRIP_COST:
+    if mean >= cost:
         # Clears its own costs -- not a candidate, and NEITHER test below
         # runs. This is what keeps the sign test off AERO-USDC (3 of 38
         # round trips clear cost, p=0.0000, +2.350% per trade) and off
@@ -307,25 +334,25 @@ def _verdict(values: List[float]) -> Optional[Tuple[float, str]]:
     # Test the EXCESS return over what the round trip costs, so the null
     # hypothesis is "this symbol pays for its own trading" rather than
     # "this symbol is above zero".
-    excess = [value - ROUND_TRIP_COST for value in values]
+    excess = [value - cost for value in values]
     t = _t_statistic(excess)
     if t < MAX_T:
         return (
             t,
             f"{len(values)} closed round trips at mean return "
-            f"{mean * 100:+.3f}% vs {ROUND_TRIP_COST * 100:.3f}% cost "
+            f"{mean * 100:+.3f}% vs {cost * 100:.3f}% cost "
             f"(t={t:+.2f} on excess return)",
         )
     # The mean is below cost but the dispersion swallowed the t. Ask the
     # same question without a denominator: how many round trips actually
     # cleared the cost? COMP-USDC is 1 of 16 at t=-1.44.
-    sign_p = _sign_test_p(values, ROUND_TRIP_COST)
+    sign_p = _sign_test_p(values, cost)
     if sign_p < SIGN_MAX_P:
-        wins = sum(1 for value in values if value > ROUND_TRIP_COST)
+        wins = sum(1 for value in values if value > cost)
         return (
             t,
             f"{len(values)} closed round trips at mean return "
-            f"{mean * 100:+.3f}% vs {ROUND_TRIP_COST * 100:.3f}% cost "
+            f"{mean * 100:+.3f}% vs {cost * 100:.3f}% cost "
             f"-- only {wins} cleared it (sign test p={sign_p:.4f}, "
             f"t={t:+.2f} did not fire)",
         )

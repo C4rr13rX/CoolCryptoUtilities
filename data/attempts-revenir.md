@@ -1456,3 +1456,68 @@ the entire 32-hour outage, which is precisely why it lasted 32 hours.
   horizon or cost complaints ("JITOSOL-USDC: information decays after 28.0 min
   but the signal looks 1440.0 min ahead -- 51.4x past"), and the lattice is
   correct to refuse them.
+
+- 2026-09-07 Sage. HYPOTHESIS: the omen wall is the TARGET, not the
+  representation -- three passes moved train recall 89.2 -> 98.7% by fixing
+  how a bar is represented and all three ended with no held-out edge, so the
+  thing nobody had questioned was label_omen() itself. HALF WRONG, HALF RIGHT,
+  AND IT GENERALISED INTO A LAW THAT EXPLAINS ALL THREE PASSES.
+  DID: built trading/omen_path.py (path-dependent take/stop labelling),
+  scripts/omen_label_audit.py and scripts/omen_barrier_sweep.py; walked
+  294,241 bars x 12 hourly corpora and 94,714 bars x 10 five-minute corpora,
+  offline, no node, nothing retrained. Then followed the arithmetic into the
+  cost constant and shipped services/round_trip_cost.py.
+  RESULT:
+  (1) MY 'murk hides fast winners' HALF IS WRONG. Of 120,775 murk bars,
+  29.29% are path wins and 31.80% are path stops -- net -2.51%. Murk is
+  near-random. Dropped.
+  (2) THE OTHER HALF IS REAL: 30.57% of the bars the endpoint label calls a
+  BUY hit the stop before the target. Nearly a third of what the brain is
+  taught to want is a realised loss once a stop exists.
+  (3) THE LAW. break-even p* = (S+c)/(T+S), and indiscriminate entry on a
+  driftless price already gives p0 = S/(T+S), so THE SKILL A SELECTOR MUST
+  ADD IS EXACTLY c/(T+S) -- cost over barrier width, and nothing else. Not
+  volatility, not horizon, not symbol. Corollary: EVERY barrier pair has
+  exactly zero pre-cost expectancy, so barriers alone can never pay and a
+  symmetric take/stop is a guaranteed donation of the fee. At the omen's own
+  take = stop = 0.975% that is 33.3 POINTS of win rate the brain must supply;
+  it has demonstrated zero (31.2% exact vs a 31.2% majority class).
+  (4) SWEEP CONFIRMS IT: 0 of 120 (take, stop, horizon) combinations had
+  positive unconditional net; 0 of 120 had measured p above p*; best gap
+  still -20.39 points. Every combination lands at ~-0.62%/trade.
+  (5) VERIFIED THE TOOL BEFORE BELIEVING IT, because the first read looked
+  too bad to be true: ambiguous deciding bars are 0.01-0.24% of DECIDED walks
+  (not a driver), the corpora are driftless (mean 3-bar return -0.003% to
+  +0.002%), and a symmetric take = stop = 1.3% race measures p = 49.80%
+  against the 50.00% the martingale identity predicts.
+  (6) THE COST WAS MEASURING ITS OWN DEFAULT. Chasing the c in c/(T+S): of
+  196 rows in trade_outcomes, 105 carry fee_cost/notional of EXACTLY
+  0.650000%, min == max, zero variance -- the constant written back into the
+  book. symbol_edge_gate documented 0.0065 as "the measured median over the
+  143 closed round trips on 2026-09-04"; it had measured its own default. The
+  82 real rows have MOVED with the gas fixes: real median 1.2259% on
+  09-03/04, p75 of the last 20 real fees 0.4738% today. So the literal was
+  47% too LOW during the era it claimed to measure and 37% too HIGH now.
+  SHIPPED: services/round_trip_cost.py (echo excluded, recent window, p75 not
+  median, hard bounds, constant as fallback) and symbol_edge_gate now
+  measures per verdict instead of reading a literal. 0.6500% -> 0.4738%.
+  (7) HONEST NEGATIVE: NO SYMBOL'S VERDICT MOVES on today's book. The four
+  judged symbols are -0.27% to -4.33% and the four clearing ones +1.07% to
+  +6.89%; none sits in the 0.4738-0.6500% band the change opens. It fixes the
+  arithmetic and cuts the omen's required skill 33.3 -> 24.3 points; it did
+  not promote a strategy this pass.
+  (8) The pass-gate break I caused and fixed: wiring the gate to the measured
+  cost broke test_a_return_exactly_at_cost_is_not_a_win, and it was a REAL
+  defect -- my module froze SYMBOL_EDGE_ROUND_TRIP_COST at import and read
+  the production book instead of the caller's DB_PATH. Both fixed and both
+  now tested. Gate 467 passed / 0 failed, profit_logic_audit NO KNOWN LOSING
+  SHAPES.
+  NEXT: the law says the levers are WIDTH and COST, never recall, so stop
+  buying recall. Two concrete moves, in order. (a) Ask whether ANY computable
+  feature lifts the CONDITIONAL win rate by the required points -- start with
+  position-in-range, the literal "buy low" the user asked for, measured per
+  bucket against that bucket's own p*. If nothing does, the target is not
+  learnable at this width and no brain will fix it. (b) The 0.4738% cost is
+  still ~30x a Base swap's gas; find where the rest of it goes, because
+  c/(T+S) falls in direct proportion and it is the only lever that does not
+  cost hold time.
