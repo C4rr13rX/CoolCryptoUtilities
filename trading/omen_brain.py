@@ -239,6 +239,30 @@ def _names_from_env(env_name: str, default: Tuple[str, ...]) -> Tuple[str, ...]:
 PREDICT_COLLECTIONS: Tuple[str, ...] = _names_from_env(
     "OMEN_PREDICT_COLLECTIONS", ("temporal", "geometry", "cross"))
 
+#: Query sets whose AGREEMENT is the abstention signal. Confidence is not
+#: one -- measured 2026-09-07, mean confidence was 0.999 when the answer was
+#: right and 0.969 when it was wrong on train recall, and 0.965 vs 0.967
+#: held-out, i.e. a gap of -0.002. It cannot tell a caller anything.
+#:
+#: Unanimity across these four can. Same run, same fabric:
+#:
+#:   train recall   unanimous (85.0% of samples)  99.4%  (169/170)
+#:                  split     (15.0%)             73.3%  ( 22/ 30)
+#:   held-out       unanimous (19.2%)             33.3%  ( 32/ 96)
+#:                  split     (80.8%)             29.7%  (120/404)
+#:
+#: Read that honestly: unanimity is a REPRODUCTION gate, not an edge gate. It
+#: takes "produce perfectly" from 95.5% to 99.4% at the price of abstaining
+#: on 15% of asks, and it does NOT make the held-out forecast good -- 33.3%
+#: against a 31.2% majority class is not an edge, and the buys it admits
+#: still lost 0.2516% per trade. The first member is the primary answer.
+CONSENSUS_QUERIES: Tuple[Tuple[str, ...], ...] = (
+    ("temporal", "geometry", "cross"),
+    ("temporal", "geometry", "cross", "flow"),
+    ("temporal", "geometry", "cross", "volatility"),
+    ("temporal", "geometry", "cross", "horizon", "instrument"),
+)
+
 #: Whether a query also fires the stage-1 regime frame. Off by default: it is
 #: the LOWEST-distinctness stream in the whole design (4 values over 2725
 #: samples) and it cost 5.5 points of recall on the production path. Training
@@ -639,6 +663,10 @@ class Omen:
     VERDICTS = (
         "admitted", "below_floor", "no_answer", "degenerate",
         "unsupported_horizon", "not_trained", "transport_error",
+        # The query sets disagreed. Reproduction accuracy on a split is
+        # 73.3% against 99.4% on a unanimous answer -- a named abstention,
+        # not a weak signal.
+        "split",
     )
 
     def __post_init__(self) -> None:
@@ -875,6 +903,7 @@ class OmenBrain:
         multiple: float = COST_MULTIPLE,
         regime: Optional[str] = None,
         query_collections: Optional[Sequence[str]] = None,
+        consensus: bool = False,
     ) -> Omen:
         """Read-only prediction. Always returns a valid ``Omen``.
 
@@ -890,6 +919,12 @@ class OmenBrain:
         Omitting ``regime`` falls back to the stage-1 probe so a caller with
         frames but no bars still gets a regime *reported* -- it is never fed
         back into the stage-2 query unless ``PREDICT_INCLUDE_REGIME`` is set.
+
+        ``consensus`` fires ``CONSENSUS_QUERIES`` instead of one query and
+        abstains with ``verdict="split"`` unless they all decode the same
+        label. Costs four round trips and buys 95.5% -> 99.4% reproduction;
+        it does NOT buy an edge. Off by default so latency is a caller's
+        choice.
         """
         threshold = omen_threshold(cost, multiple)
         hold = lambda reason, **extra: _hold_omen(  # noqa: E731 - local alias
@@ -919,15 +954,39 @@ class OmenBrain:
         # stream measurably out-votes the sharp ones.
         names = list(query_collections if query_collections is not None
                      else PREDICT_COLLECTIONS)
-        stage2 = self._streams(frames, names)
-        if not stage2:  # an unknown override must not silence the brain
-            stage2 = self._streams(frames)
+
+        def fire(member: Sequence[str]) -> Tuple[List[Dict[str, Any]], Optional[str], float]:
+            streams = self._streams(frames, member)
+            if not streams:  # an unknown override must not silence the brain
+                streams = self._streams(frames)
+            if PREDICT_INCLUDE_REGIME and regime is not None:
+                streams.append({"pool_id": REGIME_POOL,
+                                "frame": _b64url(regime_frame(regime))})
+            reply, conf = self._predict(streams, OMEN_POOL)
+            return streams, reply, conf
+
+        if not self._streams(frames, names):
             names = [c.name for c in COLLECTIONS]
-        if PREDICT_INCLUDE_REGIME and regime is not None:
-            stage2.append({"pool_id": REGIME_POOL,
-                           "frame": _b64url(regime_frame(regime))})
-        answer, confidence = self._predict(stage2, OMEN_POOL)
+
+        # The first member is always the primary answer, so a consensus read
+        # and a plain read agree on WHAT was predicted and differ only on
+        # whether it is admitted.
+        members = ([tuple(names)] + [m for m in CONSENSUS_QUERIES
+                                     if tuple(m) != tuple(names)]
+                   if consensus else [tuple(names)])
+        member_labels: List[Optional[str]] = []
+        stage2: List[Dict[str, Any]] = []
+        answer: Optional[str] = None
+        confidence = 0.0
+        for position, member in enumerate(members):
+            streams, reply, conf = fire(member)
+            member_labels.append(parse_omen(reply))
+            if position == 0:
+                stage2, answer, confidence = streams, reply, conf
         label = parse_omen(answer)
+        unanimous = (len(members) == 1
+                     or (label is not None
+                         and all(m == label for m in member_labels)))
 
         if label is None:
             self._recent_answers.append("__none__")
@@ -944,10 +1003,18 @@ class OmenBrain:
             # Whether the regime was arithmetic or a guess. A held-out number
             # read without this line is not comparable to one read with it.
             "regime_source": "computed" if regime_confidence >= 1.0 else "stage1",
+            "consensus": bool(consensus),
+            "unanimous": bool(unanimous),
+            "member_answers": member_labels,
         }
 
         if self._degenerate():
             return hold("degenerate", support=support)
+        if not unanimous:
+            # 73.3% right on a split against 99.4% on a unanimous answer.
+            omen = hold("split", support=support)
+            omen.regime, omen.regime_confidence = regime, regime_confidence
+            return omen
         if confidence < confidence_floor:
             omen = hold("below_floor", support=support)
             omen.regime, omen.regime_confidence = regime, regime_confidence

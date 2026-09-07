@@ -169,6 +169,9 @@ def main() -> int:
     parser.add_argument("--query-collections", default=None,
                         help="comma-separated override of the collections a "
                              "PREDICTION fires (default: measured)")
+    parser.add_argument("--consensus", action="store_true",
+                        help="require CONSENSUS_QUERIES to agree; abstains "
+                             "with verdict='split' when they do not")
     parser.add_argument("--guess-regime", action="store_true",
                         help="let stage 1 guess the regime instead of "
                              "computing it -- the pre-2026-09-07 behaviour, "
@@ -268,21 +271,31 @@ def main() -> int:
             # The regime is arithmetic here: we hold the bars. --guess-regime
             # restores the old chain so the two can be compared in one run.
             regime=None if args.guess_regime else sample["regime"],
-            query_collections=query)
+            query_collections=query, consensus=args.consensus)
 
     # 1 -- TRAIN RECALL. Does it reproduce what it was taught?
     recall_set = rng.sample(balanced, min(args.recall_sample, len(balanced)))
     recall_hits = 0
+    recall_split = 0
     recall_misses: List[Dict[str, str]] = []
     for sample in recall_set:
         omen = predict(sample)
+        if omen.verdict == "split":
+            recall_split += 1
+            continue
         if omen.omen == sample["label"] and omen.verdict == "admitted":
             recall_hits += 1
         elif len(recall_misses) < 12:
             recall_misses.append({"expected": sample["label"],
                                   "got": omen.omen, "verdict": omen.verdict})
-    recall = recall_hits / max(1, len(recall_set))
-    print(f"\n1. TRAIN RECALL  : {recall:.1%} ({recall_hits}/{len(recall_set)})")
+    # Recall is scored over the asks the brain ANSWERED. An abstention is
+    # neither a hit nor a miss, and the abstention rate is printed beside it
+    # so a high recall bought by refusing everything cannot hide.
+    answered = len(recall_set) - recall_split
+    recall = recall_hits / max(1, answered)
+    print(f"\n1. TRAIN RECALL  : {recall:.1%} ({recall_hits}/{answered} answered"
+          + (f", {recall_split} split/abstained of {len(recall_set)}"
+             if recall_split else "") + ")")
     if recall_misses:
         print("   misses       :", recall_misses[:6])
 
@@ -376,7 +389,9 @@ def main() -> int:
         "regime_source": "stage1_guess" if args.guess_regime else "computed",
         "conflicting_frame_tuples": conflicts,
         "recall_ceiling": 1.0 - conflicts / max(1, len(balanced)),
+        "consensus": bool(args.consensus),
         "train_recall": recall, "recall_sample": len(recall_set),
+        "recall_answered": answered, "recall_abstained": recall_split,
         "recall_misses": recall_misses,
         "garbage_distinct": len(set(garbage_labels)),
         "garbage_total": len(garbage_labels),

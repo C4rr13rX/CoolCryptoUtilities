@@ -64,6 +64,14 @@ CACHE_SEC = float(os.getenv("OMEN_CACHE_SEC", "30"))
 #: first guess of 0.45 would have sat below every garbage frame and filtered
 #: nothing -- the same mistake the regime gate's first 0.15 margin made.
 CONFIDENCE_FLOOR = float(os.getenv("OMEN_CONFIDENCE_FLOOR", "0.80"))
+#: Require four query sets to decode the same label, or abstain with
+#: verdict="split". This is the gate CONFIDENCE_FLOOR cannot be: measured
+#: 2026-09-07, confidence separated a right answer from a wrong one by 0.030
+#: on train recall and by -0.002 held-out, while agreement separated them by
+#: 99.4% against 73.3%. On by default -- it costs four round trips behind the
+#: cache and it is the only measured correctness signal this brain has.
+REQUIRE_CONSENSUS = os.getenv("OMEN_REQUIRE_CONSENSUS", "1").strip().lower() in {
+    "1", "true", "yes", "on"}
 #: Master switch. Off until a run in data/brain_experiments/ shows the omen
 #: beating indiscriminate entry per trade, net of cost, on held-out bars.
 ENABLED = os.getenv("OMEN_STRATEGY_ENABLED", "0").strip().lower() in {
@@ -181,7 +189,13 @@ class OmenReversionStrategy(Strategy):
                     # We hold the bars the frames were built from, so the
                     # regime is arithmetic here. Letting stage 1 guess it
                     # instead measured 86.0% train recall against 90.7%.
-                    regime=label_regime(bars, index))
+                    regime=label_regime(bars, index),
+                    # Four query sets must decode the same label or the omen
+                    # abstains with verdict="split". 99.4% reproduction when
+                    # they agree, 73.3% when they do not -- and confidence
+                    # separates those two cases by 0.030, so it cannot be
+                    # the gate. Four round trips behind a 60s cache.
+                    consensus=REQUIRE_CONSENSUS)
                 with self._lock:
                     self._cache[symbol] = (time.time(), omen)
             except Exception:
