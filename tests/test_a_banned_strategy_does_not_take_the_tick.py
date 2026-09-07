@@ -39,7 +39,7 @@ from typing import Dict, List
 import pytest
 
 import trading.scheduler as scheduler_module
-from trading.scheduler import BusScheduler, TradeDirective
+from trading.scheduler import BusScheduler, HorizonSignal, TradeDirective
 
 
 BANNED_STRATEGY = "obv_accumulation@1w"
@@ -131,7 +131,30 @@ def _scheduler(monkeypatch, candidates: List[Dict[str, object]]) -> BusScheduler
     )
     # The forecast lane must not add competing candidates of its own, or the
     # assertion below would be about the forecast rather than about the ban.
-    monkeypatch.setattr(sched, "_forecast", lambda state: [])
+    #
+    # It must still return a SIGNAL, though. ``evaluate`` short-circuits at
+    # "no_forecast_signals" and returns before the strategy registry is ever
+    # consulted, so stubbing ``_forecast`` to ``[]`` tests nothing: the tick
+    # dies two hundred lines above the ban. A FLAT signal -- expected_return
+    # 0.0, predicted price equal to the last sample -- clears that guard while
+    # generating no tf_forecast candidate of its own, because every forecast
+    # candidate below is gated on a margin this signal does not have.
+    monkeypatch.setattr(
+        sched,
+        "_forecast",
+        lambda state: [
+            HorizonSignal(
+                label="5m",
+                seconds=300,
+                predicted_price=float(state.samples[-1][1]),
+                expected_return=0.0,
+                zscore=0.0,
+            )
+        ],
+    )
+    # The ATF scout reads a live signal file; without this the candidate set
+    # under test would depend on what production wrote a moment ago.
+    monkeypatch.setenv("ATF_STATIC_GHOST_SCOUT_ENABLED", "0")
     return sched
 
 
