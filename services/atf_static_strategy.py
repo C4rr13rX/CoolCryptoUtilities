@@ -1131,7 +1131,44 @@ def _run_ghost_quote_scout(
     }
 
 
-def _drop_already_refused(candidates: List[Any], *, quote_token: str) -> List[Any]:
+def _scout_held_pairs(db: Any) -> set:
+    """Pairs this scout is holding a ghost position in, right now.
+
+    These must never be dropped from the candidate list, whatever any gate
+    says about entering them. ``pairs`` below is built ONLY from candidates
+    that survive ``_drop_already_refused``, and ``pairs`` is what refreshes the
+    ``stream`` and ``ghost`` watchlists -- so dropping a candidate takes its
+    price feed away. The scout's exit path needs a corroborated tick for every
+    rule it has (``_corroborated_price`` returns None on a silent feed and the
+    loop ``continue``s), so a held symbol that loses its feed is never closed
+    at all.
+
+    This is the dark-feed stranding this repo has already paid for: one slot
+    held 11.5 days, and 18 of 25 abandonments with a LIVE feed. Entering and
+    exiting are different questions, and a standing refusal answers only the
+    first.
+
+    Note this reads the SCOUT's own book (``GHOST_POSITIONS_KEY``), which is a
+    different store from the bot's ``ghost_trading.positions`` that
+    ``_certainly_refused_as_held`` reads. Neither one sees the other's
+    positions, and it is this one whose exits depend on the watchlist above.
+    """
+    try:
+        positions = db.get_json(GHOST_POSITIONS_KEY) or {}
+        if not isinstance(positions, dict):
+            return set()
+        return {str(sym or "").strip().upper() for sym in positions if str(sym or "").strip()}
+    except Exception:  # noqa: BLE001 - unreadable book protects nothing extra
+        return set()
+
+
+def _drop_already_refused(
+    candidates: List[Any],
+    *,
+    quote_token: str,
+    strategy_id: str = SIGNAL_STRATEGY_ID,
+    protected: Optional[set] = None,
+) -> List[Any]:
     """Drop candidates the gates have already, standingly, refused.
 
     The gates below run per ENTRY and they are correct, but a candidate slot
@@ -1152,14 +1189,37 @@ def _drop_already_refused(candidates: List[Any], *, quote_token: str) -> List[An
     refusal twice. Every gate still runs at the entry site, so a symbol whose
     verdict changes between here and there is still judged correctly.
 
+    ``strategy_id`` is what makes "the same question" true. ``symbol_edge_gate``
+    judges a ``(strategy, symbol)`` pair as well as the pooled symbol, and
+    ``trading/bot.py:7707`` -- the entry gate these candidates are walking
+    toward -- passes the executor id. This call site did not, so it asked the
+    strictly EASIER pooled question and kept candidates the entry gate was
+    already certain to refuse.
+
+    AERO-USDC is the live case, measured 2026-09-07: pooled it is ALLOWED
+    (n=46, mean +1.805%), and for ``atf_static`` it is BANNED (n=17, mean
+    -0.992%, t=-6.24 on excess return). The signals this function feeds carry
+    ``strategy_id: "atf_static"``, so every AERO candidate survived this filter
+    and then died downstream -- 16 pre-drops and 17 entry-gate refusals in the
+    hours before this changed, each one costing a candidate slot, a 0x quote
+    probe, a ``ghost_candidate`` row and a bus action for a verdict already on
+    file. That is the exact waste this function was written to stop; the pair
+    verdict simply arrived after it.
+
+    ``protected`` names pairs that are never dropped however they are judged --
+    see ``_scout_held_pairs``. Dropping a candidate removes it from the stream
+    watchlist, and a held position with no feed is never closed.
+
     Fails OPEN in every direction: a gate that cannot be imported, or that
     raises, leaves the candidate in the list to be judged downstream as
     before.
     """
+    keep_always = {str(p or "").strip().upper() for p in (protected or set())}
+    sid = str(strategy_id or "") or None
     try:
         from services.symbol_edge_gate import refusal_reason as _edge
     except Exception:  # noqa: BLE001
-        def _edge(_symbol: str):  # type: ignore[misc]
+        def _edge(_symbol: str, _strategy_id=None):  # type: ignore[misc]
             return None
     try:
         from services.symbol_motion_gate import refusal_reason as _motion
@@ -1179,7 +1239,10 @@ def _drop_already_refused(candidates: List[Any], *, quote_token: str) -> List[An
             if not base:
                 continue
             pair = f"{base}-{str(quote_token or 'USDC').upper()}"
-            if _edge(pair) or _motion(pair) or _stop(pair):
+            if pair in keep_always:
+                kept.append(candidate)
+                continue
+            if _edge(pair, sid) or _motion(pair) or _stop(pair):
                 continue
         except Exception:  # noqa: BLE001 - never drop on an error
             kept.append(candidate)
@@ -1408,7 +1471,18 @@ def build_static_strategy_signals(
 
     candidates = select_candidates(budget_usd=effective_budget, max_positions=max_positions)
     candidates = _add_streamed_candidates(candidates, max_positions=max_positions)
-    candidates = _drop_already_refused(candidates, quote_token=quote_token)
+    candidates = _drop_already_refused(
+        candidates,
+        quote_token=quote_token,
+        # The executor whose entry gate these candidates are walking toward.
+        # The signals built below all publish this id, and bot.py:7707 judges
+        # them with it, so this is the question that decides whether a real
+        # entry can ever happen on the symbol.
+        strategy_id=SIGNAL_STRATEGY_ID,
+        # Never drop a symbol the scout is holding: the drop takes its price
+        # feed with it and the exit path needs a tick.
+        protected=_scout_held_pairs(db),
+    )
     # Read ONCE per cycle, not per candidate: the book does not move while we
     # iterate, and load_state() is not free.
     held_pairs = _certainly_refused_as_held(quote_token=quote_token)
