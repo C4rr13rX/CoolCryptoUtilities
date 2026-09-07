@@ -294,8 +294,32 @@ def _custom_objects():
             "_slice_price_log_var": md._slice_price_log_var,
             "_identity": md._identity,
             "_compute_net_margin": md._compute_net_margin,
+            "PriceVolScaleNorm": md.PriceVolScaleNorm,
         }
     return _CUSTOM_OBJECTS
+
+
+def _reads_price_scale(model: Any) -> bool:
+    """True if this artifact predates PriceVolScaleNorm and reads raw quotes.
+
+    A model saved before that layer existed has the raw (price, volume) window
+    wired straight into ``ts_d1``, so its convolution weights were fit against
+    absolute magnitudes. Probed on models/active_model.keras 2026-09-07: holding
+    the shape of the move fixed and varying only the price level swung
+    ``price_dir`` from 0.2019 to 0.6142, while varying the actual DIRECTION at a
+    fixed level moved it 0.4815 -> 0.4808. Such an artifact cannot be repaired by
+    inserting the layer -- its weights encode the wrong input distribution -- so
+    the only correct response is to discard it and build fresh.
+    """
+    md = _get_model_defs()
+    if md is None:
+        return False
+    layer_name = getattr(md, "PRICE_VOL_NORM_LAYER", "ts_scale_norm")
+    try:
+        names = {getattr(layer, "name", "") for layer in model.layers}
+    except Exception:  # noqa: BLE001 - a model we cannot inspect is not our call to delete
+        return False
+    return layer_name not in names
 
 MODEL_OUTPUT_ORDER: Tuple[str, ...] = (
     "exit_conf",
@@ -868,7 +892,23 @@ class TrainingPipeline:
             return None
         try:
             with _utf8_text_io():
-                self._active_model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
+                loaded = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
+            if _reads_price_scale(loaded):
+                # This artifact was fit on RAW quotes, so it ranks the price tag
+                # above the price move (see _reads_price_scale). Retrofitting the
+                # normalisation would only feed its weights a distribution they
+                # have never seen; the artifact has to go so ensure_active_model
+                # builds one that reads returns. The stale challenger goes with
+                # it, or the next promotion cycle reopens the same hole.
+                print(
+                    "[training] active model predates price-scale normalisation "
+                    "(reads raw quotes); discarding so a scale-free model is built."
+                )
+                path.unlink(missing_ok=True)
+                for stale in ("challenger_model.keras", "challenger_meta.json"):
+                    (self.model_dir / stale).unlink(missing_ok=True)
+                return None
+            self._active_model = loaded
             return self._active_model
         except Exception as exc:
             # Deleting on ANY load failure is what turned a transient read into
@@ -1023,11 +1063,17 @@ class TrainingPipeline:
 
     def _load_active_clone(self) -> tf.keras.Model:
         path = self.model_dir / "active_model.keras"
+        model = None
         if path.exists():
             with _utf8_text_io():
                 model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
-        else:
-            base = self.ensure_active_model()
+            if _reads_price_scale(model):
+                # Fine-tuning a raw-quote artifact would carry the price-tag bias
+                # into every candidate. load_active_model discards the file; take
+                # the fresh baseline it builds instead.
+                model = None
+        if model is None:
+            base = self.load_active_model() or self.ensure_active_model()
             model = tf.keras.models.clone_model(base)
             model.build(base.input_shape)
             model.set_weights(base.get_weights())

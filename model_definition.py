@@ -101,6 +101,107 @@ class ExponentialDecay(tf.keras.layers.Layer):
         return config
 
 
+# Name of the layer that makes ``price_vol_input`` scale-free. Callers use it
+# to tell a normalised artifact from a pre-normalisation one on load; see
+# trading/pipeline.py:_model_reads_price_scale.
+PRICE_VOL_NORM_LAYER = "ts_scale_norm"
+
+
+@tf.keras.utils.register_keras_serializable(package="CoolCrypto")
+class PriceVolScaleNorm(tf.keras.layers.Layer):
+    """Turn a raw (price, volume) window into a scale-free one, in the graph.
+
+    THE MODEL WAS READING THE PRICE TAG, NOT THE PRICE MOVE.
+
+    ``price_vol_input`` went straight into three Conv1D layers carrying raw
+    quotes. ``ts_norm`` (LayerNormalization) sits AFTER them, so the
+    convolutions saw absolute magnitudes -- while ``tech_input`` gets
+    LayerNormalization as its very first op. The corpus spans 9e-08 to 123,429
+    on the price channel and the live stream spans 1.672e-23 to 135,744, so a
+    single set of conv weights was being asked to cover 27 orders of magnitude.
+
+    Probed against models/active_model.keras on 2026-09-07, holding the SHAPE
+    of the move fixed at +0.2%/step (a +12.7% move across the 60-step window)
+    and varying only the price level:
+
+        level 1e-06   price_dir 0.2019   price_mu -0.1298
+        level 1.0     price_dir 0.5276   price_mu +0.5493
+        level 21.0    price_dir 0.4822   price_mu -0.1718
+        level 1206    price_dir 0.6142   price_mu -0.2791
+
+    Then holding the level at 21.0 and varying the actual DIRECTION from
+    -1%/step to +1%/step: price_dir moved 0.4815 -> 0.4808. Seven ten-thousandths,
+    and the wrong way. The price tag swung the entry signal 585x harder than the
+    price direction did, and the entry bar (direction_prob >= 0.58) was reachable
+    only at levels above ~1000.
+
+    Two channels, two neutral-preserving transforms:
+
+    * price -> ``log(p_t / p_0)``, the cumulative log return from the first bar
+      of the window. Scale-free, exactly 0 at t=0, valued on the same 0.01-0.1
+      scale as the ``price_mu`` target, and its first difference is the step
+      return, which the dilated causal convolutions can take themselves.
+    * volume -> ``v_t / mean(v) - 1``, relative volume centred on zero.
+
+    The volume transform also closes the second half of the skew. Live volume is
+    0.0 on 57,957 of 57,984 market_stream rows (99.95%) because no price source
+    we poll reports a per-bar traded size, while the training corpus has a median
+    of 125,401 and never a zero. Raw, that put every live inference several
+    standard deviations off the edge of the training distribution -- moving that
+    channel from 0 to 125,401 swung price_mu from -0.1718 to +1.1588. Relative,
+    an all-zero window has an undefined ratio, which this maps to 0.0: exactly
+    the value a perfectly average-volume window gets. An input we cannot measure
+    now lands at the CENTRE of what the model was trained on rather than off its
+    edge.
+
+    It lives in the graph rather than in the loader so that training and serving
+    cannot disagree: there is one implementation and both paths execute it.
+    trading/data_loader.py and trading/bot.py::_prepare_inputs keep feeding raw
+    quotes, which also leaves trading/pipeline.py::_wizard_push_ohlcv reading a
+    real close price out of channel 0.
+    """
+
+    EPS = 1e-12
+
+    def call(self, inputs):
+        x = tf.cast(inputs, tf.float32)
+        price = x[..., 0]
+        volume = x[..., 1]
+
+        # Anchor on the first STRICTLY POSITIVE price in the window, not on
+        # price[:, 0]. A leading zero or a padded row would otherwise divide the
+        # whole window by ~0 and hand the convolutions an infinity; the model
+        # then dies inside the market-stream callback, which is the one place a
+        # crash costs a tick.
+        positive = price > 0.0
+        safe_price = tf.where(positive, price, tf.ones_like(price))
+        first_idx = tf.argmax(tf.cast(positive, tf.int32), axis=1, output_type=tf.int32)
+        anchor = tf.gather(safe_price, first_idx, batch_dims=1)
+        anchor = tf.where(
+            tf.reduce_any(positive, axis=1), anchor, tf.ones_like(anchor)
+        )
+        anchor = tf.expand_dims(anchor, axis=-1)
+        log_ret = tf.math.log(safe_price / tf.maximum(anchor, self.EPS))
+        # A non-positive quote carries no return; say so rather than inventing one.
+        log_ret = tf.where(positive, log_ret, tf.zeros_like(log_ret))
+
+        mean_vol = tf.reduce_mean(tf.abs(volume), axis=1, keepdims=True)
+        rel_vol = tf.where(
+            mean_vol > self.EPS,
+            volume / tf.maximum(mean_vol, self.EPS) - 1.0,
+            tf.zeros_like(volume),
+        )
+
+        out = tf.stack([log_ret, rel_vol], axis=-1)
+        # Windows in this corpus are minutes to hours apart; a |log return| over
+        # 10 (a 22,000x move) is a data fault, not a market. Clip so one bad row
+        # cannot dominate a batch's gradients.
+        return tf.clip_by_value(out, -10.0, 10.0)
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+
 _GAUSS_EPS = tf.constant(1e-6, dtype=tf.float32)
 _GAUSS_MIN_LOG_VAR = tf.math.log(_GAUSS_EPS)
 _GAUSS_MAX_LOG_VAR = tf.constant(8.0, dtype=tf.float32)
@@ -209,7 +310,8 @@ def build_multimodal_model(
         dropout_main = 0.3
 
     ts_in = Input((window_size, 2), name="price_vol_input")
-    d1 = Conv1D(ts_filters, 3, padding="causal", dilation_rate=1, name="ts_d1")(ts_in)
+    ts_scaled = PriceVolScaleNorm(name=PRICE_VOL_NORM_LAYER)(ts_in)
+    d1 = Conv1D(ts_filters, 3, padding="causal", dilation_rate=1, name="ts_d1")(ts_scaled)
     d1 = Activation("swish")(d1)
     d2 = Conv1D(ts_filters, 3, padding="causal", dilation_rate=2, name="ts_d2")(d1)
     d2 = Activation("swish")(d2)
