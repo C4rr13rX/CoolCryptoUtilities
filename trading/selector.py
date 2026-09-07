@@ -35,8 +35,46 @@ from services.logging_utils import log_message
 from trading.ghost_limits import resolve_pair_limit
 from services.watchlists import load_watchlists
 from services.background_workers import _ensure_assignment_template, _update_assignment, _run_download
+from services.trading_accounting import is_usd_accounting_symbol
 
 STABLE_TOKENS = {"USDC", "USDT", "DAI", "BUSD", "TUSD", "USDP", "USDD", "USDS", "GUSD"}
+
+#: Refuse pairs whose P&L cannot be denominated in USD, at SELECTION.
+#:
+#: `trading/bot.py:6046` already refuses them -- `is_usd_accounting_pair` is
+#: the first thing the decision path asks, and a pair that fails it can never
+#: reach an entry however the market moves. Nothing upstream asked the same
+#: question, so the feed spent its bandwidth streaming pairs whose only
+#: possible outcome was `hold-price-domain`.
+#:
+#: MEASURED 2026-09-06 over 24h of `market_stream`: 13 of 42 streamed symbols
+#: were non-USD-accounting and took 1793 of 4567 ticks -- 39.3% of the feed --
+#: CBETH-WETH (175), CBETH-CBBTC (162), AERO-WETH (158), VVV-WETH (147),
+#: USDT-USDC (147, stable base), VIRTUAL-WETH, EURC-WETH, MORPHO-WETH,
+#: EURC-USDC, JITOSOL-CBBTC, SOL-CBBTC, TIBBIR-VIRTUAL, DAI-USDC. Over the
+#: same window `organism_snapshots` shows 151 of 606 decisions (24.9%) ending
+#: in `hold-price-domain` on exactly these symbols.
+#:
+#: That bandwidth is not free. Entries AND exits here are sample-driven -- a
+#: position is only marked out when a tick for its symbol arrives -- so ticks
+#: spent on an untradeable pair are ticks the tradeable ones did not get, and
+#: the symbols that CAN trade were down at 2-6 ticks/hour (BASEMATE-USDC 2,
+#: BST-USDC 4, TONY-USDC 6, CBZEC-USDC 6) against USDT-USDC's 51. Each of the
+#: 13 also holds a slot against `select_pairs`'s limit.
+#:
+#: HELD POSITIONS ARE EXEMPT wherever this is applied. A position already open
+#: in a non-USD pair needs its feed to be closed at all; dropping the stream
+#: would strand it exactly as the dark-feed positions were stranded.
+_REQUIRE_USD_ACCOUNTING = os.getenv(
+    "SELECTOR_REQUIRE_USD_ACCOUNTING", "1"
+).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _can_denominate_pnl_in_usd(symbol: str) -> bool:
+    """Selector-side gate; the env var is an escape hatch, not a default."""
+    if not _REQUIRE_USD_ACCOUNTING:
+        return True
+    return is_usd_accounting_symbol(symbol)
 
 # Pair selection is blocking by nature -- live-price probes, CEX backfills,
 # `proc.wait()` on download2000 -- and `reconcile_pairs` used to run it inline
@@ -724,6 +762,16 @@ def select_pairs(
             cand = candidate_map.get(symbol.upper())
             if not cand:
                 return
+            # Checked BEFORE the priority escape below, deliberately. The
+            # manual watchlist and the wallet-holdings loop both enter here
+            # with priority=True precisely so they skip the volume score, and
+            # that loop builds the inverted `f"{stable}-{held}"` form
+            # (USDC-AERO) alongside the real one -- a stable BASE, which the
+            # accounting layer can never denominate. A priority flag says
+            # "we have no volume history for this yet"; it does not say the
+            # P&L formula will work.
+            if not _can_denominate_pnl_in_usd(cand.symbol):
+                return
             token_key = (tuple(sorted(cand.tokens)), chain.lower())
             if token_key in seen_tokens:
                 return
@@ -792,6 +840,14 @@ def select_pairs(
             if scanned > max_scan and picked:
                 break
             if cand.avg_volume < min_volume:
+                continue
+            # Repeated rather than shared with try_add_candidate: this loop is
+            # the bulk scan over `analyse_historical_pairs()` and never calls
+            # that helper. It is the source of the WETH- and CBBTC-quoted
+            # pairs, whose symbols come straight from OHLCV filenames
+            # (0011_CBETH-WETH.json), so a gate wired only into the helper
+            # would leave the largest producer untouched.
+            if not _can_denominate_pnl_in_usd(cand.symbol):
                 continue
             token_key = (tuple(sorted(cand.tokens)), chain.lower())
             if token_key in seen_tokens:
@@ -1086,14 +1142,35 @@ class GhostTradingSupervisor:
                 )
             )
         # Dedup the combined candidate list, preserving priority order.
+        #
+        # `prioritized` is held positions + ATF signals + focus assets + the
+        # genome seed, and NONE of those passed through select_pairs -- so the
+        # accounting gate wired in there has never seen them. Applied here or
+        # they arrive with a bot attached.
+        held_upper = {symbol.upper() for symbol in held_symbols}
         all_ordered: List[PairCandidate] = []
         seen: set[str] = set()
+        refused_accounting: List[str] = []
         for candidate in prioritized + pairs:
             symbol_u = candidate.symbol.upper()
             if symbol_u in seen:
                 continue
+            # A HELD POSITION KEEPS ITS FEED whatever its quote token is. It is
+            # the only thing that can close, and the exit path is sample-driven
+            # -- taking the stream away is how positions became immortal.
+            if symbol_u not in held_upper and not _can_denominate_pnl_in_usd(symbol_u):
+                refused_accounting.append(symbol_u)
+                seen.add(symbol_u)
+                continue
             all_ordered.append(candidate)
             seen.add(symbol_u)
+        if refused_accounting:
+            log_message(
+                "ghost-supervisor",
+                f"refused {len(refused_accounting)} pair(s) that cannot denominate P&L in USD",
+                severity="info",
+                details={"symbols": refused_accounting[:16]},
+            )
         if not all_ordered:
             all_ordered = list(pairs)
         if atf_priority:
@@ -1224,9 +1301,37 @@ class GhostTradingSupervisor:
         # virtue of the very bot the eviction below is about to stop.
         held_book = _held_position_symbols(getattr(self, "db", None))
         held_all = set(held_book)
+        # COVERAGE MEANS A BOT, NEVER A DATA-ONLY STREAM.
+        #
+        # `existing` deliberately includes `self.data_streams`, which is right
+        # for pair SELECTION -- there is no point streaming a symbol twice. It
+        # is wrong for the held book, because a data-only stream runs
+        # `_run_data_stream_forever` (WS -> market_stream) and never calls
+        # `_handle_sample`. Every exit rule there is -- stop, target, timed
+        # exit, confidence drop, MAX_HOLD_FORCE_SECONDS -- hangs off
+        # `_handle_sample`, so a data stream produces prices for a symbol that
+        # still has nothing able to SELL it.
+        #
+        # Testing the held book against `existing` therefore marked exactly the
+        # stranded positions as covered: the symbol ticks, so it looks healthy
+        # from `market_stream`, while `_SYMBOL_LAST_TICK_TS` never sees it and
+        # no bot holds it. Measured 2026-09-05, both live positions in the book
+        # were in precisely that state --
+        #
+        #   CBBTC-USDC  held 19.8h  50 ticks/h in market_stream, no bot
+        #   CBXRP-USDC  held 19.1h  49 ticks/h in market_stream, no bot
+        #
+        # -- against 100 `entry-refused-duplicate` rows on CBBTC-USDC and zero
+        # live trades on the day, because atf_static is the only live-approved
+        # strategy and both of its slots were held by positions it could not
+        # reach. `_held_position_symbols` was written for this rule and reads
+        # the book correctly; the answer was being thrown away one line later.
         held_symbols = [
-            symbol for symbol in held_book if symbol not in existing
+            symbol for symbol in held_book if symbol not in existing_bots
         ]
+        # The symbols that must end this reconcile owning a BOT, whatever else
+        # is already streaming them.
+        held_needs_bot = set(held_symbols)
         if held_symbols:
             ceiling = int(_meta.get("max_limit") or pair_limit)
             pair_limit = min(
@@ -1351,11 +1456,34 @@ class GhostTradingSupervisor:
 
         for pair in candidates:
             symbol = pair.symbol.upper()
-            if symbol in existing:
+            # A held symbol is NOT skipped for already being in `existing`: the
+            # thing covering it may be the data-only stream that stranded it.
+            # It still needs a bot, and this is the only loop that makes one.
+            if symbol in existing and symbol not in held_needs_bot:
+                continue
+            # Same accounting gate as build(), and needed separately: the
+            # `promoted` block above injects ATF-signal symbols that were never
+            # in `candidates`, so they reach this loop without having passed
+            # select_pairs. `held_all` is the book's open positions -- exempt,
+            # because a position with no feed can never be closed.
+            if symbol not in held_all and not _can_denominate_pnl_in_usd(symbol):
                 continue
             if await _free_bot_slot_for(symbol):
                 existing.add(symbol)
                 existing_bots.add(symbol)
+                held_needs_bot.discard(symbol)
+                # Retire any data-only stream for this symbol first. Leaving it
+                # would run two websockets for one pair and keep a data slot
+                # spent on coverage that cannot close anything.
+                for idx in range(len(self.data_streams) - 1, -1, -1):
+                    if str(getattr(self.data_streams[idx], "symbol", "") or "").upper() != symbol:
+                        continue
+                    stale_stream = self.data_streams.pop(idx)
+                    try:
+                        if hasattr(stale_stream, "stop"):
+                            await stale_stream.stop()
+                    except Exception:
+                        pass
                 stream = MarketDataStream(symbol=symbol, chain=PRIMARY_CHAIN)
                 bot = TradingBot(db=self.db, stream=stream, pipeline=self.pipeline)
                 bot.configure_route(symbol, pair.tokens)
@@ -1377,6 +1505,13 @@ class GhostTradingSupervisor:
                     pass
                 added_bots.append(symbol)
                 full_slots -= 1
+                continue
+            if symbol in held_needs_bot:
+                # No bot slot was free. Do NOT fall through to a data-only
+                # stream: that is the exact coverage that made this position
+                # unclosable, and adding it would re-mark the symbol as handled
+                # on the next reconcile. Leave it uncovered so it stays at the
+                # front of the queue until a real bot slot opens.
                 continue
             if data_slots > 0:
                 existing.add(symbol)

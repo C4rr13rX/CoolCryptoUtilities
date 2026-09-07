@@ -17,6 +17,30 @@ def is_usd_accounting_pair(base_token: str, quote_token: str) -> bool:
     return bool(base and quote and base not in USD_STABLE_QUOTES and quote in USD_STABLE_QUOTES)
 
 
+def is_usd_accounting_symbol(symbol: str) -> bool:
+    """Same question asked of a ``BASE-QUOTE`` string.
+
+    The pair form above is what ``trading/bot.py`` calls once a decision has
+    already been computed; this is the form the SELECTOR needs, so a pair that
+    can never produce a USD P&L is refused before it is given a price stream.
+
+    Split raw rather than through ``trading/data_stream.py:_split_symbol``:
+    that applies TOKEN_NORMALIZATION (WETH->ETH, USDBC->USDC), and normalising
+    USDBC to USDC would turn a pair this predicate must judge on its literal
+    tokens into a different pair. ``USD_STABLE_QUOTES`` already lists both
+    spellings.
+
+    A malformed symbol (no quote leg, or more than two legs) is refused. It
+    cannot be judged, and ``is_usd_accounting_pair`` would refuse it at
+    decision time anyway -- returning True here would only move the refusal
+    later and spend a stream slot reaching it.
+    """
+    parts = [part for part in str(symbol or "").strip().upper().split("-") if part]
+    if len(parts) != 2:
+        return False
+    return is_usd_accounting_pair(parts[0], parts[1])
+
+
 def validate_outcome_math(
     *,
     entry_price: float,
