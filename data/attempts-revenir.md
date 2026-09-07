@@ -203,3 +203,49 @@ result, pick a different one.
   Second, unshipped finding, worth its own pass: "no_candidates (thresholds
   not met)" is the single largest terminal state in the funnel and writes NO
   trading_ops row, which is the only reason this took a snapshot join to find.
+
+2026-09-07 01:58 | Fern | hypothesis: with direction_prob fixed (113d862), the
+  NEXT binding gate is something nobody has censused -- so census the decision
+  funnel by TERMINAL REASON instead of guessing which gate is closed |
+  did: (a) took the restart Bay flagged at 01:29 -- found it had ALREADY
+  happened by itself, keeper relaunched prod at 01:42:02 after the old PID
+  died ~01:40, which is after 113d862, so no action was needed and I said so
+  rather than eating a second 13min boot; (b) censused organism_snapshots by
+  decision.reason. Last hour: scenario_spread 31.1%, strategy_edge 29.6%,
+  usd_pnl price-domain 6.6%, symbol_edge 5.7%. scenario_spread is the single
+  largest and had never been looked at; (c) read it. ScenarioReactor.divergence
+  is max-min of (b+1.5v, b, b-1.5v) == 3v EXACTLY, so base_expected CANCELS
+  and should_defer never consults the edge -- it is a bare volatility ceiling
+  at tolerance/3 = 0.5%. Confirmed on 808 snapshots: 429 bit-identical to 3v,
+  rest inside 3e-06; (d) the v it was fed was ABSOLUTE quote-currency
+  volatility while base_expected is a return fraction, so the sum
+  (-0.0087 + 1.5*22.66 for CBBTC) has no unit and the rule ranks by PRICE.
+  result: MEASURED defer rate by symbol over 24h -- CBZEC($1190) 86.5%,
+  CBBTC($80048) 69.0%, CBETH($2858) 56.0%, COMP($21) 50.0%, and 0.0% for ALL
+  FOURTEEN symbols priced under $1, whose absolute volatility rounds to
+  0.000000 and which passed unconditionally. Backwards twice: the sub-$1 names
+  are what symbol-motion refuses for never clearing the 0.65% round trip, and
+  the deferred names are what the live lane trades. Fixed to volatility_rel,
+  which already existed 2 lines above from the reflex fix -- that pass left a
+  comment saying the scenario reactor "consume[s] it in absolute units and
+  [is] not being retuned", so this was a known-deferred second consumer.
+  Replayed over 4448 real market_stream windows: defer 25.8% -> 8.1%, and it
+  MOVES rather than loosens -- CBHYPE 53.5->0.0, COMP 40.7->0.0, VVV 42.4->0.0,
+  while BASECAT 0->32.0, TIBBIR 0->28.9, BSTONK 0->19.4 start deferring (the
+  two whose live round trips were stopped out inside the noise band).
+  NEGATIVE result worth recording: I expected a big clip-size win from
+  scenario_mod too and there is none -- mean 0.9941 -> 0.9730, -2.1% mean clip,
+  because high-absolute-vol windows were deferred before they could be sized.
+  Also confirmed Bay's 113d862 IS live: direction_prob_calibrated 0 -> 9 rows
+  (it lives in the 'prediction' dict, not 'decision'), bearish share
+  92.89% -> 35.29% vs his replayed prediction of 35.6%. Feed 56 -> 335
+  ticks/10m, entries 2 -> 4 this hour. Shipped 3818bea, 8 tests, both call-site
+  assertions verified failing against the old code.
+  next: my fix is INERT until the next restart, and the next restart is
+  currently UNSAFE -- production loads the WORKING TREE, and
+  trading/strategies/ledger.py was saved at 01:52 (after the 01:42 boot) with
+  4 failing re-arm tests (live_approved False where asserted True), so
+  restarting would push a broken live-approval path into production. Sequence:
+  let Echo land ledger green, THEN restart, THEN re-measure the last-hour
+  reason census -- scenario_spread should fall from 31.1% to roughly 8%, and
+  strategy_edge becomes the top blocker.
