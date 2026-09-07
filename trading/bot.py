@@ -9843,6 +9843,28 @@ class TradingBot:
                     # positions in ONE symbol and have it look like 13
                     # independent trades.
                     symbol=symbol,
+                    # How long this round trip actually ran, in SECONDS, from
+                    # the same clock and the same `entry_ts` field the hold
+                    # timer at line 9732 reads. The ledger refuses an outcome
+                    # held far past the horizon it grades on -- see
+                    # trading.strategies.ledger._exceeds_evidence_horizon --
+                    # and without this it arrives with no holding period at
+                    # all, which is how a 21-day mark-out came to be the
+                    # entire positive case for spending real money.
+                    #
+                    # A position with no entry timestamp reads None rather
+                    # than 0.0: unknown must not read as "closed instantly",
+                    # which would pass the horizon check by accident. That is
+                    # the opposite of the `held_position_age` default at line
+                    # 6995, and deliberately so -- there, 0.0 makes a stale
+                    # slot EVICTABLE, which is the safe direction for a slot;
+                    # here, 0.0 would make an unmeasurable trade COUNT, which
+                    # is not the safe direction for evidence.
+                    held_sec=(
+                        float(sample_ts) - float(pos.get("entry_ts") or pos.get("ts") or 0.0)
+                        if (pos.get("entry_ts") or pos.get("ts"))
+                        else None
+                    ),
                 )
                 self._refresh_auto_execute()
             except Exception:

@@ -98,6 +98,82 @@ _ABSOLUTE_MAX_OUTCOME = _env_float("STRATEGY_MAX_TRADE_PROFIT", 2.0)
 #: penalised for trading larger.
 _RELATIVE_MAX_MULTIPLE = _env_float("STRATEGY_MAX_TRADE_PROFIT_MULTIPLE", 25.0)
 
+#: How many times the configured max hold a round trip may run and still count
+#: as evidence. See ``_exceeds_evidence_horizon``.
+_MAX_HOLD_MULTIPLE = _env_float("STRATEGY_MAX_EVIDENCE_HOLD_MULTIPLE", 4.0)
+
+
+def _max_evidence_hold_sec() -> float:
+    """Longest round trip that still describes the horizon this loop trades.
+
+    Derived from ``MAX_HOLD_SECONDS`` -- the timer the exit path itself runs on
+    -- rather than from a fresh number, so the bar and the behaviour it judges
+    cannot drift apart. Read at call time because both env vars are tuned
+    against a running production process. A multiple of zero or less disables
+    the check entirely.
+    """
+    try:
+        base = float(os.getenv("MAX_HOLD_SECONDS", "3600"))
+    except (TypeError, ValueError):
+        base = 3600.0
+    if base <= 0.0 or _MAX_HOLD_MULTIPLE <= 0.0:
+        return 0.0
+    return base * _MAX_HOLD_MULTIPLE
+
+
+def _exceeds_evidence_horizon(held_sec: Optional[float]) -> bool:
+    """Did this round trip run so long that its return is drift, not a decision?
+
+    THE SAME CLASS OF DEFECT AS ``_is_implausible``, ONE UNIT OVER. That guard
+    bounds an outcome in DOLLARS. The artifact it keeps missing is in TIME.
+
+    Measured 2026-09-07, replaying the 30-day ghost book at the $6 live clip
+    through ``services/roundtrip_cost`` and splitting on ``_live_tradeable``:
+
+        live-tradeable round trips           312   net  +7.157
+          of which held longer than 4h        20   net  +7.938
+          held inside 4h                     292   net  -0.779
+
+    Six percent of the rows are the entire positive case for spending real
+    money, and they are the rows whose holding period bears no relation to the
+    horizon the strategy is graded on. The worst is CBBTC-USDC at +22.20%,
+    held 30,617 minutes -- 21.3 days, against a ``MAX_HOLD_SECONDS`` of 3600.
+    That single row IS ``atf_static``/CBBTC's whole +0.6705, the top-ranked
+    live-tradeable pair in the system; without it the pair is -0.6384 over 40
+    trades. Per strategy, on tradeable symbols:
+
+        atf_static        all holds   181 trades  +1.0596
+        atf_static        <= 4h       175 trades  -0.9080   <- the honest book
+
+    ``_is_implausible`` cannot see any of this. A 21-day drift on cbBTC nets
+    $1.31 at the $6 clip, which is comfortably under the $2.00 absolute cap and
+    nowhere near 25x the strategy's own scale, so it books as proof that a
+    strategy graded on a one-hour horizon may spend real money.
+
+    Note the DIRECTION this moves the numbers: excluding these rows makes the
+    only live-capable strategy look worse, not better. That is the check
+    working. A filter that improved the record it judges would be laundering
+    it -- which is exactly the failure ``_is_implausible`` documents at its own
+    "only outsized GAINS are filtered" note, arrived at from the other side.
+
+    An outcome with no known holding period is NOT rejected. The field is new
+    and most historical callers cannot supply it; rejecting on its absence
+    would discard the whole book to catch 6% of it. Same fail-open shape as
+    ``pl_ref`` and ``dd_ref``, and for the same reason.
+    """
+    if held_sec is None:
+        return False
+    try:
+        held = float(held_sec)
+    except (TypeError, ValueError):
+        return False
+    if held != held:                     # NaN: unmeasurable, not long
+        return False
+    cap = _max_evidence_hold_sec()
+    if cap <= 0.0:
+        return False
+    return held > cap
+
 
 def _is_implausible(profit: float, *, relative_to: Optional[float]) -> bool:
     """Is this outcome too good to have actually happened?
@@ -422,9 +498,17 @@ class StrategyLedger:
         mode: str,
         confidence: Optional[float] = None,
         symbol: str = "",
+        held_sec: Optional[float] = None,
         mirror_registry: bool = True,
     ) -> None:
         """Record a closed trade outcome and re-evaluate graduation/demotion.
+
+        ``held_sec`` is the round trip's holding period in SECONDS -- the same
+        clock and unit as ``MAX_HOLD_SECONDS`` and as the ``age_sec`` the exit
+        path already publishes. Passing it lets the ledger refuse an outcome
+        whose horizon is not the one the strategy is graded on; see
+        ``_exceeds_evidence_horizon``. ``None`` means "not known", and is
+        recorded exactly as it was before this argument existed.
 
         ``mirror_registry=False`` records into this ledger WITHOUT touching the
         lifetime registry. It exists for one caller: replaying outcomes the
@@ -467,6 +551,24 @@ class StrategyLedger:
                 f"rejected implausible {mode_key} outcome for {sid}: "
                 f"{profit:+.6f} (likely a stale-entry repricing artifact, "
                 "not a real fill)",
+                severity="warning",
+            )
+            return
+        # ...and reject outcomes that ran too long to describe this horizon.
+        #
+        # Placed beside the size guard because it is the same guard in the
+        # other unit, and ahead of the registry mirror for the same reason: an
+        # outcome refused here was never evidence, so the append-only lifetime
+        # record must not gain it either. `_exceeds_evidence_horizon` carries
+        # the measurement.
+        if _exceeds_evidence_horizon(held_sec):
+            log_message(
+                "strategy-ledger",
+                f"rejected out-of-horizon {mode_key} outcome for {sid} on "
+                f"{symbol or '(unknown symbol)'}: {profit:+.6f} over "
+                f"{float(held_sec) / 3600.0:.1f}h against a "
+                f"{_max_evidence_hold_sec() / 3600.0:.1f}h evidence horizon "
+                "(that return is market drift, not this strategy's decision)",
                 severity="warning",
             )
             return

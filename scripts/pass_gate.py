@@ -176,6 +176,22 @@ GATE_TESTS = (
     # is judged, because that bot is the only thing that can sell it.
     "test_a_bot_slot_is_not_spent_on_a_symbol_nothing_may_enter.py",
     "test_a_held_position_is_never_evicted.py",
+    # What the evidence a licence rests on is allowed to be. Measured
+    # 2026-09-07, replaying the 30-day ghost book at the $6 live clip through
+    # services/roundtrip_cost and splitting on ledger._live_tradeable: 312
+    # live-tradeable round trips net +7.157, of which the 20 held longer than
+    # 4h contribute +7.938 and the 292 held inside 4h net -0.779. atf_static,
+    # the only live-capable strategy, reads +1.0596 over 181 tradeable trades
+    # with all holds and -0.9080 over 175 inside 4h -- six rows flip its sign.
+    # The worst is CBBTC-USDC +22.20% held 30,617 minutes (21.3 days) against
+    # MAX_HOLD_SECONDS of 3600; that one row IS atf_static/CBBTC's whole
+    # +0.6705 and made it the top-ranked tradeable pair in the system.
+    # `_is_implausible` bounds an outcome in DOLLARS and could not see any of
+    # it: $1.31 at the $6 clip passes the $2.00 cap. The bound had to be in
+    # TIME. Both production writers now hand the ledger a holding period, and
+    # the call-site assertions here are the load-bearing half -- a guard the
+    # exit paths do not feed fails open on 100% of the book.
+    "test_a_three_week_hold_is_not_minutes_scale_evidence.py",
 )
 
 

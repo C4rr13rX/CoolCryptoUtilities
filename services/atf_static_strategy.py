@@ -100,7 +100,12 @@ SCOUT_STRATEGY_ID = "atf_static_scout"
 SIGNAL_STRATEGY_ID = "atf_static"
 
 
-def _record_ghost_outcome(strategy_id: str, profit: float, symbol: str = "") -> None:
+def _record_ghost_outcome(
+    strategy_id: str,
+    profit: float,
+    symbol: str = "",
+    held_sec: Optional[float] = None,
+) -> None:
     """
     Report a closed ghost trade to the strategy ledger.
 
@@ -115,6 +120,12 @@ def _record_ghost_outcome(strategy_id: str, profit: float, symbol: str = "") -> 
     outcome this module produced must never be filed under the id the live
     gate reads.
 
+    ``held_sec`` is the round trip's age in SECONDS -- the same ``age`` this
+    module already publishes as ``details["age_sec"]``. The ledger refuses an
+    outcome held far past the horizon it grades on; without this argument every
+    outcome from here arrives with no holding period and that guard cannot see
+    it. See ``trading.strategies.ledger._exceeds_evidence_horizon``.
+
     Deliberately best-effort. A ledger write must never abort a trading
     cycle -- losing one outcome is recoverable, stalling the loop is not.
     """
@@ -122,7 +133,11 @@ def _record_ghost_outcome(strategy_id: str, profit: float, symbol: str = "") -> 
         from trading.strategies.ledger import StrategyLedger
 
         StrategyLedger().record(
-            strategy_id, profit=float(profit), mode="ghost", symbol=symbol
+            strategy_id,
+            profit=float(profit),
+            mode="ghost",
+            symbol=symbol,
+            held_sec=held_sec,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"[atf-static] ledger record failed: {type(exc).__name__}: {exc}",
@@ -880,7 +895,8 @@ def _run_ghost_quote_scout(
         db.log_trade(wallet="ghost", chain=chain, symbol=symbol, action="exit", status="ghost-exit", details=details)
         # The ledger is USD too: trading/bot.py records ``economic_profit``
         # here, and graduation scores the two writers against one threshold.
-        _record_ghost_outcome(SCOUT_STRATEGY_ID, profit_usd, symbol=symbol)
+        _record_ghost_outcome(SCOUT_STRATEGY_ID, profit_usd, symbol=symbol,
+                              held_sec=age)
         # Both, named. An event feed that says "profit" without saying which
         # unit is how the ghost book came to add percentages to dollars.
         events.append({
