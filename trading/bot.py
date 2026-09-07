@@ -3531,10 +3531,44 @@ class TradingBot:
             match = None
         if match:
             memory_bias, memory_meta = match
+        # SCALE-FREE volatility, for the same reason the reflex above uses it.
+        #
+        # ScenarioReactor.analyse builds optimistic = base_expected +
+        # volatility * 1.5, and ``base_expected`` here is ``net_margin`` -- a
+        # RETURN FRACTION. Handing it absolute (quote-currency) volatility adds
+        # a price standard deviation to a fraction: for CBBTC that is
+        # -0.0087 + 1.5 * 22.66. The sum has no unit at all.
+        #
+        # It then decides with it. ``should_defer`` is
+        # ``divergence > tolerance``, and divergence is
+        # ``max - min == (b + 1.5v) - (b - 1.5v) == 3v`` EXACTLY -- verified
+        # against 808 live snapshots, 429 bit-identical and the rest inside
+        # 3e-06. ``base_expected`` cancels, so the edge never enters the
+        # decision and the rule is purely ``volatility > tolerance/3``, i.e.
+        # 0.5% in whatever units arrive. Absolute units make that a PRICE
+        # ranking, exactly the bug fixed for the reflex above: measured over
+        # 24h of decisions, defer rate ran 69.0% for CBBTC ($80,048), 56.0%
+        # for CBETH ($2,858), and 0.0% for every one of the fourteen symbols
+        # priced under $1 -- whose volatility rounds to 0.000000 and which
+        # therefore passed unconditionally. That is backwards twice over: the
+        # sub-$1 names are the ones the symbol-motion gate refuses for not
+        # clearing the 0.65% round trip, and the majors are what the live lane
+        # actually trades.
+        #
+        # ``volatility_rel`` is a per-tick return std -- a fraction, so it is
+        # comparable to the 0.015 tolerance the reactor's own unit test
+        # already assumes (it passes 0.0002 and 0.5). Replayed over 4448
+        # windows of real market_stream ticks the defer rate falls 25.8% ->
+        # 8.1%, and it MOVES rather than merely loosening: CBHYPE 53.5% ->
+        # 0.0%, COMP 40.7% -> 0.0%, VVV 42.4% -> 0.0%, while the genuinely
+        # choppy names it used to wave through start deferring -- BASECAT
+        # 0.0% -> 32.0%, TIBBIR 0.0% -> 28.9%, BSTONK 0.0% -> 19.4%. Those
+        # last two are the symbols whose live round trips were stopped out
+        # inside the noise band.
         scenarios = self.scenario_reactor.analyse(
             float(pred_summary.get("net_margin", 0.0)),
             float(pred_summary.get("direction_prob", 0.5)),
-            volatility,
+            volatility_rel,
         )
         scenario_spread = self.scenario_reactor.divergence(scenarios)
         scenario_defer = self.scenario_reactor.should_defer(scenarios)
@@ -3692,6 +3726,12 @@ class TradingBot:
             "regime_signal": regime_payload,
             "volatility": volatility,
             "volatility_avg": self._volatility_avg,
+            # The scale-free measure that scenario_defer and the reflex both
+            # decide on. The snapshot published only the ABSOLUTE volatility,
+            # so neither decision could be audited from stored state -- the
+            # price-ranking above had to be reconstructed by replaying
+            # market_stream tick by tick. Publish what the gate actually reads.
+            "volatility_rel": volatility_rel,
             "reflex_triggered": reflex_triggered,
             "reflex_block_active": reflex_active,
             "reflex_block_until": self._reflex_blocked_until if reflex_active else None,

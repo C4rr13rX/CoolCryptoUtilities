@@ -23,6 +23,18 @@ class ScenarioReactor:
         self.tolerance = tolerance
 
     def analyse(self, base_expected: float, confidence: float, volatility: float) -> List[ScenarioResult]:
+        """Build the three scenarios.
+
+        UNITS: ``base_expected`` and ``volatility`` must be in the SAME units,
+        and because ``tolerance`` is a fraction (0.015 = 1.5%) that unit has to
+        be a RETURN FRACTION. ``optimistic`` adds them together, so a caller
+        passing an absolute price deviation for ``volatility`` and a margin for
+        ``base_expected`` produces a sum with no unit -- and, since
+        ``divergence`` reduces to exactly ``3 * volatility`` (see below), a
+        ``should_defer`` that ranks symbols by PRICE instead of by risk.
+        ``trading/bot.py`` did precisely that until 2026-09-07 and deferred
+        69% of CBBTC against 0% of every symbol priced under $1.
+        """
         volatility = max(1e-6, volatility)
         optimistic = base_expected + volatility * 1.5
         pessimistic = base_expected - volatility * 1.5
@@ -40,4 +52,14 @@ class ScenarioReactor:
         return max(values) - min(values)
 
     def should_defer(self, scenarios: List[ScenarioResult]) -> bool:
+        """Defer when the scenarios disagree by more than ``tolerance``.
+
+        Note what this does NOT consider: the edge. For scenarios built by
+        ``analyse`` the divergence is
+        ``(b + 1.5v) - (b - 1.5v) == 3v`` exactly -- ``base_expected``
+        cancels -- so a trade with a large positive expected margin is
+        deferred on precisely the same terms as one with a large negative
+        margin. The rule is a volatility ceiling of ``tolerance / 3``, and
+        reading it as anything richer than that has misled two passes.
+        """
         return self.divergence(scenarios) > self.tolerance
