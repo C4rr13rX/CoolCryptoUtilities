@@ -477,3 +477,64 @@ result, pick a different one.
   atf_static_scout's missing live branch (233 ghost trades / 79% / +6.5595,
   graduation_blocked 'ghost-only executor: no live branch exists') rather than
   anything further upstream.
+
+2026-09-07 03:45 | Vale | hypothesis: the model's price channel is unnormalised,
+  so the direction head ranks a symbol by its PRICE TAG rather than its price
+  MOVE (the second train/serve skew Pike measured at 02:19 and did not fix) |
+  did: probed models/active_model.keras directly. Held the SHAPE of the move
+  fixed at +0.2%/step (+12.7% across the 60-step window) and varied only the
+  level; then held the level at 21.0 and varied the actual direction.
+                          price_dir        price_mu
+      level 1e-06          0.2019          -0.1298
+      level 1.0            0.5276          +0.5493
+      level 21.0           0.4822          -0.1718
+      level 1206           0.6142          -0.2791
+      -1%/step @ 21.0      0.4815          -0.1852
+      +1%/step @ 21.0      0.4808          -0.1207
+  The price tag swung the entry signal 0.41; the actual direction swung it
+  0.0007, and the wrong way. 585x. The entry bar is direction_prob >= 0.58 and
+  only levels above ~1000 ever reached it. Cause: model_definition.py:211 fed
+  RAW (price, volume) into three Conv1D layers -- ts_norm (LayerNormalization)
+  sits AFTER them, while tech_input gets LayerNormalization as its first op.
+  Corpus price spans 9e-08..123,429; live spans 1.672e-23..135,744.
+  Production agreed, 605 decisions/6h joined to market_stream prices:
+      $2852 CBETH   n= 62  mean dir_prob 0.3847   25.8% over the bar
+      $21.0 COMP    n=126               0.3558    19.8%
+      $0.54 AERO    n= 90               0.3651    30.0%
+      ------------------- under $0.06 -------------------
+      $0.051 BASECAT n=18               0.1596     0.0%
+      $0.036 CBETH-CBBTC n=51           0.0347     0.0%
+      $0.000088 BST n=12                0.0614     0.0%
+  167 of 605 decisions (27.6%) across SIXTEEN symbols sat on tokens where the
+  model has never once reached the entry bar, and every one is under 6 cents.
+  corr(log10 price, direction_prob) +0.157 by decision, +0.266 by symbol.
+  Volume was the matching fault: market_stream is volume=0.0 on 57,957 of
+  57,984 rows (99.95%) while the corpus median is 125,401 and never zero.
+  Moving that channel 0 -> 125,401 swung price_mu -0.1718 -> +1.1588.
+  SHIPPED 6b44fd6: PriceVolScaleNorm at the head of the Conv1D stack, IN THE
+  GRAPH so training and serving share one implementation and cannot skew.
+  price -> log(p_t/p_0) from the window's first strictly positive bar;
+  volume -> v_t/mean(v) - 1, and 0.0 when the mean is 0, so live's all-zero
+  window reads as perfectly average volume instead of five sigma off the edge.
+  Loader and bot.py keep feeding raw quotes: no disk-cache bump, and
+  _wizard_push_ohlcv still reads a real close price out of channel 0.
+  _reads_price_scale discards a pre-normalisation artifact (its conv weights
+  are fit on absolute magnitudes and cannot be repaired by inserting a layer).
+  result: models/active_model.keras was rebuilt by prod PID 10204 at 03:38:29
+  -- it booted 03:32:53 but _get_model_defs() imports model_definition lazily,
+  so it took the edit off disk on its first training step. Re-probed the
+  artifact now on disk: price_dir 0.5277 and price_mu 0.94593 at ALL EIGHT
+  levels from 1e-06 to 135,744 -- eleven orders of magnitude, bit-identical.
+  And the direction now moves it: -1%/step to +1%/step swings price_mu
+  -1.331 -> +1.722, a range of 3.05 against the old artifact's 0.0646. 47x.
+  No restart taken: the model_definition half is already live and measured,
+  and the pipeline.py half is a no-op today (models/ holds one artifact and it
+  is already normalised; verified the running process loads it fine with the
+  old _custom_objects() because register_keras_serializable covers it).
+  Gate 289 passed / 0 failed. profit_logic_audit NO KNOWN LOSING SHAPES.
+  next: price_mu is still on a +/-1.7 scale where a 5-minute move is 0.03, so
+  the MAGNITUDES are still wrong -- that is Pike's retrain on the 0e5adb5
+  labels, not this. Re-measure corr(log10 price, direction_prob) over
+  organism_snapshots once decisions resume after 03:38:29; it was +0.157 and
+  should collapse toward 0. If the sixteen sub-$0.06 symbols start producing
+  direction_prob above 0.58, the candidate pool roughly doubles.
