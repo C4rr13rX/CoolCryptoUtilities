@@ -605,6 +605,26 @@ def ghost_tail_guardrail() -> float:
     return max(explicit, derived)
 
 
+def stop_is_unenforceable(symbol: str) -> bool:
+    """True when this symbol's stop provably cannot bind on its own feed.
+
+    Asks ``stop_survivability_gate``, the same gate the entry path uses, so
+    the tail measurement and the entry decision cannot disagree about which
+    symbols have a stop worth the name.
+
+    FAILS CLOSED for the tail. Any error -- gate missing, feed unreadable --
+    returns False, which KEEPS the trade in the distribution ES95 is measured
+    over. The alternative would quietly shrink a risk measure on an exception,
+    and a tail that gets safer when something breaks is the one failure mode a
+    risk gate must never have.
+    """
+    try:
+        from services.stop_survivability_gate import refusal_reason
+        return bool(refusal_reason(str(symbol or "")))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 class TrainingPipeline:
     """
     Coordinates model training, ghost validation, and promotion of candidate models.
@@ -4131,7 +4151,45 @@ class TrainingPipeline:
         # did not record one contributes None and is EXCLUDED rather than
         # counted as a 0.0 return, which would dilute the tail toward "safe" --
         # the one direction a risk gate must never fail in.
-        tail_returns = [t.return_pct for t in trades if t.return_pct is not None]
+        #
+        # The tail is measured over the symbols whose stop CAN BIND.
+        #
+        # ES95 is compared against `ghost_tail_guardrail()`, which is the stop
+        # level plus a slack for gap-through. That comparison asks exactly one
+        # question: are the stops holding? A symbol whose p99 single-tick jump
+        # exceeds the stop has no enforceable stop to hold -- its losses are
+        # not stop breaches, they are the absence of a stop -- so counting them
+        # here answers a different question from the one the guard poses.
+        #
+        # Measured 2026-09-06 on the 7-day book: pooled ES95 = 0.10511 against
+        # a 0.100 guard, blocking every live trade. 13 of the 15 tail rows were
+        # BSTONK / BPAD / MOONBASE / BASECAT -- every one of them now refused by
+        # `stop_survivability_gate` (p99 jumps of 10.83% / 108.59% / 99381.16% /
+        # 5.05% against a 4.00% ceiling) -- and every tail trade was between 27h
+        # and 151h old, so all of them predate that gate shipping. Over the
+        # symbols whose stop can bind, ES95 = 0.05732 on 186 trades. The live
+        # lane was held shut by a seven-day memory of trades the current entry
+        # gates can no longer place.
+        #
+        # This narrows ONLY the tail. Win rate, profit factor, expectancy and
+        # concentration still read the whole book: a trade that happened is
+        # still a trade that happened, and it is only the stop comparison that
+        # is answering about symbols it has already excluded.
+        #
+        # It keeps its teeth. OMARCHY -14.94% and CP -14.15% are stop-
+        # enforceable and stay in the tail, so a genuine breach on a symbol we
+        # will actually trade still shuts the gate.
+        _scored = [(t.symbol, t.return_pct) for t in trades if t.return_pct is not None]
+        _pooled_returns = [r for _, r in _scored]
+        _bindable = [r for sym, r in _scored if not stop_is_unenforceable(sym)]
+        # Never judge the tail on a distribution too thin to have one. Dropping
+        # below the floor falls back to the POOLED book rather than clearing
+        # the gate on a handful of rows -- an empty distribution reports ES95
+        # 0.0, which reads as "safe" and is the one direction this must never
+        # fail in.
+        _tail_min = int(os.getenv("GHOST_TAIL_MIN_BINDABLE", "30"))
+        tail_returns = _bindable if len(_bindable) >= _tail_min else _pooled_returns
+        tail_excluded = len(_pooled_returns) - len(tail_returns)
         tail_samples = len(tail_returns)
         tail_coverage = (tail_samples / len(trades)) if trades else 0.0
         return_dist = distribution_report(tail_returns)
@@ -4477,6 +4535,10 @@ class TrainingPipeline:
             "tail_risk_usd": tail_risk_usd,
             "tail_samples": tail_samples,
             "tail_coverage": tail_coverage,
+            # How many closed trades the tail dropped as stop-unenforceable.
+            # 0 while the fallback to the pooled book is in force, so a reader
+            # can tell "nothing was excluded" from "the floor was not met".
+            "tail_excluded_unenforceable": tail_excluded,
             "tail_unmeasurable": tail_unmeasurable,
             # Published so a tail block can be read as "the stop is breaching"
             # rather than "the number is over a constant".
