@@ -546,7 +546,7 @@ class StrategyLedger:
         max_losses = _env_int("STRATEGY_DEMOTE_MAX_LIVE_LOSSES", 4)
         streak = int(live.get("consecutive_losses", 0))
         if streak >= max_losses:
-            net_live = float(live.get("total_profit", 0.0))
+            net_live = self._licence_net(live)
             if net_live > 0.0:
                 # Imported here: this module is loaded by tooling that does
                 # not always have services on the path, and a logging import
@@ -581,10 +581,18 @@ class StrategyLedger:
         # So: once a strategy has a fair sample of LIVE trades, it must be net
         # positive on real money. Win rate, ghost record and consecutive-loss
         # counts are all secondary to whether the account grew.
-        live_trades = int(live.get("trades", 0))
+        #
+        # Measured over the CURRENT licence, not over the strategy's lifetime.
+        # Read lifetime it is a one-way ratchet: a demoted strategy takes no
+        # further live trades, so its lifetime sum cannot move, so the rule
+        # that demoted it re-demotes it on every subsequent record() call
+        # forever. See `_licence_net` for the measurement on atf_static, whose
+        # -0.186371 over 18 lifetime trades had produced seven demotions and an
+        # empty `approved_ids()`.
+        live_trades = self._licence_trades(live)
         min_sample = _env_int("STRATEGY_DEMOTE_MIN_LIVE_TRADES", 8)
         if live_trades >= min_sample:
-            live_profit = float(live.get("total_profit", 0.0))
+            live_profit = self._licence_net(live)
             floor = _env_float("STRATEGY_DEMOTE_MIN_LIVE_PROFIT", 0.0)
             if live_profit <= floor:
                 self._demote_locked(
@@ -703,6 +711,9 @@ class StrategyLedger:
         # A new licence starts its drawdown clock at today's total, not at a
         # high-water mark from a licence that has already been revoked.
         live["dd_ref"] = float(live.get("total_profit", 0.0) or 0.0)
+        # ...and its P/L clock, for exactly the same reason. See `_licence_net`.
+        live["pl_ref"] = float(live.get("total_profit", 0.0) or 0.0)
+        live["trades_ref"] = int(live.get("trades", 0) or 0)
 
     @staticmethod
     def _dd_ref(live: Dict[str, Any]) -> float:
@@ -715,6 +726,77 @@ class StrategyLedger:
         if ref is None:
             return float(live.get("peak_profit", 0.0) or 0.0)
         return float(ref)
+
+    @staticmethod
+    def _licence_net(live: Dict[str, Any]) -> float:
+        """Live P/L earned under the CURRENT licence to trade.
+
+        THE SAME RATCHET THE DRAWDOWN BRAKE ALREADY FIXED, one rule higher.
+
+        ``_dd_ref`` exists because "current < peak x (1 - max_dd)" measured
+        against a lifetime peak is a ratchet with no exit: demoted means no
+        further live trades, no further live trades means ``current`` can never
+        climb, so the strategy is demoted forever. That argument is written out
+        at the drawdown brake below. It applies word for word to the two rules
+        above it, which read ``live["total_profit"]`` -- a LIFETIME sum that a
+        demotion freezes -- and it was never applied to them.
+
+        Measured 2026-09-06 on data/strategy_ledger.json. ``approved_ids()``
+        returns [] and has done for the whole day; 0 live trades. atf_static is
+        the only entry that has ever had a live branch, and it is pinned by
+        both copies:
+
+            live: 18 trades, 5W/13L, total_profit -0.186371
+            demote_reason "live P/L -0.1585 over 17 trades is not profitable"
+            demotions 7   graduation_blocked False
+
+          * _maybe_rearm_locked: `trades(18) >= 3 and net(-0.186371) <= 0`
+            returns before it reads one line of ghost evidence. No quantity of
+            fresh ghost trades can ever re-arm it -- the method is dead code
+            for this strategy, permanently, without `graduation_blocked` ever
+            being set.
+          * _evaluate_demotion_locked: `trades(18) >= 8 and profit <= 0`
+            re-demotes on the next record() call, so a hand-reinstatement is
+            undone within minutes. The ledger records exactly that:
+            reinstated_ts 1788636635 -> demoted_ts 1788642158, 5523s later,
+            and seven demotions in total.
+
+        The lockout is what empties `approved_ids()`, which is what makes
+        `_live_gate_candidates()` empty, which is what silently switches the
+        live gate's subject from "the strategy about to spend money" to the
+        pooled book of all 36 strategies -- the subject its own docstring calls
+        wrong. Every refusal downstream of that is a symptom of this.
+
+        So the question becomes "has it lost money since it was allowed to
+        trade again?" rather than "has it ever been down?". Nothing is
+        loosened: the floor, the sample size and the drawdown brake are
+        unchanged, they are simply applied to the record the current licence
+        earned. A strategy that loses under its new licence is demoted by the
+        same rule on the same evidence -- and re-arming still demands a full
+        graduation-grade ghost book gathered AFTER the demotion, which is the
+        bar that makes a second licence cost something.
+
+        Falls back to the lifetime total when the reference is absent, so a
+        ledger written before this field existed is judged exactly as it was.
+        """
+        ref = live.get("pl_ref")
+        if ref is None:
+            return float(live.get("total_profit", 0.0) or 0.0)
+        return float(live.get("total_profit", 0.0) or 0.0) - float(ref)
+
+    @staticmethod
+    def _licence_trades(live: Dict[str, Any]) -> int:
+        """Live round trips taken under the CURRENT licence. See `_licence_net`.
+
+        The count has to be re-based with the sum or the pair is incoherent: a
+        fresh licence would read 0 profit over 18 trades and trip the "fair
+        sample" floor on its first evaluation, which is the ratchet again
+        wearing the sample size as a disguise.
+        """
+        ref = live.get("trades_ref")
+        if ref is None:
+            return int(live.get("trades", 0) or 0)
+        return max(0, int(live.get("trades", 0) or 0) - int(ref))
 
     def _maybe_rearm_locked(self, sid: str) -> None:
         """Let a demoted strategy back in once the money says it recovered.
@@ -760,8 +842,15 @@ class StrategyLedger:
             return                      # never demoted; nothing to undo
 
         live = ent.get("live") or {}
-        net = float(live.get("total_profit", 0.0))
-        trades = int(live.get("trades", 0))
+        # The licence's own record, not the lifetime one. Lifetime, this test is
+        # unsatisfiable by construction for the only strategy it has ever had to
+        # judge: a demotion stops live trading, so the sum that convicted the
+        # strategy is frozen at its convicting value and this method returns
+        # before reading a single ghost trade, forever. `_licence_net` carries
+        # the measurement. The freshness bar below is what a demotion is
+        # actually asking for, and it is unchanged.
+        net = self._licence_net(live)
+        trades = self._licence_trades(live)
         min_sample = _env_int("STRATEGY_REARM_MIN_LIVE_TRADES", 3)
         if trades >= min_sample and net <= 0.0:
             return                      # it lost real money; ghost cannot excuse that
@@ -857,6 +946,14 @@ class StrategyLedger:
         # strategy does under that licence. peak_profit is deliberately left
         # alone: it is a lifetime fact and dashboards read it as one.
         ent["live"]["dd_ref"] = float(ent["live"].get("total_profit", 0.0) or 0.0)
+        # The P/L and trade-count references retire with it, for the reason
+        # `_licence_net` sets out: a demotion freezes the lifetime sum at the
+        # value that caused it, so a rule reading that sum re-fires forever and
+        # `_maybe_rearm_locked` never reaches its ghost evidence. total_profit
+        # and trades are untouched -- they are lifetime facts, and the demote
+        # reason above still quotes the record that ended this licence.
+        ent["live"]["pl_ref"] = float(ent["live"].get("total_profit", 0.0) or 0.0)
+        ent["live"]["trades_ref"] = int(ent["live"].get("trades", 0) or 0)
 
     # ------------------------------------------------------------------
     # Queries

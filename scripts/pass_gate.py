@@ -57,6 +57,14 @@ SPRINT_BUDGET_SEC = float(os.getenv("SPRINT_BUDGET_SEC", "600"))
 # through. These are the files that pin the money path and run in seconds.
 GATE_TESTS = (
     "test_demotion_needs_a_net_loss.py",
+    # Upstream of every gate in this file. Both the re-arm rule and the
+    # profitability floor read a LIFETIME live P/L that a demotion freezes, so
+    # the only strategy with a live execution branch could never be re-armed
+    # and was re-demoted within minutes of any hand reinstatement -- seven
+    # demotions against one number. `approved_ids()` was empty all day on
+    # 2026-09-06 and LIVE TRADES TODAY was 0. No guard below can matter while
+    # nothing is permitted to trade at all.
+    "test_a_demotion_is_not_a_life_sentence.py",
     "test_token_contract_guard.py",
     "test_ledger_rejects_artifacts.py",
     "test_dust_is_not_a_sparse_wallet.py",
