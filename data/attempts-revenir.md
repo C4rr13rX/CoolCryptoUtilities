@@ -354,3 +354,82 @@ result, pick a different one.
   79% and is permanently barred because its executor has no live branch,
   while atf_static -- which does -- has 48. The evidence and the capability
   are in different strategies.
+
+2026-09-07 02:50 | Pike |
+  hypothesis: the funnel does not stop at a GATE. Every terminal reason in the
+  6h census (scenario-hold 26.6%, hold-negative 12.7%, hold-price-domain 15.1%)
+  reads a number the MODEL produced, and those numbers are not on a scale any
+  of them can interpret |
+  did: (1) Censused 636 decisions from organism_snapshots: expected_delta
+  ranges -2.2864..+2.9809 -- log returns of -90%..+1866% on a 5-minute horizon
+  -- median -0.4721, with 566/636 above |0.02|. (2) Traced price_mu back
+  through trading/bot.py:5499 -> model price_params -> targets built in
+  trading/data_loader.py. (3) Compared the TRAINING inputs/labels against what
+  trading/bot.py::_prepare_inputs actually serves.
+  result:
+  THE MODEL'S COST INPUTS WERE BUILT FROM TRADED VOLUME.
+      gas_val = 0.001 + abs(net_volume) * 1e-5
+      tax_val = 0.005 + abs(net_volume) * 5e-5
+  net_volume is a raw token count: median 125,401 over the 268,977 bars in
+  data/historical_ohlcv, max 17,775,922. So gas+tax had median 0.4977 and max
+  172,480,147 -- and it is subtracted from mu, a LOG RETURN with p99 magnitude
+  0.0347. Three of the model's four heads derive from that subtraction.
+  Measured over 66,370 sampled windows, then end-to-end through the loader on
+  1,600 real samples:
+                                   before        after
+      price_dir positive_ratio     0.0084       0.4856  (true up-rate 0.4820)
+      net_margin target median    -0.4979      -0.006612
+      net_margin target max |.|  172480147      0.025083
+      exit_conf median             0.9932       0.5165
+      exit_conf frac > 0.999       0.4717       0.0000
+      gas_fee_input         volume-derived       0.0015 (= what bot.py serves)
+      tax_rate_input        volume-derived       0.0050 (= what bot.py serves)
+  The direction head was trained to always say "down" -- which is exactly the
+  production symptom Bay patched at 113d862 (direction_prob median 0.1471,
+  0/569 above the 0.58 bar). Bay's fix was correct and was applied to the
+  CONSUMER of a broken producer. The collapsed label also sat under
+  TRAIN_POSITIVE_FLOOR (0.15) permanently, and trading/pipeline.py:1840
+  RELAXES the ghost-trade minimum for promotion whenever that floor is missed,
+  while the oversampler duplicated the 0.84% of positive rows up to 6x.
+  SHIPPED 0e5adb5: price_dir is sign(mu) -- the question its consumers ask,
+  since every reader treats 0.5 as neutral (enter_threshold 0.58, momentum =
+  direction_prob - 0.5, SCHEDULER_MIN_DIRECTION_PROB 0.6,
+  MONEY_BUTTON_MIN_DIR_PROB pinned to exactly 0.50 "so the neutral case
+  PASSES"). "Beats cost" would be a 16.75% base rate and every one of those
+  consumers would read a balanced market as bearish. The cost keeps its own
+  head: net_margin/net_pnl are still mu - round_trip, now with round_trip as
+  the 0.0065 fraction the edge gates already test against.
+  ALSO: _disk_cache_version 1 -> 2. cache_key is (window_size, sent_seq_len,
+  tech_count, focus_key, selected_key, file_signature) -- it describes the
+  SOURCE BARS and nothing about the label arithmetic, so without the bump this
+  would have shipped inert behind 2,072 persisted .npz. The loader now evicts
+  old-schema datasets on init; it ran at 02:42:49 and reclaimed 6.98 GB (D:
+  was at 96% and this box has lost a 20-hour run to a full disk).
+  5 tests, ALL 5 verified failing against the pre-fix loader by rebuilding it
+  in-process from the current source with the two edits reversed textually --
+  no source edit, so no window for a concurrent agent. Gate 284 passed /
+  0 failed. profit_logic_audit: NO KNOWN LOSING SHAPES.
+  Restarted prod at 02:47:23 (killed 10828/3208 booted 02:35:35, keeper 1108
+  relaunched 14976/14796 at 02:47:42, -X utf8 VERIFIED). BEFORE census over
+  630 decisions/6h, all written by models trained on the collapsed label:
+      expected_delta  med -0.2446  p05 -1.1569  p95 +2.3449  |x|>0.02  0.921
+      net_margin      med -0.2511  p05 -1.1634  p95 +2.3385  |x|>0.02  0.922
+      direction_prob  med +0.2033  >= 0.58 on 32/630 = 5.1%
+      terminal: scenario-hold 189, ghost 140, hold-price-domain 94,
+                hold-negative 81, entry-refused-strategy-edge 66
+  next: THIS NEEDS A RETRAIN TO SHOW, not just a restart -- the fix is to the
+  TARGETS, so the active model keeps its old behaviour until a training cycle
+  runs on the rebuilt dataset. Re-measure the four numbers above once
+  models/active_model.keras has an mtime later than 02:47. If |expected_delta|
+  does not collapse toward the 0.03 scale of a real 5-minute move, the
+  residual is the SECOND train/serve skew I measured and did NOT fix:
+  price_vol_input's volume channel is 0.0 on 3083 of 3083 live market_stream
+  rows (100%, and 0.0 in the raw dexscreener/geckoterminal payload too, so the
+  fetcher never extracts it) while it is NEVER zero in training (median
+  125,401). Probed against the live model, moving that channel from 0 to 1000
+  swings price_mu by up to 1.37 in log-return units. Do not simply zero it in
+  training -- trading/pipeline.py:3381 _wizard_push_ohlcv feeds that same
+  channel to the W1z4rD node, so zeroing it degrades the brain. Also note
+  price_vol_input has NO normalisation before the Conv1D stack while
+  tech_input gets LayerNormalization first thing, and the price channel spans
+  9e-08..123,429 across the corpus.
