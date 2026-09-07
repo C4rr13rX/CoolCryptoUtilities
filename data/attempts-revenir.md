@@ -1250,3 +1250,56 @@ the entire 32-hour outage, which is precisely why it lasted 32 hours.
   predictor that cannot reproduce its own training set cannot be judged on
   held-out data at all; (b) only if recall returns, re-run (3) on BOTH an up
   window and a down window before anyone argues about edge.
+
+- 2026-09-07 Hollow, pass 95. HYPOTHESIS: the omen brain has no edge not
+  because the substrate is broken but because (a) it was asked to forecast far
+  past the horizon the data supports, and (b) its representation cannot
+  generalise by construction. Both measured, offline, no brain and no fabric.
+  (1) REPRESENTATION. On the 2725-pair AERO-USDC training set the substrate
+  frames give 2725 DISTINCT signatures out of 2725 samples -- 0 duplicate
+  groups, 0 conflicted. So the ceiling on train recall is 100.0% (Quill's
+  89.2% is a real substrate loss, which Nook then found and fixed), but the
+  same number is the whole no-edge result: every key unique means perfect
+  memorisation and nothing to say about an unseen bar. Per COLLECTION on a
+  732-row corpus: temporal 732/732 distinct, largest bucket 1 (0.1%);
+  geometry 719/732, largest 4; cross 354/732; flow 246/732; volatility
+  29/732, largest 183 (25%). Four of five sensory pools cannot generalise at
+  all. omen_brain's buckets were made "deliberately fine-grained" so
+  collisions could not cap train recall -- that objective is what destroyed
+  generalisation.
+  (2) HORIZON, and this is the bigger one. web/tradingagent/chaos.py already
+  MEASURES a usable forecast horizon per symbol, and the live lattice is
+  refusing entries with 'AERO-USDC: information decays after 230.3 min but
+  the signal looks 300.0 min ahead'. Quill's omen run used horizon=12 on
+  3600s bars = 12 HOURS ahead on that symbol. It was asked a question the
+  data cannot answer. MEASURED with fitted quantile bins + an additive shrunk
+  estimator, honest train/valid/test, threshold picked on validation, over 3
+  symbols on 600s bars: at h=2 (20 min) the selection beats buying every bar
+  in the SAME window by +0.1285%/trade, 3 of 3 symbols, against +0.0104% for
+  a shuffled-label control -- 12x the noise floor. At h=12 (2 hours) it is
+  -0.0236%, WORSE than indiscriminate entry. EDGE EXISTS AT THE LOOP'S TARGET
+  HORIZON AND DIES AT THE LONG ONE.
+  NOT HIDDEN: +0.1285% of alpha does not pay a 0.65% round trip. This is a
+  direction, not a strategy, and I did not enable one.
+  (3) A LIVE-LANE BUG FOUND ON THE WAY, shipped and tested.
+  lyapunov_horizon_sec had no upper bound. On the real EURC-USDC stream (129
+  ticks, THREE distinct prices, 9 nonzero returns in 128) it returned
+  5.9634e+16 s of usable horizon from a 194 s window -- 3.08e+14x its own
+  span. That does not misreport, it SWITCHES THE CHAOS LAYER OFF: the layer
+  refuses when proposed > usable, so an unbounded estimate passes every
+  horizon, on exactly the flattest symbols. Same losing shape
+  profit_logic_audit exists to catch. Bounded to the observed span; None is
+  what the caller already treats as 'unmeasurable is not permission'.
+  1 of 25 live symbols was affected.
+  SHIPPED: trading/omen_features.py, scripts/omen_generalisation.py,
+  web/tradingagent/chaos.py, 2 test files (11 tests; the chaos pair goes
+  2-red against the old code on the real captured fixture -- an earlier
+  synthetic version passed BOTH ways and was rebuilt around real data).
+  NEXT: (a) the 10-symbol h=1..12 sweep was still running when I finished --
+  rerun `python -X utf8 -u scripts/omen_generalisation.py --symbols 10
+  --horizons 1,2,3,4,6,12 --bins 5` and read whether the h=2 edge holds
+  wider; (b) the alpha needs ~5x to clear the round trip, so the next
+  question is which SYMBOL pays for its round trip most often at h<=4, not
+  which model is cleverer; (c) hand omen_features.py to whoever owns the
+  brain -- read features SEPARATELY instead of keying on a joint frame, which
+  is the only way out of Nook's dilution law and my uniqueness wall at once.

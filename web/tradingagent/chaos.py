@@ -187,7 +187,29 @@ def lyapunov_horizon_sec(prices: Sequence[float], bar_sec: float
     exponent_per_sec = per_step / bar_sec
     if exponent_per_sec <= 0:
         return None
-    return 1.0 / exponent_per_sec
+    usable = 1.0 / exponent_per_sec
+
+    # A decay timescale cannot be longer than the data it was estimated from.
+    # `per_step` is a mean of log ratios: on a near-flat series -- a stablecoin
+    # pair, a frozen feed -- those ratios cancel to a value indistinguishable
+    # from zero, and 1/tiny is astronomical rather than informative. Measured
+    # 2026-09-07 on the live stream: EURC-USDC returned 5.963e16 s of "usable
+    # horizon" from a 17980 s window, 3.3e12 times its own observation span.
+    #
+    # That number is not merely wrong, it DISABLES THE GATE. The chaos layer
+    # refuses when `proposed_horizon_sec > usable`, so an unbounded estimate
+    # passes every horizon anyone asks for, on exactly the flattest symbols --
+    # the same "flat is unmeasurable, not calm" mistake the swap guard's
+    # frozen-feed clause was written to fix. An unmeasurable quantity that
+    # defaults to the permissive value is the losing shape
+    # `services.profit_logic_audit` was built to catch.
+    #
+    # Returning None is not a weaker answer here: the caller already treats
+    # None as "unmeasurable is not permission" and refuses.
+    observed_span = len(series) * bar_sec
+    if usable > observed_span:
+        return None
+    return usable
 
 
 def _return_autocorrelation(prices: Sequence[float], lag: int = 1

@@ -270,6 +270,31 @@ GATE_TESTS = (
     # brain_bridge's own comment records a py-spy dump catching exactly that.
     "test_an_omen_cannot_be_measured_against_zero.py",
     "test_the_omen_strategy_never_blocks_the_feed.py",
+    # The third omen question, upstream of both: can the representation say
+    # anything about a bar it has not already been shown? Measured on a 732-row
+    # corpus, the substrate's per-collection frames are 732/732 distinct for
+    # temporal and 719/732 for geometry -- largest bucket 1 and 4 rows. A key
+    # that is always unique memorises perfectly and generalises to nothing,
+    # which is exactly 100% train recall beside 26.6% held-out against a 31.2%
+    # majority. This pins the opposite property on the fitted-bin features.
+    "test_a_feature_key_that_is_always_unique_cannot_generalise.py",
+    # The lattice's chaos layer refuses an entry when the proposed horizon
+    # exceeds the measured usable one, so an UNBOUNDED usable horizon switches
+    # the layer off rather than merely misreporting. On the real EURC-USDC
+    # stream (129 ticks, three distinct prices) it returned 5.9634e+16 s from a
+    # 194 s window -- 3.08e+14x its own span, and every forecast passed. Same
+    # losing shape profit_logic_audit exists to catch: an unmeasurable quantity
+    # defaulting to the permissive value.
+    "test_a_forecast_horizon_cannot_outlive_its_own_data.py",
+    # Added at Nook's request (they hold the omen brain and could not edit this
+    # file while it was claimed); verified green here independently -- 15
+    # passed -- rather than on trust. Nook measured that a stream dilutes the
+    # stage-2 decode in proportion to how many training samples share its
+    # frame, so the flattest, least informative pool drowns out the sharp ones.
+    # That is the same wall as the test above it, seen from the other side: a
+    # frame coarse enough to be shared costs recall, and one fine enough to be
+    # unique cannot generalise.
+    "test_a_low_entropy_stream_cannot_outvote_the_sharp_ones.py",
 )
 
 
