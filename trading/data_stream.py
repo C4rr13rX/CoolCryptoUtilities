@@ -774,6 +774,11 @@ class MarketDataStream:
         self.rate_limiter = APIRateLimiter(default_capacity=5.0, default_refill_rate=1.0)
         self._rest_parallel = max(1, int(os.getenv("REST_CONSENSUS_PARALLEL", "3")))
         self._rest_batch_retry = max(1, int(os.getenv("REST_CONSENSUS_BATCHES", "3")))
+        # A batch lost entirely to OUR blocked loop was never really asked, so
+        # it is re-asked rather than spent. See the retry in `_poll_rest_data`.
+        self._local_stall_retries = max(0, int(os.getenv("FEED_LOCAL_STALL_RETRIES", "2")))
+        self._local_stall_retry_count = 0
+        self._local_stall_recovered = 0
         self._rest_latency: Dict[str, deque] = {name: deque(maxlen=32) for name in self._endpoint_scores}
         self._last_rest_health: Dict[str, Any] = {}
         self._snapshot_refresh_interval = max(1, int(os.getenv("MARKET_SNAPSHOT_REFRESH_FAILS", "6")))
@@ -1248,9 +1253,8 @@ class MarketDataStream:
                 if not batch:
                     break
                 attempts += 1
-                results = await asyncio.gather(
-                    *(self._timed_rest_fetch(endpoint, base, quote) for endpoint in batch),
-                    return_exceptions=False,
+                results = await self._fetch_batch_past_local_stalls(
+                    batch, base, quote, end_time=end_time
                 )
                 for endpoint, result, latency in results:
                     if result.error == "unavailable":
@@ -3081,6 +3085,95 @@ class MarketDataStream:
         result = await self._fetch_rest_price(endpoint, base, quote)
         latency = time.time() - start
         return endpoint, result, latency
+
+    @staticmethod
+    def _lost_to_local_stall(
+        results: Sequence[Tuple[Endpoint, RestFetchResult, float]]
+    ) -> bool:
+        """Was this batch lost to OUR blocked loop and to nothing else?
+
+        True only when at least one endpoint timed out on our own stall and no
+        endpoint came back having actually been asked. A success, an HTTP
+        status, a DNS failure -- any of those is information about the
+        upstream, and there is then nothing to re-ask. ``unavailable`` is a
+        missing URL template rather than a request, so it counts as neither.
+        """
+        stalled = False
+        for _endpoint, result, _latency in results:
+            if result.error == "local_stall":
+                stalled = True
+            elif result.error != "unavailable":
+                return False
+        return stalled
+
+    async def _fetch_batch_past_local_stalls(
+        self,
+        batch: Sequence[Endpoint],
+        base: str,
+        quote: str,
+        *,
+        end_time: float,
+    ) -> List[Tuple[Endpoint, RestFetchResult, float]]:
+        """Fetch one batch, re-asking it while WE are what lost it.
+
+        ``_fetch_rest_price`` already separates the two reasons an aiohttp
+        timeout fires: the endpoint was slow, or this process stalled the loop
+        that the timeout is timed on. It returns ``local_stall`` for the
+        second, and the poll loop then skips the endpoint -- correctly
+        declining to blame it, and incorrectly throwing the tick away with it.
+        The endpoint was never asked, so the answer is to ask it.
+
+        Measured over the 6h ending 2026-09-07 05:13 of one production log:
+        1230 REST timeouts classified ``local_stall`` against 7 upstream HTTP
+        429s, and 1251 dropped ticks against 1185 published. Loop lag over the
+        same log was p50 16.1s, p90 47.7s, max 246.8s against a 10s fetch
+        budget -- so a batch of three endpoints times out together off one
+        stall, and three such batches spend the whole poll.
+
+        The retry is refused unless EVERY endpoint in the batch came back
+        ``local_stall``. That is what keeps it from adding load to an upstream
+        that is genuinely struggling: one real answer, even an error, and this
+        returns immediately.
+        """
+        results = list(
+            await asyncio.gather(
+                *(self._timed_rest_fetch(endpoint, base, quote) for endpoint in batch),
+                return_exceptions=False,
+            )
+        )
+        for _ in range(self._local_stall_retries):
+            if not self._lost_to_local_stall(results):
+                break
+            # A retry that runs past the poll window buys a price nobody will
+            # read, at the cost of the next symbol's turn on the same loop.
+            if time.time() >= end_time:
+                break
+            self._local_stall_retry_count += 1
+            results = list(
+                await asyncio.gather(
+                    *(self._timed_rest_fetch(endpoint, base, quote) for endpoint in batch),
+                    return_exceptions=False,
+                )
+            )
+            if any(
+                result.error not in {"local_stall", "unavailable"}
+                for _endpoint, result, _latency in results
+            ):
+                self._local_stall_recovered += 1
+                log_message(
+                    "market-stream",
+                    "re-asked a REST batch our own loop stall had lost; the "
+                    "endpoint answered",
+                    details={
+                        "symbol": self.symbol,
+                        "endpoints": [endpoint.name for endpoint in batch],
+                        "retries_total": self._local_stall_retry_count,
+                        "recovered_total": self._local_stall_recovered,
+                    },
+                    severity="info",
+                )
+                break
+        return results
 
     def _clear_endpoint_network_backoff(self, name: str) -> None:
         self._endpoint_network_failures.pop(name, None)

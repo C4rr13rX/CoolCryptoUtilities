@@ -154,6 +154,17 @@ GATE_TESTS = (
     # outrank the deferral and the stale clock must still release an in-band
     # position, or a bearish model pins it open forever.
     "test_an_opinion_cannot_spend_a_round_trip_the_move_never_earned.py",
+    # The supply side of every number above. `_fetch_rest_price` learned to
+    # tell a slow endpoint from a stall in our own loop, and then the poll
+    # discarded the tick anyway -- its own comment said the endpoint "was
+    # never really asked" and nothing asked it. Measured 2026-09-07 over the
+    # 6h to 05:13 of one production log: 1185 ticks published, 1251 dropped,
+    # 1230 REST timeouts our own loop caused, and 7 upstream HTTP 429s. The
+    # feed was losing 51% of its ticks to this process, not to the network.
+    # At 265 ticks/h across 12 symbols nothing can be traded on the minutes
+    # timescale this loop targets, no stop can bind, and the ghost round trips
+    # that re-arm a demoted strategy accrue too slowly to reach the bar.
+    "test_a_stalled_batch_is_re_asked_not_discarded.py",
 )
 
 
