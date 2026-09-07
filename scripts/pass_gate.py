@@ -192,6 +192,21 @@ GATE_TESTS = (
     # the call-site assertions here are the load-bearing half -- a guard the
     # exit paths do not feed fails open on 100% of the book.
     "test_a_three_week_hold_is_not_minutes_scale_evidence.py",
+    # ...and HOW MUCH of that evidence the gate can actually see. The
+    # `ghost.tradeable` sub-counter the graduation and re-arm bars read is only
+    # maintained forward by `record()`, so when it landed it started every
+    # strategy at zero. Measured 4.7h later: 394 ghost trades in the ledger
+    # against SEVEN in the tradeable counters, 33 of 37 entries with no
+    # `tradeable` key at all, and atf_static -- the only executor with a live
+    # branch -- judged on 1 round trip while its recorded history held 174
+    # live-tradeable in-horizon ones at a 44.8% win rate. Those two samples give
+    # opposite instructions: 1-of-20 says collect more evidence, 78/174 against
+    # a 55% bar says there is no edge to find. This guards the reconstruction
+    # that tells them apart, including that it applies the LEDGER'S predicates
+    # rather than a second copy of them, and that `reconcile_window` refuses to
+    # locate a rolling window it cannot prove -- which it cannot for both
+    # live-relevant strategies.
+    "test_graduation_reads_one_trade_of_a_174_trade_record.py",
 )
 
 
