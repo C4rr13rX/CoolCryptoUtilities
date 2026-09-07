@@ -236,6 +236,25 @@ GATE_TESTS = (
     # a 40% move between two ticks one second apart, MOONBASE's denomination
     # flip, and a calm dense AERO feed all still get the verdict they had.
     "test_a_stop_gate_cannot_call_a_31_hour_gap_one_tick.py",
+    # A brain that cannot answer, reaching the money path as "no opinion".
+    # `trading.brain_bridge` returns (None, 0.0) for a refused connection, a
+    # timeout, a bad body AND for a genuine abstention, and both callers --
+    # `trading/bot.py:5014` and `services/ga_service.py:296` -- document that
+    # as "the caller already treats a None answer as no opinion".
+    #
+    # Measured 2026-09-07 08:35 on the node BRAIN_ENDPOINT defaults to: :8090
+    # served /health (uptime 32.3h) and /brain/stats (521224 concepts /
+    # 10725783 terminals) while EVERY /brain/predict timed out, at 34 MB RSS
+    # against a 15.7 GB brain.wbrain. So for 32 hours every brain query in the
+    # live lane returned nothing, and no counter, log line or status field
+    # said so -- the same shape as a status line reading "0 ticks/10m with no
+    # error anywhere". The same binary launched correctly on :8091 answered
+    # the identical call in 0.67s against 5525536 terminals.
+    #
+    # This is money path by the only test that matters: the bot sizes on that
+    # confidence. A guard that cannot tell an outage from an abstention lets a
+    # dead forecaster vote silently, forever.
+    "test_a_blocked_brain_is_not_an_absent_opinion.py",
 )
 
 
