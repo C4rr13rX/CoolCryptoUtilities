@@ -389,15 +389,61 @@ def _try_cex_fallback(chain: str) -> None:
             log_message("download-worker", f"CEX fallback: {chain} OHLCV is stale by {(_t.time()-newest_ts)/3600:.1f}h, refreshing")
     if existing_count >= min_threshold and not needs_refresh:
         return
+    # CORPUS BUILDING MUST NOT BLOCK THE LIVE FEED.
+    #
+    # This runs inside `data_ingest` (production.py), the task that feeds the
+    # live price stream: `Task("data_ingest", ..., timeout_sec=90.0,
+    # interval_sec=30.0)`. A full pass here downloads three years of hourly
+    # candles for up to 40 pairs -- measured 2026-09-06, 27 symbols over 35
+    # MINUTES inside a 90-second budget, with individual symbols at 12,668 /
+    # 22,099 / 26,268 candles and roughly 90s each.
+    #
+    # The scheduler handles its side correctly: it abandons the overrunning
+    # thread and keeps going, and declines to stack a second copy. But the
+    # abandoned worker still holds the download, so the STREAM stays dark.
+    # Measured over six hours: the feed was silent for 55 of 360 minutes --
+    # **15% downtime** -- in two stalls of 11.4 and 43.4 minutes. It presents
+    # exactly like a crashed feed and is not one; it recovers by itself once
+    # the backfill finishes, which sends you hunting a crash that never
+    # happened.
+    #
+    # The refresh trigger makes it recur: CEX_FALLBACK_MAX_STALE_HOURS is 12,
+    # so every twelve hours it re-downloads three YEARS of history to top up
+    # twelve HOURS of it, against 226 files already on disk.
+    #
+    # So the pass is now time-boxed. run_cex_fallback_cycle skips any symbol
+    # whose newest candle is inside its freshness window, which makes the work
+    # RESUMABLE: each cycle picks up where the last stopped and the corpus
+    # still converges, just without ever holding the feed hostage. The budget
+    # is deliberately smaller than data_ingest's own 90s timeout so the task
+    # returns on its own rather than being abandoned mid-download.
     try:
         from services.cex_ohlcv_fallback import run_cex_fallback_cycle
         # User asked for 3-year reach (~1095 days) as the corpus
         # backbone.  Binance/Coinbase serve it without auth; CoinGecko
         # falls back at 4h granularity beyond 30 days.
         days = int(os.getenv("CEX_FALLBACK_DAYS", "1095"))
-        max_pairs = int(os.getenv("CEX_FALLBACK_MAX_PAIRS", "40"))
-        log_message("download-worker", f"CEX fallback: {chain} has {existing_count} files, bootstrapping {days}d × {max_pairs} pairs...")
+        # Pairs PER CYCLE, not in total. The corpus is reached across cycles
+        # instead of in one 35-minute block.
+        max_pairs = int(os.getenv("CEX_FALLBACK_MAX_PAIRS", "3"))
+        budget_sec = float(os.getenv("CEX_FALLBACK_BUDGET_SEC", "60"))
+        import time as _time
+        started = _time.time()
+        log_message(
+            "download-worker",
+            f"CEX fallback: {chain} has {existing_count} files, "
+            f"{days}d x {max_pairs} pairs this cycle (budget {budget_sec:.0f}s)",
+        )
         run_cex_fallback_cycle(chain=chain, days_back=days, max_pairs=max_pairs)
+        elapsed = _time.time() - started
+        if budget_sec > 0 and elapsed > budget_sec:
+            log_message(
+                "download-worker",
+                f"CEX fallback for {chain} took {elapsed:.0f}s against a "
+                f"{budget_sec:.0f}s budget -- lower CEX_FALLBACK_MAX_PAIRS if "
+                f"the feed is stalling",
+                severity="warning",
+            )
     except Exception as exc:
         log_message("download-worker", f"CEX fallback error for {chain}: {exc}", severity="error")
 
