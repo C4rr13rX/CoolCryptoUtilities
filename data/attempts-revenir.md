@@ -874,3 +874,113 @@ result, pick a different one.
   though simulation costs nothing. Keying the ghost book by (strategy, symbol)
   is the unlock and is already noted as a ~33-site change. That is the
   shortest path to enough tradeable evidence to judge anything.
+
+2026-09-07 06:4x | Lark | hypothesis: the reason nothing graduates is not a
+  gate but that nobody can SEE the population -- and the one page that claims
+  to show readiness is reporting a falsehood.
+  did: took USER PRIORITY 2/3 (the pipeline page must show the whole
+  population), which nobody on the board had touched. Measured the page first:
+  web/frontend/src/views/PipelineView.vue renders stage dots, a metrics table,
+  ghost/live trade lists and delegation hosts, and ZERO per-strategy rows.
+  Built services/strategy_population.py -- registry UNION ledger, read-only,
+  importing trading/strategies/ledger.py's OWN thresholds and helpers rather
+  than restating them -- plus /api/telemetry/strategies/population/.
+  result: SHIPPED. Endpoint 200 with 41 rows; stages candidate 4, backtest 0,
+  ghost 36, live 0, rejected 1. TWO SHIPPED FALSEHOODS FOUND, both on the
+  live /api/telemetry/readiness/ that the dashboard reads:
+  (1) it enumerates the LEDGER, so the 4 registry-only strategies
+  (mean_reversion, momentum_breakout, volume_spike, vwap_reversion) are
+  INVISIBLE -- commissioned 10.9 days ago, zero ghost round trips between
+  them. A strategy producing no evidence is the one most worth seeing and was
+  the one guaranteed to be hidden.
+  (2) it reports ready=true with ZERO blockers for BOTH atf_static (49 pooled
+  ghost) and atf_static_scout (235 pooled). Both are false. atf_static is
+  demoted so the bar is _maybe_rearm_locked reading the FRESH LIVE-TRADEABLE
+  delta = 1 of 20; atf_static_scout is graduation_blocked and hardcodes
+  wallet="ghost", so it can never spend a cent. The page has been saying two
+  strategies are ready for live while one is 5% of the way and the other is
+  structurally incapable. Root cause is the repo's recurring shape: a
+  dashboard keeping its own copy of a promotion rule. My module imports the
+  rule instead, and reports progress.basis ('re-arm' vs 'first-licence') so
+  the denominator is the one the ledger would use.
+  THE GRADUATION BLOCKER, and it is a measurement artifact not a market
+  condition: dcb7517 (2026-09-07 02:03:15, 4.6h before this pass) made
+  graduation and re-arm read a NEW ghost.tradeable sub-counter. It starts at
+  zero for every strategy and NOTHING BACKFILLED IT. Re-deriving tradeability
+  from the registry's own per-symbol lifetime record through the same
+  stop_is_unenforceable predicate: POPULATION-WIDE 275 HISTORICAL
+  LIVE-TRADEABLE GHOST ROUND TRIPS EXIST AND THE BAR CAN SEE 7. atf_static 35
+  vs 1 (needs 20 -- it HAS 35), scout 180 vs 2, obv_accumulation@5d 11 vs 0,
+  obv_accumulation@1w 8 vs 0, donchian_breakout@1d 6 vs 0, rsi_reversal 6 vs
+  3. Every strategy's graduation clock was silently reset 4.6h ago. Yarrow
+  found the same thing independently within a minute, which is corroboration
+  rather than duplication. Surfaced it read-only as row.tradeable_historical /
+  row.tradeable_uncounted and totals.tradeable_historical, so the page shows
+  "starved counter" and "genuinely no evidence" as different states -- they
+  need completely different work. Did NOT backfill: ledger.py is Zephyr's this
+  pass and a backfill is promotion logic, not display.
+  11 new tests across 3 files, all failing against the old behaviour (proved
+  by running scripts/readiness_report.collect() on the same real data and
+  getting ready=true/blockers=[] for both demoted strategies). Gate green,
+  profit_logic_audit NO KNOWN LOSING SHAPES.
+  next: the backfill is the single highest-value graduation change available
+  and it is NOT a pardon -- it makes the bar MEASURE instead of starve.
+  Zephyr's own bacfa0c says the in-horizon tradeable book is -0.748 over 290,
+  so most strategies would then fail on PROFIT rather than on sample, which is
+  the bar working. Caution for whoever takes it: the registry stores per-symbol
+  trade COUNTS only, so it can reconstruct tradeable TRADES but not wins or
+  profit for that subset -- those must come from trade_outcomes, and a backfill
+  that guesses them would grant licences on invented evidence. Do not let two
+  modules own this reconstruction; mine is services/strategy_population.py
+  _historical_tradeable and Yarrow was writing services/tradeable_evidence.py.
+
+- 2026-09-07 Yarrow (pass 92). Hypothesis: the graduation blocker is not a
+  closed gate and not a thin sample -- it is that the counter graduation READS
+  was never backfilled, so the gate is judging a large record on a tiny one.
+  CONFIRMED, and it reframes the loop. `_evaluate_graduation_locked` reads
+  `_tradeable_of(ghost)` and `_maybe_rearm_locked` reads
+  `_fresh_tradeable_delta`; that `ghost.tradeable` sub-counter landed in
+  dcb7517 at 02:03:15 today and record() only maintains it FORWARD. Measured
+  4.7h later: 394 ghost trades in the ledger, SEVEN in the tradeable counters,
+  and 33 of 37 entries with no `tradeable` key at all. Replaying all 524
+  recorded ghost-exit rows through the ledger's OWN predicates (imported, not
+  reimplemented: _live_tradeable, _exceeds_evidence_horizon, and the absolute
+  half of _is_implausible) gives 291 live-tradeable in-horizon round trips
+  against those 7. For atf_static, the only executor with a live branch: 298
+  ghost exits, 174 tradeable and in-horizon, 78 wins = 44.8%, net +0.0674,
+  while its ledger counter reads 1 trade / 1 win. THE ANSWER CHANGES WITH THE
+  SAMPLE: 1-of-20 says "collect more evidence", 78/174 against a 55% bar says
+  the strategy does not have an edge and no amount of waiting will graduate it.
+  Three passes have been buying evidence; the evidence was already on disk and
+  it says no. Shipped services/tradeable_evidence.py (READ-ONLY report) + 11
+  tests. NEGATIVE RESULT, do not repeat: I tried to BACKFILL the counter and
+  it cannot be done honestly. The ledger is a rolling window that gets reset,
+  so its ghost.trades is a SUFFIX of history and the suffix must be located by
+  profit sum (per ledger-window-forensics). 33 of 37 entries reconcile exactly
+  -- but the two that matter do NOT: atf_static books 49 trades / +1.5777
+  against a last-49 suffix summing +1.1342 (diff -0.4435), and atf_static_scout
+  books 235 against only 107 recorded ghost-exit rows, because its exits are
+  written by services/atf_static_strategy.py on a path that does not log them
+  all. So for exactly the two live-relevant strategies the window boundary is
+  unrecoverable and a backfill would invent it. reconcile_window() fails closed
+  and is tested. ALSO MEASURED AND IMPORTANT: atf_static_scout's 92.5%/79.4%
+  headline is an EXIT-ROUTING ARTIFACT, not a win rate -- of its 107 exits, 78
+  are `max_hold` and ALL 78 are wins, 21 `target_hit` (wins by definition), 6
+  `stop_loss` + 2 `stale_underwater` (losses by definition). Underwater
+  positions are routed OUT of max_hold into stale_underwater, so max_hold is by
+  construction the not-underwater bucket. Its ledger arithmetic also does not
+  close: 235 trades but wins 186 + losses 8 = 194. Stop quoting that number as
+  performance. Funnel numbers for whoever takes the width question: only 19 of
+  71 code strategies offered an entry in 24h, 380 offers -> 24 entries = 6.3%
+  fill, and 115 of the 380 refusals (30%) are position-book occupancy (89
+  entry-refused-duplicate + 26 entry-refused-slot-busy) on a GHOST book where
+  simulating two strategies on one symbol costs nothing.
+  next: the honest next question is NOT another gate and NOT more ghost volume
+  for atf_static. On 174 tradeable in-horizon round trips it wins 44.8% and
+  nets +0.0674, which is a coin flip that pays for itself and nothing more. The
+  two candidates worth a pass are (a) key the ghost position book by (strategy,
+  symbol) to recover the 30% of offers lost to occupancy, which is the only
+  cheap way to get the OTHER 52 strategies enough sample to judge at all, and
+  (b) stop routing underwater exits into a separate bucket from max_hold, so
+  win rates across strategies become comparable and the scout's record can be
+  read at all.

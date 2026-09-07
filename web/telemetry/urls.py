@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django.urls import path
 
-from . import readiness_views, views
+from . import population_views, readiness_views, views
 
 app_name = "telemetry"
 
@@ -21,4 +21,11 @@ urlpatterns = [
     path("readiness/", readiness_views.TradingReadinessView.as_view(),
          name="trading-readiness"),
     path("readiness", readiness_views.TradingReadinessView.as_view()),
+    # The WHOLE population, not just the ledger's rows. `readiness/` above
+    # lists the 37 strategies that have a ledger entry; this lists all 41,
+    # including the four that have never closed a ghost round trip and the
+    # ones that were tried and permanently barred.
+    path("strategies/population/",
+         population_views.StrategyPopulationView.as_view(),
+         name="strategy-population"),
 ]

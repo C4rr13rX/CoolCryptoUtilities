@@ -39,6 +39,16 @@ export async function fetchPipelineReadiness() {
   return data;
 }
 
+// The whole strategy population -- candidate, backtest, ghost, live and
+// rejected -- not just the ones with a ledger row. Read `tradeable` on each
+// row rather than `ghost`: the pooled ghost count is what makes a strategy
+// look ready, and the live-tradeable subset is the population graduation
+// actually consults.
+export async function fetchStrategyPopulation() {
+  const { data } = await api.get('/telemetry/strategies/population/');
+  return data;
+}
+
 export async function fetchBusSchedule() {
   const { data } = await api.get('/telemetry/bus/schedule/');
   return data;
