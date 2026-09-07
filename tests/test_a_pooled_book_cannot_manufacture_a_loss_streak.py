@@ -27,11 +27,30 @@ import unittest
 from typing import Any, Dict, List, Optional, Sequence
 from unittest import mock
 
+from services.roundtrip_cost import roundtrip_cost_usd
 from trading.metrics import MetricsCollector, TradePerformance
 from trading.pipeline import TrainingPipeline
 
+#: The clip the live gate prices its evidence at, and the cost bound that comes
+#: with it -- GHOST_MAX_LOSS_STREAK_COST is a fraction of a clip, so the dollar
+#: figure a streak is compared against moves with the clip. Derived here rather
+#: than written as a constant so this file cannot drift away from the guard.
+CLIP = 6.0
+BOUND = 0.25 * CLIP
 
-def _trade(symbol: str, strategy: str, profit: float, ts: float, ret: float) -> TradePerformance:
+
+def _ret_for(profit_usd: float) -> float:
+    """The return a round trip must post to net ``profit_usd`` at ``CLIP``.
+
+    ``_ghost_validation`` re-prices every row from its own recorded return, so
+    a row whose ``profit`` and ``return_pct`` disagree describes two different
+    trades. Deriving one from the other keeps the book self-consistent and the
+    USD magnitudes below meaning what they say.
+    """
+    return (profit_usd + roundtrip_cost_usd(CLIP)) / CLIP
+
+
+def _trade(symbol: str, strategy: str, profit: float, ts: float, ret: float | None = None) -> TradePerformance:
     return TradePerformance(
         symbol=symbol,
         entry_ts=ts - 60.0,
@@ -42,7 +61,7 @@ def _trade(symbol: str, strategy: str, profit: float, ts: float, ret: float) -> 
         reason="test",
         route=[],
         strategy_id=strategy,
-        return_pct=ret,
+        return_pct=_ret_for(profit) if ret is None else ret,
     )
 
 
@@ -76,8 +95,8 @@ class PooledLossStreakTest(unittest.TestCase):
     def _interleaved_book(self) -> List[TradePerformance]:
         """12 consecutive pooled losses, but only 2 per strategy.
 
-        Each strategy loses $0.05 twice -- $0.10, comfortably inside the $0.25
-        cost bound. Pooled, the same twelve trades cost $0.60 and cross it.
+        Each strategy loses $0.30 twice -- $0.60, comfortably inside the $1.50
+        cost bound. Pooled, the same twelve trades cost $3.60 and cross it.
         """
         now = time.time()
         strategies = [
@@ -92,12 +111,12 @@ class PooledLossStreakTest(unittest.TestCase):
         # A win apiece first, so every strategy's streak starts clean.
         ts = now - 4000.0
         for strat in strategies:
-            book.append(_trade("AERO-USDC", strat, +0.40, ts, +0.01))
+            book.append(_trade("AERO-USDC", strat, +0.40, ts))
             ts += 10.0
         # Now the interleaved losing hour: round-robin, twice through.
         for _ in range(2):
             for strat in strategies:
-                book.append(_trade("AERO-USDC", strat, -0.05, ts, -0.002))
+                book.append(_trade("AERO-USDC", strat, -0.30, ts))
                 ts += 10.0
         return book
 
@@ -108,11 +127,11 @@ class PooledLossStreakTest(unittest.TestCase):
         self.assertEqual(len(tail), 12)
         self.assertEqual(book[-12:], tail, "the last 12 pooled trades must all be losses")
         self.assertGreater(
-            sum(abs(t.profit) for t in tail), 0.25,
+            sum(abs(t.profit) for t in tail), BOUND,
             "pooled the run must breach the cost bound, or the test proves nothing",
         )
 
-        with mock.patch.dict(os.environ, {"GHOST_MAX_LOSS_STREAK_COST": "0.25"}, clear=False):
+        with mock.patch.dict(os.environ, {"GHOST_MAX_LOSS_STREAK_COST": "0.25", "LIVE_MIN_CLIP_USD": str(CLIP)}, clear=False):
             verdict = _pipeline(book)._ghost_validation()
 
         # Per strategy nobody ran more than two, and two cheap losses are not a
@@ -130,38 +149,38 @@ class PooledLossStreakTest(unittest.TestCase):
     def test_a_real_single_strategy_streak_still_breaches(self):
         """The guard keeps its teeth: one strategy losing real money in a row."""
         now = time.time()
-        book = [_trade("AERO-USDC", "atf_static", +0.40, now - 5000.0, +0.01)]
+        book = [_trade("AERO-USDC", "atf_static", +0.40, now - 5000.0)]
         ts = now - 4000.0
         for _ in range(6):
-            book.append(_trade("AERO-USDC", "atf_static", -0.10, ts, -0.01))
+            book.append(_trade("AERO-USDC", "atf_static", -0.30, ts))
             ts += 10.0
         # Other strategies trading profitably alongside must not dilute it.
         for i in range(6):
-            book.append(_trade("CBBTC-USDC", "rsi_reversal", +0.30, ts, +0.01))
+            book.append(_trade("CBBTC-USDC", "rsi_reversal", +0.30, ts))
             ts += 10.0
 
-        with mock.patch.dict(os.environ, {"GHOST_MAX_LOSS_STREAK_COST": "0.25"}, clear=False):
+        with mock.patch.dict(os.environ, {"GHOST_MAX_LOSS_STREAK_COST": "0.25", "LIVE_MIN_CLIP_USD": str(CLIP)}, clear=False):
             verdict = _pipeline(book)._ghost_validation()
 
         self.assertEqual(verdict["max_loss_streak"], 6)
         self.assertGreaterEqual(
             verdict["effective_loss_streak"], 3,
-            "a $0.60 six-loss run by ONE strategy is a genuine breach",
+            "a $1.80 six-loss run by ONE strategy is a genuine breach",
         )
 
     def test_unattributed_trades_are_their_own_book(self):
         """Trades with no strategy must not be folded into a strategy's record."""
         now = time.time()
         book = [
-            _trade("AERO-USDC", "atf_static", +0.50, now - 5000.0, +0.01),
-            _trade("AERO-USDC", "", -0.20, now - 4000.0, -0.01),
-            _trade("AERO-USDC", "atf_static", -0.20, now - 3900.0, -0.01),
-            _trade("AERO-USDC", "", -0.20, now - 3800.0, -0.01),
+            _trade("AERO-USDC", "atf_static", +0.50, now - 5000.0),
+            _trade("AERO-USDC", "", -0.80, now - 4000.0),
+            _trade("AERO-USDC", "atf_static", -0.80, now - 3900.0),
+            _trade("AERO-USDC", "", -0.80, now - 3800.0),
         ]
-        with mock.patch.dict(os.environ, {"GHOST_MAX_LOSS_STREAK_COST": "0.25"}, clear=False):
+        with mock.patch.dict(os.environ, {"GHOST_MAX_LOSS_STREAK_COST": "0.25", "LIVE_MIN_CLIP_USD": str(CLIP)}, clear=False):
             verdict = _pipeline(book)._ghost_validation()
         # The two unattributed losses are consecutive within their own book
-        # ($0.40, a breach); atf_static's single $0.20 loss is not.
+        # ($1.60, a breach); atf_static's single $0.80 loss is not.
         self.assertEqual(verdict["max_loss_streak"], 2)
         self.assertEqual(verdict["effective_loss_streak"], 2)
 

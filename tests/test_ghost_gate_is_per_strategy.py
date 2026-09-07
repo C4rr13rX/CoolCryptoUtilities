@@ -32,8 +32,17 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from services.roundtrip_cost import roundtrip_cost_usd
 from trading.metrics import MetricsCollector, TradePerformance
 from trading.pipeline import TrainingPipeline
+
+#: The clip the live gate prices its evidence at.
+CLIP = 6.0
+
+
+def _ret_for(profit_usd: float) -> float:
+    """The return a round trip must post to net ``profit_usd`` at ``CLIP``."""
+    return (profit_usd + roundtrip_cost_usd(CLIP)) / CLIP
 
 
 def _trade(
@@ -45,11 +54,14 @@ def _trade(
 ) -> TradePerformance:
     """A stand-in round trip.
 
-    ``return_pct`` defaults to ``profit``, i.e. these fixtures are read as
-    returns on a $1 notional. A real ghost trade always records one -- 144 of
-    144 exits in the live 48h window carry both prices -- and the tail gate
-    refuses to clear a book whose tail it cannot measure, so a fixture without
-    a return is not a faithful stand-in for a trade.
+    ``return_pct`` defaults to the return that nets ``profit`` at the live
+    clip. A real ghost trade always records one -- 144 of 144 exits in the live
+    48h window carry both prices -- and the tail gate refuses to clear a book
+    whose tail it cannot measure, so a fixture without a return is not a
+    faithful stand-in for a trade. It must also AGREE with ``profit``: the
+    gate re-prices every row from its own return, so a fixture that says +$0.10
+    while its prices say +10% describes two different trades and the book the
+    assertions below reason about is not the book the gate sees.
     """
     return TradePerformance(
         symbol=symbol,
@@ -61,7 +73,7 @@ def _trade(
         reason="target_hit",
         route=[],
         strategy_id=strategy_id,
-        return_pct=profit if return_pct is None else return_pct,
+        return_pct=_ret_for(profit) if return_pct is None else return_pct,
     )
 
 
@@ -93,6 +105,7 @@ class _StubPipeline:
 # Staleness is measured against wall-clock; these fixtures use ts=0, so the
 # guard is disabled for the gate tests. Every OTHER guardrail stays live.
 _ENV = {
+    "LIVE_MIN_CLIP_USD": str(CLIP),
     "GHOST_MAX_STALE_SEC": "0",
     "GHOST_REQUIRE_MULTI_SYMBOL_EDGE": "1",
     "GHOST_MAX_SYMBOL_DOMINANCE": "0.82",
@@ -183,13 +196,19 @@ class JackknifeGuardTest(unittest.TestCase):
         """Many symbols, but every dollar came from one -- and the rest lose.
 
         Deliberately built to clear every OTHER guardrail, so the only thing
-        that can refuse it is the jackknife: win rate 0.60, profit factor 1.5,
-        avg profit positive, ES95 0.05 against a 0.10 tail guard, loss rate
-        0.40, trade dominance 0.60 against the 0.82 guard, and losses
-        interleaved so no streak becomes costly. Net +0.50 overall; net -1.00
-        once LUCKY-USDC is removed.
+        that can refuse it is the jackknife: win rate 0.60, profit factor 3.30,
+        payoff ratio 2.20, avg profit positive, ES95 well inside the 0.10 tail
+        guard, loss rate 0.40, trade dominance 0.60 against the 0.82 guard, and
+        losses interleaved so no streak becomes costly. Net +2.30 overall; net
+        -1.00 once LUCKY-USDC is removed.
+
+        The wins are $0.11 rather than $0.05 so that the payoff ratio clears
+        2.0. At $0.05 the book failed the TRADEABLE-EDGE guard as well -- both
+        guards refused it, and since ``no_tradeable_edge`` outranks
+        ``single_symbol_dependence`` in the reason ladder the verdict named the
+        wrong one. A fixture that trips two guards cannot pin either.
         """
-        wins = [_trade(0.05, symbol="LUCKY-USDC", strategy_id="s") for _ in range(30)]
+        wins = [_trade(0.11, symbol="LUCKY-USDC", strategy_id="s") for _ in range(30)]
         losses = [_trade(-0.05, symbol="BBB-USDC", strategy_id="s") for _ in range(20)]
         trades = []
         while wins or losses:

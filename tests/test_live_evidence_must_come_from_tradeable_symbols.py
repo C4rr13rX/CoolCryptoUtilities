@@ -34,13 +34,24 @@ import unittest
 from typing import Any, Dict, List, Sequence
 from unittest import mock
 
+from services.roundtrip_cost import roundtrip_cost_usd
 from trading.metrics import MetricsCollector, TradePerformance
 from trading.pipeline import TrainingPipeline
 
 REFUSED = {"BSTONK-USDC", "BASECAT-USDC"}
 
+#: The live gate prices its evidence at one clip and reads each row's own
+#: return to do it, so a fixture's ``profit`` and ``return_pct`` must describe
+#: the SAME trade or the book under test is not the book asserted on.
+CLIP = 6.0
 
-def _trade(symbol: str, strategy: str, profit: float, ts: float, ret: float) -> TradePerformance:
+
+def _ret_for(profit_usd: float) -> float:
+    """The return a round trip must post to net ``profit_usd`` at ``CLIP``."""
+    return (profit_usd + roundtrip_cost_usd(CLIP)) / CLIP
+
+
+def _trade(symbol: str, strategy: str, profit: float, ts: float, ret: float | None = None) -> TradePerformance:
     return TradePerformance(
         symbol=symbol,
         entry_ts=ts - 60.0,
@@ -51,7 +62,7 @@ def _trade(symbol: str, strategy: str, profit: float, ts: float, ret: float) -> 
         reason="test",
         route=[],
         strategy_id=strategy,
-        return_pct=ret,
+        return_pct=_ret_for(profit) if ret is None else ret,
     )
 
 
@@ -93,13 +104,13 @@ def _book() -> List[TradePerformance]:
     ts = now - 40000.0
     for symbol in ("BSTONK-USDC", "BASECAT-USDC"):
         for i in range(15):
-            profit, ret = (+0.50, +0.08) if i % 5 != 4 else (-0.05, -0.01)
-            book.append(_trade(symbol, "refused_lane", profit, ts, ret))
+            profit = +0.50 if i % 5 != 4 else -0.05
+            book.append(_trade(symbol, "refused_lane", profit, ts))
             ts += 60.0
     for symbol in ("AERO-USDC", "CBBTC-USDC"):
         for i in range(20):
-            profit, ret = (+0.02, +0.003) if i % 2 == 0 else (-0.02, -0.003)
-            book.append(_trade(symbol, "tradeable_lane", profit, ts, ret))
+            profit = +0.02 if i % 2 == 0 else -0.02
+            book.append(_trade(symbol, "tradeable_lane", profit, ts))
             ts += 60.0
     return book
 
@@ -115,7 +126,8 @@ class TradeableEvidenceTest(unittest.TestCase):
         self.book = _book()
 
     def _verdict(self, **env: str) -> Dict[str, Any]:
-        base = {"GHOST_MAX_LOSS_STREAK_COST": "0.25", "GHOST_TRADEABLE_MIN_TRADES": "30"}
+        base = {"GHOST_MAX_LOSS_STREAK_COST": "0.25", "GHOST_TRADEABLE_MIN_TRADES": "30",
+                "LIVE_MIN_CLIP_USD": str(CLIP)}
         base.update(env)
         with mock.patch.dict(os.environ, base, clear=False):
             return _pipeline(self.book)._ghost_validation()

@@ -17,6 +17,7 @@ from collections import Counter
 
 import hashlib
 import math
+from dataclasses import replace as _dataclass_replace
 
 import numpy as np
 
@@ -603,6 +604,73 @@ def ghost_tail_guardrail() -> float:
     if ceiling > 0:
         derived = min(derived, ceiling)
     return max(explicit, derived)
+
+
+def price_book_at_live_clip(trades: Sequence[Any]) -> List[Any]:
+    """The simulated book, re-priced at the ONE clip the live lane will use.
+
+    Every USD statistic the live gate reads -- expectancy, profit factor,
+    payoff ratio, net profit, the sign that decides a win from a loss, and the
+    cost bound on a losing streak -- is a sum or a ratio over ``profit``. Those
+    only mean something if every row is denominated the same way. They were
+    not.
+
+    MEASURED 2026-09-06 on the 5-day ghost book (246 paired round trips). Each
+    row's implied notional is ``profit / return_pct``; across ``atf_static``'s
+    34 tradeable trades that spans $0.031 to $39.573 -- a factor of 1276. The
+    ghost lanes each sized their own simulation, so the book is not one game
+    but a mixture of them, and every ratio over it is decided by which rows
+    happened to be recorded large rather than by whether the strategy is right:
+
+        atf_static, tradeable subset      as-is (mixed)   at the $6 live clip
+        expectancy USD/trade                  -0.00143            +0.01140
+        net USD                               -0.04850            +0.38760
+        profit factor                            0.850               1.537
+        payoff ratio                             0.755               1.537
+
+        pooled tradeable subset (153)     as-is (mixed)   at the $6 live clip
+        expectancy USD/trade                  +0.00245            +0.04473
+        profit factor                            1.239               2.792
+        payoff ratio                             2.145               4.448
+
+    The mixed-clip book says atf_static LOSES money at a profit factor of 0.85.
+    At the size it will actually trade it makes a cent a trade. Neither number
+    is a market fact; one of them is an accident of bookkeeping.
+
+    A ghost trade is a SIMULATION -- no money moved, so its recorded notional
+    is an arbitrary choice by the lane that wrote it, while a live entry is
+    raised to ``ghost_clip_usd()`` every time. Pricing the evidence at the size
+    the decision will be executed at is the only reading that answers the
+    question the gate asks.
+
+    This does NOT flatter the book. ``net_profit_usd`` charges a full round
+    trip to every row, so a trade whose gross return does not cover the fee
+    becomes a loss it was not before -- the loss rate and the streak get worse,
+    which is the same direction the 2026-09-06 scout conversion moved them.
+
+    Rows with no usable return are left exactly as written: they cannot be
+    re-priced without inventing a price, and dropping them would shorten the
+    book silently.
+    """
+    from services.roundtrip_cost import ghost_clip_usd, net_profit_usd
+
+    clip = ghost_clip_usd()
+    priced: List[Any] = []
+    for trade in trades:
+        ret = getattr(trade, "return_pct", None)
+        if ret is None:
+            priced.append(trade)
+            continue
+        try:
+            repriced = float(net_profit_usd(float(ret), clip))
+        except (TypeError, ValueError):
+            priced.append(trade)
+            continue
+        try:
+            priced.append(_dataclass_replace(trade, profit=repriced))
+        except Exception:  # noqa: BLE001 - never shorten the book on a shape change
+            priced.append(trade)
+    return priced
 
 
 def stop_is_unenforceable(symbol: str) -> bool:
@@ -4123,6 +4191,14 @@ class TrainingPipeline:
             )
         except Exception:
             trades = []
+        # One book, one clip. See price_book_at_live_clip: the raw rows carry
+        # each lane's own simulated notional (measured spread: $0.031 to
+        # $39.573), so summing or ratioing their dollars answers "which rows
+        # were recorded big", not "does this strategy have an edge". Applied
+        # here rather than in ghost_trade_snapshot because it is the LIVE gate
+        # that asks about the live clip; the raw book stays raw for everyone
+        # else, including the tail, which is measured over returns regardless.
+        trades = price_book_at_live_clip(trades)
         summary = metrics.aggregate_trade_metrics(trades)
         profit_dist = distribution_report([t.profit for t in trades])
         # The tail is measured over RETURNS, not dollars.
@@ -4237,9 +4313,50 @@ class TrainingPipeline:
         # caught by drawdown_guard, and a streak of genuinely damaging losses
         # still trips this, since such a streak necessarily exceeds the cost
         # bound.
+        # ...and that bound is a FRACTION OF A CLIP, not a bare dollar amount.
+        #
+        # The calibration note directly above is the evidence: "the worst
+        # 7-loss streak cost -0.067 in total (~$0.13 on a $2 clip)". -0.067 is
+        # the number that came out of the book and $0.13 is its translation, so
+        # `profit` was a fraction when 0.25 was chosen -- the bound meant "a
+        # quarter of one clip, cumulative", the same unit as the 0.08 stop it
+        # sits beside. This is the identical shape as the tail-risk bug fixed
+        # above: a guardrail calibrated while `profit` was fractional, still
+        # being compared after `profit` became USD.
+        #
+        # Measured 2026-09-06 on the 5-day book at the $6 live clip: 0.25 read
+        # as dollars is 4.2% of one clip, so THREE ordinary losses exhaust it.
+        # Every book with a run that long reported its full length, and the
+        # cost test had stopped discriminating at all:
+        #
+        #     strategy               n   net USD  worst costly streak    cost
+        #     atf_static_scout     105    +9.990          8            $0.669
+        #     obv_accumulation@1w   10    -0.216          9            $0.312
+        #     atf_static            46    +4.681          2            $0.793
+        #
+        # -- a bar of 5 breached by $0.31 spread over nine trades, against
+        # $18.19 of deployable capital. At the calibrated meaning the bound is
+        # 0.25 x $6.00 = $1.50: roughly three consecutive full stop-outs on an
+        # 8% stop, which is the run the guard was written to catch, and which
+        # none of the books above comes near.
+        #
+        # Expressed as a rate so that changing the clip can never silently
+        # retighten it again. GHOST_MAX_LOSS_STREAK_COST_USD still overrides in
+        # dollars for anyone who wants an absolute bound, and 0 still means off.
         max_loss_streak_cost = 0.0
         worst_costly_streak = 0
-        streak_cost_guard = float(os.getenv("GHOST_MAX_LOSS_STREAK_COST", "0.25"))
+        streak_cost_clips = float(os.getenv("GHOST_MAX_LOSS_STREAK_COST", "0.25"))
+        if streak_cost_clips <= 0:
+            streak_cost_guard = 0.0
+        else:
+            from services.roundtrip_cost import ghost_clip_usd as _ghost_clip_usd
+
+            streak_cost_guard = float(
+                os.getenv(
+                    "GHOST_MAX_LOSS_STREAK_COST_USD",
+                    str(streak_cost_clips * _ghost_clip_usd()),
+                )
+            )
         losses = sum(1 for t in trades if float(getattr(t, "profit", 0.0)) <= 0)
         # A losing STREAK is a property of one decision-maker's own sequence of
         # bets. It was being measured over the POOLED book -- every strategy's
