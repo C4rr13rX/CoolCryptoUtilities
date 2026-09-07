@@ -228,6 +228,14 @@ GATE_TESTS = (
     # is not strained by including them.
     "test_strategy_ledger.py",
     "test_readiness_report.py",
+    # The gate that was refusing 100% of entries, and the half of its tests
+    # that matters. `_tick_jumps` read prices without timestamps, so a 40%
+    # move across a 31-hour hole in the feed scored as a single-tick jump and
+    # every symbol dense enough to judge was banned. The three tests here that
+    # PASS both before and after the fix are the load-bearing ones: they prove
+    # a 40% move between two ticks one second apart, MOONBASE's denomination
+    # flip, and a calm dense AERO feed all still get the verdict they had.
+    "test_a_stop_gate_cannot_call_a_31_hour_gap_one_tick.py",
 )
 
 

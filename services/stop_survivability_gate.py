@@ -128,6 +128,70 @@ STOP_PCT = float(os.getenv("GHOST_STOP_LOSS_PCT", "0.02"))
 #: loss.
 MAX_JUMP_RATIO = float(os.getenv("STOP_SURVIVE_MAX_JUMP_RATIO", "2.0"))
 
+#: How far apart two stored rows may be and still count as ONE TICK.
+#:
+#: A "SINGLE-TICK JUMP" ACROSS A 31-HOUR HOLE IS NOT A SINGLE-TICK JUMP.
+#:
+#: ``_tick_jumps`` selected ``price`` and never read ``ts``, so consecutive
+#: ROWS were treated as consecutive TICKS however far apart in time they were.
+#: On a feed that runs at 8-19 ticks/10m and has gone dark for hours at a time
+#: -- our own outages, most of them since fixed: the news crawl on the stream
+#: event loop, a 3-year backfill inside data_ingest, the live gate rebuilding
+#: its dataset on the feed loop -- the gaps between stored rows reach 31 hours.
+#: Measured 2026-09-07 over the 7-day window, max gap per symbol:
+#:
+#:     AAVE-USDC      111156s (30.9h)    VIRTUAL-USDC   115584s (32.1h)
+#:     MORPHO-WETH     89952s (25.0h)    LFG-USDC       183319s (50.9h)
+#:
+#: So the gate was charging today's entries a MULTI-DAY return and calling it
+#: the jump a 2% stop has to survive between two observations. It refused all
+#: 46 symbols it had enough data to judge, which -- with the thin remainder
+#: abstained on -- is why entry-refused-stop-survivability was 100% of refusals
+#: (7-8/h) with the aggregate live gate wide open.
+#:
+#: This is the same conflation trading/pipeline.py:4988 records against
+#: ``sparse``: the AGE of a measurement scored as a fault in the thing
+#: measured. A market that gaps and a feed that went down last Tuesday are
+#: different problems, and only the first one is this gate's.
+#:
+#: Restricting to pairs at most this far apart, over the same window and the
+#: same 4.00% ceiling (2% stop x 2.0):
+#:
+#:     max gap      refused   allowed        AAVE     CLANKER    SPACEX    BSTONK
+#:     none (old)        46       163       4.81%      46.11%    91.67%    10.83%
+#:     900s              35       174
+#:     300s              24       185
+#:     120s              17       192       0.25%       0.51%     0.00%     5.03%
+#:      60s               6       203
+#:
+#: 120s, and the sensitivity above is why the number is not arbitrary: the
+#: per-symbol MEDIAN gap on every symbol dense enough to be judged is 1-65s, so
+#: this keeps the whole body of the distribution, and it drops the p90 tail
+#: (90-1800s) which is dominated by outages rather than by the market. It also
+#: sits below the shortest holding period we trade -- round trips resolving in
+#: single-digit minutes -- so a jump inside it is genuinely one the stop must
+#: survive while a position is open.
+#:
+#: THE GUARD STILL BANS WHAT IT EXISTS TO BAN. 17 symbols stay refused, and
+#: they are the right ones: BSTONK-USDC 5.03%, BASEPEPE-USDC 9.67%, MEME-USDC
+#: 22.36%, CBETH-CBBTC 20.69%, MOONBASE-USDC 27.78% -- the symbol this module's
+#: own docstring was written about -- and the contaminated pairs JITOSOL-CBBTC
+#: 715127%, EURC-WETH 238626%, VVV-WETH 227177%. Nine become POSITIVELY allowed
+#: on a measured p99 rather than by abstention: ANTHROPIC-USDC 0.00%,
+#: MORPHO-WETH 0.00%, SPACEX-USDC 0.00%, TIBBIR-VIRTUAL 0.04%, VIRTUAL-WETH
+#: 0.07%, CLANKER-USDC 0.51%, CBETH-WETH 0.96%, LFG-USDC 2.68%,
+#: BASECAT-USDC 3.32%.
+#:
+#: The rest fall below ``MIN_TICKS`` once long-gap pairs are dropped and land
+#: on the existing abstention, which is this module's stated policy rather than
+#: a new hole: "this gate is not the one that polices thin feeds --
+#: symbol_motion_gate and the ATF scout's _feed_is_dense_enough already refuse
+#: those". The breach counter is filtered with the percentile deliberately: a
+#: breach observed across a 31-hour hole is the same non-evidence as a
+#: percentile computed from one, and letting it ban while the percentile may
+#: not would put the old bug back through the thin-feed door.
+MAX_TICK_GAP_SEC = float(os.getenv("STOP_SURVIVE_MAX_TICK_GAP_SEC", "120"))
+
 #: Symbols never refused regardless of feed. Empty by default.
 NEVER_BAN = {
     s.strip().upper()
@@ -143,36 +207,50 @@ _cache_built_at: float = 0.0
 
 def _tick_jumps(conn: sqlite3.Connection, symbol: str,
                 since: float) -> List[float]:
-    """Absolute fractional price change between consecutive ticks.
+    """Absolute fractional price change between ticks ADJACENT IN TIME.
 
     Fractional rather than absolute because the stop is a fraction: a $0.01
     move means something entirely different on CBBTC than on a sub-cent
     memecoin, and comparing dollars to a percentage is the units error this
     repo has shipped more than once.
+
+    Pairs separated by more than ``MAX_TICK_GAP_SEC`` are dropped rather than
+    measured. This function used to select ``price`` alone, so it could not
+    tell a 4% move in 30 seconds from a 4% move over 31 hours and scored both
+    as one tick. See ``MAX_TICK_GAP_SEC`` for the measurement.
     """
-    prices: List[float] = []
+    points: List[Tuple[float, float]] = []
     try:
         rows = conn.execute(
-            "SELECT price FROM market_stream WHERE symbol = ? AND ts > ? "
+            "SELECT ts, price FROM market_stream WHERE symbol = ? AND ts > ? "
             "ORDER BY ts",
             (symbol, since),
         )
-        for (price,) in rows:
+        for stamp, price in rows:
             try:
                 value = float(price)
+                when = float(stamp)
             except (TypeError, ValueError):
                 continue
-            if value > 0.0:
-                prices.append(value)
+            # A row with no usable timestamp cannot be shown to be adjacent to
+            # anything, and this gate bans on adjacency. Dropping it costs one
+            # sample; keeping it would reintroduce the unbounded-gap pair the
+            # cap exists to remove.
+            if value > 0.0 and when == when:
+                points.append((when, value))
     except Exception:  # noqa: BLE001
         return []
 
+    gap_cap = MAX_TICK_GAP_SEC if MAX_TICK_GAP_SEC > 0 else float("inf")
     jumps: List[float] = []
-    for index in range(len(prices) - 1):
-        previous = prices[index]
+    for index in range(len(points) - 1):
+        previous = points[index][1]
         if previous <= 0.0:
             continue
-        jump = abs(prices[index + 1] - previous) / previous
+        elapsed = points[index + 1][0] - points[index][0]
+        if elapsed < 0.0 or elapsed > gap_cap:
+            continue
+        jump = abs(points[index + 1][1] - previous) / previous
         # A jump is only meaningful if it is finite. Feed contamination can
         # produce inf/nan, and those must not poison a percentile.
         if jump == jump and jump != float("inf"):
