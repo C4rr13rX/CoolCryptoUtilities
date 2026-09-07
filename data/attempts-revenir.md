@@ -649,3 +649,53 @@ result, pick a different one.
   tradeable book turns positive and atf_static's re-arm becomes reachable on
   its own record instead of unreachable. Do NOT touch STRATEGY_GRADUATION_MIN_
   TRADES: the bar is measuring correctly, it is the book that was wrong.
+
+2026-09-07 05:55 | Dune | hypothesis: the ghost-entry rate is low not because the
+  gates refuse, but because a large share of candidates die ABOVE the gates on
+  symbols the price feed cannot carry |
+  did: censused trading_ops over the 2h to 05:10 and joined every ghost_candidate
+  row to market_stream. First, the feed itself is FINE -- 282 ticks/10m across 8
+  symbols, newest 19.6s, so the "2 ticks/10m" in the pass header was the tail of
+  Gale's 04:46:54 restart boot, not a dark feed. The funnel: 48 candidates -> 2
+  ghost entries. Then the join:
+      VIRTUAL-USDC   13 candidates   last tick 31.1h ago
+      AIXBT-USDC      4 candidates   last tick 31.0h ago
+      TBTC-USDC       1 candidate    last tick  6.4h ago
+      CBMEGA-USDC     2 candidates   last tick  1.8h ago
+      MOONKIN, CHUBBY 2 candidates   never ticked
+  22 of 41 (53.7%). NOT ONE of them appears in the refusal census -- every
+  refusal row in the window belongs to AERO, COMP, VVV, CLANKER or JITOSOL. They
+  never reached a gate at all. Every entry rule reads a market sample, so with no
+  tick there is nothing to enter on, price or stop; the candidate dies silently
+  above the gates having already spent a slot, a 0x quote probe, a
+  ghost_candidate row and a bus action. That is why no previous pass found it:
+  the gate census, which is how every one of the last nine passes looked at this
+  funnel, cannot see a candidate that dies before a gate.
+  It was self-sustaining. watchlists.stream held 35 symbols of which 25 (71.4%)
+  had no tick in the last hour and 8 had NEVER ticked, and
+  build_static_strategy_signals re-prepends every offered candidate to the FRONT
+  of that list each cycle -- so being offered is what kept the dead ones ahead of
+  the ten that were ticking, and being at the front is what kept them offered.
+  result: SHIPPED 5a3ddaa. _drop_unstreamable keeps held/protected always, keeps
+  anything ticked inside the hour, keeps anything NEVER subscribed (a new pool
+  has had no chance to stream and the watchlist entry IS the chance -- refusing
+  there would switch new-pool discovery off), and drops only subscribed-and-
+  silent. It runs BEFORE _drop_already_refused and a test pins the order: a
+  symbol with no feed has no closed round trips, so symbol_edge_gate has nothing
+  to ban it on and asking the gates first lets it straight through.
+  One hour rather than the 600s streamed_symbol_candidates uses, because
+  declaring a symbol DEAD is a stronger claim than picking the hottest one and
+  the census separates them with room to spare -- dead at 31.1h/31.0h/6.4h/1.8h/
+  never, slow-but-live at 30/30/30/38 minutes. A 600s line would have called
+  CBZEC, FOLD, U1 and OPENAI dead and starved the funnel further.
+  Replayed on the real rows: 22 of 41 offers removed, every one silent >=1.8h,
+  all 8 kept symbols priced inside 38 min. Simulated on the real watchlist, the
+  reorder that follows takes live symbols in the first ten from 5 to 8.
+  Gate 296 passed / 0 failed; profit_logic_audit NO KNOWN LOSING SHAPES.
+  next: 5a3ddaa is INERT -- prod 16392/43116 booted 04:46:54, before it. I did
+  NOT restart: trading/data_stream.py is uncommitted in the shared tree and
+  production reads the working tree, so a restart would have loaded a
+  half-written PRICE FEED module. Whoever restarts next carries this. Then
+  re-censusthe same join in 2h: the number to watch is ghost candidates whose
+  symbol has no tick inside the hour, which was 53.7% and should be ~0%, and
+  whether ghost entries/h moves off 1.
