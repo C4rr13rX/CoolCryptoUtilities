@@ -1157,3 +1157,45 @@ result, pick a different one.
   bar LOSES, because the smoke window was up 69.2% of the time and any
   long-only rule looks good there. Do NOT enable the strategy on the smoke
   numbers -- n=14 buy omens.
+
+## 2026-09-07 Hollow (pass 94) -- the brain the money path queries was dead, and nothing said so
+HYPOTHESIS: the user's 08:04 priority (wizard brain predicts buy-low/sell-high
+omens accurately, then use it in a strategy) is blocked before any modelling
+question, because the node cannot answer at all.
+DID: measured every brain surface directly rather than through brain_bridge,
+which swallows failures. :8090 -- the BRAIN_ENDPOINT default that
+trading/bot.py:5014 and services/ga_service.py:296 both query -- served
+/health (uptime 32.3h) and /brain/stats (521224 concepts / 10725783 terminals)
+while POST /brain/predict timed out at 25s and /brain/consolidate at 30s. It is
+pid 21704, a BARE launch with no arguments, started 9/6 00:01, 34 MB RSS
+against a 15.7 GB brain.wbrain. The same binary on :8091 (pid 9756, launched
+the documented way with --config node_config.json api --addr) answered the
+identical call in 0.67s against 5525536 terminals. Also found
+brain-data/brain.bin.tmp at 179 BYTES written 08:13 -- a checkpoint that died
+after its header, the disk-full-broke-brain-checkpoint signature; D has 44.3 GB
+free and brain-data holds 44.5 GB (wbrain 15.77 + failover 15.77 + a STALE
+Aug-19 brain.bin 12.93).
+RESULT, THE NUMBER THAT MATTERS: 32 hours in which every brain query in the
+live lane returned nothing, with zero counters, log lines or status fields
+reporting it. brain_bridge._post catches everything and returns None, and both
+money-path callers document None as "no opinion" -- so a dead forecaster and a
+forecaster with nothing to say are the same value. Shipped
+services/brain_health.py: grades unreachable / blocked / empty / ready and
+exposes .usable, so a null answer only reads as an abstention when the fabric
+actually answered. Graded all three live cases correctly on the spot -- :8090
+blocked (8.0s, no return), :8091 ready (0.67s, 5525536 terminals), :9999
+unreachable. Emptiness is read off fabric SIZE, not latency, because an
+unloaded brain answers FASTER than a loaded one (:8091 replied in 0.00s while
+empty) and any latency-graded check ranks the useless node healthiest.
+12 tests, in GATE_TESTS. Gate 426 passed / 0 failed (was 375),
+profit_logic_audit NO KNOWN LOSING SHAPES. Commit 22199f3.
+DID NOT: start, stop or restart any node. pid 21704 also holds :8080, Quill was
+mid-flight on :8091, and concurrent restarts of a 15.7 GB brain are how the WAL
+was corrupted before. Left the call to Quill on the board.
+NEXT: the detector exists but nothing consumes it yet. Two things follow.
+(1) :8090 still needs relaunching WITH --config -- that is the actual unblock,
+and it is one command, but it belongs to whoever owns the node this pass.
+(2) Wire brain_health.probe() into the pipeline status and into the bot's brain
+read, so a blocked brain is visible on the page and cannot vote by silence.
+Do NOT grade node health on /health or /brain/stats: both were green through
+the entire 32-hour outage, which is precisely why it lasted 32 hours.

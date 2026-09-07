@@ -255,6 +255,21 @@ GATE_TESTS = (
     # confidence. A guard that cannot tell an outage from an abstention lets a
     # dead forecaster vote silently, forever.
     "test_a_blocked_brain_is_not_an_absent_opinion.py",
+    # The other half of the same brain question: what the brain's forecast is
+    # allowed to MEAN once it can answer. Added at Quill's request (they built
+    # the omen path and could not edit this file while it was claimed);
+    # verified green here independently -- 39 passed -- rather than on trust.
+    #
+    # An omen is "buy here, sell higher later", so its threshold is the one
+    # place a return must be compared against what the round trip COSTS rather
+    # than against zero. That exact shape -- a return tested against 0 -- is
+    # what services/profit_logic_audit flags as GEARED TO LOSE, and it has
+    # shipped in this repo before. The second file pins the constraint that
+    # already cost the feed 26 dark minutes on 2026-09-06: a brain call on the
+    # asyncio loop that polls prices freezes ingestion for every symbol, and
+    # brain_bridge's own comment records a py-spy dump catching exactly that.
+    "test_an_omen_cannot_be_measured_against_zero.py",
+    "test_the_omen_strategy_never_blocks_the_feed.py",
 )
 
 
