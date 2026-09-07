@@ -1303,3 +1303,42 @@ the entire 32-hour outage, which is precisely why it lasted 32 hours.
   which model is cleverer; (c) hand omen_features.py to whoever owns the
   brain -- read features SEPARATELY instead of keying on a joint frame, which
   is the only way out of Nook's dilution law and my uniqueness wall at once.
+
+- 2026-09-07 Hollow, pass 95 CORRECTION, and it corrects my own commit
+  33f5b65. The 10-symbol sweep finished after I committed and it does NOT
+  support the strongest thing I said. Report
+  data/brain_experiments/omen-generalisation-20260907-094035.json, 10 symbols,
+  236404 feature rows, bins=5, same honest train/valid/test with the threshold
+  picked on validation. EDGE over buying every bar in the SAME window, real
+  then shuffled-label control, with symbols beating every-bar:
+    h=1  +0.0616% / +0.0001%   7/10
+    h=2  +0.0575% / -0.0035%   7/10
+    h=3  +0.0778% / -0.0065%   8/10
+    h=4  +0.0916% / -0.0028%   9/10   <- peak
+    h=6  +0.0633% / -0.0066%   9/10
+    h=12 +0.0280% / +0.0023%   8/10   <- weakest, but still POSITIVE
+  WHAT SURVIVES: the edge is real and consistent. Every horizon is positive
+  and 4-14x the largest magnitude the shuffled control manufactures (max
+  0.0066%), and 9 of 10 symbols beat every-bar at h=4. The horizon direction
+  survives too -- h=4 is 3.3x h=12.
+  WHAT DOES NOT SURVIVE: I wrote that at h=12 the edge is -0.0236%, WORSE than
+  indiscriminate entry. That was the 3-symbol run and it is gone at 10
+  symbols, where h=12 is +0.0280%. "Edge dies at the long horizon" is too
+  strong. The measured claim is "edge peaks at h=3-4 and is 3.3x weaker by
+  h=12". I should have waited for the wide run before writing the narrow
+  number into a commit message.
+  THE NUMBER THAT ACTUALLY BLOCKS THIS: peak alpha +0.0916% against a 0.6500%
+  round trip. Best per-trade net is -0.5596%. Every configuration loses money
+  after cost, by 7x, and no horizon or bin setting closes that. This is not a
+  strategy and nothing was enabled.
+  ALSO CONFIRMED AT SCALE: uniq-key is 100.0% at bins=5 across all 10 symbols
+  -- the JOINT key is always unique however coarse the bins get, so a
+  joint-frame-to-outcome binding can never generalise. The edge above comes
+  entirely from reading features SEPARATELY and adding shrunk evidence.
+  NEXT, and (b) has changed because of this: (a) rerun with --bins 3,10 to see
+  whether coarseness moves the peak; (b) 7x is too far for a better model to
+  close, so the question is now COST, not prediction -- the alpha is real at
+  ~0.09% and the round trip is 0.65%, so ask which symbol and which clip size
+  make the round trip cheaper than the alpha, and note the live lattice is
+  already refusing on a 7.9854% round trip at a $0.75 clip; (c) hand
+  trading/omen_features.py to whoever owns the brain.
