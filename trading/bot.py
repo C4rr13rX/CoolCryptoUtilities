@@ -178,6 +178,42 @@ _SYMBOL_LAST_TICK_LOCK = threading.Lock()
 _LONG_HORIZONS = ("@12h", "@1d", "@3d", "@5d", "@1w")
 
 
+def damp_direction_prob(direction_prob: float, graph_conf: float) -> float:
+    """Discount a direction probability for low confidence, toward NO OPINION.
+
+    ``graph_conf`` is a confidence in [0, ~1.1]; ``direction_prob`` is a
+    probability whose neutral point is 0.5 -- and 0.5 is the neutral point
+    everywhere downstream, deliberately: ``enter_threshold`` (0.58), the
+    bearish exit floor, ``momentum = direction_prob - 0.5`` handed to the risk
+    layer, SCHEDULER_MIN_DIRECTION_PROB (0.6), and MONEY_BUTTON_MIN_DIR_PROB,
+    which services/env_loader.py pins to exactly 0.50 with the comment "so the
+    neutral case PASSES".
+
+    This used to be ``direction_prob * graph_conf``, which is a units error
+    with a direction. Multiplying a probability by a confidence can only ever
+    LOWER it -- measured over 707 production evaluations, graph_confidence had
+    median 1.00 and p25 0.80 -- and it moves the number toward 0, which every
+    one of those consumers reads as "certainly DOWN" rather than as "no
+    opinion". A bullish 0.62 at graph_conf 0.80 came out at 0.496: the sign
+    flipped on nothing but a confidence discount. It also capped
+    direction_prob at graph_conf, so a 0.80-confidence tick could never clear
+    the 0.58 entry gate however bullish the model was.
+
+    Identity at graph_conf 1.0, exactly 0.5 at graph_conf 0.0, sign preserved
+    everywhere in between. Clamped because graph_conf is observed above 1.0
+    (max 1.1046) and an over-unity confidence must not push a probability out
+    of range.
+    """
+    try:
+        prob = float(direction_prob)
+        conf = float(graph_conf)
+    except (TypeError, ValueError):
+        return 0.5
+    if prob != prob or conf != conf:                      # NaN
+        return 0.5
+    return float(min(1.0, max(0.0, 0.5 + (prob - 0.5) * conf)))
+
+
 def _long_horizon_cap() -> int:
     """How many long-horizon positions may be open at once."""
     try:
@@ -5450,10 +5486,53 @@ class TradingBot:
         if use_calibration:
             raw_prob = float(np.clip(summary["direction_prob"], 1e-6, 1.0 - 1e-6))
             logit = math.log(raw_prob / (1.0 - raw_prob))
-            logit = max(-30.0, min(30.0, logit * float(cal_scale) + float(cal_offset)))
-            calibrated = 1.0 / (1.0 + math.exp(-logit))
+            scaled = max(-30.0, min(30.0, logit * float(cal_scale) + float(cal_offset)))
+            calibrated = 1.0 / (1.0 + math.exp(-scaled))
+            # RE-CENTRE ON THE CALIBRATOR'S OWN NO-INFORMATION POINT.
+            #
+            # Every threshold that reads ``direction_prob`` treats 0.5 as "the
+            # model has no opinion": ``enter_threshold`` (0.58) below,
+            # SCHEDULER_MIN_DIRECTION_PROB (0.6), the bearish exit floor,
+            # ``momentum = direction_prob - 0.5`` handed to the risk layer, and
+            # MONEY_BUTTON_MIN_DIR_PROB -- which services/env_loader.py pins to
+            # exactly "0.50" with the comment "so the neutral case PASSES".
+            #
+            # A Platt calibration does not preserve that point. Its neutral is
+            # wherever it sends a model that said 0.5, which is logit 0, which
+            # is the OFFSET: sigmoid(cal_offset). Measured 2026-09-07 by
+            # fitting the 1324 production evaluations where graph_confidence
+            # was exactly 1.0, so nothing else touched the number:
+            #
+            #     logit_out = 0.9806 * logit_in - 2.0784   (median |resid| 0.048)
+            #
+            # so this model's neutral point is sigmoid(-2.0784) = 0.111, and
+            # clearing the 0.58 entry gate needs a raw output of 0.906. Over
+            # 3007 paired evaluations in 72h the decision path saw >= 0.58
+            # sixteen times (0.53%) and read BEARISH 96.8% of the time, while
+            # the model's own median output was 0.5985 -- bullish just over
+            # half the time. That is why ``no_candidates (thresholds not met)``
+            # terminated 379 of 532 scheduler route evaluations in 6h.
+            #
+            # The offset carries the BASE RATE; the scale carries the
+            # sharpening. A threshold asking "is this more bullish than no
+            # information" wants the base rate divided out and the sharpening
+            # kept, which on the logit scale is exactly ``scaled - offset``.
+            # The true calibrated probability stays available under
+            # ``direction_prob_calibrated`` for anything that needs a genuine
+            # P(up) rather than a comparison against neutral.
+            #
+            # Identity when cal_offset is 0, so a model calibrated on scale
+            # alone is judged exactly as it is today.
+            neutral_logit = max(-30.0, min(30.0, float(cal_offset)))
+            centred = 1.0 / (1.0 + math.exp(-(scaled - neutral_logit)))
             summary["direction_prob_raw"] = summary["direction_prob"]
-            summary["direction_prob"] = float(np.clip(calibrated, 1e-6, 1.0 - 1e-6))
+            summary["direction_prob_calibrated"] = float(
+                np.clip(calibrated, 1e-6, 1.0 - 1e-6)
+            )
+            summary["direction_prob_neutral"] = float(
+                1.0 / (1.0 + math.exp(-neutral_logit))
+            )
+            summary["direction_prob"] = float(np.clip(centred, 1e-6, 1.0 - 1e-6))
         else:
             temp_scale = getattr(self.pipeline, "temperature_scale", 1.0)
             if temp_scale and temp_scale > 0:
@@ -5884,7 +5963,7 @@ class TradingBot:
         exit_threshold = min(enter_threshold * 0.6, 0.5)
         max_hold_sec = float(os.getenv("MAX_HOLD_SECONDS", "3600"))
         graph_conf = float(brain.get("graph_confidence", 1.0) or 1.0)
-        direction_prob = float(np.clip(direction_prob * graph_conf, 0.0, 1.0))
+        direction_prob = damp_direction_prob(direction_prob, graph_conf)
         swarm_bias = float(brain.get("swarm_bias", 0.0) or 0.0)
         margin += swarm_bias
         delta += swarm_bias

@@ -141,3 +141,65 @@ result, pick a different one.
   against a min_clip_usd of 6.00 -- that is ONE concurrent live position, and
   the next entry sees zero headroom, while deployable_stable_usd is 19.659.
   Measure how often headroom is the binding refusal before touching the ramp.
+
+2026-09-07 01:45 | Bay | hypothesis: the entry funnel does not stop at a GATE
+  at all -- 66% of candidates die with no refusal row, so the loss is
+  upstream of every gate that has been audited |
+  did: (1) per-symbol 6h funnel from trading_ops -- 182 candidates across 43
+  symbols, but only 9 symbols ever reach an entry-gate outcome; 120 of 182
+  candidate rows (66%) have NO entry and NO refusal. (2) Found the terminal
+  state: TradingScheduler.evaluate returns None at scheduler.py:821 setting
+  state.last_filter_reason = "no_candidates (thresholds not met)", which is
+  written to no table. (3) Read it out of organism_snapshots.scheduler
+  instead: 379 of 532 route evaluations in 6h (71%) end there. (4) Walked the
+  enter branch: it needs direction_prob >= SCHEDULER_MIN_DIRECTION_PROB (0.6).
+  Measured 530 evaluations in 6h -- max EXACTLY 0.5000, so 0/530.
+  result: CONFIRMED, and the cause is a SCALE error, not a threshold.
+  Over 3007 paired evaluations in 72h:
+      model's own output (direction_prob_raw)   median 0.5985  max 0.9498
+      what the decision path saw                median 0.1414  max 0.7183
+      >= 0.58 (bot.py enter_threshold)          16/3007 = 0.53%
+      >= 0.60 (SCHEDULER_MIN_DIRECTION_PROB)    15/3007 = 0.50%
+      read as BEARISH (< 0.5)                 2910/3007 = 96.8%
+  The model is bullish just over half the time; the decision path reads it as
+  bearish 96.8% of the time. Fitting the transform on the 1324 evals where
+  graph_confidence was EXACTLY 1.0 (nothing else touching the number) gives
+      logit_out = 0.9806 * logit_in - 2.0784   median |resid| 0.048
+  i.e. the active model's Platt calibration, whose no-information point is
+  sigmoid(-2.0784) = 0.111, NOT 0.5. Clearing the 0.58 entry gate needs a raw
+  model output of 0.906. Every threshold reading direction_prob was chosen
+  against a 0.5-neutral scale and services/env_loader.py says so out loud --
+  it pins MONEY_BUTTON_MIN_DIR_PROB to "0.50" with the comment "so the
+  neutral case PASSES".
+  SHIPPED, both halves of the same units error, in trading/bot.py:
+   * _summarise_predictions: re-centre on the calibrator's own neutral point
+     (subtract cal_offset on the logit scale). The offset carries the BASE
+     RATE, the scale carries the sharpening; a threshold asking "more bullish
+     than no information" wants the base rate divided out and the sharpening
+     kept. Identity when cal_offset is 0. True P(up) still published as
+     direction_prob_calibrated.
+   * damp_direction_prob(): was `direction_prob * graph_conf`, a probability
+     multiplied by a confidence. It can only LOWER the number (graph_conf
+     p25 = 0.80 over 707 evals) and it moves toward 0 = "certainly down"
+     instead of toward 0.5 = "no opinion". A bullish 0.62 at graph_conf 0.80
+     came out at 0.496 -- sign flipped on a confidence discount alone. It also
+     capped direction_prob at graph_conf, so a 0.80 tick could never clear
+     0.58 at ANY model output.
+  Replayed over the same 3007 real evaluations, gate input:
+      median          0.1414 -> 0.5818   (model raw median 0.5985)
+      >= 0.58          0.53% -> 50.12%
+      >= 0.60          0.50% -> 47.12%
+      reads bearish     96.8% -> 35.6%
+  14 tests. Verified failing against the old code both ways: reverting the
+  calibration block fails 3, mutating the helper back to `prob * conf` fails
+  4. One test reads _interpret_predictions.__code__.co_names, because a
+  concurrent stale-buffer write to bot.py reverted the CALL SITE mid-pass
+  while leaving the helper in place and every arithmetic test still passed.
+  next: production must be RESTARTED to pick this up (it booted 00:53 on the
+  old code). Then re-measure, in order: (a) organism_snapshots direction_prob
+  median -- expect ~0.58, not 0.14; (b) the share of route evaluations ending
+  at "no_candidates" -- expect well under 71%; (c) ghost entries/24h -- 14 now,
+  and 12 more fresh atf_static ghost round trips is the whole re-arm bar.
+  Second, unshipped finding, worth its own pass: "no_candidates (thresholds
+  not met)" is the single largest terminal state in the funnel and writes NO
+  trading_ops row, which is the only reason this took a snapshot join to find.
