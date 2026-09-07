@@ -7,6 +7,7 @@ import os
 import socket
 import threading
 import time
+import weakref
 from dataclasses import dataclass
 import statistics
 from urllib.parse import quote_plus, urlsplit
@@ -365,6 +366,137 @@ class RestFetchResult:
     price: Optional[float]
     error: Optional[str] = None
     status: Optional[int] = None
+
+
+#: How long a REST price fetch is given before it is called a timeout.
+REST_FETCH_TIMEOUT = float(os.getenv("REST_FETCH_TIMEOUT", "10") or 10.0)
+
+#: A timeout only stops being evidence about the ENDPOINT once our own event
+#: loop was blocked for this fraction of the request budget. At the 0.5 default
+#: and a 10s budget, the loop has to have been stalled >=5s -- half the time we
+#: claimed to be waiting on the network -- before the endpoint is excused.
+#: Ordinary scheduling jitter is nowhere near that and is still charged.
+LOOP_STALL_FRACTION = float(os.getenv("FEED_LOOP_STALL_FRACTION", "0.5") or 0.5)
+
+
+class _EventLoopLagMonitor:
+    """How late is this event loop running its own callbacks?
+
+    A TIMEOUT IS NOT EVIDENCE ABOUT AN ENDPOINT WHEN THE LOOP WAS BLOCKED.
+
+    ``_poll_rest_data`` charged every ``timeout`` to the endpoint that "caused"
+    it, and ``outage_detected`` fires when EVERY endpoint failed -- so the
+    clearer the evidence that the fault was local, the harder this file punished
+    the upstreams. Measured 2026-09-07 over 6h of production feedback_events:
+
+        4551 REST timeouts; of the 430 distinct seconds containing one, 351
+        (82%) had 2+ DISTINCT endpoints time out in the SAME second, up to 5.
+        dexscreener/geckoterminal/coingecko/mexc sit on different CDNs and do
+        not fail in the same second. A direct probe of all three answered
+        HTTP 200 in 0.07-0.37s, nine times out of nine, while production was
+        logging them dead.
+
+    The loop itself is what stalls. Same window, gaps between this stream's own
+    feedback_events: p50 0.011s, p99 39.3s, max 2601s, and 89.7% of the six
+    hours sat inside a gap longer than 5s -- then 37 events landed in a single
+    0.1s bucket. That is a blocked loop catching up, and it is the exact
+    signature ``_fetch_rest_price`` already documents from 2026-09-01.
+
+    The cost of the misattribution is the feed itself: a timeout escalates
+    endpoint backoff 15s -> 64s -> 98s and then ``block_rest`` for 426s, so a
+    local stall buys a seven-minute self-inflicted blackout on a healthy
+    upstream. Ticks fell 91 -> 33 per 10m over four days, candidates 1019 ->
+    130, ghost entries 863 -> 14, ghost exits 53 -> 10 -- and ghost exits are
+    the only currency that re-arms a demoted strategy for live.
+
+    This measures the loop directly rather than guessing from the failure
+    pattern, which keeps a REAL outage fully punished: packets blackholed by a
+    dead upstream time out while the loop stays responsive, lag reads ~0, and
+    every existing penalty applies unchanged. Only a timeout that coincides
+    with our own loop being blocked is withheld.
+    """
+
+    #: Sampling period. Also the resolution of the lag estimate.
+    _INTERVAL = 0.25
+    #: Samples older than this are dropped; far longer than any request budget.
+    _RETENTION = 300.0
+
+    def __init__(self) -> None:
+        self._samples: deque = deque()
+        self._task: Optional[asyncio.Task] = None
+
+    def ensure_started(self) -> None:
+        """Idempotent, and safe to call off-loop (it simply does nothing)."""
+        if self._task is not None and not self._task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        try:
+            self._task = loop.create_task(self._run())
+        except Exception:  # noqa: BLE001 - never let telemetry break a fetch
+            self._task = None
+
+    async def _run(self) -> None:
+        while True:
+            before = time.monotonic()
+            try:
+                await asyncio.sleep(self._INTERVAL)
+            except asyncio.CancelledError:
+                return
+            woke = time.monotonic()
+            # Everything past the interval we asked for is time the loop was
+            # not free to run us -- i.e. time an in-flight request also spent
+            # unable to make progress, however healthy its socket was.
+            lag = max(0.0, woke - before - self._INTERVAL)
+            self._samples.append((woke, lag))
+            cutoff = woke - self._RETENTION
+            while self._samples and self._samples[0][0] < cutoff:
+                self._samples.popleft()
+
+    def max_lag_since(self, since: float) -> float:
+        """Worst stall affecting the window since ``since`` (``time.monotonic``).
+
+        Two components, and the second is not optional. A stall is only
+        RECORDED by the sample that wakes from it, but the timeout we are
+        classifying is itself a timer that comes due the moment the loop
+        resumes -- so whether the sampler or the timeout callback runs first is
+        a race, and losing it would make the stall invisible at exactly the
+        moment we need to see it. The in-flight term asks how overdue the next
+        sample is right now, which is the part of a stall that has happened but
+        has not been written down yet.
+        """
+        recorded = max((lag for woke, lag in self._samples if woke >= since), default=0.0)
+        inflight = 0.0
+        if self._samples:
+            last_woke = self._samples[-1][0]
+            inflight = max(0.0, time.monotonic() - last_woke - self._INTERVAL)
+        return max(recorded, inflight)
+
+
+#: One monitor per event loop. The streams share a loop, so in practice this
+#: holds a single entry; keying by loop keeps tests that spin their own loop
+#: from reading another loop's samples.
+_LAG_MONITORS: "weakref.WeakKeyDictionary[Any, _EventLoopLagMonitor]" = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _loop_lag_monitor() -> Optional[_EventLoopLagMonitor]:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+    monitor = _LAG_MONITORS.get(loop)
+    if monitor is None:
+        monitor = _EventLoopLagMonitor()
+        try:
+            _LAG_MONITORS[loop] = monitor
+        except TypeError:  # pragma: no cover - loop not weak-referenceable
+            return None
+    monitor.ensure_started()
+    return monitor
 
 
 @dataclass
@@ -1122,6 +1254,14 @@ class MarketDataStream:
                 )
                 for endpoint, result, latency in results:
                     if result.error == "unavailable":
+                        continue
+                    if result.error == "local_stall":
+                        # Our loop was blocked, so this endpoint was never
+                        # really asked. Not an attempt and not an error:
+                        # counting it either way feeds `outage_detected`
+                        # below, which is `total_network_errors ==
+                        # total_attempted` and therefore trivially true
+                        # exactly when a stall hits every endpoint at once.
                         continue
                     self._record_rest_latency(endpoint.name, latency)
                     total_attempted += 1
@@ -3306,6 +3446,11 @@ class MarketDataStream:
             result = await self._fetch_rest_price(endpoint, base, quote)
             if result.error == "unavailable":
                 continue
+            if result.error == "local_stall":
+                # See the identical guard in the batched poller above: a
+                # blocked loop is not a verdict on the endpoint, and letting
+                # it reach `outage_detected` blocks REST for 426s.
+                continue
             total_attempted += 1
             if result.error in {"dns", "network", "timeout"}:
                 total_network_errors += 1
@@ -3379,6 +3524,11 @@ class MarketDataStream:
             host = url.split("/")[2]
         except Exception:
             host = endpoint.name
+        # Started here rather than at stream construction so it lives on the
+        # loop that actually runs the fetches, and so a stream built off-loop
+        # (tests, offline replay) simply never starts one.
+        lag_monitor = _loop_lag_monitor()
+        started = time.monotonic()
         try:
             try:
                 # APIRateLimiter.acquire() waits with time.sleep(), so calling
@@ -3416,12 +3566,34 @@ class MarketDataStream:
                     severity="warning",
                 )
                 return RestFetchResult(None, "rate_limited_local")
-            async with self._http_session.get(url, timeout=10, headers=headers) as resp:
+            async with self._http_session.get(
+                url, timeout=REST_FETCH_TIMEOUT, headers=headers
+            ) as resp:
                 if resp.status != 200:
                     error = "rate_limited" if resp.status in {418, 429, 451} else "http_error"
                     return RestFetchResult(None, error, status=resp.status)
                 data = await resp.json()
         except (asyncio.TimeoutError, TimeoutError):
+            # Ask whether OUR loop was blocked for a meaningful share of the
+            # budget before blaming the endpoint. See _EventLoopLagMonitor: a
+            # blocked loop times out healthy hosts, and charging that to them
+            # escalates to a 426s block_rest on an upstream answering in 100ms.
+            if lag_monitor is not None:
+                lag = lag_monitor.max_lag_since(started)
+                if lag >= LOOP_STALL_FRACTION * REST_FETCH_TIMEOUT:
+                    log_message(
+                        "market-stream",
+                        f"REST timeout on {host} while our event loop was blocked "
+                        f"{lag:.1f}s of a {REST_FETCH_TIMEOUT:.0f}s budget; "
+                        f"not charging the endpoint",
+                        details={
+                            "endpoint": endpoint.name,
+                            "symbol": self.symbol,
+                            "loop_lag_sec": round(lag, 3),
+                        },
+                        severity="warning",
+                    )
+                    return RestFetchResult(None, "local_stall")
             return RestFetchResult(None, "timeout")
         except (aiohttp.ClientConnectorError, aiohttp.ClientConnectionError, aiohttp.ClientOSError, OSError) as exc:
             return RestFetchResult(None, "dns" if _is_dns_error(exc) else "network")
