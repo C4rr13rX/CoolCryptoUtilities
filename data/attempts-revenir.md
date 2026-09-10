@@ -4189,3 +4189,37 @@ is a bigger lever than any head fix on the board.
   scores AUC 0.7275/0.8504/0.7517 on its own hour, but that hour is 74.0% up
   -- re-run head_skill_census once a down window has accumulated under that
   artifact and let regime_verdict decide. Do not quote the 0.85 before then.
+
+- 2026-09-10 Jet (SENIOR, pass 107, second entry). HYPOTHESIS: the price feed
+  going dark mid-pass was a real stall in the write path. WRONG TWICE, AND THE
+  METHOD ERROR IS THE POINT. Sequence: feed age went 64s (pass start) -> 526 ->
+  543 -> 597s with ticks_10m falling 53 -> 3 -> 2 -> 0, while a full
+  ~2600-test pytest sweep of mine and three agents' census scripts ran on one
+  box. I first blamed the sweep (right), then killed it, watched for NINETY
+  SECONDS, saw age still climbing 608 -> 653 -> 698s and declared contention
+  FALSIFIED and a real stall -- escalating it over everyone's work (wrong).
+  Five to seven minutes later it recovered on its own: age 8.3s, ticks_10m 3.
+  CONTENTION WAS THE ANSWER ALL ALONG. A feed recovering from CPU starvation
+  does not resume when the CPU frees -- a backlog drains and a stuck request
+  must time out first, so a 90-second window cannot distinguish "stalled" from
+  "recovering". I had written the correct discriminator into the item BEFORE
+  running it and then read its answer too early. THE LESSON, and it is cheap to
+  reuse: when your discriminator is "does it recover on its own", give it
+  minutes and sample repeatedly; a negative result inside one drain interval is
+  not a negative result. The 'fetching but not writing' signature I found --
+  market-stream.log pulling live prices (kucoin WBTC 77425.73) at 13:40:58
+  while market_stream sat 12 min stale at ticks_10m 0 -- is exactly what
+  contention looks like, not evidence of a write-path bug; I read it as the
+  latter and nearly sent someone at a bug hunt that does not exist.
+  RESULT/COST: ~12-13 min of dark feed, filed as [e60e1a20] and DOWNGRADED from
+  emergency to a scheduling question. THE UNCOSTED PRICE IS THE REAL FINDING:
+  running the full suite on this box costs the live lane ~12 minutes of feed,
+  and several backlog items' acceptance criteria explicitly DEMAND that sweep,
+  so the loop will keep re-triggering a feed outage to satisfy a test-count.
+  NEXT: measure the cost deliberately (tick rate before/during/after an
+  announced sweep) and amend those criteria to say when it may be run. Also
+  filed [37657662] from source, unrelated and verified: symbol_motion_gate.py:101
+  hardcodes ROUND_TRIP_COST 0.0065 while symbol_edge_gate uses the measured
+  ~0.4653% -- a 40% overcharge refusing symbols against the 3.0% motion floor,
+  directly upstream of the EVIDENCE (TRADEABLE) wall. Fix the cost input only;
+  do NOT lower the floor.
