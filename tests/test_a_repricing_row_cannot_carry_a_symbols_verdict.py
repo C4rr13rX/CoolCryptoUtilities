@@ -258,3 +258,32 @@ def test_the_all_time_book_is_negative_at_every_threshold():
             % (s["max_ret"] * 100, s["gross"])
         )
     assert sw["verdict_is_threshold_dependent"] is False
+
+
+def test_the_wall_naming_tool_prints_the_threshold_curve_too():
+    """``tradeable_book`` is the tool that NAMES THE WALL; it must not hide the cap.
+
+    It carried the implausibility literal and printed a one-line verdict ("Gross
+    is NEGATIVE" / "this is a cost problem") off a single threshold. The curve now
+    sits beside that verdict over the live-tradeable rows it is computed from.
+
+    AND THE RECONCILIATION THAT MATTERS: Jet's sweep flips sign at 15% over ALL
+    ghost rows, while the live-tradeable sweep does not move at all. That is not
+    a contradiction -- BSTONK-USDC is REFUSED by the live lane, and five of the
+    eight rows carrying his book are BSTONK. They never touched the graduation
+    verdict. They ARE in data/strategy_ledger.json's totals, which is why
+    [c4f16946] is still the work.
+    """
+    from scripts.tradeable_book import collect, render
+
+    sw = collect(days=7.0)["ret_sweep"]
+    assert sw["steps"], "the sweep must be computed over the tradeable rows"
+    assert [s["max_ret"] for s in sw["steps"]][0] == 0.50
+
+    # It must be RENDERED, not merely returned -- a number nobody reads is not a
+    # correction. This repo has shipped a report whose encouraging half was the
+    # one that got quoted.
+    text = render(collect(days=7.0))
+    assert "IS THE VERDICT THE BOOK, OR THE THRESHOLD?" in text
+    for step in sw["steps"]:
+        assert "%.0f%%" % (step["max_ret"] * 100) in text

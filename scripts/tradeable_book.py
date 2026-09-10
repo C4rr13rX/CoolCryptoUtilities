@@ -66,6 +66,7 @@ from services.outcome_plausibility import (    # noqa: E402
     IMPLAUSIBLE_RET,
     is_implausible as _row_is_implausible,
     strategy_scales as _strategy_scales,
+    sweep as _ret_sweep,
 )
 
 
@@ -332,6 +333,11 @@ def collect(
         "untradeable": untradeable,
         "sane": sane,
         "sane_dropped": sane_dropped,
+        # THE THRESHOLD CURVE, over the LIVE-TRADEABLE rows this verdict is read
+        # from. IMPLAUSIBLE_RET is calibrated ABOVE most rows the ledger already
+        # calls fabricated, so a single cap must never be the only number a
+        # reader gets. Raised by Jet, pass 102; see outcome_plausibility.sweep.
+        "ret_sweep": _ret_sweep([r for r in rows if is_tradeable(r["symbol"])]),
         "strategies": sorted(
             per_strategy.values(), key=lambda s: -s["tradeable"]["trades"]),
         "symbols": sorted(per_symbol.values(), key=lambda s: -s["book"]["trades"]),
@@ -418,6 +424,38 @@ def render(r: Dict[str, Any]) -> str:
         out.append("    NOTE: the RAW book says %+.4f%% and would have given the"
                    % ra["gross_pct"])
         out.append("    OPPOSITE verdict. The difference is the excluded rows above.")
+
+    # HOW MUCH OF THAT VERDICT IS THE THRESHOLD RATHER THAN THE BOOK.
+    #
+    # IMPLAUSIBLE_RET is 0.50 and sits ABOVE most of the rows the ledger already
+    # calls fabricated: measured over 7 days, the 50% cap catches 2 of the 8 rows
+    # that carry +2.6472 of a +2.3846 book, and the six it misses are BSTONK-USDC
+    # at +25.35%/+23.68%/+17.87%/+17.83%/+17.28% and BASECAT at +17.31%. Two of
+    # those are literally the +1.0201 of fabricated fills [c4f16946] names as the
+    # evidence the re-arm rule reads for atf_static. Printing the whole curve is
+    # the honest alternative to quietly choosing a smaller constant -- the real
+    # fix names an overshoot by its own limit (`clamped_gross`) and annuls it.
+    sw = r.get("ret_sweep") or {}
+    if sw.get("steps"):
+        out.append("")
+        out.append("  IS THE VERDICT THE BOOK, OR THE THRESHOLD?  (live-tradeable)")
+        out.append("    %-10s %6s %6s %10s %10s" % ("|ret| <=", "kept", "drop",
+                                                    "gross", "net"))
+        for st in sw["steps"]:
+            out.append("    %-10s %6d %6d %+10.4f %+10.4f%s" % (
+                "%.0f%%" % (st["max_ret"] * 100), st["kept"], st["dropped"],
+                st["gross"], st["net"],
+                "   <- the cap this verdict used"
+                if abs(st["max_ret"] - sw["default"]) < 1e-9 else ""))
+        if sw.get("verdict_is_threshold_dependent"):
+            out.append("    THE SIGN FLIPS AT %.0f%%. The verdict above is a CHOICE"
+                       % (sw["flips_at"] * 100))
+            out.append("    OF CAP, not a measurement. Do not quote either half")
+            out.append("    alone, and do not fix it by lowering the cap: annul the")
+            out.append("    overshoot rows ([c4f16946] / [db76611a]).")
+        else:
+            out.append("    The sign holds across the sweep, so the verdict is a")
+            out.append("    property of the book rather than of the cap.")
     out.append("")
     out.append("    variable cost floor %.4f%% of notional -- gross must beat THIS"
                % ra["variable_floor_pct"])
