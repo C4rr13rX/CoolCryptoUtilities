@@ -50,11 +50,42 @@ The position is on a real DEX and a quote is one RPC call: price it AT the
 abandon, or book it flagged so the tradeable filter can refuse it. A fake
 tradeable round trip is worse than a destroyed one, because graduation counts it.
 
+THE TWO DESTROYED POPULATIONS ARE OPPOSITE SHAPES
+-------------------------------------------------
+Only one of them is evidence, and the tool reports the discriminator
+(``inside_horizon``) so nobody has to take that on trust.
+
+The release op records no ``held_sec`` -- but it records ``released_entry_ts``,
+and the op's own ``ts`` is when the position was taken away, so hold time is
+recoverable from the log that already exists. Reading it, over 7 days:
+
+    EVICTIONS   median held 22 SECONDS; 91.6% taken away INSIDE the 900s
+                horizon, only 4.0% past 4x. The price at eviction is FRESH --
+                median staleness 3.0s, p90 21.1s, 96.6% under 60s against
+                market_stream -- so booking them would not fabricate a fill.
+                The objection is different: a position force-closed 22 seconds
+                after entry is not a round trip the STRATEGY made. It never
+                chose to exit; the harness took its slot. Booking all 784
+                injects ~51 tradeable rows/day of pure round-trip cost with no
+                direction in them, which pushes win rate and P/L DOWN against a
+                55%-and-positive bar -- graduation gets HARDER while the
+                throughput number looks better. The fix is to stop evicting at
+                22 seconds, not to book the eviction as an exit.
+
+    ABANDONS    the mirror image, and genuine: 0 of 90 inside the horizon,
+                median 10.8x, so the exit was truly OWED and no rule could
+                reach it -- but the price is 65 minutes stale.
+
+FRESH PRICE + NO REAL TRIP against REAL TRIP + STALE PRICE. Neither is fixed by
+booking the row where it is discarded.
+
 WHAT THIS TOOL IS FOR
 ---------------------
-It is the before/after number for [0f6957e3] and [79ad4d0d]. Both items are
-"make the ghost lane book what it already computed"; this says whether they did.
-Run it before the fix and after, and read ``booked_share`` and ``over_4x_stale``.
+It is the before/after number for [0f6957e3] and [79ad4d0d]. Run it before the
+fix and after, and read ``booked_share``, ``over_4x_stale`` and
+``inside_horizon``. A rise in ``booked_share`` that comes from booking rows with
+a high ``inside_horizon`` share is not progress -- it is the bar being fed rows
+the strategy did not make.
 """
 
 from __future__ import annotations
@@ -103,6 +134,24 @@ def _rows(con: sqlite3.Connection, status: str, since: float) -> List[Dict[str, 
     return out
 
 
+def _held_secs(row: Dict[str, Any]) -> float:
+    """How long the position was actually held, in seconds, or 0.0 if unknowable.
+
+    The abandon op records ``held_sec`` directly. The RELEASE op does not -- but
+    it records ``released_entry_ts``, and the op's own ``ts`` is the moment the
+    position was taken away, so the hold time is recoverable from the log that
+    already exists. Do not add logging for this: 775 of 784 releases over 7 days
+    carry the entry timestamp, and reading it is what showed the median eviction
+    happens 22 SECONDS after entry.
+    """
+    direct = float(row.get("held_sec") or 0.0)
+    if direct > 0:
+        return direct
+    entry_ts = float(row.get("released_entry_ts") or 0.0)
+    ts = float(row.get("ts") or 0.0)
+    return (ts - entry_ts) if (entry_ts > 0 and ts > entry_ts) else 0.0
+
+
 def _tradeable() -> Optional[Any]:
     """The live lane's own predicate, or None if it cannot be imported.
 
@@ -148,8 +197,7 @@ def destroyed_evidence(
     }
 
     for status, rows in fates.items():
-        held = [float(r.get("held_sec") or 0.0) for r in rows]
-        held = [h for h in held if h > 0]
+        held = [h for h in (_held_secs(r) for r in rows) if h > 0]
         silent = [float(r.get("silent_sec") or 0.0) for r in rows if r.get("silent_sec")]
         tradeable_n = (
             sum(1 for r in rows if is_tradeable(str(r.get("symbol") or "")))
@@ -167,6 +215,11 @@ def destroyed_evidence(
             "held_median_x_stale": (statistics.median(held) / STALE_EXIT_SECS) if held else None,
             "held_max_x_stale": (max(held) / STALE_EXIT_SECS) if held else None,
             "over_4x_stale": sum(1 for h in held if h > 4 * STALE_EXIT_SECS),
+            # The discriminator between the two destroyed populations. A position
+            # taken away INSIDE the horizon never asked to exit -- booking it
+            # writes a round trip the strategy did not make. One past the horizon
+            # was owed an exit no rule could reach.
+            "inside_horizon": sum(1 for h in held if h < STALE_EXIT_SECS),
             "with_held_secs": len(held),
             # Everything needed to book the round trip, present and unused.
             "bookable": sum(
@@ -219,6 +272,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("      held: median %s x stale_exit_secs, max %s x   [%d of %d over 4x]"
               % (_fmt(f["held_median_x_stale"]), _fmt(f["held_max_x_stale"]),
                  f["over_4x_stale"], f["with_held_secs"]))
+        if f["inside_horizon"]:
+            print("      %d of %d (%.1f%%) were taken away INSIDE the 900s horizon --"
+                  % (f["inside_horizon"], f["with_held_secs"],
+                     100.0 * f["inside_horizon"] / f["with_held_secs"]))
+            print("      those never asked to exit; booking them writes a trip the "
+                  "strategy did not make")
         print("      bookable now (entry price AND size present): %d of %d, %d with a strategy_id"
               % (f["bookable"], f["n"], f["with_strategy_id"]))
         if f["silent_median_secs"]:

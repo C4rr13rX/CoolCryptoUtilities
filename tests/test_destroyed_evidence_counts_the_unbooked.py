@@ -65,11 +65,14 @@ def book(tmp_path):
     _op(con, ts=NOW - 60, symbol="AERO-USDC", action="exit",
         status="ghost-exit", details={})
     # Evicted by a new entry: the slot was reused and nothing was written.
+    # These carry NO held_sec -- only released_entry_ts, exactly as the real op
+    # does. 22 seconds after entry, which is the real median.
     for i in range(2):
         _op(con, ts=NOW - 120, symbol="AERO-USDC", action="hold",
             status="position-released",
             details={"released_entry_price": 1.0, "released_size": 10.0,
-                     "released_strategy_id": "atf_static"})
+                     "released_strategy_id": "atf_static",
+                     "released_entry_ts": NOW - 142})
     # Feed went dark. Held far past the horizon the exit rules promise.
     _op(con, ts=NOW - 30, symbol="AERO-USDC", action="hold",
         status="position-abandoned-dark-feed",
@@ -124,6 +127,33 @@ def test_every_abandoned_position_had_what_it_needed_to_book(book):
     f = r_fate(book)
     assert f["bookable"] == 2
     assert f["with_strategy_id"] == 1
+
+
+def test_an_evictions_hold_time_is_recovered_without_new_logging(book):
+    """The release op records no held_sec -- but it records released_entry_ts.
+
+    Reading it is what showed the median eviction happens 22 SECONDS after
+    entry. A tool that reported the eviction hold time as unknown would have
+    left [0f6957e3] looking like destroyed long-held evidence, which is the
+    opposite of what it is.
+    """
+    r = destroyed_evidence(days=7.0, db_path=book, now=NOW)
+    f = r["fates"]["position-released"]
+    assert f["with_held_secs"] == 2
+    assert f["held_median_secs"] == pytest.approx(22.0)
+    assert f["over_4x_stale"] == 0
+
+
+def test_a_position_taken_away_inside_the_horizon_is_counted_apart(book):
+    """The discriminator between the two destroyed populations.
+
+    Inside the horizon the strategy never asked to exit, so booking the row
+    writes a round trip it did not make; past the horizon the exit was owed.
+    Real book: 91.6% of evictions inside, 0 of 90 abandons inside.
+    """
+    r = destroyed_evidence(days=7.0, db_path=book, now=NOW)
+    assert r["fates"]["position-released"]["inside_horizon"] == 2
+    assert r["fates"]["position-abandoned-dark-feed"]["inside_horizon"] == 0
 
 
 def test_a_stale_last_price_is_reported_so_nobody_books_a_fill_at_it(book):
