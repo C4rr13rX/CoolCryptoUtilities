@@ -312,3 +312,27 @@ def test_a_raising_fill_reader_does_not_lose_the_trade_path():
     # Degraded, but still a decision -- no exception escaped the entry.
     assert decision["status"] == "live-entry-failed"
     assert decision["fill_source"] == "wallet_delta"
+
+
+# THE FIXTURE PINS THE SYMBOL EDGE GATE, IT DOES NOT WEAKEN IT.
+#
+# Every test in this file is about what the ENTRY BOOKS once it fires --
+# the receipt fill, the recorded cost, the single spin of the swap. None of
+# them is about whether the edge gate lets the entry through, and the gate
+# sits UPSTREAM of every one of those assertions.
+#
+# Without this pin these tests read production data. services/symbol_edge_gate
+# opens storage/trading_cache.db at test time and answers from the live closed
+# book, so on 2026-09-10 SYMBOL (BASECAT-USDC) crossed the ban threshold -- 35
+# closed round trips at mean -0.852% against 0.465% cost, gross -1.4379 -- and
+# turned six green tests red with no code change at all. A test whose verdict
+# moves when the bots trade is not testing the code.
+#
+# The ban is CORRECT and stays: services.symbol_edge_gate.refusal_reason
+# still returns it, and the gate's own coverage lives with the gate. What is
+# pinned here is only this file's precondition -- that the entry is reached.
+@pytest.fixture(autouse=True)
+def _entry_reaches_the_booking_path(monkeypatch):
+    monkeypatch.setattr(
+        "trading.bot.symbol_edge_refusal", lambda _symbol, _strategy_id=None: None
+    )

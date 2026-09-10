@@ -422,3 +422,23 @@ def test_nothing_is_adopted_when_live_execution_is_not_armed(monkeypatch):
     bot._orphan_adoption_checked_at.clear()
     monkeypatch.setenv("LIVE_TRADES_DRY_RUN", "0")
     assert bot._adopt_orphaned_live_holding(SYMBOL, chain="base", price=MARK) is None
+
+
+# THE FIXTURE PINS THE SYMBOL EDGE GATE, IT DOES NOT WEAKEN IT.
+#
+# These tests are about what happens to the POSITION BOOK once an entry
+# fires. The symbol edge gate sits upstream of all of it, and it answers
+# from production: services/symbol_edge_gate opens storage/trading_cache.db
+# at test time and reads the live closed book. On 2026-09-10 BASECAT-USDC
+# crossed the ban threshold -- 35 closed round trips at mean -0.852% against
+# 0.465% cost, gross -1.4379 -- and these tests went red with no code change.
+# A test whose verdict moves when the bots trade is not testing the code.
+#
+# The ban is CORRECT and stays: services.symbol_edge_gate.refusal_reason
+# still returns it, and the gate's own coverage lives with the gate. Pinned
+# here is only this file's precondition -- that the entry is reached at all.
+@pytest.fixture(autouse=True)
+def _entry_reaches_the_position_book(monkeypatch):
+    monkeypatch.setattr(
+        "trading.bot.symbol_edge_refusal", lambda _symbol, _strategy_id=None: None
+    )

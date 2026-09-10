@@ -56,6 +56,16 @@ SPRINT_BUDGET_SEC = float(os.getenv("SPRINT_BUDGET_SEC", "600"))
 # not finish and reported "0 passed" -- which would have waved every pass
 # through. These are the files that pin the money path and run in seconds.
 GATE_TESTS = (
+    # STEP 8 OF THE PATH TO A PAID TRADE, AND IT WAS INVISIBLE HERE.
+    #
+    # This gate read 621 passed / 0 failed on 2026-09-10 while six tests in
+    # this file were red -- what a live entry BOOKS: the receipt fill, the
+    # recorded cost, that the swap spins once. They were red because the
+    # symbol edge gate reads storage/trading_cache.db at test time, so
+    # BASECAT-USDC crossing the ban threshold turned them red with no code
+    # change at all. The fixture now pins that gate; the ban itself stands.
+    # A gate that cannot see the money path is not a gate.
+    "test_live_entry_books_the_receipt_fill.py",
     "test_demotion_needs_a_net_loss.py",
     # Upstream of every gate in this file. Both the re-arm rule and the
     # profitability floor read a LIFETIME live P/L that a demotion freezes, so
