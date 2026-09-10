@@ -812,6 +812,11 @@ def symbol_edge(
 
     per_symbol: Dict[str, Dict[str, Any]] = {}
     grid: Dict[tuple, Dict[str, Any]] = {}
+    # Item [d763940a] asks this report to NAME the implausible rows rather than
+    # count them. A count cannot be acted on: an entry-basis guard cannot delete
+    # history, so the honest close on that criterion is to say which rows remain
+    # and, for each, whether the guard would have refused it.
+    named_implausible: List[Dict[str, Any]] = []
     refused = 0
     scales = _strategy_scales(rows)
     for r in rows:
@@ -847,6 +852,14 @@ def symbol_edge(
             bucket["wins_clamped"] += 1 if net_c > 0 else 0
             if implausible:
                 bucket["implausible"] += 1
+                if extra is None and bucket.get("strategy_id") is None:
+                    named_implausible.append({
+                        "symbol": sym, "strategy_id": r.get("strategy_id", ""),
+                        "ts": float(r.get("ts", 0.0) or 0.0),
+                        "entry": float(r.get("entry_price", 0.0) or 0.0),
+                        "exit": float(r.get("exit_price", 0.0) or 0.0),
+                        "net": net, "reason": str(r.get("reason", "") or ""),
+                    })
             else:
                 bucket["net_sane"] += net_c
                 bucket["trips_sane"] += 1
@@ -908,6 +921,7 @@ def symbol_edge(
         "total_trips_sane": trips_sane,
         "total_win_rate_sane": wins_sane / trips_sane if trips_sane else 0.0,
         "implausible_rows": total["trades"] - trips_sane,
+        "named_implausible": named_implausible,
         "symbols": symbols,
         "grid": cells,
         "best_symbol": best,
@@ -915,6 +929,38 @@ def symbol_edge(
         "bar": {"trades": BAR_TRADES, "win_rate": BAR_WINRATE, "net": 0.0},
         "strategies_clearing_bar": winners,
     }
+
+
+def _basis_verdict(row: Dict[str, Any]) -> str:
+    """What the entry-basis guard says about one already-booked row.
+
+    Reported rather than enforced here: this script reads history, and a guard
+    that runs at entry time cannot remove a row the book already holds. Naming
+    the verdict is what closes criterion 3 of item [d763940a] honestly -- it
+    separates "this one would now be refused" from "no source can judge it".
+    """
+    try:
+        from services.entry_price_corroboration import (
+            book_disagreement, corroborating_ticks)
+    except Exception as exc:                                # pragma: no cover
+        return "entry-basis guard unavailable: %s" % (exc,)
+    sym, px, ts = row["symbol"], row["entry"], row.get("ts", 0.0)
+    try:
+        feed = corroborating_ticks(sym, px, at_ts=ts)
+        book = book_disagreement(sym, px, at_ts=ts)
+    except Exception as exc:                                # pragma: no cover
+        return "entry-basis guard errored: %s" % (exc,)
+    if feed.get("corroborated") is False:
+        return "WOULD BE REFUSED (feed): %s" % feed["reason"]
+    if book.get("disagrees"):
+        return "WOULD BE REFUSED (book): %s" % book["reason"]
+    if feed.get("corroborated") is True:
+        return ("CANNOT JUDGE -- the feed CORROBORATES this price: %s. A price "
+                "the feed itself published is not reachable by a plausibility "
+                "threshold; if it is still wrong, the ticker carries two assets."
+                % feed["reason"])
+    return ("CANNOT JUDGE -- no feed coverage and no prior entry to compare "
+            "against: %s / %s" % (feed.get("reason", ""), book.get("reason", "")))
 
 
 def render_symbol_edge(r: Dict[str, Any]) -> str:
@@ -938,6 +984,19 @@ def render_symbol_edge(r: Dict[str, Any]) -> str:
                % (r["total_trips_sane"], 100.0 * r["total_win_rate_sane"],
                   r["total_net_sane"], r["implausible_rows"],
                   100.0 * IMPLAUSIBLE_RET))
+    named = r.get("named_implausible") or []
+    if named:
+        out.append("")
+        out.append("  THE IMPLAUSIBLE ROWS, NAMED -- and whether the entry-basis")
+        out.append("  guard (services.entry_price_corroboration) would have refused")
+        out.append("  each one at the moment it was opened. A row it CANNOT judge")
+        out.append("  is named as such: an entry guard cannot delete history, so a")
+        out.append("  row already in the book stays in it either way.")
+        for row in sorted(named, key=lambda z: z.get("ts", 0.0)):
+            out.append("    %-14s entry %-12.6f exit %-12.6f net %+8.4f  %s"
+                       % (row["symbol"], row["entry"], row["exit"], row["net"],
+                          row.get("reason", "")))
+            out.append("      %s" % _basis_verdict(row))
     out.append("")
     out.append("  %-20s %5s %5s %9s %9s %9s %7s %4s %4s" % (
         "symbol", "trips", "win%", "gross", "gross_cl", "net_sane", "gr_cl%",
