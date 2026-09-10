@@ -4935,3 +4935,22 @@ NEXT: [9fd050f1]. services/internal_cron.py:765 decides a chain is ready by COUN
 *.json files and never looks at their age, so 233 files on base pass the gate while 11 of the
 19 in use are stale. The 11 now start cold instead of poisoned; the right outcome is a fresh
 file, not a refusal.
+
+2026-09-10 | Jet (QA) | hypothesis: the stop-survivability gate's WINDOW is too short to see BASECAT-USDC's jumps, which is why it accepts a symbol a 7d census says has p99 5.559% and 31 jumps above 5% against a 4.00% ceiling.
+
+FALSIFIED, and the premise was wrong rather than the threshold. WINDOW_SEC is 604800.0 -- the gate already reads the SAME seven days the census read. There is no window disagreement. The entire difference is MAX_TICK_GAP_SEC: the census counted consecutive ROWS, the gate counts rows adjacent IN TIME.
+
+RESULT, one 7d window, >5% jumps split by the gap they span:
+  BASECAT-USDC  1809 pairs  p99 5.272% by row / 2.646% at <=120s  23 jumps >5%, ZERO within 120s (min gap 281s, median 2135s), largest move inside 120s all week 4.472%
+  BSTONK-USDC   1455 pairs  p99 12.318% by row / 4.788% at <=120s  79 jumps >5%, TEN within 120s (min gap 17s) -- refused live today
+  AERO-USDC     3668 pairs  p99 0.862% by row / 0.426% at <=120s   1 jump >5%, spanning 22 hours
+
+So BASECAT's admission is CORRECT and closes with no change to the gate's logic. The 120s measure is the right one: a stop is only enforceable on a tick that ARRIVES, so a 5% move accumulated across 35 minutes of feed silence is not a move the stop failed to bind on. It is load-bearing rather than cosmetic -- it separates the symbol that booked six 17-25% gross ghost rows from the one that booked a single row, and row-adjacent p99 does not separate them.
+
+Shipped d7f93c9: the table in the module docstring so nobody re-derives it, plus tests/test_a_jump_nobody_could_trade_through_cannot_ban_a_symbol.py -- 4 tests at the shape actually measured (many large jumps, symbol dense enough to be judged on a percentile), 2 of which go RED at max_gap=0.0.
+
+HANDS TO [d763940a]/[57d69341]: BASECAT has exactly FIVE tick-adjacent pairs above the 4.00% ceiling in 7 days, largest 4.472%. Those five are the only contamination candidates a tick-to-tick guard can ever fire on there; the other 23 large moves are gap-spanning and such a guard will never see them.
+
+ALSO shipped 1f08755, unrelated and found by doing it: scripts/notify_sms.py matched only --check/--test and let every other flag fall through to send(" ".join(args)), so an unrecognised flag was TEXTED to the operator as the message and reported as success. PRE-FIX rc=0 transmitted=['--body-fyle /tmp/x.txt']; NOW rc=1 transmitted=[]. Added --body-file <path>, which also fixes Iris's separate short-send finding -- the script does not truncate, the body was already cut by an argv length limit in the caller. 9 tests. Gate 721 passed 0 failed both times.
+
+NEXT: the honest gap I did NOT close, stated so it is not mistaken for coverage -- above MIN_TICKS the gate bans on p99 alone, so BASECAT's five genuinely tick-adjacent breaches of the ceiling do not ban it, while below MIN_TICKS just TWO observed breaches would. That asymmetry is defensible (p99 is the right estimator at density) but it is unmeasured. Worth a pass only if a symbol turns out to lose money through breaches its p99 hides.
