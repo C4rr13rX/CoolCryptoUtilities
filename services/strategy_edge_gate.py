@@ -110,8 +110,34 @@ MIN_SAMPLES = int(os.getenv("STRATEGY_EDGE_MIN_SAMPLES", "3"))
 #: because MIN_SAMPLES is small.
 MAX_T = float(os.getenv("STRATEGY_EDGE_MAX_T", "-1.7"))
 
-#: Round-trip cost as a fraction of notional. Measured from receipts, and the
-#: same figure symbol_edge_gate tests against.
+#: FALLBACK round-trip cost, used only when the book holds too few real fees
+#: to measure one. The live verdict calls ``_cost()`` -> ``round_trip_cost()``.
+#:
+#: This literal used to be read DIRECTLY, and its comment claimed it was "the
+#: same figure symbol_edge_gate tests against". That stopped being true when
+#: symbol_edge_gate moved to the measured cost: it charges 0.4653% while this
+#: gate was charging 0.6500%, a 0.185%-of-notional surcharge on every strategy
+#: it judged. Two gates answering one question at two different bars is the
+#: shape this repo has shipped before.
+#:
+#: It is not a rounding difference. Re-priced 2026-09-10 against
+#: services/round_trip_cost (0.4653%), 2 of the 7 standing bans are entirely
+#: an artifact of the surcharge and lift::
+#:
+#:     rsi_reversal          10 trips  mean -0.625%  t=-1.85 -> -1.44  LIFTS
+#:     stochastic_reversal    4 trips  mean -0.168%  t=-1.86 -> -1.29  LIFTS
+#:
+#:     bus_schedule           4 trips  mean -1.366%  t=-3.70 -> -3.36  stands
+#:     donchian_breakout@1d   3 trips  mean -1.082%  t=-2.54 -> -2.27  stands
+#:     obv_accumulation@1w    9 trips  mean -1.668%  t=-8.39 -> -7.72  stands
+#:     obv_accumulation@3d    3 trips  mean -0.579%  t=-2.04 -> -1.74  stands
+#:     obv_accumulation@5d    8 trips  mean -0.598%  t=-2.99 -> -2.55  stands
+#:
+#: rsi_reversal is the strategy CLOSEST to graduation on tradeable evidence.
+#: It was being refused entries for failing to clear a cost it is not charged.
+#: A gate refusing a strategy that pays for itself is wrong, not safe -- and
+#: nothing here is loosened: MAX_T, MIN_SAMPLES and the ordering are untouched,
+#: the bar is simply asked at the price the receipts actually charge.
 ROUND_TRIP_COST = float(os.getenv("STRATEGY_EDGE_ROUND_TRIP_COST", "0.0065"))
 
 #: Positions below this notional produce meaningless returns (a $0.0001
@@ -250,30 +276,56 @@ def _load_book(limit: int = 500) -> Dict[str, List[float]]:
     return dict(book)
 
 
+def _cost() -> float:
+    """What a round trip actually costs, as a fraction of notional.
+
+    Measured from receipts by ``services.round_trip_cost``, falling back to
+    ``ROUND_TRIP_COST`` when the book holds too few real fees to measure one.
+    Exactly the accessor ``symbol_edge_gate._verdict`` uses, so the two gates
+    cannot answer one question at two different bars again.
+    """
+    try:
+        from services.round_trip_cost import round_trip_cost
+
+        measured = float(round_trip_cost(db_path=DB_PATH))
+    except Exception:  # noqa: BLE001
+        return ROUND_TRIP_COST
+    # A non-finite or non-positive measurement is not a free round trip, it is
+    # a broken read. Charging zero would ban nothing and switch the gate off.
+    if not math.isfinite(measured) or measured <= 0.0:
+        return ROUND_TRIP_COST
+    return measured
+
+
 def _rebuild(now: float) -> None:
     global _cache_built_at
     book = _load_book()
     verdicts: Dict[str, Tuple[float, str]] = {}
+    # Read the cost ONCE for the whole rebuild. Calling the accessor per
+    # strategy would let a cache expiry land mid-sweep and judge two
+    # strategies at two different bars in one pass -- the same reason
+    # symbol_edge_gate._verdict reads it once per verdict.
+    cost = _cost()
     for strategy, values in book.items():
         if strategy in NEVER_BAN:
             continue
         if len(values) < MIN_SAMPLES:
             continue
         mean = statistics.mean(values)
-        if mean >= ROUND_TRIP_COST:
+        if mean >= cost:
             continue  # pays for its own trading -- not a candidate
         # Test the EXCESS over what the round trip costs, so the null
         # hypothesis is "this strategy pays for itself" rather than "this
         # strategy is above zero". A strategy returning +0.1% per round trip
-        # against a 0.65% cost is a loser, and comparing to zero would miss it
+        # against the cost is a loser, and comparing to zero would miss it
         # -- the exact shape services/profit_logic_audit.py flags in code.
-        excess = [value - ROUND_TRIP_COST for value in values]
+        excess = [value - cost for value in values]
         t = _t_statistic(excess)
         if t < MAX_T:
             verdicts[strategy] = (
                 t,
                 f"{len(values)} closed round trips at mean return "
-                f"{mean * 100:+.3f}% vs {ROUND_TRIP_COST * 100:.3f}% cost "
+                f"{mean * 100:+.3f}% vs {cost * 100:.3f}% cost "
                 f"(t={t:+.2f} on excess return)",
             )
     for strategy, (_t, detail) in sorted(verdicts.items()):
