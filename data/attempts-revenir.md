@@ -4553,3 +4553,26 @@ NEXT: not another topology tweak. A fabric at 100% train recall and 30%
 held-out against a 55% majority is reproducing, not generalising; a change
 worth 2 points cannot close a 25-point gap. Ask why the gap is there first.
 Report: data/brain_experiments/QUERY-PATH-PROOF-pass109-gale.md
+
+## 2026-09-10 | Iris | pass 109 | the cost floor is a horizon problem, not an absolute one
+
+HYPOTHESIS: item 618d4c4b's last criterion -- is there a horizon, symbol or
+clip where any signal clears the round-trip cost, or does none exist?
+
+DID: added a three-arm COST-FLOOR SWEEP to scripts/head_skill_census.py,
+printed on every run. 26h, 6633 predictions, 78 symbols. Commit e5a9527.
+
+RESULT: two of the three levers clear it, which is not the expected answer.
+CLIP CANNOT -- $10 to $250 moves the share of ticks whose |move| outruns the
+fee by 2.6 points (27.5% -> 30.0%, asymptote), because the clip amortises only
+the fixed $0.004047 leg while the 0.3187% rate is size-invariant. HORIZON CAN
+-- 5m 17.8%, 15m 27.5%, 30m 38.2%, 60m 53.2%, 120m 68.1%, 240m 80.3%; median
+|move| 0.0628% -> 1.3381%. SYMBOL CAN -- VVV-USDC clears 71.2% of 15m ticks.
+BUT NO SIGNAL PAYS WHERE THE FLOOR CLEARS: top-decile entry is UP 4/4 DOWN 0/7
+at 240m, UP 5/6 DOWN 1/6 at 120m, and UP 6/8 DOWN 0/4 on VVV-USDC where the
+head's AUC is a real 0.5828 +/- 0.026. Long exposure in up windows.
+
+NEXT: the wall is off cost and onto direction in DOWN windows. Also filed
+[4d0b539b]: --horizon is in BARS and data/historical_ohlcv is mixed-cadence
+(166s to 345600s over 629 files), so "horizon 12" means 33 minutes on one file
+and 48 days on another and no report records the minutes.
