@@ -243,6 +243,15 @@ GATE_TESTS = (
     # which was not broken. Both files could be green while disagreeing about
     # every strategy in the ledger, so neither could catch it alone.
     "test_readiness_is_not_computed_from_the_pooled_ghost_book.py",
+    # The per-symbol edge table that answers "is there a symbol we can spend on
+    # where the edge survives the fee". It is a measurement, not a gate, but a
+    # measurement the next pass will BUILD A STRATEGY FROM, so its arithmetic
+    # is on the money path. All three of its mistakes have shipped here: a
+    # refused symbol carrying the tradeable total, an annulled reversal summed
+    # as a fill, and a cost rate subtracted from a dollar amount instead of
+    # charged against notional. Verified by mutation -- each of the three
+    # reintroduced separately turns this file red.
+    "test_a_refused_symbol_cannot_carry_the_tradeable_book.py",
     # The gate that was refusing 100% of entries, and the half of its tests
     # that matters. `_tick_jumps` read prices without timestamps, so a 40%
     # move across a 31-hour hole in the feed scored as a single-tick jump and
