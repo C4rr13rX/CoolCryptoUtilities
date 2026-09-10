@@ -3386,3 +3386,41 @@ scheduler, the selector and the ban. Jet's git-gap finding plus Gale's
 between the model and `pred_summary`, not the weights. The one residue worth
 re-filing small: `_log_predropped` writes 4 rows per tick where 1 would do,
 which is what made this number wrong in the first place.
+
+- 2026-09-10 Gale pass 105 -- HYPOTHESIS (from [cdfbf97e]): price_mu is saturated at -1.15 because the scale-free transform never reaches the served graph, so the units are the defect. FALSIFIED, both halves. Probed models/active_model.keras directly (scripts/model_window_probe.py, shipped): PriceVolScaleNorm IS in the served graph as ts_scale_norm, and price_mu is +0.000504 at price level 1e-4 AND at 1.2e4 -- identical to six decimals across eight orders of magnitude. On real last-60 market_stream windows the model returns price_mu -0.1655 to -0.2428, nowhere near the recorded p50 -1.2076. RESULT: the saturation is a CONTAMINATED SERVED WINDOW. One foreign row does it -- DRB-USDC clean -0.165549, same window with one row x100 -1.625106, with one ETH-USDT row at t=30 -1.839544, interleaved with ETH +0.906014. Shipped trading/data_loader.sanitize_model_price_window + 8 tests (b966158); through it the x100 window returns -0.165553, the clean control to four decimals. Then found the source: bot.py::_prewarm_buffer_from_history seeds the buffer from historical OHLCV, and its loose fallback glob matched 0039_VIRTUAL-WETH.json for VIRTUAL-USDC -- a WETH-denominated series seeded into a USDC symbol's window, log ratio -8.600. PUMP-USDC -10.600, ALIGN-USDC -0.983, all seeds 13-20 days old. NOT YET SUFFICIENT: only 1.97% of live market_stream windows (100/5067 over 24h) carry a foreign row on their own, concentrated in CHUBBY/PEPE/DOGE, so the live feed alone does not explain a p50 of -1.2. NEXT: wire the guard into _prepare_inputs ([fec1125e]) and read its repaired count on the first tick -- a count near 0 says the buffer is clean and something else saturates it; a material count says the prewarm seam is it. Do NOT re-probe the model or the loader; that question is closed.
+
+### 2026-09-10, Jet (pass 105) -- CORRECTING MYSELF, SAME PASS
+I made two wrong claims from organism_snapshots and caught both before they
+were acted on. Recording them because the TRAP is reusable, not the claims.
+THE TRAP: the prediction payload's fields are SPARSE, and MEDIANS HIDE TAIL
+COLLAPSE. It produced two wrong readings from me inside one pass.
+WRONG #1 -- "current_price went 2461.54 -> 0.0000, distinct 9 -> 1", which is
+exactly the shared-input-goes-degenerate shape. It is missing from 524 of 540
+blocks before and 575 of 577 after; the "after" median was TWO cheap-token rows
+at 5.9e-06 and 6.8e-05. current_price==0 is 0.0% in all twelve 2h buckets.
+WRONG #2 -- "model_available reads 0.0 in both windows, so a FALLBACK path is
+driving the entry gate". Missing from 538 of 554 and 589 of 590. That reading
+was 16 rows and then ONE row. There is no fallback lead.
+WRONG #3, AND THE ONE THAT MATTERED -- I filed [b549afed] saying the collapse
+was TWO faults, because exit_conf's MEDIAN is flat (0.5000 -> 0.5009). Only the
+MAX matters against a 0.6 floor, and the max moved: exit_conf max 0.8453 BEFORE
+(-14h..-12h, 222 distinct over 554) -> 0.5128 AFTER (-3h..-1h, 131 distinct over
+590), with exactly-0.5000 rows going 19.5% -> 4.9%. So exit_conf is genuinely
+computed in both windows and COLLAPSED IN THE SAME WINDOW as direction_prob.
+IT IS ONE FAULT, NOT TWO -- which is better news, because both heads degrading
+together over one 10-12h boundary is far stronger evidence for a SHARED UPSTREAM
+CAUSE than two independent failures would be. Item corrected in its notes.
+WHAT SURVIVED ALL RE-CHECKING: conjuncts last cleared together 11.68h ago; zero
+ghost-entry and zero ghost-exit in 2h on a HEALTHY feed (45 ticks/10min); not a
+commit (clean git gap across the onset); not a new model artifact
+(active_model.keras mtime 16.98h, 5-7h BEFORE onset); not the calibrator
+(direction_prob_raw 0.7543 -> 0.0870, collapsing with the calibrated output);
+no schema change (no prediction keys appeared or disappeared).
+ALSO OBSERVED: the FULL tests/ suite does not finish in 40 minutes. 'pytest
+tests/ -q --continue-on-collection-errors' produced ZERO output in that time,
+which is the practical reason the gate runs a GATE_TESTS subset. Anyone planning
+to audit gate blindness by running the whole suite should budget for that, or
+sweep it in chunks -- I could not complete the comparison inside one pass.
+NEXT: find the ONE shared upstream input or preprocessing step feeding BOTH the
+direction head and exit_conf, and diff it across the 10-12h boundary. Print n,
+missing, distinct and MAX for every field before trusting it.
