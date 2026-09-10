@@ -416,6 +416,15 @@ GATE_TESTS = (
     # With peak edge at +0.0916% against a 0.6500% round trip, a score that
     # ranks MAGNITUDE is the only shape that closes a 7x gap.
     "test_the_mean_over_admitted_bars_hides_the_tail.py",
+    # Both were reported as "fail at collection, never run, never report".
+    # They fail to collect under the SYSTEM interpreter (no tensorflow, no
+    # daphne) and pass under .venv, which is the one _run_tests uses:
+    # measured 2026-09-10, 11 passed in 12.2s. They are in the gate because
+    # the gate can now see a collection error if that ever changes.
+    "test_the_model_reads_the_price_move_not_the_price_tag.py",
+    "test_wallet_websocket.py",
+    # The gate's own blindness. It printed OK on a run in which nothing ran.
+    "test_the_gate_cannot_go_green_on_tests_that_never_ran.py",
 )
 
 
@@ -428,38 +437,105 @@ def _targets() -> list:
     return out
 
 
+def _missing_targets() -> list:
+    """GATE_TESTS entries with no file behind them.
+
+    _targets() drops these silently, and a shorter list is indistinguishable
+    from a passing one: rename a gate test and the gate simply stops running
+    it, forever, while still printing OK. They are counted as failures.
+    """
+    return [n for n in GATE_TESTS if not (ROOT / "tests" / n).exists()]
+
+
+# The flags matter as much as the target list, so they are named here and the
+# test for this file uses THESE, not a copy that can drift from them.
+#
+#   -rfE, not -rf         with -rf pytest omits ERROR lines from the short
+#                         summary, so a file that fails to COLLECT is never
+#                         named and lands in no outcome. Measured 2026-09-10
+#                         against one uncollectable file: returncode 2,
+#                         "1 error in 10.03s", outcomes {} -- and therefore no
+#                         regression, so the gate printed "OK" and exited 0.
+#   --continue-on-collection-errors
+#                         a collection error Interrupts the whole session, so
+#                         that same single bad file also stopped every OTHER
+#                         gate test from running. The gate reported OK on a
+#                         run in which nothing ran at all.
+PYTEST_FLAGS = ("-q", "--no-header", "-rfE", "--tb=no",
+                "--continue-on-collection-errors")
+
+
+def _summarise(text: str, returncode: int, missing: list) -> dict:
+    """Turn one pytest run into counts and NAMED outcomes.
+
+    Pure, so the gate's own blindness is testable without a subprocess.
+    """
+    outcomes = {}
+    for line in text.splitlines():
+        line = line.strip()
+        # "____ ERROR collecting tests/foo.py ____" -- the section header names
+        # the file even when the short-summary nodeid does not.
+        m = re.search(r"ERROR collecting (\S+)", line)
+        if m:
+            outcomes[m.group(1)] = "fail"
+            continue
+        m = re.match(r"^(?:FAILED|ERROR)\s+(\S+)", line)
+        if m:
+            node = m.group(1)
+            # "ERROR - ImportError: ..." -- pytest emits an empty nodeid for a
+            # session-level error, and "-" as an outcome key names nothing and
+            # collapses every such error into one entry.
+            if node == "-":
+                outcomes["<session error> %s" % line[:120]] = "fail"
+            else:
+                outcomes[node] = "fail"
+    for name in missing:
+        outcomes["tests/%s (MISSING FILE)" % name] = "fail"
+
+    passed = re.search(r"(\d+) passed", text)
+    # failed and errors are counted SEPARATELY. One alternation over
+    # "(\d+) (?:failed|error)" stops at the first match, so "1 failed,
+    # 2 errors" reported 1 and three broken files read as one.
+    n_failed = re.search(r"(\d+) failed", text)
+    n_error = re.search(r"(\d+) error", text)
+    counted = bool(passed or n_failed or n_error)
+    # 0 = all passed, 1 = tests failed. 2/3/4 are interrupted / internal error
+    # / usage error: none of them mean "the tests passed", and all of them can
+    # leave the counts blank, which used to read as INCONCLUSIVE and exit 0.
+    usable = returncode in (0, 1)
+    return {
+        "ran": counted and usable,
+        "passed": int(passed.group(1)) if passed else 0,
+        "failed": ((int(n_failed.group(1)) if n_failed else 0)
+                   + (int(n_error.group(1)) if n_error else 0)
+                   + len(missing)),
+        "outcomes": outcomes,
+        "missing": list(missing),
+        "returncode": returncode,
+    }
+
+
 def _run_tests() -> dict:
     """Per-test outcomes, so a regression can be named rather than counted."""
     py = ROOT / ".venv" / "Scripts" / "python.exe"
     exe = str(py) if py.exists() else sys.executable
     targets = _targets()
+    missing = _missing_targets()
     if not targets:
-        return {"ran": False, "outcomes": {}}
+        return {"ran": False, "outcomes": {}, "missing": missing}
 
     # No timeout: a cut-off run reports "did not run", which would read as a
     # clean pass and defeat the gate.
     try:
         out = subprocess.run(
-            [exe, "-m", "pytest", *targets, "-q", "--no-header", "-rf",
-             "--tb=no"],
+            [exe, "-m", "pytest", *targets, *PYTEST_FLAGS],
             cwd=str(ROOT), capture_output=True, text=True)
     except Exception as exc:  # noqa: BLE001
-        return {"ran": False, "outcomes": {}, "error": str(exc)}
+        return {"ran": False, "outcomes": {}, "error": str(exc),
+                "missing": missing}
 
-    text = (out.stdout or "") + (out.stderr or "")
-    outcomes = {}
-    for line in text.splitlines():
-        m = re.match(r"^(?:FAILED|ERROR)\s+(\S+)", line.strip())
-        if m:
-            outcomes[m.group(1)] = "fail"
-    passed = re.search(r"(\d+) passed", text)
-    failed = re.search(r"(\d+) (?:failed|error)", text)
-    return {
-        "ran": bool(passed or failed),
-        "passed": int(passed.group(1)) if passed else 0,
-        "failed": int(failed.group(1)) if failed else 0,
-        "outcomes": outcomes,
-    }
+    return _summarise((out.stdout or "") + (out.stderr or ""),
+                      out.returncode, missing)
 
 
 def _profit_numbers() -> dict:
@@ -571,9 +647,23 @@ def check() -> int:
         print("link for another is not progress, whatever else the pass did.")
         verdict = 1
     elif not after.get("ran"):
-        print("INCONCLUSIVE -- the test run produced no counts. Treat as unproven.")
+        print("REJECTED -- the test run produced no usable counts "
+              "(pytest returncode %s)." % after.get("returncode"))
+        print()
+        print("A gate that did not run is not a gate. This used to print")
+        print("INCONCLUSIVE and still exit 0, so an interrupted pytest -- which")
+        print("is what ONE uncollectable file does to the whole session --")
+        print("waved the pass through green with nothing executed.")
+        verdict = 1
     else:
         print("OK -- nothing that was passing is broken.")
+
+    if after.get("missing"):
+        print()
+        print("GATE TESTS WITH NO FILE -- these stopped running and the gate")
+        print("could not tell that from passing:")
+        for name in after["missing"]:
+            print("    tests/%s" % name)
 
     # Constraint 3: did the numbers this work claims to move actually move?
     was_p = before.get("profit") or {}
