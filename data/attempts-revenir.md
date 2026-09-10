@@ -2355,3 +2355,61 @@ is the strong evidence there and win rate is the weak one. One correction to my
 own stop claim: on the narrower population the tightest width alone is now
 slightly better than booked (0.25% -0.6125 vs booked -0.7107); every other width
 is still worse and no width makes the book positive.
+
+## 2026-09-10 — Jet (manager, pass 100)
+
+HYPOTHESIS: `_live_tradeable` answers "could the live lane have placed this"
+with only `stop_is_unenforceable`, while every live entry site ALSO consults
+`symbol_edge_gate` — so the ledger counts banned symbols as spendable evidence.
+
+RESULT: CONFIRMED, and bigger than filed. Over 213 closed `trade_outcomes` rows
+at the measured 0.4653% cost: tradeable-by-stop-only 190 trades / 36.8% /
++1.2127 → minus the symbol ban 130 / 35.4% / +4.4282 → minus the pair ban too
+106 / 38.7% / +4.8778. 60 symbol-banned trips worth -3.2155 and 24 pair-banned
+worth -0.4497 were counted as a licence to spend real money. Shipped 2b58f50,
+forward-only and with no look-ahead: the gate is consulted at `record()` time,
+so a trade is judged against the ban standing when it closed.
+
+THREE MORE, ALL FOUND BY FOLLOWING THAT ONE THREAD OUTWARD:
+
+1. `services/strategy_edge_gate.py:115` hardcoded `ROUND_TRIP_COST = 0.0065`
+   with no measured fallback, under a comment claiming it was "the same figure
+   symbol_edge_gate tests against" — which stopped being true when
+   symbol_edge_gate moved to `round_trip_cost()`. A 0.185%-of-notional
+   surcharge on every strategy it judged. Re-priced, 2 of 7 bans are entirely
+   the surcharge: rsi_reversal t=-1.85 → -1.44 and stochastic_reversal
+   t=-1.86 → -1.29 both LIFT. rsi_reversal is TOP of the graduation
+   leaderboard. Shipped c9ffb5c. Nothing loosened — MAX_T, MIN_SAMPLES and the
+   ordering are untouched; the bar is asked at the price the receipts charge.
+
+2. `scripts/tradeable_book.py` — the tool that NAMES THE WALL — kept its own
+   copy of the tradeable predicate and drifted the moment the ledger's changed.
+   It printed BASECAT-USDC and COMP-USDC as "live: yes" after graduation had
+   stopped counting them. Shipped 2f3569d: it now delegates to
+   `ledger._live_tradeable`.
+
+3. THE BIG ONE. `trading/bot.py` raised `UnboundLocalError: target_price_held`
+   at the ghost exit BOOKING site — bound at 7320-7321 inside the `else:` at
+   7307, while `should_exit` is set at 7131 and 7216 without passing through
+   it. A raise there closes no round trip, writes no `trade_outcomes` row and
+   logs no reason: the exact silent shape reported as "GHOST: no ghost activity
+   in 1h" (226 trading_ops over 2h → 1 ghost-entry, 0 closes). Shipped fab1c87.
+
+WHAT THIS PASS ACTUALLY TEACHES, and it is a method rather than a fact:
+**four independent defects, and every one of them was two copies of a single
+rule that drifted apart.** stop-vs-ban in the ledger; 0.650% vs 0.4653% across
+two gates; the wall report's private predicate vs the ledger's; a bracket price
+bound on one path and read on another. None was found by reasoning about the
+market. All four were found by asking "who else answers this question, and do
+they still agree?" That question is cheap and it is nowhere near exhausted —
+run it before opening another cost or clip item.
+
+NEXT: (a) RESTART PRODUCTION — fab1c87 is forward-only and 14 python processes
+are alive on the OLD code, so the ghost lane keeps raising until they restart;
+then re-measure closed ghost round trips/hour and say whether step 3 GHOST
+moved FAIL → PASS. That number is not yet in hand and the fix is claimed on it.
+(b) Do NOT open another cost/clip/admission item: `tradeable_book --days 7`
+now reports de-contaminated gross of **-0.3416% of notional**, i.e. the book
+loses BEFORE fees, so no admission rule and no clip can reach it — I rejected
+[cce4bf04] and [8810a066] on that measurement. The live question is WHICH
+STRATEGY supplies the negative gross ([aee0af15], Iris).
