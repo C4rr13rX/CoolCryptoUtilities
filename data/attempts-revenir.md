@@ -2627,3 +2627,42 @@ system takes.
 **Lesson, and it is the second one this pass: when a fix and a big number sit
 next to each other, bucket the number before claiming the fix moves it.** I had
 the census one query away and asserted the link instead.
+
+**Third finding, same pass, and it argues against the item I had just filed.**
+[0f6957e3] asks whether the eviction is wrong or the BOOKING is missing. I
+answered it. The booking is not blocked by anything: all 787 release ops carry
+`released_entry_price` and `released_size`, and 785 of 787 have a
+`market_stream` price within 5 minutes. But priced at the eviction and charged
+the receipts cost (0.004047 fixed + 0.3187% of notional, not a flat 0.65%):
+
+    gross         +1.1422
+    real cost     -3.8706
+    NET           -2.7284
+    net win rate   2.2%   (17 of 785)
+    net per trip  -0.003476
+
+Gross alone is +0.5248% of notional at a 53.5% gross win rate, which is why
+this looks like a win right up until the cost is applied.
+
+**So plugging the biggest evidence leak in the system adds ~785 round trips at
+a 2.2% net win rate.** The bar is 20 trades at 55%. It raises the evidence rate
+and destroys the win rate, and it must not be filed as a path to graduation --
+only as "make the book stop scoring itself on survivors", which is a real but
+different argument.
+
+**The number underneath, and it is the one I would chase next:** total notional
+across all 785 is 217.66 -- a **mean notional of about $0.277**. The FIXED cost
+of 0.004047 is **1.46% of a $0.277 clip** before the 0.3187% rate is charged at
+all. At that clip a round trip cannot pay its own fixed cost in either
+direction, which would explain a losing tradeable book far more economically
+than any exit rule does. That is the micro-clip / cost-floor family.
+
+**Unclosed caveat, flagged rather than buried:** `released_size` may be a
+residual rather than the full position size, which would understate the mean
+notional and overstate per-trip cost. The SIGN does not depend on it (+1.14
+gross against 3.87 cost is a 3.4x gap) but the clip argument does. Verify
+`released_size` against the entry op's size before acting on it.
+
+**Next:** that verification, then the clip. Lesson for the loop: **a gross
+number and a net number disagreed in SIGN here, and only the net one is a
+decision.** Charge the receipts cost before calling anything an edge.
