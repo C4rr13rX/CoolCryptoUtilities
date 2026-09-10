@@ -4865,3 +4865,41 @@ anyway. Two things are worth a pass: (1) volatility still saturates at hi on
 ~100% of bars (three u tokens every bar by construction) -- band each stream
 against ITS OWN distribution, Gale's suggestion; (2) the EXIT side, which is
 measured nowhere and looked better than the entry side here.
+
+2026-09-10 | Cove | pass 110 | hypothesis: the shipped entry-basis gate already
+covers item [d763940a], so only wiring is left. FALSE, and that is the result.
+The gate corroborates against the FEED, and the feed's first AERO tick is ~7h
+AFTER the AERO 1.140000 entry was booked -- no coverage means UNJUDGEABLE, and
+unjudgeable is allowed for ghost by design. So the guard was OFF in the exact
+lane that produced every contaminated row, and refused it only under strict=True
+(the live setting). RESULT, a number that moved: entry_price_is_corroborated
+("AERO-USDC", 1.14, at_ts=...) returns True on c4af3fa and False on f68f649.
+Second source added: median of the symbol's own PRIOR ENTRIES, backward-looking,
+refuse beyond 2.5x. Thresholds measured, not chosen -- over 175 judgeable rows
+the largest LEGITIMATE ratio is BSTONK-USDC 0.006106 at 2.03x and p99 is 1.52,
+while AERO 1.140000 reads 2.61x. ENTRIES ONLY is also a measurement: the
+contaminated tick IS trade 1's EXIT, so including exits drags AERO's median
+0.436805 -> 0.788402 and the row reads 1.45x, under BSTONK's honest 1.81x, and is
+MISSED. Refusal rate over all 216 closed round trips: ghost 4.3% -> 5.1% (11),
+live/strict 7.4% (16). Shipped f68f649 + scripts/entry_basis_census.py + 6 tests,
+gate 721/0. NEXT: the 4-line insert at trading/bot.py:9034 (after the
+'# ghost / paper entry' comment, BEFORE _release_position_for_entry so a refused
+entry never disturbs a slot). Blocked only because Iris holds bot.py -- and note
+the general trap this pass paid for: she cleared me onto disjoint REGIONS, but
+`git commit -- <path>` scopes by FILE not by hunk, so two agents still cannot
+commit one file independently.
+
+2026-09-10 Gale pass 111 -- HYPOTHESIS: pools 15/16/19 read as dead because nothing
+records SETTLED predictions in the shape they need. CONFIRMED, and the cause was one
+missing keyword: scripts/omen_experiment.build_samples called build_collections without
+history=, so every self frame in every training set was the na sentinel and the three
+pools trained as CONSTANTS. RESULT: query path DEAD 0/60 -> LIVE 45/60 on a fresh
+19-pool node (control A-vs-A 0/60 both passes); self_outcome 1 distinct value -> 24,
+self_error_run 1 -> 25, self_agreement 1 -> 2. HELD-OUT, one fabric, train pinned,
+operator's money scoreboard: per-trade net on trough omens -0.4939% UP (buy-every-bar
++0.0338%) and -3.2611% DOWN (-2.2136%) -- BELOW BASELINE IN BOTH. One-variable control
+on the same fabric with the self pools dropped from the QUERY: +0.28pp UP and +0.27pp
+DOWN against buy-every-bar, so querying them costs 0.81pp and 1.32pp. NEXT: train on
+15/16/19 and never query them (their distinctness is 0.035-0.037, far under the 0.103
+empty-band floor); pool 16 needs a NODE's own per-query-set votes before it can carry
+anything. Do NOT re-run this arm expecting a different answer.
