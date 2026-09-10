@@ -19,8 +19,22 @@ Configure by env (all have working defaults; override in .env if needed):
 
 Usage:
     python scripts/notify_sms.py "first live trade: +$0.04"
+    python scripts/notify_sms.py --body-file notice.txt   # body from a FILE
     python scripts/notify_sms.py --check       # config check, sends nothing
     python scripts/notify_sms.py --test        # sends a real test message
+
+PREFER --body-file FOR ANYTHING LONGER THAN A SENTENCE, and never build a
+notice on the command line. Measured 2026-09-10: a notice of roughly 2,400
+characters arrived as 978, and one of roughly 1,450 arrived as 331 cut
+mid-word at "Median price move is 0.0783 perce". The script is not the
+culprit -- ``segments`` preserves every word and ``MAX_SEGMENTS`` was not in
+play at those lengths -- the body was ALREADY short when it reached ``argv``,
+because a command line has a length limit and the shell cut it. Reading the
+body from a file takes it off the command line entirely.
+
+It matters more than a formatting nit: the standing orders put the ASK LAST
+in every notice, so an argv cut removes precisely the decision request and
+leaves the evidence that motivated it.
 
 Exit codes: 0 sent, 1 not configured/skipped, 2 send failed.
 A missing config is not worth crashing a trading loop over, so callers
@@ -179,6 +193,12 @@ def _send_one(aws: str, cfg: dict, body: str) -> int:
     return 0
 
 
+def read_body_file(path: str) -> str:
+    """The notice, read from a file so it never passes through ``argv``."""
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        return fh.read()
+
+
 def main() -> int:
     args = sys.argv[1:]
     if not args:
@@ -194,6 +214,48 @@ def main() -> int:
 
     if args[0] == "--test":
         return send("R3V3N!R test message. If you got this, milestone alerts work.")
+
+    if args[0] == "--body-file":
+        if len(args) < 2 or not args[1].strip():
+            sys.stderr.write("notify_sms: --body-file needs a path\n")
+            return 1
+        try:
+            body = read_body_file(args[1])
+        except OSError as exc:
+            sys.stderr.write("notify_sms: cannot read %s: %s\n" % (args[1], exc))
+            return 1
+        if not body.strip():
+            sys.stderr.write("notify_sms: %s is empty; nothing to send\n" % args[1])
+            return 1
+        return send(body)
+
+    # AN UNRECOGNISED FLAG WAS TEXTED TO THE OPERATOR AS THE MESSAGE.
+    #
+    # This function matched only --check and --test and let everything else
+    # fall through to ``send(" ".join(args))``. So `notify_sms.py --body-file
+    # notice.txt` -- a plausible guess at an interface that did not exist yet --
+    # sent the literal string "--body-file notice.txt" to a real phone and
+    # printed "notify_sms: sent to 9194957881@vtext.com (23 chars)" with exit
+    # 0. It happened twice on 2026-09-10 before anyone read the source.
+    #
+    # Reporting SUCCESS for delivering the wrong thing is the worst shape a
+    # failure can take, because nothing downstream can detect it: the caller
+    # sees 0, the log says sent, and only the person holding the phone knows.
+    # So an unknown option is refused rather than transmitted.
+    #
+    # "--" ends option parsing, for the genuine case of a notice that has to
+    # begin with two dashes.
+    if args[0] == "--":
+        return send(" ".join(args[1:]))
+
+    if args[0].startswith("--"):
+        sys.stderr.write(
+            "notify_sms: unknown option %s -- refusing to send it as a message.\n"
+            "Known options: --check, --test, --body-file <path>.\n"
+            "To send a message that really does start with '--', use: "
+            "notify_sms.py -- <message>\n" % args[0]
+        )
+        return 1
 
     return send(" ".join(args))
 
