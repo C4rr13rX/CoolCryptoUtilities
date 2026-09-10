@@ -4954,3 +4954,20 @@ HANDS TO [d763940a]/[57d69341]: BASECAT has exactly FIVE tick-adjacent pairs abo
 ALSO shipped 1f08755, unrelated and found by doing it: scripts/notify_sms.py matched only --check/--test and let every other flag fall through to send(" ".join(args)), so an unrecognised flag was TEXTED to the operator as the message and reported as success. PRE-FIX rc=0 transmitted=['--body-fyle /tmp/x.txt']; NOW rc=1 transmitted=[]. Added --body-file <path>, which also fixes Iris's separate short-send finding -- the script does not truncate, the body was already cut by an argv length limit in the caller. 9 tests. Gate 721 passed 0 failed both times.
 
 NEXT: the honest gap I did NOT close, stated so it is not mistaken for coverage -- above MIN_TICKS the gate bans on p99 alone, so BASECAT's five genuinely tick-adjacent breaches of the ceiling do not ban it, while below MIN_TICKS just TWO observed breaches would. That asymmetry is defensible (p99 is the right estimator at density) but it is unmeasured. Worth a pass only if a symbol turns out to lose money through breaches its p99 hides.
+
+2026-09-10 | Cove | pass 110 addendum | WIRED AND CLOSED. The ghost entry guard
+is in: trading/bot.py, ghost/paper branch, ABOVE _release_position_for_entry so
+a refused basis never disturbs a slot, GHOST only because the live branch books
+a SETTLED receipt where money has already left the wallet, and failing OPEN
+because unjudgeable is not contaminated. RESULT: ghost refusals 4.3% -> 5.1% of
+216 closed round trips (live/strict 7.4%), AERO 1.140000 True -> False. Also
+made scripts/tradeable_book.py NAME its dropped rows instead of counting them --
+the one survivor is UNI-USDC entry 2.859000, reported as CANNOT JUDGE because it
+is UNI's first trade, so nothing precedes it to disagree with. Commits f68f649,
+add8efe, 3099104, ed9f6f8, all pushed, gate 721/0, 15 new tests. TRAP PAID FOR
+THIS PASS, worth more than the item: two agents cannot commit one shared FILE
+independently -- Iris cleared me onto disjoint regions of bot.py and that was
+still not enough, because `git commit -- <path>` scopes by file, not by hunk.
+NEXT: [781bf37c], the LIVE lane, which must gate BEFORE the swap is submitted
+and never on the settled receipt; and [90f8a974], notify_sms silently dropping
+half of every notice while exiting 0.
