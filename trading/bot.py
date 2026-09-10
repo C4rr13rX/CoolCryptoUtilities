@@ -5700,6 +5700,45 @@ class TradingBot:
             # window gate below still answers that one.
             self._note_symbol_tick(sample.get("symbol", ""), now)
 
+            # THE SWEEP RUNS HERE, ABOVE EVERY EARLY RETURN, FOR THE SAME
+            # REASON THE TICK NOTE ABOVE DOES -- AND IT USED TO SIT BELOW BOTH.
+            #
+            # The sweep runs on ANY symbol's tick, deliberately: a position on
+            # a dead feed is unreachable from its own symbol by construction,
+            # so something else has to be what notices. That makes this the
+            # only wall clock the exit rules have, and it was gated behind two
+            # returns that have nothing to do with whether some OTHER symbol's
+            # position has gone dark:
+            #
+            #   * the window gate below, which asks whether THIS bot can yet
+            #     form a prediction. The sweep never invokes the model -- it
+            #     reads `self.positions` and the shared tick map and nothing
+            #     else -- so a short buffer was withholding a clock from a
+            #     question that does not need one;
+            #   * the duplicate-signature return, which drops a repeated
+            #     (symbol, ts). A symbol whose publisher restamps the same
+            #     timestamp therefore swept nothing at all.
+            #
+            # The window gate is the expensive one. A bot added by
+            # `reconcile_pairs` for a HELD symbol -- added precisely so the
+            # position can be closed -- starts with an empty buffer and must
+            # fill a full window before it will sweep anything: at CBBTC-USDC's
+            # measured 50 ticks/h against a 60-step window, over an hour of a
+            # pool-wide clock lost, and the whole pool's dark positions wait it
+            # out. The comment that used to sit on this block already asserted
+            # "the tick was recorded above the window gate -- see there for
+            # why" while the block itself was below it, which is the shape this
+            # repo has shipped before: a comment claiming a property the code
+            # does not have.
+            #
+            # Ordering note: this is above `_check_sim_restart` too, which is
+            # safe because the sweep neither reads nor writes the sim bankroll.
+            try:
+                self._abandon_dark_feed_positions(now)
+                self._exit_dark_live_positions(now)
+            except Exception as exc:      # never let the sweep stop a tick
+                print(f"[dark-feed-sweep] failed: {exc}")
+
             # The model's window, which _ensure_model_bindings may have grown
             # since this bot was constructed. Checking the old value admitted
             # ticks the model could not consume.
@@ -5715,16 +5754,6 @@ class TradingBot:
             if signature == self._last_sample_signature:
                 return
             self._last_sample_signature = signature
-
-            # The tick was recorded above the window gate -- see there for why.
-            # The sweep runs on ANY symbol's tick, deliberately: a position on a
-            # dead feed is unreachable from its own symbol by construction, so
-            # something else has to be what notices.
-            try:
-                self._abandon_dark_feed_positions(now)
-                self._exit_dark_live_positions(now)
-            except Exception as exc:      # never let the sweep stop a tick
-                print(f"[dark-feed-sweep] failed: {exc}")
 
             # Live-tick → brain push.  Runs BEFORE the TF gate so the
             # brain keeps learning from live market data even when TF
