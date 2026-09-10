@@ -130,6 +130,47 @@ def test_the_no_model_sentinel_is_not_counted_as_a_prediction():
     assert era["scored"] == 0, "abstentions were scored as directional calls"
 
 
+def test_a_non_monotonic_ranking_is_reported_as_non_monotonic():
+    """A calibrator preserves ORDER, so a broken order is not a calibration bug.
+
+    The measured pre-collapse head ran quintile up-rates 50.3 / 52.7 / 31.9 /
+    37.9 / 43.0 -- its most confident UP calls were LESS likely to go up than
+    its least confident ones. If this flag ever reads YES on that shape, the
+    next pass gets sent to fix a calibrator that cannot help.
+    """
+    rows = []
+    # Confidence rises with dp, but the realised up-rate falls: an INVERTED head.
+    for i, up_rate in enumerate((0.9, 0.7, 0.5, 0.3, 0.1)):
+        for j in range(100):
+            rows.append(
+                {
+                    "ts": 0.0,
+                    "symbol": "X",
+                    "direction_prob": 0.1 + i * 0.2,
+                    "realised": 0.005 if j < up_rate * 100 else -0.005,
+                }
+            )
+    profile = census.rank_profile(rows)
+    assert not profile["monotonic"]
+    assert profile["up_spread"] < 0, "an inverted head must show a negative spread"
+
+    # And the honest positive control: a head whose order genuinely works.
+    good = []
+    for i, up_rate in enumerate((0.1, 0.3, 0.5, 0.7, 0.9)):
+        for j in range(100):
+            good.append(
+                {
+                    "ts": 0.0,
+                    "symbol": "X",
+                    "direction_prob": 0.1 + i * 0.2,
+                    "realised": 0.005 if j < up_rate * 100 else -0.005,
+                }
+            )
+    good_profile = census.rank_profile(good)
+    assert good_profile["monotonic"]
+    assert good_profile["up_spread"] > 0
+
+
 def test_a_nearest_tick_outside_tolerance_is_refused():
     """A stale price silently reached for is a fabricated forward return."""
     series = ([100.0, 200.0], [1.0, 2.0])

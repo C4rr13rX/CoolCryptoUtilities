@@ -238,6 +238,54 @@ def score_era(rows: List[Dict[str, Any]], flat_bp: float) -> Dict[str, Any]:
     }
 
 
+def rank_profile(rows: List[Dict[str, Any]], buckets: int = 5) -> Dict[str, Any]:
+    """Does a HIGHER direction_prob actually mean a higher realised return?
+
+    This is the question a calibrator cannot dodge. Calibration is a monotone
+    remap of the head's output: it moves the LEVEL and preserves the ORDER by
+    construction. So if the ranking carries information, recalibrating can
+    recover a usable head; if the ranking carries none, there is nothing for a
+    calibrator to rescue and the defect is in the model's content.
+
+    Measured 2026-09-10, the pre-collapse head's quintile up-rates ran
+    50.9 / 52.1 / 32.1 / 37.8 / 43.1 -- non-monotonic, with the most confident
+    UP quintile LESS likely to go up than the least confident one.
+    """
+    if not rows:
+        return {"n": 0}
+    ordered = sorted(rows, key=lambda r: r["direction_prob"])
+    n = len(ordered)
+    k = max(n // 10, 1)
+
+    def up_rate(group: List[Dict[str, Any]]) -> float:
+        return sum(1 for r in group if r["realised"] > 0) / len(group) if group else float("nan")
+
+    def mean_ret(group: List[Dict[str, Any]]) -> float:
+        return sum(r["realised"] for r in group) / len(group) if group else float("nan")
+
+    bottom, top = ordered[:k], ordered[-k:]
+    quintiles = [ordered[i * n // buckets : (i + 1) * n // buckets] for i in range(buckets)]
+    quintiles = [q for q in quintiles if q]
+    return {
+        "n": n,
+        "dp_min": ordered[0]["direction_prob"],
+        "dp_max": ordered[-1]["direction_prob"],
+        "bottom_up": up_rate(bottom),
+        "top_up": up_rate(top),
+        "bottom_mean_ret": mean_ret(bottom),
+        "top_mean_ret": mean_ret(top),
+        "up_spread": up_rate(top) - up_rate(bottom),
+        "ret_spread": mean_ret(top) - mean_ret(bottom),
+        "quintile_up": [up_rate(q) for q in quintiles],
+        # Monotone means every step up in confidence raises the realised
+        # up-rate. Anything else is a head whose order carries no information.
+        "monotonic": all(
+            up_rate(quintiles[i]) <= up_rate(quintiles[i + 1])
+            for i in range(len(quintiles) - 1)
+        ),
+    }
+
+
 def verdict(era: Dict[str, Any], min_scored: int) -> Tuple[str, str]:
     """MARKET / MODEL / INFORMATIVE / INSUFFICIENT, plus the reason."""
     if era.get("scored", 0) < min_scored:
@@ -367,6 +415,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "pre_collapse": score_era(pre, args.flat_bp),
         "post_collapse": score_era(post, args.flat_bp),
     }
+    ranks = {"pre_collapse": rank_profile(pre), "post_collapse": rank_profile(post)}
     kind, reason = verdict(eras["post_collapse"], args.min_scored)
 
     result = {
@@ -383,6 +432,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "implausible_return": implausible,
         },
         "eras": eras,
+        "rank_profile": ranks,
         "verdict": kind,
         "reason": reason,
     }
@@ -423,6 +473,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"{era['abs_ret_p50'] * 100:>8.4f}  {era['abs_ret_p90'] * 100:>8.4f}  "
             f"{era['up_frac'] * 100:>4.1f}  {era['down_frac'] * 100:>5.1f}  "
             f"{_fmt(era['majority'])} {_fmt(era['hit_rate'])} {_fmt(era['edge'], '+.4f')}"
+        )
+    print()
+    print("  RANKING -- can a CALIBRATOR fix this? Calibration is a monotone remap: it")
+    print("  moves the level and preserves the order. If the order carries nothing,")
+    print("  there is nothing for a calibrator to rescue.")
+    print("     era            realised up% by direction_prob quintile (low -> high)   monotone")
+    for name in ("pre_collapse", "post_collapse"):
+        rp = ranks[name]
+        if not rp.get("n"):
+            continue
+        cells = "  ".join(f"{v * 100:5.1f}" for v in rp["quintile_up"])
+        print(f"     {name:<14} {cells}      {'YES' if rp['monotonic'] else 'NO'}")
+        print(
+            f"       top decile mean return {rp['top_mean_ret'] * 100:+.4f}% vs bottom "
+            f"{rp['bottom_mean_ret'] * 100:+.4f}%  (spread {rp['ret_spread'] * 100:+.4f}%)"
         )
     print()
     # Direction is worthless if the move is smaller than the round trip. The
