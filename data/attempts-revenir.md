@@ -4649,3 +4649,21 @@ Also changed [54aaf3b7]'s criterion demanding a full unfiltered pytest sweep
 (forbidden -- the one 598s run took the price feed dark ~12 min). Substitute:
 `pytest tests/ -q --collect-only --continue-on-collection-errors`, 13 seconds,
 proves 0 uncollectable files across all 2736, cannot starve the box.
+
+2026-09-10 Gale pass 109 addendum -- the rig is DETERMINISTIC, so small effects here are real
+
+HYPOTHESIS: the +1.7pp relation effect above might be inside the 4.4pp
+run-to-run band the standing orders cite (89.2% vs 93.6% on one fabric).
+
+DID: replicated the DOWN relation arm on a fourth FRESH brain dir
+(brain-data-p109-gale-rep1), node restarted, fabric rebuilt from empty.
+
+RESULT: identical in every figure -- 31.7% exact, 42 buy omens, total -1.0696,
+-2.5468% per trade. OBSERVED VARIANCE 0.0 POINTS, not 4.4, at 311 training
+pairs / 180 held-out / --seed 7 / one consolidation epoch.
+
+NEXT: two things follow. Small back-to-back effects in THIS configuration are
+real and should not be dismissed as noise. And whoever cites the 4.4pp band
+must say which configuration produced it, because it is not this one. Also
+use pool_count to tell nodes apart -- :8090 and :8091 BOTH return node_id
+node-cd4c5a9a7225, while pool_count reads 4 vs 15.
