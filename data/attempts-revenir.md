@@ -4971,3 +4971,48 @@ still not enough, because `git commit -- <path>` scopes by file, not by hunk.
 NEXT: [781bf37c], the LIVE lane, which must gate BEFORE the swap is submitted
 and never on the settled receipt; and [90f8a974], notify_sms silently dropping
 half of every notice while exiting 0.
+
+2026-09-10 Iris pass 111 -- HYPOTHESIS: query-set AGREEMENT is a usable
+abstention gate held out, since it is 99.4% correct when unanimous vs 73.3%
+when split. DID: built scripts/omen_agreement_census.py -- one fabric (1353
+balanced pairs, AERO-USDC, fresh dir on :8093), one held-out pass, every
+sample fired once per query set, scored twice (all answers vs the agreeing
+subset) in an UP and a DOWN window, with an A-vs-A determinism control.
+RESULT: NEGATIVE in both windows. DOWN: ALL 100 kept / 17 buy omens /
+-1.4747% per trade against buy-every-bar -1.4720%; AGREE 23 kept / 3 buys /
+-1.2017%, 0 of 3 cleared the 0.6500% round trip. UP: ALL 100 / 3 buys
+(n=3); AGREE 22 kept / ZERO buys. It does not change per-trade net because it
+keeps no trades, and it does not buy held-out accuracy either (UP 23.0% ->
+9.1%). The 99.4% is a TRAIN RECALL number -- omen_brain.py:1098 says so.
+Query path proven live: 77/100 and 78/100 splits vs A-vs-A of 4/100 and
+0/100. TWO SIDE FINDINGS: omen_brain.py:1147 dedupes consensus members by
+tuple while the measured set comes back in distinctness order, so consensus
+fires 5 queries not 4 and one agrees by construction; and the node is not
+perfectly deterministic (A-vs-A 4/100; two identical runs moved the ALL arm
+0.28 points). NEXT: do not re-run this arm. There is no edge to gate -- the
+ungated arm matches buy-every-bar in DOWN and places 3 trades in UP -- so the
+question is the edge, not the gate.
+
+2026-09-10 Gale -- L2 over a live L1: is the fixed-length path the problem, or is L1?
+Hypothesis: replacing L2 sampling (transitions / run-length, per the operator) clears the 0.30 identifier ceiling.
+Did: scripts/omen_l2_scheme_probe.py, 600 samples on p108_aero_down and p108_aero_up, relative banding, one process, no node.
+RESULT: BOTH schemes FAIL -- transitions 0.7067/0.6767, run-length 0.9217/0.9450 vs the current path 0.8233/0.8250. Step sweep shows why: transitions at steps=1 EQUAL L1 exactly (0.1983/0.1383, a copy) and steps=2 is already 0.6017/0.4917, because L1 changes on 73.1%/74.0% of bars so there are almost no repeats to collapse.
+RESULT 2: the fix is UPSTREAM. Hysteresis on the bands (margin 0.50 of band width) takes the change rate to 37.6%/38.2%, and L2_transitions steps=2 then clears at 0.2633/0.2000 in BOTH windows.
+RESULT 3: label skew (trough, min_support 20) -- WITHOUT hysteresis L2 has ZERO groups reaching n=20 in either window, i.e. no measurable signal at all. WITH it: L1 coverage 30.8%->57.8% DOWN and 43.7%->68.0% UP for a modest lift fall (2.87->2.37, 3.42->2.46); L2 gets 3 groups/10.5%/lift 1.47 DOWN and 5/21.9%/4.21 UP. In-sample, so a green light for one arm, not an edge.
+Next: L0 vs L0+L1(margin 0.50), bands fitted on TRAIN and reused held-out. Do NOT promote L2 on the UP number alone -- its DOWN side is thin.
+
+
+2026-09-10 Iris pass 111 addendum -- HYPOTHESIS: the consensus query path
+fires the query sets it claims to. DID: instrumented predict() with a
+recording transport after the agreement census printed five members where
+CONSENSUS_QUERIES names four. RESULT: it fired FIVE. predict deduped members
+by tuple while discriminating_collections returns the measured set in
+distinctness order, so ('geometry','temporal','cross') and
+('temporal','geometry','cross') both survived -- the same query twice. Fixed
+to dedupe by frozenset (65fc04d). Three costs: 25% extra latency on that
+path; every unanimity rate quoted here was over 3 distinct sets plus a copy;
+and because the node is not deterministic (A-vs-A 4/100) the copy could
+disagree with the primary on node noise and turn an undisputed answer into a
+split hold. NEXT: the same class of bug is worth looking for anywhere a set
+is compared as an ordered tuple -- the query path had it twice this week
+(pass 108 reported one set and fired another, this one counted a set twice).
