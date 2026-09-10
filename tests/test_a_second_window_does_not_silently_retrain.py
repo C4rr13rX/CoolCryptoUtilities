@@ -148,3 +148,70 @@ def test_a_mostly_frozen_window_does_not_get_a_direction_from_its_few_live_bars(
     info = window_regime(_bars(closes), 0, 200, HORIZON)
     assert info["zero_share"] > 0.5
     assert info["regime"] == "FLAT"
+
+
+class _Reply:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def read(self):
+        import json as _json
+        return _json.dumps(self._payload).encode()
+
+
+class _Conn:
+    """Stands in for the node. Records nothing, answers one canned reply."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def request(self, *_args, **_kwargs):
+        return None
+
+    def getresponse(self):
+        return _Reply(self._payload)
+
+
+def test_a_backpressured_node_is_detected_before_the_run_not_after(monkeypatch):
+    """The preflight must READ backpressure, not infer it from slowness.
+
+    Measured pass 108: a node with a 4096 MB consolidation floor on a box
+    with 2903 MB free answered /health OK and bound nothing. The client
+    retries a refused sample 30 times at 2s across two stages, so the run
+    does not fail fast -- it takes up to 120s per sample and reports the
+    failure after the window to act on it has closed.
+    """
+    import scripts.omen_experiment as mod
+
+    payload = {"available_mb": 3209, "backpressure": True,
+               "consolidated": False, "floor_mb": 4096, "retry_after_ms": 2000}
+    monkeypatch.setattr("http.client.HTTPConnection",
+                        lambda *a, **k: _Conn(payload))
+
+    gate = mod.backpressure_probe("http://127.0.0.1:8093")
+    assert gate["reachable"] is True
+    assert gate["backpressure"] is True
+    assert gate["available_mb"] == 3209 and gate["floor_mb"] == 4096
+
+
+def test_a_healthy_node_passes_the_preflight(monkeypatch):
+    import scripts.omen_experiment as mod
+
+    monkeypatch.setattr("http.client.HTTPConnection",
+                        lambda *a, **k: _Conn({"consolidated": True}))
+    gate = mod.backpressure_probe("http://127.0.0.1:8093")
+    assert gate["reachable"] is True and gate["backpressure"] is False
+
+
+def test_an_unreachable_node_is_not_reported_as_healthy(monkeypatch):
+    """Unknown must not read as OK -- that is how a dead node becomes a result."""
+    import scripts.omen_experiment as mod
+
+    def _boom(*_a, **_k):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("http.client.HTTPConnection", _boom)
+    gate = mod.backpressure_probe("http://127.0.0.1:9999")
+    assert gate["reachable"] is False
+    assert gate.get("backpressure") is not True
+    assert "refused" in gate["error"]

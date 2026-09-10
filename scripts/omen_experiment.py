@@ -165,6 +165,48 @@ def window_regime(bars: Sequence[Mapping[str, Any]], start: int, stop: int,
             "ts_stop": int(bars[min(stop, len(bars)) - 1]["timestamp"])}
 
 
+def backpressure_probe(endpoint: str | None) -> Dict[str, Any]:
+    """Ask the node whether it will actually LEARN, before we spend an hour.
+
+    Measured 2026-09-10 pass 108: a node with a 4096 MB consolidation floor
+    on a box with 2903 MB free answers /health OK, returns a full plausible
+    /brain/stats, and serves /brain/observe in 0.16s -- while REFUSING every
+    supervised binding. total_binding froze at 415 while the training loop
+    still looked alive.
+
+    The client retries a refused sample WIZARD_BACKPRESSURE_RETRIES times
+    (default 30) at 2s across two stages, so a run under backpressure does
+    not fail fast: it takes up to 120 SECONDS PER SAMPLE and reports
+    failed_pairs at the end of a window that has already closed. Nothing was
+    dishonest about that accounting -- it was just far too late to act on.
+
+    A result measured under backpressure is not a weak result, it is not a
+    result: the fabric never learned the samples the report says it taught.
+    So this is a hard stop, not a warning.
+    """
+    from http.client import HTTPConnection  # local: only the preflight needs it
+    from urllib.parse import urlparse
+
+    target = endpoint or os.getenv("OMEN_BRAIN_ENDPOINT") or "http://127.0.0.1:8091"
+    parsed = urlparse(target if "//" in target else f"http://{target}")
+    try:
+        conn = HTTPConnection(parsed.hostname or "127.0.0.1",
+                              parsed.port or 80, timeout=15)
+        # An empty stream list is a no-op binding: it asks the node's ingest
+        # gate the question without teaching it anything.
+        conn.request("POST", "/brain/consolidate/multi",
+                     json.dumps({"streams": [], "outcome_pool": 0,
+                                 "outcome_frame": ""}),
+                     {"Content-Type": "application/json"})
+        reply = json.loads(conn.getresponse().read() or b"{}")
+    except Exception as exc:  # noqa: BLE001 -- any failure here is unknown, not OK
+        return {"reachable": False, "error": str(exc)}
+    return {"reachable": True, "backpressure": bool(reply.get("backpressure")),
+            "available_mb": reply.get("available_mb"),
+            "floor_mb": reply.get("floor_mb"),
+            "retry_after_ms": reply.get("retry_after_ms")}
+
+
 def build_samples(bars, symbol, chain, horizon, start, stop):
     """Frames + true label for every bar in [start, stop) that has both."""
     samples = []
@@ -271,6 +313,11 @@ def main() -> int:
                              "with their up-rate and drift, then exit -- so an "
                              "UP and a DOWN window are PICKED from measurement "
                              "rather than hoped for")
+    parser.add_argument("--ignore-backpressure", action="store_true",
+                        help="train even when the node says it will not "
+                             "consolidate. The result is NOT a measurement -- "
+                             "the fabric never learns the samples the report "
+                             "says it was taught")
     parser.add_argument("--guess-regime", action="store_true",
                         help="let stage 1 guess the regime instead of "
                              "computing it -- the pre-2026-09-07 behaviour, "
@@ -350,6 +397,28 @@ def main() -> int:
     if not brain.supports_multi():
         print("FAIL: node has no /brain/predict/multi -- stale binary or wrong port")
         return 3
+
+    # PREFLIGHT. A node that will not consolidate makes a training run a very
+    # slow no-op, and the failure is invisible until the run ends.
+    if not args.skip_train:
+        gate = backpressure_probe(args.endpoint)
+        if gate.get("backpressure"):
+            print(f"\nREFUSING TO TRAIN: the node is applying ingest backpressure.")
+            print(f"  available {gate.get('available_mb')} MB against a "
+                  f"{gate.get('floor_mb')} MB consolidation floor")
+            print("  It answers /health, /brain/stats and /brain/observe "
+                  "normally and still binds NOTHING.")
+            print("  Free memory first -- kill omen nodes you are not using -- "
+                  "then re-run. A run started now would take up to 120s per "
+                  "sample and teach the fabric nothing.")
+            print("  --ignore-backpressure overrides this, and the result is "
+                  "not a measurement.")
+            if not args.ignore_backpressure:
+                return 4
+        elif not gate.get("reachable"):
+            print(f"\nWARNING: could not probe the node's ingest gate "
+                  f"({gate.get('error')}). Proceeding, but if training stalls "
+                  f"this is the first thing to check.")
 
     balanced = balance(train_samples, rng)
     print(f"balanced train   : {len(balanced)} samples, "
