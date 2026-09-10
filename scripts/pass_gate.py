@@ -142,6 +142,21 @@ GATE_TESTS = (
     # the sole thing between here and a re-armed live lane -- were on a symbol
     # it is banned from.
     "test_a_banned_strategy_does_not_take_the_tick.py",
+    # STEP 3 GHOST, AND IT WAS THE LANE'S BIGGEST BLIND SPOT. The scheduler's
+    # `no_candidates` branch terminated 1083 of 1646 route evaluations in 6h on
+    # 2026-09-10 and wrote NO trading_ops row at all, so three passes of funnel
+    # census attributed the missing candidates to the symbol edge ban -- a gate
+    # that had refused the worst-affected symbol (DRB-USDC: 34 quote-OK
+    # candidates, zero other rows) exactly zero times.
+    "test_a_quote_ok_candidate_leaves_a_reason.py",
+    # The census that reads the four entry conjuncts, which is how the closed
+    # lane was found: two of them (direction_prob, and confidence via
+    # exit_conf) were satisfied 0 times in 2000 snapshots over 24h against
+    # their 0.6 floors. The tests pin the ways that instrument could lie --
+    # chiefly that an UNMEASURED conjunct must not read as a failing one, and
+    # that a conjunct is read from the payload key its consumer binds rather
+    # than from its own name.
+    "test_entry_conjunct_census_names_the_binding_floor.py",
     # Half the book was decided by the fee rather than by the market. Measured
     # 2026-09-07 over the 117 closed round trips of the last 7 days on symbols
     # the live lane could actually have traded -- the same population
