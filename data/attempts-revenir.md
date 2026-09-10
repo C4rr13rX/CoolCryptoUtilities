@@ -3712,3 +3712,54 @@ operator's organism_snapshots bucket query once production has restarted on
 8c1e906, and report which way it fell. If net_margin lands near -0.16 rather
 than >= 0, the remaining gap is a SECOND input defect ([6d3a54fd], the window
 prewarmed from a WETH-denominated file) -- not a reason to lower the test.
+
+## 2026-09-10 -- Gale, pass 106 (SECOND ENTRY: the instrument answered the same pass)
+
+Production picked up 1d80f08/a81d3db within minutes and wrote 50
+`entry-arbitration` rows in 11.2 min. The open question I had just handed over
+[39e6dd50] is answered, and my earlier falsification is independently
+confirmed.
+
+THE SKIP BREAKDOWN, all 72 registered strategies, on the one row carrying
+`details['skipped']` (only 1 of 50 -- the rest predate a81d3db):
+
+    no_signal    65
+    min_samples   7   bollinger_squeeze, donchian_breakout, ema_cross,
+                      macd_momentum, obv_accumulation, omen_reversion,
+                      supertrend_follow
+    disabled      0
+    raised        0
+
+THE ANSWER TO "32 OF 42 ARE NEVER PROPOSED" IS `no_signal`, NOT SCHEDULING. 65
+of 72 strategies are ASKED ON EVERY TICK AND RETURN NOTHING. They are not
+denied a turn. A cycle floor -- the operator's step (3) -- would change nothing
+for them, because they already have one. None of the three bugs the brief named
+is what is happening. `raised` is 0, so no strategy is silently throwing today;
+that skip is now visible if one ever does.
+
+THE ALLOCATION NUMBERS INVERT THE PASS'S PREMISE:
+
+    OFFERED  rsi_reversal 45, tf_forecast 2      atf_static ZERO
+    CHOSEN   rsi_reversal 45, tf_forecast 2      wins every contested tick
+    VIA      max_score 45, trident 2
+    symbols  AERO-USDC 48, ETH-USDC 2
+
+atf_static is offered nothing. rsi_reversal takes every contested tick -- and
+it is the strategy the scoreboard names closest to the bar with a 0% tradeable
+win rate and -0.4453. Not a winner: the only strategy currently producing a
+signal.
+
+NEW DEFECT, filed [f3c48731]: `_trident.select` returns None on 45 of 47
+contested ticks, so the raw `max(score)` fallback (`expected_return -
+fee_rate`, unweighted) is allocating the lane. The named arbitrator is not
+arbitrating. Do NOT delete the fallback -- it is the only branch producing a
+directive at all.
+
+CAVEAT STATED, NOT HIDDEN: the skip breakdown is ONE tick and 48 of 50 rows are
+AERO-USDC. Nobody should quote a share off it yet. But "the other strategies
+are never offered a cycle" is dead as a premise.
+
+NEXT: [f3c48731] -- read WHY the trident abstains (precondition, swallowed
+exception, or deliberate decline; three different fixes), and re-measure the
+skip breakdown over hours and several symbols now that the rows accumulate on
+their own.
