@@ -265,6 +265,48 @@ so rather than overclaiming.
    (checked across `trading/`, `scripts/`, `services/`), so the additive keys
    reach nothing that did not ask for them.
 
+### MEASURED: all three relations are TRAIN-ONLY streams
+
+The distinctness check, run on the real corpus rather than deferred —
+13,219 samples over 4 files (AERO-USDC x3, cbBTC-USDC), horizon 12:
+
+| collection | distinctness | queryable (>= 0.2)? |
+|---|---|---|
+| geometry | 0.510 | YES |
+| temporal | 0.537 | YES |
+| flow | 0.169 | no |
+| cross | 0.121 | no |
+| volatility | 0.086 | no |
+| horizon | 0.000 | no |
+| instrument | 0.000 | no |
+| **rel_shape_flow** | **0.119** | **no — dilutes** |
+| **rel_move_vol** | **0.089** | **no — dilutes** |
+| **rel_trend_noise** | **0.030** | **no — dilutes** |
+
+`discriminating_collections` returns `('geometry', 'temporal')` — unchanged
+by the relations.
+
+**Read this honestly: the relations do not join the query set.** By the
+dilution law they are train-only streams. Adding them to
+`OMEN_PREDICT_COLLECTIONS` would dilute a query that currently discriminates,
+which is the mistake the law exists to prevent.
+
+Two things stop this from being a verdict on the idea:
+
+1. They are **not unusually bad** — they land in the same band as their own
+   parent streams (`cross` 0.121, `volatility` 0.086). The relations inherit
+   the coarseness of the families they relate. Only `geometry` and `temporal`
+   clear 0.2 at all, and they always have.
+2. `rel_trend_noise` at **0.030** is the outlier and is close to constant.
+   Its `t168`/`t24` are z-scores over long baselines that move slowly, and
+   its `exp` field duplicates one already in `volatility`. It is the first
+   candidate to redesign or drop.
+
+The actionable next step is therefore **bucket resolution, not more pools**:
+`_bucket_signed` currently spans [-4, +4] over 20 levels, and a narrower span
+would spread real mass across more buckets. That is a one-change pass with a
+number to move — distinctness — before any accuracy claim is attempted.
+
 ### Where the next pass starts
 
 Not at the topology — at measurement. Run the relations against held-out data

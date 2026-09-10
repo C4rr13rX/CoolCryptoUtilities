@@ -3763,3 +3763,20 @@ NEXT: [f3c48731] -- read WHY the trident abstains (precondition, swallowed
 exception, or deliberate decline; three different fixes), and re-measure the
 skip breakdown over hours and several symbols now that the rows accumulate on
 their own.
+
+2026-09-10 Cove pass 106 (second entry, the NUMBER). HYPOTHESIS: the three new
+relation streams would be discriminating enough to join the query set. RESULT:
+FALSIFIED, measured on the real corpus -- 13219 samples over 4 files
+(AERO-USDC x3, cbBTC-USDC), horizon 12. Distinctness: rel_shape_flow 0.119,
+rel_move_vol 0.089, rel_trend_noise 0.030, all BELOW MIN_QUERY_DISTINCTNESS
+0.2. discriminating_collections still returns ('geometry','temporal'),
+unchanged. By the dilution law they are TRAIN-ONLY: do NOT add them to
+OMEN_PREDICT_COLLECTIONS. Context that stops this being a verdict on the idea:
+they land in the same band as their own parents (cross 0.121, volatility
+0.086) -- only geometry 0.510 and temporal 0.537 clear 0.2 at all, and always
+have. rel_trend_noise 0.030 is the outlier and near-constant; its t168/t24 are
+slow-moving long-baseline z-scores and its exp field duplicates one already in
+volatility -- first candidate to redesign or drop. NEXT: bucket RESOLUTION,
+not more pools -- _bucket_signed spans [-4,+4] over 20 levels and a narrower
+span would spread real mass across more buckets. One change, and distinctness
+is the number to move BEFORE any accuracy claim.
