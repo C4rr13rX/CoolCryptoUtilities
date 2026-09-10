@@ -202,3 +202,59 @@ rather than merely informing it. Guard tests:
 ```
 python -X utf8 -m pytest tests/test_a_motif_layer_that_abstracts_nothing_is_cut.py -q
 ```
+
+---
+
+## 7. ADDENDUM — the encoder was blind, and fixing it does not rescue the edge
+
+Gale independently ran the falsification on AERO 0004 (3000 bars) and produced
+the per-stream census that explains section 5's caveat: **`_band_of` never saw
+a `q` token.** Geometry frames are all quantile buckets (`geo p24=q5 body=q17
+uw=q0`), the band function counted only `u`/`d`/`r` prefixes, so every geometry
+frame tied 0–0 and returned `mid` on **600 of 600 bars**. Volatility read `hi`
+on 600/600 for a different reason (three `u` tokens every bar by
+construction). A 5-slot motif had **2 live slots**, which is exactly what a
+13-motif vocabulary predicts.
+
+Fixed the `q` blindness only — one change, quantile 0–19 split into thirds
+(`q<=6` lo, `q>=13` hi) — and re-measured back-to-back on the same corpus:
+
+| | before | after (UP) | after (DOWN) |
+|---|---:|---:|---:|
+| L1 vocabulary | 10 motifs | **21** | **25** |
+| L1 distinctness | 0.0139 | 0.0292 | 0.0348 |
+| L2 distinctness | 0.2017 / 0.2559 | **0.4520** | **0.4159** |
+
+**The encoder fix is real and the held-out edge still does not appear:**
+
+| | UP | DOWN |
+|---|---:|---:|
+| per-trade net edge | **−0.9346%** (was −0.5901%) | **−0.2128%** (unchanged) |
+| trough precision | 0.0% vs 7.1% base | 17.4% vs 14.3% base |
+| crest fall precision | 44.4% on 9 calls | 94.1% on 17 calls |
+
+Both crest cells are now **below the 20-call support floor**, so neither is
+rankable — the sharper encoder made the sell-high signal more selective and
+too small to judge at this corpus size. The DOWN crest number stays
+interesting and stays unproven.
+
+**A consequence that must not be missed: L2 now FAILS the identifier guard.**
+At 0.4520 distinct per sample a 4-step motif path is approaching a
+near-unique key — the trap that maximises train recall and destroys
+generalisation, and the exact reason `SEQUENCE_STEPS` went from 8 to 5 in
+`omen_metacognition`. The probe exits **nonzero** and says so. `MOTIF_SEQUENCE_STEPS`
+must come down from 4 before anything trains on L2. I did not change it in
+this pass — that is a second change and this pass already made one.
+
+**Still not fixed, and named:** volatility saturates at `hi` on ~100% of bars
+because its frame carries three `u` tokens every bar. Banding each stream
+against *its own* distribution rather than a fixed letter rule is the real
+repair, and it is Gale's suggestion, not mine.
+
+### Reproduce the addendum
+
+```
+python -X utf8 scripts/omen_layer_probe.py \
+  --corpus data/brain_experiments/p108_aero_up.json --horizon 12 --heldout
+# exits 1: L2 DOES NOT ABSTRACT (0.4520 against 0.3000)
+```

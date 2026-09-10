@@ -103,6 +103,28 @@ def _band_of(frame: Optional[str]) -> str:
                 up += 1
             elif level <= 8:
                 down += 1
+        elif head == "q":
+            # A QUANTILE bucket, 0-19, and the reason this branch exists:
+            # without it ``_band_of`` never SAW a q token, so every geometry
+            # frame -- which is all q buckets (``geo p24=q5 body=q17 uw=q0``)
+            # -- tied 0-0 and returned "mid" on 600 of 600 bars. Measured by
+            # Gale on AERO 0004: geometry mid 600/600, so a 5-slot motif had
+            # 2 live slots and the whole L1 vocabulary was 13 motifs over
+            # 3000 samples. The layer was not degenerate; the encoder was
+            # blind to the stream it was reading.
+            #
+            # The thresholds split the 0-19 range into rough thirds rather
+            # than at the midpoint: a quantile is already uniform by
+            # construction, so thirds give each band real occupancy, which is
+            # the whole point of a band.
+            try:
+                level = int(value[1:])
+            except ValueError:
+                continue
+            if level >= 13:
+                up += 1
+            elif level <= 6:
+                down += 1
 
     if up == 0 and down == 0:
         return "mid"
