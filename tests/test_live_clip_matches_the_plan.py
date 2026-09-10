@@ -369,8 +369,22 @@ def test_an_exit_is_never_resized() -> None:
 # The silence
 # ---------------------------------------------------------------------------
 
-def test_a_profit_floor_refusal_of_a_live_entry_leaves_a_row() -> None:
-    """The gate that refused 85 of 85 entries must say so in the database."""
+def test_a_profit_floor_refusal_of_a_live_entry_leaves_a_row(monkeypatch) -> None:
+    """The gate that refused 85 of 85 entries must say so in the database.
+
+    THE GUARANTEE IS THE ROW, NOT THE REFUSAL. This test used to reach the
+    floor for free, because the flat $0.02 SMALL_PROFIT_FLOOR refused a $0.053
+    entry on sight. trading/bot.py:7733 now scales the floor to a quarter of
+    the trade's own estimated cost, so this fixture sails through it -- and a
+    refusal that never happens cannot be checked for its audibility.
+
+    So the fixture is made to hit the floor honestly, by charging a fixed
+    round-trip cost large enough that the net lands under a quarter of it.
+    That is the same branch the real refusals take: ``gross_return <=
+    variable_cost_rate`` is tested first and on the RATE alone, so a fixed
+    cost cannot divert this to ``edge_does_not_cover_variable_costs``.
+    """
+    monkeypatch.setenv("MICRO_FIXED_COST_USD", "1.00")
     bot = _bot(plan=None)
     bot.positions[SYMBOL] = _ghost_position()
     _enter(bot, _directive("atf_static"), swapper=_Stub())

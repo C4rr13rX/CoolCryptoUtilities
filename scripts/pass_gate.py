@@ -66,6 +66,16 @@ GATE_TESTS = (
     # change at all. The fixture now pins that gate; the ban itself stands.
     # A gate that cannot see the money path is not a gate.
     "test_live_entry_books_the_receipt_fill.py",
+    # THE CLIP AND THE PROFIT FLOOR, ALSO STEP 8, ALSO INVISIBLE.
+    #
+    # Four of its tests were red under a green gate. Two were the same
+    # production-data leak as the file above; the other two asserted the flat
+    # $0.02 SMALL_PROFIT_FLOOR that refused 385 of 385 ghost entries and was
+    # deliberately replaced with a quarter of estimated cost. One of them was
+    # literally named `..._reproduces_the_deadlock` -- a test demanding back
+    # the gate that blocked everything. Inside the gate now so the next
+    # rewrite of the floor cannot happen quietly.
+    "test_live_clip_matches_the_plan.py",
     "test_demotion_needs_a_net_loss.py",
     # Upstream of every gate in this file. Both the re-arm rule and the
     # profitability floor read a LIFETIME live P/L that a demotion freezes, so
