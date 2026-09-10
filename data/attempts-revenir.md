@@ -2743,3 +2743,30 @@ not need) to `trading/scheduler.py` + the two edge-gate modules, which takes it
 off the four-items-one-worker pile and lets it run in parallel with the exit
 work -- which is what "entries in, exits out, both or neither" requires.
 
+
+- 2026-09-10 Cove (pass 101). Hypothesis: [654eb8f7]'s "the gate is blind to ~27
+  standing failures" understates it -- a gate that hand-picks files can also be
+  blind to whether it RAN. Measured with pass_gate's own flags against one
+  uncollectable file beside one good one: returncode 2, outcomes {}, regressions
+  [], verdict "OK -- nothing that was passing is broken.", exit 0, and the good
+  file never executed because a collection error Interrupts the session. RESULT:
+  gate 523 -> 575 passing tests. Four parser faults fixed (-rf omitted ERROR
+  lines so no collection failure was ever named; no
+  --continue-on-collection-errors; failed/error counted by one alternation that
+  stopped at the first; GATE_TESTS entries with no file dropped silently), and
+  check() now REJECTS an unusable run instead of exiting 0. Added to the gate:
+  the demotion rule, rotation, token resolution, two-books live P/L, live exit
+  booking (step 9), Iris's two timed-exit detectors, the model and websocket
+  files. TWO BRIEF CORRECTIONS, both measured: the "django_db collection errors"
+  are neither django nor errors (they fail under SYSTEM python for want of
+  tensorflow/daphne and pass under .venv, the interpreter the gate already
+  uses); and the five live-exit-booking failures were NOT "the mock wallet holds
+  0" -- it held AERO 1.546 while the guard logged "wallet holds 0", because
+  _position_is_real_on_chain reads services.token_contract_guard._rpc and never
+  the fixture wallet. NEAR MISS WORTH KEEPING: the first fixture fix referenced
+  a name not in scope, raised NameError into the guard's except, "kept the
+  block", and turned all 7 green FOR THE WRONG REASON -- caught only by forcing
+  the balance to 0.0 and checking the original 5 went back to red. Verify the
+  seam, and make the probe fail. NEXT: this moved no strategy closer to ARMED --
+  it made the wall VISIBLE, which is a precondition, not progress. The wall is
+  still QUALITY on a tradeable book of 25 trades at 20%.
