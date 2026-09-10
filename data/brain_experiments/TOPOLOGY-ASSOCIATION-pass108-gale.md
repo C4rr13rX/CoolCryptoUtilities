@@ -172,13 +172,59 @@ nodes were up failed. The flat arm is not privileged here — the DOWN flat cell
 and the UP flat cell are the same code on the same corpus size, and the UP flat
 cell died too.
 
+### 4.3 The relation arm, measured after reclaiming memory — and it changed NOTHING
+
+I killed my own two nodes, **free memory went 3.1GB -> 11.4GB** (far more than
+their 1.4GB of reported working set), started one fresh node on `:8097`, and the
+relation arm then ran **sequentially, to completion, in 0.3 min at 17.6
+samples/s** — against the 1.7/s pass 107 recorded. That is a ~10x throughput
+change from freeing memory alone, and it settles §4.2: the with-relations arm was
+never slow, it was **starved**.
+
+The three relation streams were genuinely built, and two of them are highly
+distinct — they are not near-constant, and all three were selected into the
+measured query set:
+
+```
+DISTINCTNESS: temporal=1.000 geometry=0.990 rel_move_vol=0.961
+              rel_trend_noise=0.617 cross=0.534 flow=0.392
+              rel_shape_flow=0.367 volatility=0.190 ...
+measured query: (geometry, temporal, flow, cross,
+                 rel_move_vol, rel_shape_flow, rel_trend_noise)
+```
+
+And the result is **byte-for-byte identical to the flat arm**:
+
+| measure | flat (7 collections) | +relations (10 collections) |
+|---|---|---|
+| held-out exact | 30.0% | **30.0%** |
+| per-trade net of cost | −3.1565% (41 omens) | **−3.1565% (41 omens)** |
+| predicted mix | trough 41, slide 47, murk 50, climb 20, crest 22 | **identical** |
+| confidence sweep | flat, 41 trades at every threshold | **identical** |
+
+Not "similar" — identical, across 180 held-out samples, in the label
+distribution *and* the P/L. Three streams entered the query set and not one
+prediction moved.
+
+**I am not going to say which of two explanations this is, because I did not
+measure it.** Either (a) the relations are a deterministic re-encoding of
+information the fabric already had, so they are genuinely redundant, or (b) the
+relation collections are trained and queried but do not influence the decoded
+answer — a live bug in the query path. Identical output across 180 samples is
+essentially impossible by chance if the query truly used new information, so
+distinguishing (a) from (b) is the single highest-value question for the next
+pass. A one-line check settles it: perturb a relation frame and see whether any
+prediction changes. If nothing moves, it is (b) and the association work has been
+measuring nothing.
+
 ---
 
 ## 5. Verdict
 
-**The item's measurement criterion is NOT met, and I am not going to redefine it
-to look met.** Criterion 3 asks for held-out edge in an UP window *and* a DOWN
-window, both arms, back-to-back. I have one arm in one window.
+**The item's measurement criterion is HALF met, and I am not going to redefine
+the other half to look met.** Criterion 3 asks for both arms in an UP window
+*and* a DOWN window. I have **both arms, back-to-back, in the DOWN window**
+(§4.1, §4.3). The UP window was not run.
 
 What is established:
 
@@ -187,25 +233,32 @@ What is established:
    client-computed and sent as its own frame. Pools 12/13/14 name the two
    sensory pools they bind, the relation, and its encoding, with every knob set
    explicitly (§2).
-2. **No edge is claimed. The one measured cell is below both baselines** — 30.0%
+2. **No edge is claimed. Both measured cells are below both baselines** — 30.0%
    exact against a 55.0% majority class, and −3.157% per trade against −2.834%
    for buying every bar. In a DOWN window the fabric's omens lose *more* than
-   indiscriminate buying.
-3. **The blocker on the relation arm is now named and measured**: the box runs
-   at 2.5GB free of 31.8GB, and fresh nodes die seconds after binding. This is
-   a prerequisite for direction #1, and it is an infrastructure fix, not a
-   topology one.
+   indiscriminate buying, and **the relation topology did not change that by a
+   single prediction** (§4.3).
+3. **The blocker was memory, and it is now cleared and quantified**: the box ran
+   at 2.5GB free of 31.8GB and fresh nodes died seconds after binding.
+   Reclaiming 8.3GB took the relation arm from "never finishes" to **0.3 min at
+   17.6 samples/s**, against the 1.7/s pass 107 recorded. Pass 107's
+   "3.3x slower" was starvation, not throughput.
 
 `OMEN_STRATEGY_ENABLED` is **0** and was never touched. Production on `:8090`
 was never trained against and was verified healthy (uptime 72045s) at the end.
 
 ### What the next pass should do first
 
-Reclaim memory **before** launching anything: retire idle experiment nodes
-(`:8091` at 6.8GB and `:8092` are both from finished passes), then run the four
-cells **sequentially on one reused port with a fresh brain dir per cell**, not
-four concurrent nodes. Four concurrent nodes is what killed this measurement,
-and sequential costs no more wall-clock than four dead ones.
+**Settle whether the relation streams influence the decoded answer at all**
+(§4.3). Perturb a relation frame and see whether any prediction moves. If none
+does, the query path ignores them and every future association experiment is
+measuring nothing — that outranks running the UP window, because the UP window
+would just reproduce an identical pair of arms.
+
+Then run the cells **sequentially on one port with a fresh brain dir per cell**,
+after reclaiming memory. Four concurrent nodes is what killed the first attempt,
+and sequential is both safer and — at 17.6 samples/s — faster than four dead
+nodes.
 
 — Gale, pass 108
 
