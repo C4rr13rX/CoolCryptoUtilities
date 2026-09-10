@@ -2908,3 +2908,40 @@ saturated at a bias. Blocker: `import tensorflow` is `ModuleNotFoundError` in
 this worktree, so the flat-window probe needs production's environment.
 **Do not lower either floor** — the floors are right and the number they read is
 wrong.
+
+## 2026-09-10 — Gale, pass 103 — [c4f16946] the gap-fill annulment
+
+**Hypothesis:** the ghost limit-exit overshoot rows already written are inflating
+the book the re-arm rule reads, and annulling them (atf_static ghost +1.5407 ->
++0.5206) corrects the number that gates real money.
+
+**What I did:** stopped identifying an overshoot by its RETURN and recovered each
+row's OWN target. `trade_outcomes.trade_id` ends in the position hash; the
+`action='enter'` trading_ops row for that hash carries `details.target_price`.
+Join on the HASH — a price-tolerance join silently returns some other entry's
+target when a symbol is re-entered near the same price (BSTONK, dozens of times),
+and it handed me a confidently wrong ratio before I switched.
+Shipped `scripts/annul_ghost_gap_fills.py` + 5 tests (cd4b711, 1a1a717).
+
+**RESULT — the hypothesis is FALSIFIED and nothing was rewritten.** 26 of 28
+closed ghost take-profit rows get their real limit back:
+above 1.10x their own target 5 rows +6.92359; past the fee bound only 10 rows
++1.79408; target not recoverable 2 rows +0.89176.
+atf_static's two "fabricated" rows are **1.019x and 1.074x** their targets — real
+fills. Their +25.35%/+17.28% returns come from targets set +22.96%/+9.22% above
+entry. BASECAT +17.31% and atf_static +17.28% are the SAME return and OPPOSITE
+verdicts (1.105 vs 1.074), which is why no return-keyed rule can decide this.
+atf_static's real exposure is ONE row at +0.02856 — a factor of 36 smaller.
+
+**Second result, the one that matters for the scoreboard:** ownership recovers
+from the same hash join (`strategy_id` is missing on 96 of 214 outcome rows but
+present on the ops rows). AERO +3.20662 and AAVE +3.47000, at 2.486x and 2.611x
+their targets, are owned by NO strategy in either table — **+6.67663 of the
+pooled book's +6.7948, or 98.3%**. The pooled figure the status prints beside
+tradeable -0.9126 is almost entirely two fabricated fills belonging to nobody, so
+annulling them moves the headline and moves no strategy toward the bar.
+
+**Next:** decide the 2 UNKNOWN rows (UNI-USDC +122.89%, CBBTC +22.20%) whose
+entry ops carry no `target_price` — they may not be annulled on a guessed target
+nor reported as clean. Do NOT build the ledger writer against the old criteria;
+they name numbers derived from the falsified predicate.
