@@ -83,17 +83,68 @@ def _tradeable_predicate():
     return _ok
 
 
+# The receipts-derived round-trip cost: a fixed charge per trip plus a fraction
+# of notional. Both matter and they behave completely differently -- the fixed
+# part is what a small clip cannot outrun, and the variable part is a floor no
+# clip size can move. Keeping them separate is the whole point; a single flat
+# percentage hides which of the two is beating you.
+COST_FIXED = 0.004047        # dollars per round trip
+COST_VARIABLE = 0.003187     # fraction of notional per round trip
+
+
 def _blank() -> Dict[str, Any]:
-    return {"trades": 0, "wins": 0, "losses": 0, "net": 0.0}
+    return {"trades": 0, "wins": 0, "losses": 0, "net": 0.0,
+            "gross": 0.0, "fees": 0.0, "notional": 0.0}
 
 
-def _add(acc: Dict[str, Any], net: float) -> None:
+def _add(acc: Dict[str, Any], net: float, gross: float = 0.0,
+         fees: float = 0.0, notional: float = 0.0) -> None:
     acc["trades"] += 1
     if net > 0:
         acc["wins"] += 1
     else:
         acc["losses"] += 1
     acc["net"] += net
+    acc["gross"] += gross
+    acc["fees"] += fees
+    acc["notional"] += notional
+
+
+def _rates(acc: Dict[str, Any]) -> Dict[str, Any]:
+    """Per-trip economics as PERCENTAGES OF NOTIONAL, which is the only unit
+    in which an edge and a cost can be compared.
+
+    Dollars cannot answer "does this book pay for itself" when the clip varies
+    by symbol; this repo has already shipped a rate subtracted from a dollar
+    amount. ``gross_pct`` versus ``cost_pct`` is the QUALITY question, and
+    ``gross_pct`` versus ``COST_VARIABLE`` is the version of it that no clip
+    size can rescue.
+    """
+    n = acc["notional"]
+    trips = acc["trades"]
+    clip = n / trips if trips else 0.0
+    gross_pct = 100.0 * acc["gross"] / n if n else 0.0
+    cost_pct = 100.0 * acc["fees"] / n if n else 0.0
+    return {
+        "clip": clip,
+        "gross_pct": gross_pct,
+        "cost_pct": cost_pct,
+        "net_pct": 100.0 * acc["net"] / n if n else 0.0,
+        # What the receipts model says the cost SHOULD be at this clip. When it
+        # tracks cost_pct the model is the right shape and its clip curve can
+        # be trusted; when it does not, the curve is a guess.
+        "model_cost_pct": 100.0 * (COST_FIXED / clip + COST_VARIABLE) if clip else 0.0,
+        # The floor. gross_pct must beat this or no clip size ever helps.
+        "variable_floor_pct": 100.0 * COST_VARIABLE,
+        "clears_floor": gross_pct > 100.0 * COST_VARIABLE,
+    }
+
+
+def cost_at_clip(clip: float) -> float:
+    """Modelled round-trip cost as a percentage of notional at ``clip`` dollars."""
+    if clip <= 0:
+        return float("inf")
+    return 100.0 * (COST_FIXED / clip + COST_VARIABLE)
 
 
 def _win_rate(acc: Dict[str, Any]) -> float:
@@ -111,7 +162,8 @@ def load_rows(db_path: Path, since_ts: float) -> List[Dict[str, Any]]:
     con.row_factory = sqlite3.Row
     try:
         cur = con.execute(
-            "SELECT symbol, status, net_profit, details, ts "
+            "SELECT symbol, status, net_profit, gross_profit, fee_cost, "
+            "entry_price, quantity, details, ts "
             "FROM trade_outcomes WHERE ts > ? ORDER BY ts",
             (since_ts,),
         )
@@ -130,6 +182,12 @@ def load_rows(db_path: Path, since_ts: float) -> List[Dict[str, Any]]:
                 "strategy_id": str(det.get("strategy_id") or "") or "unclassified",
                 "mode": str(det.get("mode") or "").lower(),
                 "net": float(r["net_profit"] or 0.0),
+                "gross": float(r["gross_profit"] or 0.0),
+                "fees": float(r["fee_cost"] or 0.0),
+                # Notional at ENTRY. abs() because a short's quantity is
+                # signed and the cost is charged on the size either way.
+                "notional": abs(float(r["entry_price"] or 0.0)
+                                * float(r["quantity"] or 0.0)),
                 "ts": float(r["ts"] or 0.0),
             })
         return out
@@ -169,29 +227,36 @@ def collect(
 
     for r in rows:
         net = float(r["net"])
+        gross = float(r.get("gross", 0.0) or 0.0)
+        fees = float(r.get("fees", 0.0) or 0.0)
+        notional = float(r.get("notional", 0.0) or 0.0)
         sym = r["symbol"]
         sid = r["strategy_id"]
         ok = bool(is_tradeable(sym))
-        _add(pooled, net)
-        _add(tradeable if ok else untradeable, net)
+        _add(pooled, net, gross, fees, notional)
+        _add(tradeable if ok else untradeable, net, gross, fees, notional)
 
         st = per_strategy.setdefault(
             sid, {"id": sid, "pooled": _blank(), "tradeable": _blank(),
                   "untradeable": _blank()})
-        _add(st["pooled"], net)
-        _add(st["tradeable"] if ok else st["untradeable"], net)
+        _add(st["pooled"], net, gross, fees, notional)
+        _add(st["tradeable"] if ok else st["untradeable"],
+             net, gross, fees, notional)
 
         sy = per_symbol.setdefault(sym, {"symbol": sym, "tradeable": ok,
                                          "book": _blank()})
-        _add(sy["book"], net)
+        _add(sy["book"], net, gross, fees, notional)
 
     for st in per_strategy.values():
         for key in ("pooled", "tradeable", "untradeable"):
             st[key]["win_rate"] = _win_rate(st[key])
+            st[key]["rates"] = _rates(st[key])
     for sy in per_symbol.values():
         sy["book"]["win_rate"] = _win_rate(sy["book"])
+        sy["book"]["rates"] = _rates(sy["book"])
     for acc in (pooled, tradeable, untradeable):
         acc["win_rate"] = _win_rate(acc)
+        acc["rates"] = _rates(acc)
 
     return {
         "generated_at": now,
@@ -221,14 +286,51 @@ def render(r: Dict[str, Any]) -> str:
     out.append("=" * 74)
     out.append("")
     out.append("  %-22s %5s %5s %10s" % ("population", "trips", "win", "net"))
-    out.append("  %-22s %s" % ("POOLED (what the", _fmt(r["pooled"])))
-    out.append("  %-22s %s" % ("  readiness report", _blank_line()))
+    out.append("  %-22s %s" % ("POOLED (readiness)", _fmt(r["pooled"])))
     out.append("  %-22s %s" % ("LIVE-TRADEABLE", _fmt(r["tradeable"])))
     out.append("  %-22s %s" % ("untradeable", _fmt(r["untradeable"])))
     out.append("")
     out.append("  The bar reads the LIVE-TRADEABLE row. If that row is negative,")
     out.append("  the wall is QUALITY over the spendable population -- not an")
     out.append("  unwritten stamp, and not missing evidence.")
+    out.append("")
+
+    # --- is it direction, or is it cost? -----------------------------------
+    tr = r["tradeable"]
+    ra = tr.get("rates") or _rates(tr)
+    out.append("  " + "-" * 70)
+    out.append("  IS IT DIRECTION, OR IS IT COST?  (live-tradeable only)")
+    out.append("  " + "-" * 70)
+    out.append("    gross %+9.4f   fees %9.4f   net %+9.4f   notional %9.2f"
+               % (tr["gross"], tr["fees"], tr["net"], tr["notional"]))
+    out.append("    clip $%.3f per round trip" % ra["clip"])
+    out.append("    gross %+.4f%% of notional   cost %.4f%%   net %+.4f%%"
+               % (ra["gross_pct"], ra["cost_pct"], ra["net_pct"]))
+    out.append("    receipts model at this clip %.4f%%  (%s)"
+               % (ra["model_cost_pct"],
+                  "tracks the measured cost, so the clip curve below is sound"
+                  if abs(ra["model_cost_pct"] - ra["cost_pct"]) < 0.15
+                  else "does NOT track the measured cost; treat the curve as a guess"))
+    out.append("")
+    if ra["gross_pct"] > 0:
+        out.append("    The book picks correctly and pays it away: a POSITIVE gross")
+        out.append("    edge means this is a cost problem, not a direction problem.")
+    else:
+        out.append("    Gross is NEGATIVE: the book loses before a penny of fees.")
+        out.append("    No clip and no cost cut can rescue that -- it needs an edge.")
+    out.append("")
+    out.append("    variable cost floor %.4f%% of notional -- gross must beat THIS"
+               % ra["variable_floor_pct"])
+    out.append("    or no clip size ever helps.  gross %+.4f%%  ->  %s"
+               % (ra["gross_pct"],
+                  "CLEARS the floor" if ra["clears_floor"] else "BELOW the floor"))
+    out.append("")
+    out.append("    %-12s %-12s %-14s" % ("clip", "modelled cost", "net per trip"))
+    for clip in (ra["clip"] or 1.0, 5.0, 10.0, 20.0, 50.0):
+        cost = cost_at_clip(clip)
+        out.append("    $%-10.2f %8.4f%%     %+8.4f%%  %s"
+                   % (clip, cost, ra["gross_pct"] - cost,
+                      "PROFITABLE" if ra["gross_pct"] > cost else "loses"))
     out.append("")
     out.append("  %-24s %-21s %-21s" % ("strategy", "tradeable", "untradeable"))
     for st in r["strategies"][:12]:
@@ -243,8 +345,6 @@ def render(r: Dict[str, Any]) -> str:
     return "\n".join(out)
 
 
-def _blank_line() -> str:
-    return "      prints)"
 
 
 def main() -> int:

@@ -124,5 +124,87 @@ class PooledIsNotTheGraduationBook(unittest.TestCase):
             self.assertIn("stop_is_unenforceable", r["error"])
 
 
+
+class CostIsMeasuredAgainstNotionalNotZero(unittest.TestCase):
+    """A book with a POSITIVE gross edge can still lose, and the split says why.
+
+    The failure this prevents: reporting only ``net`` cannot distinguish "we
+    pick the wrong direction" from "we pick correctly and hand it to the fee",
+    and those have opposite fixes. Measured 2026-09-10 over 109 live-tradeable
+    round trips the answer was the second -- gross +0.6289, fees 1.4166, net
+    -0.7877, i.e. a real +0.2625%-of-notional edge against a 0.5913% cost.
+
+    It also pins the part that kills the obvious fix: raising the clip retires
+    only the FIXED component, so a gross edge below ``COST_VARIABLE`` loses at
+    EVERY clip. A reader that compared the edge to a single flat percentage
+    would not be able to tell.
+    """
+
+    def _rows(self):
+        # gross positive, fees larger: the shape measured on the real book.
+        return [{"symbol": "AERO-USDC", "strategy_id": "s1", "mode": "ghost",
+                 "net": -0.01, "gross": +0.005, "fees": 0.015,
+                 "notional": 2.0, "ts": 1789000000.0} for _ in range(10)]
+
+    def test_a_positive_gross_edge_is_reported_even_when_net_is_negative(self):
+        r = collect(rows=self._rows(), is_tradeable=_pred, now=1789000000.0)
+        ra = r["tradeable"]["rates"]
+
+        self.assertLess(r["tradeable"]["net"], 0.0)
+        self.assertGreater(r["tradeable"]["gross"], 0.0,
+                           "gross must survive the aggregation; net alone "
+                           "cannot tell direction from cost")
+        self.assertGreater(ra["gross_pct"], 0.0)
+        self.assertGreater(ra["cost_pct"], ra["gross_pct"])
+
+    def test_the_clip_is_notional_per_round_trip_not_total_notional(self):
+        """A units error here would misprice every point on the clip curve."""
+        r = collect(rows=self._rows(), is_tradeable=_pred, now=1789000000.0)
+        self.assertAlmostEqual(r["tradeable"]["notional"], 20.0, places=6)
+        self.assertAlmostEqual(r["tradeable"]["rates"]["clip"], 2.0, places=6)
+
+    def test_an_edge_below_the_variable_floor_loses_at_every_clip(self):
+        """The variable component is a floor no clip size can move."""
+        from scripts.tradeable_book import COST_VARIABLE, cost_at_clip
+
+        r = collect(rows=self._rows(), is_tradeable=_pred, now=1789000000.0)
+        ra = r["tradeable"]["rates"]
+        self.assertLess(ra["gross_pct"], 100.0 * COST_VARIABLE)
+        self.assertFalse(ra["clears_floor"])
+        for clip in (2.0, 10.0, 100.0, 1_000_000.0):
+            self.assertLess(ra["gross_pct"], cost_at_clip(clip),
+                            "an edge below the variable floor must lose at "
+                            "clip $%s too" % clip)
+
+    def test_an_edge_above_the_variable_floor_clears_at_a_large_enough_clip(self):
+        """The other side of the same rule, so the test is not vacuous."""
+        from scripts.tradeable_book import cost_at_clip
+
+        rows = [{"symbol": "CBADA-USDC", "strategy_id": "s1", "mode": "ghost",
+                 "net": 0.01, "gross": +0.0088, "fees": 0.011,
+                 "notional": 2.0, "ts": 1789000000.0} for _ in range(10)]
+        ra = collect(rows=rows, is_tradeable=_pred,
+                     now=1789000000.0)["tradeable"]["rates"]
+
+        self.assertTrue(ra["clears_floor"], "0.44%% must clear a 0.3187%% floor")
+        self.assertLess(ra["gross_pct"], cost_at_clip(2.0),
+                        "but it must still lose at the $2 clip, where the "
+                        "fixed component dominates")
+        self.assertGreater(ra["gross_pct"], cost_at_clip(20.0),
+                           "and win at $20, which is the whole argument for "
+                           "raising the clip")
+
+    def test_the_cost_model_keeps_fixed_and_variable_separate(self):
+        """Collapsing them to one flat percentage hides which one is winning."""
+        from scripts.tradeable_book import COST_FIXED, COST_VARIABLE, cost_at_clip
+
+        self.assertAlmostEqual(cost_at_clip(1.0),
+                               100.0 * (COST_FIXED + COST_VARIABLE), places=9)
+        # The curve must fall with clip and asymptote to the variable floor.
+        self.assertGreater(cost_at_clip(2.0), cost_at_clip(20.0))
+        self.assertGreater(cost_at_clip(1e9), 100.0 * COST_VARIABLE * 0.999)
+        self.assertLess(cost_at_clip(1e9), 100.0 * COST_VARIABLE * 1.001)
+
+
 if __name__ == "__main__":
     unittest.main()
