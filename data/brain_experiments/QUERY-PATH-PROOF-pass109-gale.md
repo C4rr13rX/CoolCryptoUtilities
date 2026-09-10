@@ -124,6 +124,31 @@ window. Selection that destroys value, not selection that adds it.
 
 `OMEN_STRATEGY_ENABLED` stays 0.
 
+### The majority-class baseline is not just an accuracy baseline — it is a money baseline, and it wins in both windows
+
+This has not been said in any report here, and it is the sharpest form of the
+result. The majority label is a *tradeable rule*, because it names a direction:
+
+- DOWN window: majority label is **`slide`**, 99 of 180 (55.0%). "Always
+  predict slide" is "never buy". It places **0 trades for a total of 0.0000**.
+  The relation arm places 42 trades for a total of **-1.0696**.
+- UP window: majority label is **`climb`**, 106 of 180 (58.9%). "Always
+  predict climb" is "buy every bar". It places 180 trades at +3.6841% for a
+  total of **+6.6314**. The relation arm places 12 trades for a total of
+  **+0.1182**.
+
+Compared on total P/L over the same 180 bars — the honest comparison when the
+arms place different numbers of trades — **the majority-class predictor beats
+the brain in both windows**: 0.0000 against -1.0696 in the DOWN window, and
++6.6314 against +0.1182 in the UP window, a factor of 56.
+
+So the accuracy deficit and the money deficit are the same fact, not two. A
+five-class head that spreads its predictions is being beaten by a constant.
+The brain's 30-31% does clear the 20% five-class chance rate, so the ordering
+is carrying *something* — which matches the direction-head AUC of 0.56-0.59
+measured elsewhere in this repo. But carrying something is not the same as
+beating a constant, and on both scoreboards it does not.
+
 ## 5. Two things the next agent should not rediscover
 
 **RELATION_COLLECTIONS is env-gated OFF, and the distinctness line tells you
