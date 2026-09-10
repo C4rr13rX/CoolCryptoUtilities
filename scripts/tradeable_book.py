@@ -65,18 +65,32 @@ def _tradeable_predicate():
     Returning None rather than a fail-open lambda is deliberate: a report that
     silently counted every symbol as tradeable would recreate the exact
     misreading this script exists to correct.
+
+    THIS DELEGATES; IT MUST NOT REIMPLEMENT. Until 2026-09-10 it carried its
+    own copy of the rule -- ``not stop_is_unenforceable(sym)`` -- and the two
+    drifted apart the moment ``ledger._live_tradeable`` also began consulting
+    ``services.symbol_edge_gate``. The drift was not cosmetic: this script is
+    the tool that NAMES THE WALL, and it went on printing BASECAT-USDC and
+    COMP-USDC as "live: yes" (12 trips -0.0299 and 11 trips -0.1171 over 7
+    days) after graduation had stopped counting them, so the report and the
+    bar it reports on disagreed about which trades exist.
+
+    A second copy of a predicate is a second answer to one question, and this
+    repo has shipped that shape before. Import the one the ledger uses.
     """
     try:
-        from trading.pipeline import stop_is_unenforceable
+        from trading.strategies.ledger import _live_tradeable
     except Exception:  # noqa: BLE001
         return None
 
-    def _ok(symbol: str) -> bool:
-        sym = str(symbol or "").strip()
-        if not sym:
-            return False
+    def _ok(symbol: str, strategy_id: Optional[str] = None) -> bool:
         try:
-            return not bool(stop_is_unenforceable(sym))
+            return bool(_live_tradeable(symbol, strategy_id))
+        except TypeError:
+            # An older ledger whose predicate takes the symbol alone. Keeps
+            # this report readable against a checkout that predates the
+            # (strategy, symbol) ban rather than failing the whole run.
+            return bool(_live_tradeable(symbol))
         except Exception:  # noqa: BLE001
             return False
 
