@@ -3823,3 +3823,52 @@ accumulates on its own, so when exit_conf is genuinely computed again the
 distribution is measurable back-to-back instead of inferred -- and if
 `via=trident` does not rise once confidence clears its floor, THEN there is a
 real defect in the arbitrator.
+
+### 2026-09-10 -- Iris, pass 106, RETRACTION of my own entry above
+
+MY ENTRY ABOVE IS WRONG WHERE IT SAYS 32 STRATEGIES ARE "NEVER PROPOSED" AND
+THAT CANDIDATE GENERATION NEVER EMITS THEM. Read the retraction, not the
+paragraph above it.
+
+Gale's `entry-arbitration` instrument (1d80f08, a81d3db) wrote the row my
+census structurally could not see. Across all 72 registered strategies on one
+tick: `no_signal` 65, `min_samples` 7, `disabled` 0, `raised` 0. The 65 ARE
+ASKED EVERY TICK and return nothing. They are not starved of cycles. It IS the
+operator's third mechanism -- strategies offered cycles and producing no
+candidate -- the one I explicitly ruled out on the board.
+
+THE ERROR, WHICH IS THE REUSABLE PART: a strategy that is asked and returns no
+candidate writes NO row in `trading_ops` and holds no scheduler slot. It is
+invisible to a log-derived census BY CONSTRUCTION. I counted who APPEARS and
+read absence as absence-of-opportunity. Absence proves SILENCE, not
+starvation. I made the same inference error twice in one pass -- first reading
+a 6h window as permanent exclusion (caught by my own 24h re-run), then reading
+log-absence as denial (caught by Gale). Both times the correction came from an
+independent measurement rather than more of mine, which is the argument for
+running the self-check and for saying the number out loud early.
+
+`scripts/decision_budget_census.py` now says all of this in its module
+docstring and labels the set SILENT rather than NEVER PROPOSED (fd1ead3), so
+the script can no longer be quoted the way I quoted it.
+
+WHAT SURVIVES AND IS SAFE TO BUILD ON:
+  * `atf_static` draws ZERO decision cycles at 6h and 24h -- confirmed twice,
+    independently, by Gale's OFFERED column. The brief's "179 vs 7" is the
+    wrong table from two directions.
+  * One row of `trading_ops` is not one cycle. A hold writes none, one tick
+    writes four. Never derive a per-strategy budget from it.
+  * 1576 of 1578 cycles hold, so no distribution change produces an entry
+    today. Allocation work is downstream of the head.
+  * THE SYMBOL CAP BINDS BELOW FEED SUPPLY, and this concerns symbols rather
+    than strategies so `no_signal` leaves it standing: `market_stream` carried
+    15 distinct symbols in 2h and 36 in 6h while the scheduler held SEVEN
+    slots, flat at 7-8 for six hours. Cause is `select_pairs(limit=6)` in
+    `trading/selector.py` against the re-prepend at
+    `services/atf_static_strategy.py:1797` (Jet, [1c75811d]).
+
+NEXT, AND THE ORDER MATTERS: signal first, cap second. Raising the cap today
+buys breadth of SYMBOLS only -- the 65 no_signal strategies would return
+no_signal on new symbols too. The question worth asking next is why 65 of 72
+have no signal on a live feed, which is a strategy-input question, not a
+scheduling one. [476b6671] is re-scoped to the cap half and carries both
+numbers.
