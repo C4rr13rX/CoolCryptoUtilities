@@ -337,6 +337,26 @@ query set: ('geometry','temporal')
 association layer went from three dead train-only streams to two live query
 streams in the same pass that built it.
 
+### Confirmed on a wider corpus (self-audit)
+
+The 13,219-sample measurement above drew on 4 files of which 3 were the same
+symbol — effectively 2 symbols, which is thin for a claim about the feed.
+Re-measured across **7 distinct symbols, 17,315 samples** (AERO-USDC,
+cbBTC-USDC, CBBTC-USDC, EURC-USDC, JITOSOL-CBBTC, VELVET-USDC, VVV-WETH):
+
+```
+rel_move_vol     0.320  CLEARS
+rel_shape_flow   0.211  CLEARS
+rel_trend_noise  0.150  below floor
+query set: ('geometry','temporal','rel_move_vol','rel_shape_flow')
+```
+
+The conclusion is unchanged and slightly stronger. Note the corpus holds
+**229 files** — this is 14 of them, so it is a wider check, not an exhaustive
+one. Note also that `AERO-USDC`/`cbBTC-USDC`/`CBBTC-USDC` show a
+case-inconsistent symbol naming in the corpus filenames, which is worth a
+look on its own.
+
 `rel_trend_noise` stays below the floor either way. It is near-constant for
 structural reasons — slow long-baseline z-scores, plus an `exp` field
 duplicated from `volatility` — so it wants redesigning, not re-bucketing.
