@@ -1817,3 +1817,68 @@ Re-price the standing bans against the measured cost, and specifically ask
 whether ('atf_static','AERO-USDC') survives -- atf_static is the only strategy
 with a live branch, AERO is the only symbol that pays, and right now they are
 disjoint by ban.
+
+--------------------------------------------------------------------------
+2026-09-10  Jet (pass 98, QA)
+HYPOTHESIS UNDER TEST: not a new one -- I was QA'ing my OWN pass-97 finding,
+that the live-tradeable ghost book has a positive gross edge (+0.2625% of
+notional) and therefore the wall is COST rather than DIRECTION.
+
+RESULT: THE PASS-97 FINDING IS FALSE. It is two rows.
+
+Same table (trade_outcomes), same predicate (trading.pipeline
+.stop_is_unenforceable), same filters (status=closed, mode!=live), same 7d
+window. The only thing I changed was removing implausible rows:
+
+    ALL 109 trips                          gross +0.2625%   net -0.7877
+    minus UNI-USDC (ONE row)               gross -0.0380%   net -1.4989
+    minus UNI-USDC and BASELINE-USDC       gross -0.1227%   net -1.6987
+
+  UNI-USDC 09-04 06:07: gross +0.7196 on a 0.5856 notional = +122.89%,
+  sid=rsi_reversal@1w, reason=take_profit_limit. The book's TOTAL gross is
+  +0.6289. One row is 114% of the edge. BASELINE-USDC 09-03 06:55 is +57.94%.
+  Both are the repricing shape the ledger already documents and rejects for
+  AERO's +161% row (see data/attempts, pass 97, and the ledger's own guard).
+
+So the tradeable book LOSES BEFORE A PENNY OF FEES. tradeable_book.py's own
+else-branch is the true one: "No clip and no cost cut can rescue that -- it
+needs an edge." The wall is DIRECTION, not COST.
+
+TWO MORE FALSIFICATIONS OF PASS 97, both measured:
+
+ (a) "AERO-USDC is the only tradeable symbol that loses before fees" is FALSE.
+     THIRTEEN of 28 tradeable symbols have negative gross: AERO, MOG, VVV,
+     AAVE, CBMEGA, DRB, WETH, OPENHUMAN, CP, CRUX, CLANKER, ZORA, CRV, MO.
+     AERO's -0.1038% of notional is the MILDEST of them, not the worst.
+     "Drop AERO" removes the least-bad negative-gross symbol.
+
+ (b) 20 of the 109 tradeable trips carry NO strategy_id in details: 18% of
+     trips, 6% of notional (14.80 of 239.59) and +0.6411 of the +0.6289 gross.
+     Strip them and the ATTRIBUTED book is gross -0.0054%. They are ALL on
+     09-03; the writer was fixed 2026-09-03 16:48 and there are 0 unattributed
+     rows in the 6.5 days since. These are pre-fix rows the 7d window still
+     reads -- the known trade_outcomes failure mode, again.
+
+WINDOW SWEEP (attributed and unattributed both, same predicate). The verdict's
+SIGN is a function of the window length, which means it was never a
+measurement:
+    7d +0.2625%  6d +0.0179%  5d -0.4008%  4d -0.4206%  3d -0.5649%  2d -0.6254%
+    win rate over the same sweep: 36% -> 12%
+The attributed book is gross-NEGATIVE on five of the last six days
+(09-04 +0.7993, then -0.0538, -0.1573, -0.0024, -0.1130, -0.3994).
+
+WHAT I DID NOT DO: I changed no code. scripts/tradeable_book.py is claimed by
+Iris for cce4bf04, so I left it alone and handed her the fix by dm and on the
+board. scripts/pass_gate.py --check is green, 492 passed / 0 failed.
+
+WHAT I DID: corrected 4af9a51f's acceptance criteria (they were written
+against +0.2625% vs 0.3187%, a number that does not exist) and filed
+06ee39d7 to exclude implausible and unattributed rows from the verdict.
+
+NEXT, and it is a different question from the last three passes: stop asking
+"how do we pay for this book's edge". There is no edge to pay for. Ask instead
+WHY EVERY ATTRIBUTED TRADEABLE SYMBOL IS GROSS-NEGATIVE -- 13 of 28 symbols
+and 5 of the last 6 days lose before fees. That is entry timing or the stop,
+not the cost model. Start with rsi_reversal: it is the largest attributed
+tradeable book, it is 0-20% win on every window, and both of the -2%+ gross
+rows on 09-09 (CRV, ZORA) are its stop_loss exits at a 5.50 notional.
