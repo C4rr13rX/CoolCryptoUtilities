@@ -4813,3 +4813,55 @@ source; the pool topology is the remaining lever. Report:
 data/brain_experiments/p110_head_level_vs_ordering_money_scoreboard.md
 
 2026-09-10 Jet (QA) -- Hypothesis: the pass gate's colour is a function of this week's market, so a green gate proves nothing about the money path. Did: built scripts/live_data_predicate_census.py, which runs the suite TWICE on one tree -- once against storage/trading_cache.db, once with all four gate modules repointed at an empty database -- and diffs the pass/fail SET, plus scripts/_live_data_isolation.py, the pytest plugin that does the repointing. Result: 7 tests in 4 files changed verdict with the tape (live 3 failed / empty 8 failed); after fixturing the predicates, 0 of 313 do (live 2 / empty 2, and those 2 are order-dependent, not tape-dependent, and predate the pass). The pass-109 grep estimate of "24 files" was wrong both ways: 35 files name a predicate unpatched, only 4 decide on the tape, and one of the 4 names no predicate anywhere. My own instrument produced one false positive and the test it accused was right -- I had repointed symbol_edge_gate.DB_PATH and not strategy_edge_gate.DB_PATH. Shipped 7a51716, gate 721/0. Also QA'd 449ad47: its 23/50/19 distinctness reproduces exactly, but the same script's "SEPARATES" verdict is max-minus-min over post-hoc buckets against a bare 0.10 literal, which clears on pure noise 96-100% of the time (null medians +29.4/+18.1/+17.6% against measured +36.6/+26.1/+15.4%) -- all three self pools are flat, filed as [ca4ac5d5]. Next: put a shuffle null inside that script before any node run is spent on it, and bisect the test_strategy_ledger order-dependence [2bc5d747].
+
+## 2026-09-10 | Cove | pass 110
+
+HYPOTHESIS: the L1 co-occurrence motif layer abstracts (distinctness falls
+L0->L1), and that abstraction carries held-out buy-low information.
+
+WHAT I DID. Built scripts/omen_layer_probe.py -- the operator's falsification
+test, run with NO node and NO fabric before any training run. Measures L0 vs
+L1 vs L2 distinctness, then label_skew (does the coarse frame's LABEL
+distribution skew), then a held-out arm: fit the motif->trough map on the
+train window, freeze it, score the held-out window on per-trade net and
+trough precision. Exits nonzero when a layer fails to abstract, so it gates.
+
+RESULT 1 -- ABSTRACTION: YES. L0 mean of the 5 input streams 0.5441, L1
+0.0139, a factor of 39. L1 is NOT cut.
+
+RESULT 2 -- THE DILUTION FLOOR IS THE WRONG TEST FOR A LAYER. MIN_QUERY_
+DISTINCTNESS is 0.20 and L1 reads 0.0139, so the law would auto-cut every
+abstraction layer before it was measured. The law was measured on SENSORY
+streams where low distinctness means constant means uninformative; a motif
+layer is low-distinctness BY DESIGN. Use label skew instead.
+
+RESULT 3 -- HELD-OUT EDGE: NEGATIVE, BOTH WINDOWS. In-sample lift is strong
+(2.69x trough UP, 2.25x DOWN, sign agreeing across both). Held out it
+collapses: per-trade net vs buy-every-bar -0.5901% UP (12 trades, unrankable)
+and -0.2128% DOWN (109 trades). Trough precision 0.0% vs 7.1% UP, 17.4% vs
+14.3% DOWN. A 2.25-2.69x in-sample lift becoming a +3.1pp precision bump with
+a negative net is a map fitted to the train window's regime.
+
+RESULT 4 -- THE SELL-HIGH HALF HAD NEVER BEEN SCORED. omen_experiment.py:552
+is long-only so a crest is an abstention. Scored crest against forward returns
+(not by shorting): fall precision 89.3% vs 73.8% base in DOWN, 23.6% vs 28.0%
+in UP. ASYMMETRIC, so no edge claimed -- but the exit side is more informative
+than the entry side on the same motifs, and nobody has been measuring it.
+
+RESULT 5 -- THE ENCODER WAS BLIND, found by Gale's per-stream census and fixed
+here. _band_of counted only u/d/r prefixes; geometry frames are all q buckets,
+so it never SAW the token and geometry read mid on 600/600 bars. Two live
+slots of five. Fixed q banding: L1 vocabulary 10 -> 21/25 motifs. The held-out
+edge did NOT improve (-0.9346% UP, -0.2128% DOWN unchanged).
+
+RESULT 6 -- THE FIX BROKE L2's GUARD, and the sweep fixed it. A 4-step path
+went 0.2017 -> 0.4520, over the 0.30 identifier guard. Swept: 2 -> 0.1266/
+0.1530, 3 -> 0.2976/0.2962, 4 -> 0.4520/0.4159. Set to 3, margin 0.8%, thin
+and flagged as thin.
+
+NEXT: do NOT run an L0-vs-L0+L1 node arm on this corpus -- the stream does not
+carry held-out buy-low signal, and there is no pool 20 in any identity toml
+anyway. Two things are worth a pass: (1) volatility still saturates at hi on
+~100% of bars (three u tokens every bar by construction) -- band each stream
+against ITS OWN distribution, Gale's suggestion; (2) the EXIT side, which is
+measured nowhere and looked better than the entry side here.
