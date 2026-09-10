@@ -126,6 +126,27 @@ def _step_token(z: Optional[float]) -> str:
     return "f"
 
 
+#: Magnitude edges for ``_bucket_z``, in units of the move's own noise. Four
+#: bands, so a scale reads "which way, and is that a nudge, a move, or a
+#: dislocation". Coarse on purpose -- see the comment in ``temporal_frames``.
+Z_EDGES: Tuple[float, ...] = (0.5, 1.5, 3.0)
+
+
+def _bucket_z(z: Optional[float]) -> str:
+    """How far, in units of the move's own noise, as one digit.
+
+    Magnitude only: the sign already rides on the direction token beside it,
+    so encoding it twice would waste resolution on a fact the frame has.
+    """
+    if z is None:
+        return "x"
+    size = abs(z)
+    for level, edge in enumerate(Z_EDGES):
+        if size < edge:
+            return str(level)
+    return str(len(Z_EDGES))
+
+
 def _run_length(tokens: Sequence[str]) -> Tuple[str, int]:
     """(token, how many times it repeats at the END of the sequence)."""
     if not tokens:
@@ -202,7 +223,24 @@ def temporal_frames(closes: Sequence[float],
     token, run = _run_length(tokens[-SEQUENCE_STEPS:])
     sequence = "seq path=%s run=%s%s" % (path or "na", token, _bucket_count(run))
 
-    # The same question at several horizons: which way, over this many bars?
+    # The same question at several horizons: which way, and HOW FAR, over
+    # this many bars?
+    #
+    # THE MAGNITUDE IS NOT DECORATION. Measured pass 109 on AERO-USDC over 600
+    # samples: a direction-token-only frame ("s3=u s12=u s48=d agree=split")
+    # scored 0.045 distinct frames per sample against the dilution law's 0.20
+    # bar, so ``discriminating_collections`` excluded pool 18 from the query
+    # set and the ONE pool aimed at multi-scale regime never fired. Three
+    # ternary tokens plus an agreement word cannot say more than a few dozen
+    # things, and a stream that coarse votes for the label DISTRIBUTION over
+    # everything it matches rather than for a label.
+    #
+    # The band it has to clear is 0.103-0.260 (the empty band), and the ceiling
+    # it must not approach is near-uniqueness: SEQUENCE_STEPS was cut from 8 to
+    # 5 for scoring 0.76 distinct frames per sample, which is an IDENTIFIER and
+    # maximises recall at the cost of the generalisation we are actually after.
+    # So magnitude is added at a DELIBERATELY COARSE resolution -- a signed
+    # z-bucket per scale -- rather than a raw number.
     scale_bits, directions = [], []
     for span in SCALES:
         if len(series) <= span:
@@ -213,7 +251,7 @@ def temporal_frames(closes: Sequence[float],
         z = None if unit is None else ret / (unit * math.sqrt(span))
         tok = _step_token(z)
         directions.append(tok)
-        scale_bits.append("s%d=%s" % (span, tok))
+        scale_bits.append("s%d=%s%s" % (span, tok, _bucket_z(z)))
 
     known = [d for d in directions if d != "x"]
     if not known:

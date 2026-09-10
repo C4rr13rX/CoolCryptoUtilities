@@ -222,3 +222,44 @@ def test_the_temporal_frames_read_order_not_just_magnitude(monkeypatch):
     assert up["temporal_sequence"] != down["temporal_sequence"], (
         "reversing the order of the recent moves did not change the sequence "
         "frame -- pool 17 is not carrying order")
+
+
+def test_the_scale_frame_is_sharp_enough_to_survive_the_dilution_filter(monkeypatch):
+    """Named after the failure it prevents, measured in pass 109.
+
+    A direction-token-only scale frame ("s3=u s12=u s48=d agree=split") scored
+    0.045 distinct frames per sample on 600 AERO-USDC samples, against the
+    dilution law's 0.20 bar -- so ``discriminating_collections`` excluded pool
+    18 from the query set and the ONE pool aimed at multi-scale regime never
+    fired. Adding a coarse magnitude bucket per scale took it to 0.303.
+
+    Both ends are asserted, because this frame can fail in two opposite
+    directions and only one of them is obvious. Too COARSE and the dilution
+    law drops it. Too SHARP and it becomes an identifier: SEQUENCE_STEPS was
+    cut from 8 to 5 for scoring 0.76 distinct per sample, which maximises
+    train recall and is exactly what cannot generalise.
+    """
+    mod = _reload(monkeypatch, meta="1")
+    bars = _bars(700, vol=0.006, seed=29)
+    frames = [mod.build_collections(bars, i, horizon_bars=6, symbol="TEST")
+              for i in range(260, 700)]
+
+    scale = {f["temporal_scale"] for f in frames}
+    ratio = len(scale) / len(frames)
+    assert ratio >= mod.MIN_QUERY_DISTINCTNESS, (
+        f"temporal_scale is {ratio:.3f} distinct per sample, below the "
+        f"{mod.MIN_QUERY_DISTINCTNESS} query bar -- pool 18 will be excluded "
+        "from every query and the regime pool will never fire")
+    assert ratio <= 0.70, (
+        f"temporal_scale is {ratio:.3f} distinct per sample -- approaching an "
+        "identifier, which maximises recall and destroys generalisation")
+
+
+# A "nudge vs dislocation" test was written here and REMOVED, deliberately.
+# It asserted that a 0.05%/bar drift and a 5%/bar rise produce different scale
+# frames. They do not, and that is correct: every scale is measured in units of
+# the move's OWN noise, because a 2% move means nothing without knowing whether
+# 2% is a normal hour for this symbol. The frame is scale-invariant by design.
+# The evidence that the magnitude bucket carries information is the distinctness
+# measurement above -- 0.045 to 0.303 on 600 real AERO-USDC samples -- not a
+# constructed pair the normalisation is built to collapse.
