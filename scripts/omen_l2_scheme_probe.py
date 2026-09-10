@@ -50,8 +50,8 @@ from trading.omen_brain import (  # noqa: E402
     LOOKBACK_BARS, build_collections, label_omen,
 )
 from trading.omen_layers import (  # noqa: E402
-    L1_STREAMS, MOTIF_SEQUENCE_STEPS, cooccurrence_motif, layer_distinctness,
-    relative_bands, sequence_motif,
+    L1_STREAMS, MOTIF_SEQUENCE_STEPS, _band_of, _numeric_of, cooccurrence_motif,
+    layer_distinctness, relative_bands, sequence_motif,
 )
 
 #: Above this, a layer NAMES samples rather than grouping them. Stated by
@@ -133,6 +133,80 @@ def run_length_motif(motifs: Sequence[str],
             runs.append([item, 1])
     return "co2r path=%s" % "|".join(
         "%s:%s" % (sym, _dwell_bucket(count)) for sym, count in runs[-steps:])
+
+
+def sticky_motifs(frame_sets: Sequence[Mapping[str, str]],
+                  bands: Mapping[str, Any], margin: float) -> List[str]:
+    """L1 motifs with HYSTERESIS: a slot holds its band until it is pushed out.
+
+    THE MEASUREMENT THAT SENT ME HERE. Neither L2 scheme can work while L1
+    changes on 73.1% of bars (DOWN) and 74.0% (UP) -- dropping repeats can only
+    remove the ~27% that ARE repeats, so any ordered pair of recent motifs is
+    near-unique by construction. The constraint is upstream, so the fix is
+    upstream: stop the slot flickering across a tercile boundary.
+
+    ``margin`` is a fraction of the band's own width (hi - lo), so it is in the
+    stream's units rather than in absolute score units -- the same knob means
+    the same thing on a stream whose scores span 0.01 and one whose scores span
+    400. A slot already in ``lo`` stays there until the score climbs past
+    ``lo + margin*width``; a slot in ``mid`` needs ``lo - margin*width`` to fall
+    into ``lo``. margin=0 reproduces the plain relative banding exactly, which
+    is what makes a both-settings comparison on one corpus honest.
+
+    MEASURED, 600 samples per corpus, both computed in one process:
+
+        margin  change rate DOWN/UP   L2_transitions steps=2 DOWN/UP
+        0.00    73.1% / 74.0%         0.6017 / 0.4917   FAIL
+        0.25    57.9% / 57.4%         0.5083 / 0.4050   FAIL
+        0.50    37.6% / 38.2%         0.2633 / 0.2000   PASS
+        1.00    18.9% / 17.9%         0.1483 / 0.1017   PASS
+
+    So an ORDER-CARRYING L2 under the 0.30 ceiling in both windows exists, and
+    it needed an L1 change rather than another L2 scheme.
+
+    THE COST, stated because distinctness alone cannot see it: L1 itself
+    coarsens (0.1983 -> 0.0817 DOWN, vocabulary 119 -> 49; 0.1383 -> 0.0683 UP,
+    83 -> 41). Whether that coarser L1 still carries label skew is NOT measured
+    here and must be, with ``omen_layer_probe``'s skew test, before any node arm
+    is spent on it. A layer that abstracts perfectly and predicts nothing is
+    still worthless.
+    """
+    scores = {name: [_numeric_of(frames.get(name)) for frames in frame_sets]
+              for name in L1_STREAMS}
+    columns: Dict[str, List[str]] = {}
+    for name in L1_STREAMS:
+        cuts = bands.get(name)
+        if cuts is None:
+            # relative_bands OMITS a stream whose terciles collapse, and
+            # cooccurrence_motif falls back to absolute sign banding for it.
+            # Emitting "na" here instead would make margin=0 a different
+            # encoder from the comparison arm -- caught by
+            # test_hysteresis_at_zero_margin_reproduces_plain_relative_banding.
+            columns[name] = [_band_of(frames.get(name)) for frames in frame_sets]
+            continue
+        low, high = cuts
+        reach = margin * (high - low)
+        held: Optional[str] = None
+        out: List[str] = []
+        for score in scores[name]:
+            if score is None:
+                out.append("na")
+                continue
+            if held == "lo":
+                band = "lo" if score <= low + reach else (
+                    "hi" if score >= high else "mid")
+            elif held == "hi":
+                band = "hi" if score >= high - reach else (
+                    "lo" if score <= low else "mid")
+            else:
+                band = "lo" if score <= low - reach else (
+                    "hi" if score >= high + reach else "mid")
+            held = band
+            out.append(band)
+        columns[name] = out
+    return ["co1 " + " ".join("%s=%s" % (name[:3], columns[name][i])
+                              for name in L1_STREAMS)
+            for i in range(len(frame_sets))]
 
 
 def build_rows(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,

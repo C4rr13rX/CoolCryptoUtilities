@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+from trading.omen_layers import relative_bands
 from scripts.omen_l2_scheme_probe import (
     IDENTIFIER_CEILING, run_length_motif, transition_motif,
 )
@@ -71,3 +72,49 @@ def test_the_ceiling_is_the_one_the_layer_probe_uses():
     gets promoted.
     """
     assert IDENTIFIER_CEILING == 0.30
+
+
+def test_hysteresis_at_zero_margin_reproduces_plain_relative_banding():
+    """The comparison arm must be the SAME encoder, not a similar one.
+
+    margin=0 has to be byte-identical to `cooccurrence_motif(frames, bands)`,
+    or a hysteresis result is a two-change measurement and says nothing about
+    either change.
+    """
+    from trading.omen_layers import cooccurrence_motif
+    from scripts.omen_l2_scheme_probe import sticky_motifs
+
+    frame_sets = [{"geometry": "geo r5", "temporal": "tmp u3",
+                   "flow": "flw q9", "volatility": "vol u10",
+                   "cross": "crs r7"},
+                  {"geometry": "geo r90", "temporal": "tmp u30",
+                   "flow": "flw q1", "volatility": "vol u1",
+                   "cross": "crs r70"},
+                  {"geometry": "geo r50", "temporal": "tmp u15",
+                   "flow": "flw q5", "volatility": "vol u5",
+                   "cross": "crs r35"}]
+    bands = relative_bands(frame_sets)
+    assert sticky_motifs(frame_sets, bands, 0.0) == [
+        cooccurrence_motif(f, bands=bands) for f in frame_sets]
+
+
+def test_hysteresis_can_only_reduce_the_change_rate():
+    """A sticky slot must never flicker MORE than a free one.
+
+    If a margin ever raised the change rate, the stickiness would be
+    implemented backwards and every number measured through it would be
+    upside down.
+    """
+    from scripts.omen_l2_scheme_probe import sticky_motifs
+
+    frame_sets = [{"geometry": f"geo r{v}", "temporal": f"tmp u{v}",
+                   "flow": f"flw q{v}", "volatility": f"vol u{v}",
+                   "cross": f"crs r{v}"}
+                  for v in (1, 90, 2, 88, 3, 91, 4, 87, 5, 89, 45, 46)]
+    bands = relative_bands(frame_sets)
+
+    def change_rate(margin):
+        motifs = sticky_motifs(frame_sets, bands, margin)
+        return sum(1 for a, b in zip(motifs, motifs[1:]) if a != b)
+
+    assert change_rate(1.0) <= change_rate(0.5) <= change_rate(0.0)
