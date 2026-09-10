@@ -55,6 +55,96 @@ HORIZON_WINDOWS_SEC: Tuple[int, ...] = (
 _LIVE_GAS_FEE_INPUT = 0.0015
 _LIVE_TAX_RATE_INPUT = 0.005
 
+#: How far a single quote may sit from the window's own median, in log space,
+#: before it is treated as a foreign row rather than as a market move.
+#:
+#: log(2.5) ~= 0.916, so a bar 2.5x above or below the median of its own 60-bar
+#: window is repaired. Real intra-window moves on this feed do not come close:
+#: measured 2026-09-10 over the last 60 ticks of the six busiest symbols, the
+#: full log-return SPAN of a window was 0.0162 (ETH-USDT) to 0.0632 (DRB-USDC)
+#: -- fourteen times inside this bound at the widest.
+_WINDOW_FOREIGN_ROW_LOG_TOLERANCE = 0.916
+
+
+def sanitize_model_price_window(
+    prices: "Sequence[float]",
+    *,
+    tolerance: float = _WINDOW_FOREIGN_ROW_LOG_TOLERANCE,
+) -> "Tuple[List[float], int]":
+    """Repair rows that are not a price of the same asset as the rest.
+
+    ONE FOREIGN ROW IN SIXTY SATURATES THE MODEL, AND THAT IS THE -1.2.
+
+    ``model_definition.PriceVolScaleNorm`` makes the price channel scale-free
+    (``log(p_t / p_0)``), and it works: probed 2026-09-10 against the deployed
+    ``models/active_model.keras``, a clean 60-bar window at price level 1e-4
+    and at 1.2e4 produced ``price_mu`` -0.000620 both times -- identical to six
+    decimals across EIGHT orders of magnitude. On real live windows the same
+    model returns ``price_mu`` -0.1655 to -0.2428, comfortably inside the band
+    the head was trained on.
+
+    What the transform cannot absorb is a window whose rows are not all the
+    same asset. Being scale-free is defined relative to the window's ANCHOR, so
+    a single row from a differently-priced feed becomes a log return of ten or
+    more and the convolutions see a move no market makes. Measured against the
+    same model, same day, same live ETH-USDT window:
+
+        clean ETH window                     price_mu -0.2065   net_margin -0.2130
+        ETH window, one row 100x            price_mu -1.5111   net_margin -1.5176
+        DRB window, one ETH row at t=30     price_mu -1.8395   net_margin -1.8460
+        ETH and DRB rows interleaved        price_mu +1.3012   net_margin +1.2947
+
+    ``organism_snapshots`` over the 1613 live predictions in the six hours to
+    2026-09-10 09:00 records ``price_mu`` min -2.0007, p50 -1.2076, max 0.0001.
+    The contaminated rows above reproduce that range; the clean ones are an
+    order of magnitude away from it. The saturation is a CONTAMINATED SERVED
+    WINDOW, not the units, not the loader, and not the market -- which is why
+    the entry conjunct ``net_margin >= 0`` at trading/scheduler.py:809 never
+    fires.
+
+    The repair is deliberately the conservative one: carry the last good price
+    forward rather than drop the row, so the window keeps its length and the
+    caller never has to handle a short buffer (a short buffer is what
+    ``_InsufficientHistory`` exists for, and it means something else). A window
+    with no usable rows at all is returned untouched -- there is nothing to
+    anchor a repair on, and inventing a price here would be worse than letting
+    the model see the truth.
+
+    Returns ``(prices, repaired_count)``. ``repaired_count`` is meant to be
+    logged: a serving path that is quietly repairing rows every tick has an
+    upstream feed bug, and the count is how anyone finds out.
+    """
+    values = [float(p) for p in prices]
+    usable = sorted(p for p in values if p > 0.0)
+    if len(usable) < 3:
+        return values, 0
+
+    median = usable[len(usable) // 2]
+    if median <= 0.0:
+        return values, 0
+
+    log_median = math.log(median)
+    repaired = 0
+    last_good: Optional[float] = None
+    out: List[float] = []
+    for price in values:
+        foreign = price <= 0.0 or abs(math.log(price) - log_median) > tolerance
+        if foreign and last_good is not None:
+            out.append(last_good)
+            repaired += 1
+            continue
+        if foreign:
+            # A leading foreign row has nothing behind it to carry forward.
+            # The median IS the window's own scale, so anchor on that rather
+            # than on a number from another asset.
+            out.append(median)
+            repaired += 1
+            last_good = median
+            continue
+        out.append(price)
+        last_good = price
+    return out, repaired
+
 _NEWS_DNS_ERROR_HINTS = (
     "name resolution",
     "temporary failure in name resolution",
