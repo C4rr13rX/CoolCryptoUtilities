@@ -557,6 +557,39 @@ class BusScheduler:
         except Exception:  # noqa: BLE001 - diagnostics must never stop a tick
             pass
 
+    def _log_no_candidates(self, symbol: str, chain: str,
+                           entry_block: Optional[Dict[str, Any]],
+                           samples: int) -> None:
+        """Name the condition that refused a quote-OK candidate.
+
+        The `no_candidates (thresholds not met)` path is the single largest
+        refusal in the system -- 1083 of 1646 route evaluations over 6h on
+        2026-09-10 -- and it was invisible to `trading_ops` entirely, so a
+        census of the entry funnel attributed those candidates to nothing at
+        all. `failed` lists which of the four entry conjuncts bound, with the
+        value it got and the floor it needed, so the next reader can tell a
+        correct refusal from a mis-set threshold without shipping code.
+
+        `entry_block` is None when the enter branch never ran (no quote asset
+        available); that is itself the answer and is recorded as such.
+        """
+        try:
+            self.db.log_trade(
+                wallet="ghost",
+                chain=str(chain or PRIMARY_CHAIN),
+                symbol=str(symbol or ""),
+                action="hold",
+                status="entry-refused-no-candidates",
+                details={
+                    "symbol": str(symbol or ""),
+                    "reason": "no_strategy_or_forecast_cleared_the_entry_test",
+                    "detail": (entry_block or {"failed": ["no_quote_asset_available"]}),
+                    "history_points": int(samples),
+                },
+            )
+        except Exception:  # noqa: BLE001 - diagnostics must never stop a tick
+            pass
+
     def evaluate(
         self,
         sample: Dict[str, float],
@@ -645,6 +678,13 @@ class BusScheduler:
 
         fee_rate = self.fee_buffer + self.tax_buffer + self.gas_roundtrip_fee + (self.slippage_bps / 10000.0)
         candidates: List[Dict[str, Any]] = []
+        # WHICH CONJUNCT REFUSED. Filled in below when the tf_forecast entry
+        # test fails, so `no_candidates` can name a condition instead of a
+        # mood. Measured 2026-09-10 over 1749 organism snapshots in 6h: 1083
+        # of 1646 route evaluations (66%) ended `no_candidates` and NOT ONE
+        # wrote a trading_ops row, which is why 34 quote-OK DRB-USDC
+        # candidates per 6h vanish with no refusal anywhere in the census.
+        entry_block: Optional[Dict[str, Any]] = None
         context = {
             "native_balance": native_balance,
             "min_native": min_native,
@@ -805,6 +845,22 @@ class BusScheduler:
             allocation = base_allocation.get(state.symbol, 0.0) if base_allocation else 0.0
             effective_risk_budget = risk_budget * self._tier_risk_multiplier(tier)
             max_allocation = max(allocation * effective_risk_budget, 0.0)
+            entry_conjuncts = {
+                "expected_vs_min_profit": (float(expected), float(min_profit_floor)),
+                "direction_prob_vs_floor": (float(direction_prob), float(min_dir_prob)),
+                "confidence_vs_floor": (float(confidence), float(min_confidence)),
+                "net_margin_vs_floor": (float(net_margin), float(min_net_margin)),
+            }
+            entry_block = {
+                "failed": [
+                    name for name, (got, need) in entry_conjuncts.items()
+                    if (got <= need if name == "expected_vs_min_profit" else got < need)
+                ],
+                "values": {k: {"got": round(v[0], 6), "need": round(v[1], 6)}
+                           for k, v in entry_conjuncts.items()},
+                "horizon": str(best_long.label),
+                "fee_rate": round(float(fee_rate), 6),
+            }
             if (
                 expected > min_profit_floor
                 and direction_prob >= min_dir_prob
@@ -953,6 +1009,23 @@ class BusScheduler:
                 )
             else:
                 state.last_filter_reason = "no_candidates (thresholds not met)"
+                # A CANDIDATE THAT QUOTED OK AND LEFT NO ROW IS NOT REFUSED,
+                # IT IS LOST. atf_static publishes a quote-probed candidate
+                # and logs `ghost_candidate_quote_ok`; if no strategy and no
+                # forecast then clears the entry test, the tick ends here and
+                # the census sees a candidate with no answer. Measured
+                # 2026-09-10: DRB-USDC took 34 quote-OK candidates in 6h and
+                # wrote ZERO ops of any status, while the scheduler evaluated
+                # it 36 times and privately recorded this exact string.
+                #
+                # Only rows with a live quote-OK atf candidate are written --
+                # those are precisely the ones the funnel census is missing --
+                # so this adds attribution, not volume: it cannot exceed the
+                # rate of `ghost_candidate_quote_ok` itself.
+                if atf_scout_candidate:
+                    self._log_no_candidates(
+                        state.symbol, chain_name, entry_block, len(state.samples)
+                    )
             return None
         chosen = self._trident.select(candidates, context)
         if chosen:
