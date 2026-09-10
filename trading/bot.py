@@ -9032,6 +9032,32 @@ class TradingBot:
                 return decision
 
             # ghost / paper entry
+            #
+            # A contaminated tick does not cost one trade, it costs two: the
+            # price it prints becomes the COST BASIS of the next position. AERO
+            # booked entry 0.436805 -> exit 1.140000 (+161%), then opened the
+            # NEXT position at 1.140000 and stopped out at 0.513839 as the
+            # price "fell" back to where it had always been. Refuse the entry
+            # here, ABOVE _release_position_for_entry, so a refused basis never
+            # disturbs a slot. For ghost the booked entry_price IS the feed
+            # price, so this is the right place; the LIVE branch above must
+            # gate before the swap, never on a settled receipt.
+            try:
+                from services.entry_price_corroboration import book_disagreement
+                _basis = book_disagreement(symbol, price, at_ts=sample_ts)
+            except Exception:
+                # Unjudgeable, never refused: a database or import problem must
+                # not masquerade as a contaminated price and halt every entry.
+                _basis = {"disagrees": False, "reason": ""}
+            if _basis.get("disagrees"):
+                decision.update(
+                    {
+                        "action": "hold",
+                        "status": "entry-refused-implausible-basis",
+                        "reason": str(_basis.get("reason") or "implausible_entry_basis"),
+                    }
+                )
+                return decision
             if not self._release_position_for_entry(
                 symbol,
                 chain=chain_name,
