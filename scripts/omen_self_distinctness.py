@@ -91,6 +91,10 @@ def main() -> int:
     history = ResolvedHistory(args.horizon)
     frame_rows = []
     predicted_counts: Counter = Counter()
+    #: Was the prediction made AT this bar eventually right? Filled in after
+    #: the walk, from the truth map -- never during it, so the driver cannot
+    #: see it. This is scoring, not input.
+    made_at = []
     for index in range(start, stop):
         if index in truth:
             try:
@@ -108,6 +112,15 @@ def main() -> int:
         predicted_counts[call] += 1
         history.record(index, call, agreed=len(set(actuals[-3:])) and
                        (3 if len(set(actuals[-3:])) == 1 else 1), asked=3)
+        made_at.append((index, call))
+
+    # Score each prediction against the label at the bar its horizon landed
+    # on. Done AFTER the walk so nothing in the walk could have read it.
+    next_correct = [
+        (truth[bar + args.horizon] == call) if (bar + args.horizon) in truth
+        else None
+        for bar, call in made_at
+    ]
 
     total = len(frame_rows)
     print(f"predictions fed  : {len(history)}  "
@@ -151,6 +164,46 @@ def main() -> int:
           "all three, QUERY none of them, unless a sweep says otherwise.")
     print("This is a VOCABULARY measurement, not a held-out edge. The held-out "
           "number needs the node's own predictions in a walk-forward.")
+
+    # ------------------------------------------------------------------
+    # DOES THE FRAME KNOW ANYTHING? A vocabulary is necessary and not
+    # sufficient: a pool can hold fifty distinct values and every one of them
+    # be unrelated to what happens next, in which case wiring it to a node
+    # buys a consolidation and a query per sample for nothing. That is
+    # answerable HERE, offline, before anyone spends a training run -- and
+    # answering it first is the discipline that a pass-108 result went without.
+    #
+    # The question, stated so it can only be answered with a number: given the
+    # self_error_run frame at bar i, how often is the prediction MADE at bar i
+    # correct? A frame that carries self-knowledge separates those rates. A
+    # frame that does not leaves them all at the base rate, and the pool is
+    # decoration.
+    # ------------------------------------------------------------------
+    print("\n1. DOES THE FRAME KNOW ANYTHING (offline, before any node run):")
+    for key in SELF_KEYS:
+        buckets: dict = {}
+        for frame, correct in zip((r[key] for r in frame_rows), next_correct):
+            if correct is None:
+                continue
+            hit, seen = buckets.get(frame, (0, 0))
+            buckets[frame] = (hit + (1 if correct else 0), seen + 1)
+        scored = [(h / s, s, f) for f, (h, s) in buckets.items() if s >= 30]
+        if len(scored) < 2:
+            print(f"  {key:<16} too few populated frames to separate")
+            continue
+        scored.sort()
+        base = sum(1 for c in next_correct if c) / max(
+            1, sum(1 for c in next_correct if c is not None))
+        lo_rate, lo_n, lo_f = scored[0]
+        hi_rate, hi_n, hi_f = scored[-1]
+        spread = hi_rate - lo_rate
+        mark = "SEPARATES" if spread >= 0.10 else "flat -- carries no self-knowledge"
+        print(f"  {key:<16} base {base:.1%}  worst {lo_rate:.1%} (n={lo_n})  "
+              f"best {hi_rate:.1%} (n={hi_n})  spread {spread:+.1%}  {mark}")
+        print(f"       worst: {lo_f}")
+        print(f"       best : {hi_f}")
+    print("  A spread near zero means the pool holds a vocabulary that is "
+          "unrelated to being right, and wiring it to a node buys nothing.")
     return 0 if verdict_ok else 1
 
 
