@@ -83,6 +83,122 @@ STAGE_LABELS = {
 }
 
 
+def populations() -> Dict[str, Any]:
+    """The THREE strategy populations, side by side, in one read.
+
+    WHY THIS EXISTS. Measured pass 106-111: three different counts of "the
+    strategies" were quoted in a single pass -- 72, 43 and 39 -- and at most
+    one of them can be the denominator of any given share. They are all
+    correct; they answer different questions, and nothing said which:
+
+      ``offered``      72   every strategy ``StrategyRegistry.evaluate_all``
+                            is asked for a candidate on EVERY tick. Built from
+                            code (``build_default_registry``), so it exists
+                            whether or not anything has been written to disk.
+      ``commissioned`` 43   ``data/strategy_registry.json``, the append-only
+                            lifetime record.
+      ``evidenced``    39   ``data/strategy_ledger.json``, the rolling
+                            promotion window. A strict SUBSET of
+                            ``commissioned``.
+
+    AND THEY DO NOT NEST THE WAY EVERYONE ASSUMES. ``offered`` is NOT a
+    superset of ``commissioned``: 35 plugin ids (every ``@5h``/``@12h``/
+    ``@1d``/``@3d``/``@5d``/``@1w`` horizon variant, plus dust_micro_swing,
+    genome_champion, obv_accumulation, omen_reversion, swarm_consensus) have
+    no registry row until they first record an outcome, so they are invisible
+    to the status command and the population page while being asked on every
+    tick. And 6 registry ids are not plugins at all -- atf_static_scout,
+    bus_schedule, unclassified and three discovered_hurst rules -- because
+    they are non-plugin executors. The union is 78.
+
+    THE DEFECT THIS NAMES, and it is worse than a moving denominator: A SHARE
+    WHOSE DENOMINATOR IS ``evidenced`` IS SELF-REFERENTIAL, because a strategy
+    enters that population BY PRODUCING THE NUMERATOR. "strategies with >=5
+    tradeable trades must rise from 11 of 38" can be satisfied by strategies
+    leaving the ledger. Measured against the population that COULD produce
+    evidence it is 1 of 78, not 11 of 38.
+
+    So: use ``evidenced`` only for "of the strategies that have traded", and
+    ``known`` for any statement about coverage or starvation. Whichever is
+    used, name it -- that is what nothing did.
+
+    Ruled out while measuring this, so nobody re-checks it: the registry is
+    NOT written non-atomically. ``services/strategy_registry._save`` goes
+    through ``services.atomic_json.write_json``, which writes a PID+uuid
+    unique temp and ``os.replace``s it under an O_EXCL lock with retries, so a
+    reader cannot observe a partial file. A torn read would fail json parsing
+    and yield 0, never a plausible smaller count.
+    """
+    offered: List[str] = []
+    try:
+        from trading.strategies import build_default_registry
+
+        offered = sorted(build_default_registry().ids())
+    except Exception:  # noqa: BLE001
+        # Reported as an empty set with ``offered_ok`` False rather than as
+        # zero strategies: "the code would not import" and "nothing is
+        # offered a tick" are opposite findings and must not look alike.
+        offered_ok = False
+    else:
+        offered_ok = True
+
+    commissioned: List[str] = []
+    try:
+        from services import strategy_registry as _registry
+
+        commissioned = sorted(
+            str(row.get("strategy_id") or row.get("name") or "")
+            for row in (_registry.list_strategies() or [])
+            if isinstance(row, dict)
+        )
+        commissioned = [s for s in commissioned if s]
+    except Exception:  # noqa: BLE001
+        commissioned_ok = False
+    else:
+        commissioned_ok = True
+
+    evidenced: List[str] = []
+    try:
+        snap = StrategyLedger().snapshot()
+        evidenced = sorted(str(k) for k in (snap or {}))
+    except Exception:  # noqa: BLE001
+        evidenced_ok = False
+    else:
+        evidenced_ok = True
+
+    o, c, e = set(offered), set(commissioned), set(evidenced)
+    return {
+        "offered": offered,
+        "commissioned": commissioned,
+        "evidenced": evidenced,
+        "known": sorted(o | c | e),
+        "counts": {
+            "offered": len(o),
+            "commissioned": len(c),
+            "evidenced": len(e),
+            "known": len(o | c | e),
+        },
+        "sources": {
+            "offered": "trading.strategies.build_default_registry().ids()",
+            "commissioned": "data/strategy_registry.json",
+            "evidenced": "data/strategy_ledger.json",
+            "known": "union of all three",
+        },
+        "ok": {
+            "offered": offered_ok,
+            "commissioned": commissioned_ok,
+            "evidenced": evidenced_ok,
+        },
+        # The differences, because "why are these numbers not equal" is the
+        # question that cost two passes, and an answer that requires the
+        # reader to re-derive a set difference is not an answer.
+        "offered_not_commissioned": sorted(o - c),
+        "commissioned_not_offered": sorted(c - o),
+        "evidenced_not_commissioned": sorted(e - c),
+        "evidence_is_a_subset_of_commissioned": e <= c,
+    }
+
+
 def _rate(wins: Any, trades: Any) -> Optional[float]:
     """Win rate, or None when there is nothing to divide.
 
@@ -471,6 +587,10 @@ def collect(now: Optional[float] = None, ledger_path: Any = None) -> Dict[str, A
     return {
         "generated_at": now,
         "registry_ok": registry_ok,
+        # Carried on every payload so a share computed from `strategies` below
+        # can be checked against the population it should have used. `rows` is
+        # registry UNION ledger, which is NOT the population offered a tick.
+        "populations": populations(),
         "criteria": crit,
         "stages": stages,
         "totals": {

@@ -54,6 +54,13 @@ def _quiet(fn, *args, **kwargs):
         return None, traceback.format_exc(limit=3).strip().splitlines()[-1]
 
 
+def _populations_view() -> dict:
+    """The three strategy populations. See services.strategy_population."""
+    from services.strategy_population import populations
+
+    return populations()
+
+
 def collect() -> dict:
     out: dict = {"generated_at": time.time(), "errors": {}}
 
@@ -72,6 +79,18 @@ def collect() -> dict:
         rep = {"criteria": {}, "totals": {}, "strategies": []}
     out["criteria"] = rep.get("criteria", {})
     out["totals"] = rep.get("totals", {})
+
+    # The denominator, carried on the payload rather than left to the reader.
+    # `totals.strategies` is the EVIDENCED count and reads like "the
+    # population"; it is not, and quoting it as one has already produced three
+    # incompatible fractions in a single pass. Degraded to an empty dict on
+    # failure so the status still renders -- a missing denominator block is
+    # visibly missing, whereas a fabricated one is not.
+    pops, pop_err = _quiet(_populations_view)
+    if pop_err:
+        out["errors"]["populations"] = pop_err
+        pops = {}
+    out["populations"] = pops
 
     strategies = rep.get("strategies", []) or []
     crit = out["criteria"]
@@ -487,6 +506,24 @@ def render(r: dict) -> str:
     A("")
     A("  ledger: %s strategies over %.1f days" % (
         tot.get("strategies", "?"), float(tot.get("ledger_span_days", 0.0) or 0.0)))
+    # THE DENOMINATOR, NAMED. Three counts of "the strategies" were quoted in
+    # one pass -- 72, 43 and 39 -- and a criterion phrased as a share cannot be
+    # passed or failed while it is ambiguous which one it divides by. Worse,
+    # the ledger count is SELF-REFERENTIAL as a denominator: a strategy enters
+    # the ledger by producing the numerator, so "11 of 38" can be satisfied by
+    # strategies leaving. Printed here so nobody has to go and find it.
+    pop = r.get("populations") or {}
+    counts = pop.get("counts") or {}
+    if counts:
+        A("    ^ that %s is the EVIDENCED population (has recorded an "
+          "outcome). It is not the population." % counts.get("evidenced", "?"))
+        A("      offered a tick %s  |  commissioned %s  |  evidenced %s  "
+          "|  known %s" % (
+              counts.get("offered", "?"), counts.get("commissioned", "?"),
+              counts.get("evidenced", "?"), counts.get("known", "?")))
+        A("      any share of 'the population' uses KNOWN %s; a share of "
+          "'strategies that have traded' uses EVIDENCED %s. Say which." % (
+              counts.get("known", "?"), counts.get("evidenced", "?")))
     A("    tradeable : %s trades, %s win, P/L %+.4f    <- what graduation reads"
       % (
           tot.get("ghost_trades", "?"),
