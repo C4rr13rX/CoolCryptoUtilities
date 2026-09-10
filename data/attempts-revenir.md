@@ -3324,3 +3324,65 @@ edit needed -- and find WHICH input into the direction head went constant. Cove
 had the right shape on swarm_score and correctly retracted the variable; keep
 the shape, change the variable. Do NOT lower the 0.6 floors to admit an input
 this far out of range.
+
+---
+
+## 2026-09-10, pass 105, Cove -- [ed0d721e] REJECTED: its 60-96% is 4 log rows per tick, and the freed cycles would hold anyway
+
+HYPOTHESIS (the operator's steer): a stable edge ban is re-decided 188 times per
+ghost entry, so 60-96% of the decision budget is spent re-refusing AERO-USDC;
+dropping the symbol from candidate selection should raise entries/h.
+
+RESULT: FALSIFIED IN BOTH HALVES, with numbers. Commits 1ce262a (instrument +
+4 tests) and 5b27681 (GATE_TESTS, 653 -> 657 visible tests, 0 failed).
+
+1. TRADING_OPS ROWS ARE NOT DECISION CYCLES. Clustering the 96
+   `entry-predropped-edge-ban` rows of one hour by timestamp gives 25 clusters,
+   23 of them EXACTLY FOUR ROWS AT ONE INSTANT: four `evaluate()` calls land on
+   a single tick and `_log_predropped` writes one row each. AERO-USDC took 34 of
+   259 decision cycles (13.1%) against 34 of 295 ticks (11.5%) -- its fair
+   share, not 60%. Over 24h the ratio is 717 rows / 371 clusters = 1.9 per tick.
+   72 of the 96 rows also record `surviving_enter_candidates=1`, so the ban did
+   not even empty the candidate set.
+
+2. THE FREED CYCLES WOULD HOLD TOO. organism_snapshots over 6h: 1608 decision
+   cycles -> 1606 hold, 1 enter, 1 exit. Every symbol at the same rate --
+   ZORA 235/235 hold, DRB 235/235, ETH 225/225, ALIGN 209/209, AERO 231/231.
+   Over 24h: 5630 cycles, 5616 hold, 0.25% non-hold.
+
+3. WHERE THE ENTRY DIES, AND IT LEAVES NO ROW. AERO ran 33 of its 34 cycles to
+   an `active` ENTER directive with an EMPTY `last_filter_reason` -- the
+   scheduler proposed an entry every time -- and wrote no `trading_ops` row of
+   any status other than the ban, because `bot.py:5939` logs only when
+   `action != "hold"`. 1606 silent holds in 6h with no reason recorded anywhere.
+
+4. THE CAUSE IS THE HEADS, AND THE MAXIMUM IS THE NUMBER THAT MATTERS. Per 2h
+   bucket over 24h, oldest first, `net_margin` MAXIMUM:
+     +0.588 +1.690 +0.753 +0.632 +1.158 +1.085 +1.033 -0.752 -1.331 -0.951
+     -0.676 -0.180
+   The entry test needs `net_margin >= 0`; for the last TEN HOURS the maximum
+   over ~2800 cycles across EVERY symbol is negative, so the conjunct is
+   unsatisfiable by measurement, not by inference -- and was satisfiable 12h
+   earlier at +1.033. `direction_prob` MAX fell 1.000 -> 0.313 over the same
+   span and is NOT recovering while net_margin's max IS (-1.331 -> -0.180).
+   Two failures, matching the price_mu / direction-head split from pass 104.
+
+CORRECTION TO MY OWN PASS-104 READING, and it is a trap for the next reader:
+I reported the head max as "EXACTLY 0.500 and EXACTLY 0.000, a clamp
+signature". It is not a clamp. `(direction_prob=0.5, net_margin=0.0)` is
+`bot.py`'s NO-PREDICTION sentinel -- 40 of 5634 cycles in 24h -- and counting
+it as a reading lifts a collapsed head's maximum back to its ceiling, hiding
+exactly the condition that closes the entry conjunct. Exclude the pair.
+
+SHIPPED: `python -X utf8 scripts/hold_attribution_census.py --hours 24` answers
+all of the above repeatably and read-only, and prints the verdict "N of 12
+buckets have a NEGATIVE net_margin MAXIMUM". Four tests fail against both
+halves of the wrong arithmetic.
+
+NEXT: do NOT spend a pass on candidate-set pruning or on the ban; the wall is
+[618d4c4b]/[cdfbf97e], one shared input into two heads, upstream of the
+scheduler, the selector and the ban. Jet's git-gap finding plus Gale's
+"model is fine, saturation is downstream" narrow it to the SERVING path
+between the model and `pred_summary`, not the weights. The one residue worth
+re-filing small: `_log_predropped` writes 4 rows per tick where 1 would do,
+which is what made this number wrong in the first place.
