@@ -227,6 +227,11 @@ def _directive(strategy_id: str, size: float = 10.0) -> TradeDirective:
     )
 
 
+#: Older than any ghost-slot floor the bot can be configured with, so a test
+#: about DISPLACEMENT is never answered by the min-life hold instead.
+_PAST_MIN_LIFE = 3600.0
+
+
 def _position(strategy_id: str, *, mode: str, price: float = 0.9,
               held_secs: float = 20.0) -> dict:
     """A position 20 seconds old -- the measured median at abandonment."""
@@ -371,9 +376,26 @@ def test_a_live_position_is_not_restarted_by_its_own_strategy() -> None:
 # --------------------------------------------------------------------------
 
 def test_the_ghost_to_live_upgrade_still_displaces() -> None:
-    """A graduated strategy must still be able to take its own ghost slot live."""
+    """A graduated strategy must still be able to take its own ghost slot live.
+
+    HELD PAST GHOST_MIN_LIFE ON PURPOSE, and that is why this was red. A ghost
+    position younger than `bot._ghost_min_life_sec()` (180s by default) now
+    HOLDS its slot: measured 2026-09-04 over six hours, 51 ghost entries
+    produced 12 ghost exits with 25 positions released as
+    slot_taken_by_new_entry, so half of everything opened was destroyed before
+    a target, a stop or a timed exit could resolve it -- and graduation counts
+    COMPLETED ghost trades, which is the wall this whole loop is scored on.
+
+    The 20s default this helper carries is the measured median AT ABANDONMENT,
+    which is exactly the age the guard now protects. Seeding at 20s made these
+    two tests exercise the min-life hold and then assert against displacement,
+    so they read `live-entry-merged` where they expected `live-entry`. The
+    property each one is named for -- a graduated strategy taking its own ghost
+    slot live, and a cross-strategy collision still releasing -- is only
+    reachable past that floor.
+    """
     bot, swapper = _settling_bot()
-    bot.positions[SYMBOL] = _position("atf_static", mode="ghost")
+    bot.positions[SYMBOL] = _position("atf_static", mode="ghost", held_secs=_PAST_MIN_LIFE)
 
     decision = _enter(bot, _directive("atf_static"), swapper=swapper)
 
@@ -387,7 +409,10 @@ def test_the_ghost_to_live_upgrade_still_displaces() -> None:
 def test_a_different_strategy_still_releases() -> None:
     """Cross-strategy collisions were 24 of 523 and keep the old behaviour."""
     bot, swapper = _settling_bot()
-    bot.positions[SYMBOL] = _position("donchian_breakout@5d", mode="ghost")
+    # Past GHOST_MIN_LIFE -- see test_the_ghost_to_live_upgrade_still_displaces.
+    bot.positions[SYMBOL] = _position(
+        "donchian_breakout@5d", mode="ghost", held_secs=_PAST_MIN_LIFE
+    )
 
     decision = _enter(bot, _directive("atf_static"), swapper=swapper)
 
@@ -403,7 +428,10 @@ def test_a_different_strategy_still_releases() -> None:
 def test_an_unattributed_position_is_not_treated_as_a_duplicate() -> None:
     """A position with no strategy_id has unknown ownership; do not guess."""
     bot, swapper = _settling_bot()
-    pos = _position("", mode="ghost")
+    # Past GHOST_MIN_LIFE -- see test_the_ghost_to_live_upgrade_still_displaces.
+    # The property here is that UNKNOWN ownership is not guessed at, and the
+    # min-life hold would answer before ownership was ever consulted.
+    pos = _position("", mode="ghost", held_secs=_PAST_MIN_LIFE)
     bot.positions[SYMBOL] = pos
 
     decision = _enter(bot, _directive("atf_static"), swapper=swapper)
