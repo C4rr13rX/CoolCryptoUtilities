@@ -1,0 +1,181 @@
+{
+  "corpus": "data\\historical_ohlcv\\base\\0004_AERO-USDC.json",
+  "symbol": "AERO-USDC",
+  "bars": 21926,
+  "bar_seconds": 3600,
+  "horizon_bars": 12,
+  "round_trip_cost": 0.0065,
+  "omen_threshold": 0.00975,
+  "train_window": [
+    841,
+    1441
+  ],
+  "test_window": [
+    1453,
+    1573
+  ],
+  "train_end_pinned": true,
+  "heldout_regime": "UP",
+  "heldout_window_up_rate": 0.5666666666666667,
+  "heldout_window_mean_forward": 0.013793058327881693,
+  "heldout_ts_range": [
+    1712473200,
+    1712901600
+  ],
+  "trained_pairs": 600,
+  "failed_pairs": 0,
+  "train_seconds": 68.7,
+  "skipped_training": false,
+  "collection_distinctness": {
+    "geometry": 0.99,
+    "temporal": 1.0,
+    "flow": 0.305,
+    "volatility": 0.175,
+    "cross": 0.49333333333333335,
+    "horizon": 0.0016666666666666668,
+    "instrument": 0.0016666666666666668,
+    "self_outcome": 0.0016666666666666668,
+    "self_agreement": 0.0016666666666666668,
+    "temporal_sequence": 0.3233333333333333,
+    "temporal_scale": 0.045,
+    "self_error_run": 0.0016666666666666668
+  },
+  "measured_query_collections": [
+    "geometry",
+    "temporal",
+    "flow",
+    "cross",
+    "temporal_sequence"
+  ],
+  "query_collections": [
+    "geometry",
+    "temporal",
+    "flow",
+    "cross",
+    "temporal_sequence"
+  ],
+  "query_source": "measured",
+  "regime_source": "computed",
+  "conflicting_frame_tuples": 0,
+  "recall_ceiling": 1.0,
+  "consensus": false,
+  "train_recall": 0.995,
+  "recall_sample": 200,
+  "recall_answered": 200,
+  "recall_abstained": 0,
+  "recall_misses": [
+    {
+      "expected": "slide",
+      "got": "climb",
+      "verdict": "admitted"
+    }
+  ],
+  "garbage_distinct": 5,
+  "garbage_total": 40,
+  "garbage_actionable": 29,
+  "garbage_confidence": [
+    0.5199002623558044,
+    0.5222349762916565,
+    0.5260627865791321,
+    0.5268927812576294,
+    0.5286529064178467,
+    0.5287548899650574,
+    0.529295802116394,
+    0.5313342809677124,
+    0.5314533710479736,
+    0.5331407785415649,
+    0.5348566174507141,
+    0.5380595922470093,
+    0.5384459495544434,
+    0.5393585562705994,
+    0.5398181676864624,
+    0.540229856967926,
+    0.5411801934242249,
+    0.5414617657661438,
+    0.5415146350860596,
+    0.543357253074646,
+    0.5440170764923096,
+    0.5445107817649841,
+    0.5449059009552002,
+    0.5452613830566406,
+    0.5457227826118469,
+    0.5459811091423035,
+    0.5460104942321777,
+    0.5477359294891357,
+    0.551807701587677,
+    0.5533800721168518,
+    0.5555107593536377,
+    0.5560793280601501,
+    0.5643826723098755,
+    0.5666924118995667,
+    0.5701043605804443,
+    0.570899486541748,
+    0.5720868706703186,
+    0.5757223963737488,
+    0.5875437259674072,
+    0.5886966586112976
+  ],
+  "real_confidence_percentiles": "min 0.871 med 0.952 p90 0.971 max 1.000",
+  "confidence_sweep": [
+    {
+      "floor": 0.0,
+      "trades": 15,
+      "per_trade": 0.014610260960778703,
+      "hit_rate": 0.5333333333333333
+    },
+    {
+      "floor": 0.05,
+      "trades": 15,
+      "per_trade": 0.014610260960778703,
+      "hit_rate": 0.5333333333333333
+    },
+    {
+      "floor": 0.1,
+      "trades": 15,
+      "per_trade": 0.014610260960778703,
+      "hit_rate": 0.5333333333333333
+    },
+    {
+      "floor": 0.2,
+      "trades": 15,
+      "per_trade": 0.014610260960778703,
+      "hit_rate": 0.5333333333333333
+    },
+    {
+      "floor": 0.3,
+      "trades": 15,
+      "per_trade": 0.014610260960778703,
+      "hit_rate": 0.5333333333333333
+    },
+    {
+      "floor": 0.5,
+      "trades": 15,
+      "per_trade": 0.014610260960778703,
+      "hit_rate": 0.5333333333333333
+    }
+  ],
+  "heldout_admitted": 120,
+  "heldout_total": 120,
+  "heldout_exact_accuracy": 0.25833333333333336,
+  "baseline_majority": 0.26666666666666666,
+  "baseline_up_rate": 0.5666666666666667,
+  "predicted_mix": {
+    "crest": 19,
+    "climb": 39,
+    "murk": 18,
+    "trough": 15,
+    "slide": 29
+  },
+  "true_mix": {
+    "climb": 32,
+    "murk": 21,
+    "crest": 25,
+    "trough": 23,
+    "slide": 19
+  },
+  "buy_omens": 15,
+  "buy_hit_rate": 0.5333333333333333,
+  "buy_net_total": 0.21915391441168056,
+  "buy_net_per_trade": 0.014610260960778703,
+  "every_bar_net_per_trade": 0.007293058327881691
+}

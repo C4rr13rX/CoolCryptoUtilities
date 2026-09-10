@@ -4576,3 +4576,36 @@ NEXT: the wall is off cost and onto direction in DOWN windows. Also filed
 [4d0b539b]: --horizon is in BARS and data/historical_ohlcv is mixed-cadence
 (166s to 345600s over 629 files), so "horizon 12" means 33 minutes on one file
 and 48 days on another and no report records the minutes.
+
+## 2026-09-10 Cove pass 109 -- metacognition/temporal pools wired, read, below baseline both windows
+
+HYPOTHESIS: pools 15-19 (self_outcome, self_agreement, temporal_sequence,
+temporal_scale, self_error_run) carry the ORDER and self-knowledge the flat
+SensoryInput pools cannot, and would lift held-out edge.
+
+DID: fixed nothing new in the query path (that was 6be5357 last pass); built
+scripts/omen_query_path_probe.py to PROVE a query-set change moves a held-out
+prediction; wired META_COLLECTIONS into omen_brain.build_collections behind
+OMEN_META_COLLECTIONS (off by default); measured UP and DOWN windows on ONE
+fabric, windows picked from --list-windows.
+
+RESULT, mechanism (proven): relation pools moved 79/120 held-out predictions,
+temporal pools moved 77/120, negative control A-vs-A moved 0/120, taught
+600/600. The query path fires the pool. This RETIRES the pass-108 "relations
+are redundant" null result -- it measured nothing.
+
+RESULT, skill (negative): UP window 25.8% exact vs 26.7% majority = below.
+DOWN window 19.2% vs 65.0% majority = far below; 50 buy omens at -3.7937%/trade
+against -3.3221% for buying every bar, i.e. WORSE than indiscriminate buying.
+No edge. The UP window's +1.4610% vs +0.7293% is a long-only rule flattering
+itself and must not be quoted alone.
+
+WHY, measured: dilution distinctness ranks temporal_sequence 0.323 (selected
+into the query on its own merit -- order IS discriminating) but temporal_scale
+0.045, BELOW the 0.20 bar, so the one pool aimed at regime never fires. Pools
+15/16/19 read 0.002 because nothing feeds them settled predictions yet.
+
+NEXT: raise pool 18's frame resolution (magnitude buckets per scale, not a
+3-token direction) and re-measure distinctness BEFORE training; build the
+resolved-prediction feeder for 15/16/19; re-run the relation arm on 6be5357.
+Report: data/brain_experiments/METACOGNITION-pass109-cove.md
