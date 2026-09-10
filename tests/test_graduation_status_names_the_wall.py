@@ -1,27 +1,34 @@
 """
-The graduation status must name WHICH wall the funnel stands at, not just that
-it is stuck.
+The graduation status must name WHICH wall the funnel stands at, and must judge
+on the population the LEDGER judges on.
 
-The bug this prevents: a status command that reports "live-approved: 0" and
-stops. Zero approvals is true whether nothing has enough evidence yet, or two
-strategies clear the bar and the ledger simply never stamped them. Those are
-opposite jobs -- go generate ghost trades, versus go fix the stamping code --
-and a loop that cannot tell them apart burns passes on the wrong one. The
-previous run spent 86 passes asking "which gate is closed?" because the status
-it opened with could not distinguish them.
+Two bugs are pinned here, and the second one shipped.
 
-Also pinned: ``ok`` on a live-path link is tri-state, and None means the link
-could not be measured. An unmeasurable link counted as a pass would move the
-"first failing link" marker PAST the real wall, which is the same class of
-error -- a report that is confidently wrong about where the work is.
+1. A status command that reports "live-approved: 0" and stops. Zero approvals is
+   true whether nothing has enough evidence yet, or strategies clear the bar and
+   were never stamped, or the best book belongs to a strategy that structurally
+   cannot spend it. Those need opposite work, and a loop that cannot tell them
+   apart burns passes on the wrong one.
+
+2. Reading the POOLED ghost book instead of ``_tradeable_of(ghost)``. Graduation
+   counts only round trips the live lane could actually have placed; the pooled
+   book includes symbols it refuses on sight. Measured 2026-09-10 on the real
+   ledger the two disagree by a factor of ten AND by sign:
+
+       atf_static_scout   pooled 236 trades / 79% / +6.4818
+                       tradeable   3 trades / 33% / -0.0777
+       ledger totals      pooled 410 trades / +6.8134
+                       tradeable  23 trades / -0.8940
+
+   A status built on the pooled number called two strategies "ready" and named
+   the wall UNSTAMPED, sending the pass to fix a stamp that was working exactly
+   as designed. The bar was never met.
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-
-import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -49,10 +56,21 @@ def _report(strategies, links=None, min_trades=20):
         "totals": {"live_approved": len(approved)},
         "approved": approved,
         "ready_not_approved": ready_unstamped,
+        "blocked": [
+            {"id": s["id"], "why": s.get("blocked_reason", "no live branch")}
+            for s in strategies
+            if s.get("structurally_blocked")
+        ],
+        "demoted": [
+            {"id": s["id"], "times": s.get("demotions", 0), "why": s.get("demote_reason", "")}
+            for s in strategies
+            if s.get("demote_reason") and int(s.get("demotions", 0) or 0) > 0
+        ],
         "closest": [
             {
                 "id": s["id"],
                 "ghost_trades": s["ghost_trades"],
+                "pooled_trades": s.get("pooled_trades", s["ghost_trades"]),
                 "win_rate": s.get("win_rate", 0.0),
                 "ghost_profit": s.get("ghost_profit", 0.0),
                 "blockers": s.get("blockers", []),
@@ -67,89 +85,124 @@ def _report(strategies, links=None, min_trades=20):
     }
 
 
-def _strategy(sid, trades, win=0.7, profit=1.0, ready=None, approved=False, blockers=()):
+def _strategy(sid, trades, pooled=None, win=0.7, profit=1.0, ready=None,
+              approved=False, blockers=(), blocked=False, demotions=0,
+              demote_reason=""):
     return {
         "id": sid,
         "ghost_trades": trades,
+        "pooled_trades": pooled if pooled is not None else trades,
         "win_rate": win,
         "ghost_profit": profit,
         "ready": (not blockers) if ready is None else ready,
         "live_approved": approved,
         "blockers": list(blockers),
+        "structurally_blocked": blocked,
+        "blocked_reason": demote_reason if blocked else "",
+        "demotions": demotions,
+        "demote_reason": demote_reason,
     }
 
 
-def test_ready_but_unstamped_is_not_reported_as_missing_evidence():
-    """Two strategies past the bar with no approval is a STAMPING failure.
-
-    Against the old behaviour -- "live_approved == 0, therefore go get more
-    evidence" -- this is the case that sends a pass to generate ghost trades
-    that already exist. The wall must name the strategies and say the approval
-    is missing, not that the evidence is.
-    """
-    strategies = [
-        _strategy("atf_static_scout", 236, win=0.79, profit=6.48),
-        _strategy("atf_static", 52, win=0.56, profit=1.54),
-        _strategy("ema_cross", 3, win=0.33, profit=-0.02, blockers=["needs 17 more"]),
-    ]
-    report = _report(strategies)
-    assert report["ready_not_approved"] == ["atf_static_scout", "atf_static"]
-    assert report["approved"] == []
-
-    wall = gs.classify_wall(
+def _wall(report, min_trades=20):
+    return gs.classify_wall(
         approved=report["approved"],
         ready_not_approved=report["ready_not_approved"],
         ranked=report["closest"],
-        min_trades=20,
+        min_trades=min_trades,
+        blocked=report["blocked"],
+        demoted=report["demoted"],
     )
-    assert wall.startswith("READY BUT UNSTAMPED"), wall
-    assert "atf_static_scout" in wall
-    # The failure mode being pinned: never send this pass to collect evidence.
-    assert "EVIDENCE" not in wall
-    assert "more ghost trades" not in wall
-
-    m = gs.metrics(report)
-    assert m["ready_not_approved"] == 2
-    assert m["live_approved"] == 0
 
 
-def test_no_evidence_is_distinguishable_from_unstamped():
-    """When nothing clears the bar, ready_not_approved must be empty.
+def test_a_big_pooled_book_on_a_blocked_strategy_is_not_progress():
+    """The real 2026-09-10 state: the biggest book can never be spent.
 
-    This is the other side of the discrimination: same live_approved == 0, and
-    the metrics must still separate the two situations for the gate to diff.
+    atf_static_scout had 236 pooled ghost trades at 79% and +6.4818, and a
+    ghost-only executor -- no live branch exists, so none of it can become a
+    trade. Its TRADEABLE book is 3 trades at -0.0777.
+
+    Against the old behaviour (pooled book, no structural check) this read as
+    "READY BUT UNSTAMPED" and sent the pass to fix the graduation stamp. The
+    stamp was correct; the evidence was unspendable.
     """
     strategies = [
-        _strategy("ema_cross", 3, win=0.33, profit=-0.02, blockers=["needs 17 more"]),
-        _strategy("bus_schedule", 4, win=0.0, profit=-0.09, blockers=["needs 16 more"]),
+        _strategy("atf_static_scout", 3, pooled=236, win=0.33, profit=-0.0777,
+                  blocked=True, demote_reason="ghost-only executor: no live branch exists",
+                  blockers=["structurally blocked: no live branch exists"]),
+        _strategy("rsi_reversal", 6, pooled=19, win=0.0, profit=-0.4453,
+                  blockers=["needs 14 more TRADEABLE ghost trades"]),
+    ]
+    report = _report(strategies)
+
+    assert report["ready_not_approved"] == [], "nothing clears the bar on tradeable evidence"
+
+    wall = _wall(report)
+    assert wall.startswith("STRUCTURALLY BLOCKED"), wall
+    assert "atf_static_scout" in wall
+    assert "NEVER spend it" in wall
+    # The failure being pinned: never send this pass at the graduation stamp.
+    assert "UNSTAMPED" not in wall
+
+
+def test_the_bar_is_read_on_tradeable_trades_not_pooled_ones():
+    """A strategy past the bar on pooled volume and short on tradeable is NOT ready."""
+    strategies = [
+        _strategy("atf_static", 4, pooled=52, win=0.50, profit=-0.0187,
+                  blockers=["needs 16 more TRADEABLE ghost trades"]),
     ]
     report = _report(strategies)
     assert report["ready_not_approved"] == []
 
-    wall = gs.classify_wall(
-        approved=report["approved"],
-        ready_not_approved=report["ready_not_approved"],
-        ranked=report["closest"],
-        min_trades=20,
-    )
-    assert wall.startswith("EVIDENCE"), wall
-    assert "UNSTAMPED" not in wall
+    wall = _wall(report)
+    assert wall.startswith("EVIDENCE (TRADEABLE)"), wall
+    # Both numbers must appear, because the GAP is the finding: a pass that
+    # sees only "4/20" may go hunting for a dead ghost harness that is in fact
+    # producing 52 trades, none of them in symbols the live lane will take.
+    assert "4/20" in wall
+    assert "52 pooled" in wall
 
-    m = gs.metrics(report)
-    assert m["live_approved"] == 0
-    assert m["ready_not_approved"] == 0
-    # The shortfall is what a pass acts on: how many ghost trades short the
-    # closest strategy is. 20 - 4 = 16, not zero.
-    assert m["closest_shortfall"] == 16
+
+def test_ready_but_unstamped_still_reported_when_tradeable_evidence_clears():
+    """The UNSTAMPED wall is real -- it just needs TRADEABLE evidence to trigger."""
+    strategies = [
+        _strategy("some_strategy", 25, pooled=30, win=0.72, profit=1.20),
+    ]
+    report = _report(strategies)
+    assert report["ready_not_approved"] == ["some_strategy"]
+
+    wall = _wall(report)
+    assert wall.startswith("READY BUT UNSTAMPED"), wall
+    assert "TRADEABLE" in wall
+
+
+def test_a_structural_block_does_not_count_as_a_demotion():
+    """graduation_blocked writes demote_reason, but nothing was demoted.
+
+    Listing it among demotions shows "x0" -- a demotion that never happened,
+    next to real ones -- and would have a pass reading the re-arm rule for a
+    strategy that never reached it.
+    """
+    strategies = [
+        _strategy("atf_static_scout", 3, pooled=236, blocked=True, demotions=0,
+                  demote_reason="ghost-only executor: no live branch exists",
+                  blockers=["structurally blocked"]),
+        _strategy("atf_static", 4, pooled=52, demotions=7,
+                  demote_reason="live P/L -0.1585 over 17 trades is not profitable",
+                  blockers=["demoted x7, judged by the re-arm rule"]),
+    ]
+    report = _report(strategies)
+
+    assert [d["id"] for d in report["demoted"]] == ["atf_static"]
+    assert [b["id"] for b in report["blocked"]] == ["atf_static_scout"]
 
 
 def test_an_unmeasurable_link_is_not_counted_as_passing():
     """ok=None means "could not measure", and must not advance the marker.
 
-    live_path_check's Link.unknown() sets ok to None. Truthiness testing would
-    treat that as a failure by accident and identity-testing ``is False`` would
-    treat it as a pass -- the second is the dangerous one, because it points the
-    next pass at a wall further down the path than the one actually blocking.
+    live_path_check's Link.unknown() sets ok to None. Identity-testing ``is
+    False`` would treat that as a pass and point the next pass at a wall
+    further down the path than the one actually blocking.
     """
     links = [
         {"step": 1, "name": "FEED", "ok": True, "detail": "ticking"},
@@ -164,15 +217,27 @@ def test_an_unmeasurable_link_is_not_counted_as_passing():
     assert m["first_failing_link"] == "SIGNALS"
 
 
-def test_metrics_is_one_flat_json_line_for_the_gate():
-    """The gate diffs a single JSON object; nesting would break the comparison."""
+def test_metrics_carries_both_populations_and_stays_flat():
+    """The gate diffs a single JSON object; nesting would break the comparison.
+
+    Both counts ride along because the GAP between them is what a pass is
+    closing -- 23 tradeable against 410 pooled on the day this was written.
+    """
     import json
 
     report = _report(
-        [_strategy("atf_static_scout", 236, win=0.79, profit=6.48)],
+        [_strategy("atf_static_scout", 3, pooled=236, win=0.33, profit=-0.0777)],
         links=[{"step": 1, "name": "FEED", "ok": True, "detail": ""}],
     )
+    report["totals"] = {
+        "live_approved": 0, "ghost_trades": 23, "pooled_trades": 410,
+        "win_rate": 0.17, "ghost_profit": -0.894, "pooled_profit": 6.8134,
+        "trades_per_day": 3.2,
+    }
     m = gs.metrics(report)
+
+    assert m["ghost_trades"] == 23 and m["pooled_trades"] == 410
+    assert m["ghost_profit"] == -0.894 and m["pooled_profit"] == 6.8134
     line = json.dumps(m)
     assert "\n" not in line
     for key, value in m.items():
@@ -185,7 +250,8 @@ def test_render_survives_a_section_that_failed():
     A status command that dies tells the next pass nothing, which is worse than
     a partial one -- the loop opens the pass with no facts and the agent guesses.
     """
-    report = _report([_strategy("atf_static", 52, win=0.56, profit=1.54)])
+    report = _report([_strategy("atf_static", 4, pooled=52, win=0.5, profit=-0.0187)])
+    report["totals"] = {"live_approved": 0, "ghost_trades": 4, "pooled_trades": 52}
     report["errors"] = {"pipeline": "sqlite3.OperationalError: database is locked"}
     report["live_path"] = []
     text = gs.render(report)
