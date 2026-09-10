@@ -3521,3 +3521,35 @@ error) and only errors in the full run, so you cannot reproduce it file-alone.
 NEXT: fixture-ise the ledger-reading tests first -- they are the ones that make
 the gate's number untrustworthy in BOTH directions -- then add all five
 graduation-bar files to GATE_TESTS.
+
+2026-09-10 Cove pass 106 -- BRAIN. HYPOTHESIS: the operator's direction #1,
+pool-to-pool association via PoolKind::Internal, is the cheapest topology
+change because "it already exists and coding_debug.identity.toml ships working
+examples". RESULT: FALSIFIED, and cheaply -- PoolKind::Internal is INERT.
+`grep -c "PoolKind::Internal" crates/brain/src/{brain,pool}.rs
+crates/node/src/identity.rs` returns 0,0,0. It is declared at
+crates/brain/src/identity.rs:51 and matched NOWHERE; the only behavioural
+PoolKind match in the engine is Action at brain.rs:7417, and the variant's own
+doc says "future composite layers". The pool.rs:683 citation in the standing
+instructions belongs to InstructionIntentEncoding (the instruction-intent
+PROTOTYPE), not to the enum -- so coding_debug's two kind="Internal" pools are
+a naming convention, not a working example. Flipping kind="Internal" would
+have bought nothing and the next pass would have blamed the 89.2/93.6% node
+variance. WHAT I DID INSTEAD: wrote the design down first
+(data/brain_experiments/TOPOLOGY-DESIGN-pass106-cove.md), then built and
+PROVED the topology -- market_predictor_v3_assoc.identity.toml, 14 pools
+(v2's 11 + three client-computed relation pools 12/13/14), node up on :8091 on
+a FRESH dir brain-data-assoc-p106, production :8090 untouched. Verified by
+consolidating into pool 1 (control, consolidated True fired 22), pool 12 (NEW,
+consolidated True fired 27) and pool 99 (negative control, consolidated False
+"unknown input pool id 99") -- the negative control is what makes pool 12's
+success proof of load rather than a permissive path. Also found: pools 7/8
+(news_entities, news_state) are declared in v2 but NEVER FED -- no Collection
+maps to them, so the news crawl never reaches the brain and any "11 pools"
+count overstates by two. NO accuracy number was produced and none is claimed.
+NEXT: the encoder, not the topology -- compute the three relation frames in
+build_collections and add three Collection entries at omen_brain.py:165, then
+measure held-out BACK-TO-BACK on one fabric in an up AND a down window, both
+baselines reported, and check the relation streams clear MIN_QUERY_DISTINCTNESS
+before concluding anything (a near-constant relation dilutes: train on it, do
+not query it).

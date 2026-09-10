@@ -1,0 +1,219 @@
+# Pool topology design — pass 106, Cove
+
+Written BEFORE code, as the operator asked. Nothing here claims an edge. It
+establishes what the substrate can and cannot do, because the brief's first
+named direction rests on a premise that is false, and a pass spent finding
+that out by experiment would have measured only node variance.
+
+## 0. The finding that changes the plan
+
+**`PoolKind::Internal` is behaviourally inert.** Setting `kind = "Internal"`
+on a pool changes nothing about how the engine treats it.
+
+Proof, in `D:/Projects/W1z4rDV1510n`:
+
+```
+grep -c "PoolKind::Internal" crates/brain/src/brain.rs \
+                             crates/brain/src/pool.rs \
+                             crates/node/src/identity.rs
+# -> 0, 0, 0
+```
+
+The variant is *declared* at `crates/brain/src/identity.rs:51` and matched
+nowhere. The only behavioural match on `PoolKind` anywhere in the engine is:
+
+```
+crates/brain/src/brain.rs:7417:    if matches!(ps.kind, PoolKind::Action) {
+```
+
+Its own doc comment reads `Internal pool (binding, integration, future
+composite layers)` — "future" is doing the work in that sentence. The
+constructors confirm it: `identity.rs` ships `sensory_byte_passthrough` and
+`action_byte_passthrough`, and no internal equivalent.
+
+**The supporting citation points at the wrong thing.** The standing
+instructions cite `pool.rs:683` — "internal learned-route frames re-stimulate
+atoms grounded by other pools" — as evidence that Internal pools compose.
+That comment sits inside `impl AtomEncoding for InstructionIntentEncoding`.
+It describes the `instruction-intent` **prototype's** atom encoding, and the
+word "internal" there is prose about internally-generated frames. It is not
+about the `PoolKind` enum. Consequently `coding_debug.identity.toml`'s two
+`kind = "Internal"` pools (`resolution` id 9, `repair_relation` id 11) are a
+naming convention, not a working example of pool-to-pool binding.
+
+### What follows from it
+
+The fabric will **not** compose a relation between two pools on its own.
+There is no learned-route machinery to switch on. Therefore:
+
+> Pool-to-pool association must be **computed by the client and fed as its own
+> frame**. The relation becomes a first-class bindable thing by being *sent*,
+> not by being declared.
+
+This is consistent with the traps list rather than in tension with it. The
+trap already paid for is "never make the substrate guess what the caller can
+compute" — the chained regime stream, reproduced at 73.3% at 0.98 confidence
+when wrong, for a deterministic function of the bars. Computing the relation
+caller-side is the *safe* side of that trap. What we must not do is feed a
+relation and also expect the fabric to re-derive it.
+
+### The levers that actually exist
+
+1. **`prototype`** — exactly three are registered (`identity.rs:312-327`):
+   `byte-passthrough`, `code-structure`, `instruction-intent`. An unregistered
+   name is a hard build error (`unknown pool prototype '{0}'`). Anything
+   market-shaped uses `byte-passthrough` today; a new encoding is a Rust
+   change, not a TOML change.
+2. **What the client sends** — `trading/omen_brain.py:165`, a 7-entry tuple:
+   `Collection(name, prefix, pool_id)`. Pool ids are already env-overridable
+   via `OMEN_POOL_*`, so a differently-configured node needs no code change,
+   but the *set* of collections is hardcoded.
+3. **Per-pool knobs** — `recent_atoms_window`, `max_concept_member_count`,
+   `concept_emergence_threshold`, `decay_rate`, `prune_floor`. These are the
+   ones that must never be left bare (bare defaults truncate frames to 19%
+   recall).
+
+## 1. Ground truth of the current topology
+
+`market_predictor_v2.identity.toml` declares 11 pools. The client feeds 9.
+
+| pool | id | kind | fed by client? |
+|---|---|---|---|
+| ohlcv_geometry | 1 | SensoryInput | yes — `geometry`/`geo` |
+| temporal_returns | 2 | SensoryInput | yes — `temporal`/`tmp` |
+| volume_flow | 3 | SensoryInput | yes — `flow`/`flw` |
+| volatility_range | 4 | SensoryInput | yes — `volatility`/`vol` |
+| market_regime | 5 | SensoryInput | yes — `REGIME_POOL`, chained stage-1 |
+| cross_market | 6 | SensoryInput | yes — `cross`/`crs` |
+| **news_entities** | **7** | SensoryInput | **NO — dead** |
+| **news_state** | **8** | SensoryInput | **NO — dead** |
+| forecast_horizon | 9 | SensoryInput | yes — `horizon`/`hzn` |
+| instrument_context | 10 | SensoryInput | yes — `instrument`/`ins` |
+| future_outcome | 11 | Action | yes — `OMEN_POOL`, decode target |
+
+Two declared pools are never fed: no `Collection` maps to 7 or 8, and
+`grep -i "news_entit|news_state|market_news" trading/omen_brain.py
+scripts/omen_*.py` returns nothing. They are inert declarations. That is not
+itself a bug — but any census that says "11 pools" is overcounting by two,
+and the news crawl we already run is not reaching the brain at all.
+
+So the honest description of the limitation is sharper than the brief's:
+**seven flat sensory siblings that meet only at the Action pool**, plus one
+chained regime stream, plus two dead pools.
+
+## 2. The change proposed for the next pass — ONE change
+
+Add **client-computed relation collections**. Each carries the relation
+between two existing sensory families as its own prefixed frame.
+
+Three relations, chosen because each is a normalisation the flat topology
+provably cannot express (a flat sibling set can represent "return = x" and
+"range = y" but never "x is large *for* y" — that conjunction only exists if
+something writes it down):
+
+| new collection | prefix | relation | why it cannot be expressed today |
+|---|---|---|---|
+| `rel_move_vs_vol` | `rmv` | temporal × volatility | is this move big *relative to its own recent range*? The single most standard normalisation in price prediction. |
+| `rel_shape_vs_flow` | `rsf` | geometry × flow | is the shape *confirmed by volume*, or is it a thin-book artifact? |
+| `rel_sym_vs_mkt` | `rsm` | cross × temporal | is this move idiosyncratic or market-wide? Directly separates alpha from beta. |
+
+### Declared as `SensoryInput`, deliberately
+
+Since `Internal` is inert, marking these `Internal` buys nothing. It also
+carries a real risk: if any code path ever routes `observe` by kind, an
+`Internal` pool would silently receive nothing — a silent-drop failure, the
+worst kind to debug. `SensoryInput` is behaviourally identical today and safe
+under both possibilities. The choice does not depend on the unknown.
+
+Pool ids 12, 13, 14. Every knob set explicitly — windows sized to the
+mid-tier sensory pools (32768 / 16 / 5 / 0.00002 / 0.001) so that the *only*
+difference from v2 is the presence of the relation streams.
+
+### How it gets measured, honestly
+
+- Fresh brain dir, node on `:8091`. Never `:8090` — that is production,
+  uptime 56185s when checked this pass.
+- Back-to-back on one fabric: v2 collections vs v2+relations. Cross-session
+  comparison is noise (89.2% and 93.6% on the same fabric 34 minutes apart).
+- Held-out only, in an **up window and a down window**. Train recall is not
+  a result.
+- Both baselines reported: majority class, and buy-every-bar per-trade return.
+- The relation streams must clear `MIN_QUERY_DISTINCTNESS` to be queried at
+  all — `collection_distinctness` measures it from the corpus. A relation
+  that buckets to a near-constant is diluting, and the dilution law says
+  train on it but do not query it. **Check distinctness before concluding
+  anything about accuracy.**
+- Expected outcome is at or below baseline. That is the normal result here
+  and it is a finished pass.
+
+## 3. The other three directions, re-scoped against the engine
+
+- **Metacognition.** Agreement is the strong signal (99.4% unanimous vs 73.3%
+  split) and it is computed client-side today in `CONSENSUS_QUERIES`
+  (`omen_brain.py:239`). Feeding it back as a pool is cheap. But note what
+  the code comment already says honestly: unanimity is a *reproduction* gate,
+  not an edge gate — held-out it was 33.3% unanimous against a 31.2% majority
+  class. Do this one for abstention, not for accuracy, and do not expect the
+  held-out number to move.
+- **Temporal pools.** Straightforward as extra collections at several bar
+  scales. Cheapest of the four, since it needs no new relation logic — just
+  the same encoder over different windows. Bar-count time and wall-clock time
+  differ in this feed and should be separate streams.
+- **Chart-shape + mutations.** Best fit for a byte-atom substrate, and the
+  most work: it needs a mutation generator (stretch / compress / invert /
+  truncate / add noise) to teach "same shape" rather than instances. This is
+  the one that most wants a new `prototype`, i.e. a Rust change. Schedule it
+  last, and only after a relation stream has shown the plumbing works.
+
+## 3.5 The topology was built and PROVEN TO LOAD this pass
+
+`brains/market_predictor_v3_assoc.identity.toml` (14 pools = v2's 11 +
+relations 12/13/14) and its deployment were written, and a node was brought
+up on a **fresh** brain dir — `brain-data-assoc-p106`, not `brain-data-omen`
+or `-omen2`, which are dirty from prior runs:
+
+```
+& "D:\Projects\W1z4rDV1510n\start_node.ps1" -Addr 127.0.0.1:8091 \
+    -BrainDir "D:\Projects\W1z4rDV1510n\brain-data-assoc-p106" \
+    -Identity "brains\market_predictor_v3_assoc.identity.toml" \
+    -Deployment "brains\market_predictor_v3_assoc.deployment.toml"
+```
+
+`/health` returned `status OK, uptime_secs 0`. Production on `:8090` was
+untouched (it was at uptime 56185s and stayed up).
+
+Then the load was verified by consolidating one frame into each of three
+pools — **with a negative control**, because "the node returned 200" is not
+proof that a pool exists:
+
+| probe | result |
+|---|---|
+| pool 1 `ohlcv_geometry` (existing, control) | `consolidated: True`, fired 22 |
+| **pool 12 `rel_move_vs_vol` (NEW)** | **`consolidated: True`, fired 27** |
+| pool 99 (does not exist, negative control) | `consolidated: False`, `unknown input pool id 99` |
+
+The third row is what makes the second row mean something: the node **does**
+validate pool ids and rejects unknown ones, so pool 12 firing 27 atoms is a
+real load of the new topology and not a permissive accept-anything path.
+
+**Two facts are now established rather than assumed:**
+
+1. The 14-pool topology loads and is live.
+2. A client can feed a newly declared pool directly — which is the mechanism
+   all four of the operator's directions need, given that `PoolKind::Internal`
+   will not compose anything for us.
+
+What remains for the relation work is the encoder: computing the three
+relation frames in `build_collections` and adding three `Collection` entries
+to `omen_brain.py:165`. That is a contained change, and it is where the next
+pass should start.
+
+## 4. What was NOT done this pass, and why
+
+No accuracy number was produced. With the pass budget spent establishing that
+direction #1 does not work as briefed, producing a held-out number in an up
+*and* a down window would have meant rushing it, and a rushed edge number in
+this repo has historically been a fake one. The next pass starts at code with
+the premise corrected, which is the point of writing it down first.
+
+— Cove, pass 106
