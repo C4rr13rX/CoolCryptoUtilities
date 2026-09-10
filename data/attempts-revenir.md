@@ -2443,3 +2443,55 @@ which is how CRV closed on `stop_loss:-0.0272` after 17.7 hours.
 Third independent validation of the tick-path method: CRV's release op gives a
 1073.7-minute hold against the 1064.8 recovered from `market_stream` by price
 match. Two unrelated sources, agreement within 9 minutes.
+
+### Pass 102, Jet (PLANNER): the backlog had no item for the wall the scoreboard names
+
+**Hypothesis.** The loop keeps working the QUALITY wall while the status command
+prints STRUCTURALLY BLOCKED, and the reason is not disagreement -- it is that
+nobody ever filed the item. Checked: 23 backlog items, `list --all | grep -i
+"scout|live branch|port"` matched two, both about the *readiness report*. The
+wall the scoreboard has printed for five consecutive passes had no owner, no
+criteria and no id. Filed as **[b3cef28b]**, and deliberately scoped to
+*measure whether the edge exists* before any port: the scout is pooled
+237/79%/+6.4818 against tradeable 4/25%/-0.1097, on a book whose positive sign
+passes 98-100 already retired with numbers.
+
+**The rate arithmetic, measured read-only from storage/trading_cache.db.**
+24h: 619 `action='enter'` ops -> 13 `ghost-entry` -> 13 closed outcomes, a 2.1%
+conversion (2.6x better than the 0.8% [d7d87724] was filed at, still the binding
+constraint). 6h: 155 -> 2. 1h: 25 -> 1, with 92 of 161 ops (57%) being
+`entry-predropped-edge-ban`, down from 75% at pass 98. Loop is alive: newest op
+0.2 min old, newest closed outcome 46.9 min old.
+
+**Why that outranks win rate right now, and it is not an opinion.** The bar is
+20 TRADEABLE closes PER STRATEGY. The leaders hold 6, 4 and 4. Tradeable
+evidence arrives at 3.4/day spread across 38 strategies, so no strategy reaches
+20 inside ~45 days however good the signal becomes. The quality items fix the
+SIGN of the evidence; [d7d87724] fixes the RATE. 55% of nothing does not
+graduate. Reopened [d7d87724] and rewrote its criteria to target *tradeable
+closes per day* rather than pooled entries per hour.
+
+**Rejected my own sprint item [4af9a51f]** rather than reopen it a fifth time.
+Its question -- direction or cost -- was answered by Iris on pass 100 (DIRECTION:
+stop, clip, feed regime and per-strategy edge each retired with a number), and
+its acceptance criteria were outcome targets no single pass can be held to. An
+8-point item four passes could not close is a planning defect. Split into
+[aee0af15] (rsi_reversal, 61% of the book's gross loss and the strategy ranked
+CLOSEST to graduation), [fdeb0316] (atf_static, the only strategy with a live
+branch: gross -0.13% of notional but net -0.3420, and 0.45pp short even at an
+infinite clip) and [21d05469] (the clip, worth 0.14pp of a 0.61pp gap -- never
+to be shipped alone).
+
+**Tooling defect fixed (dac5974, ContinuousRefinement).** `scrum.py` had no way
+to re-rank an item; priority was settable only at `add`. That is why the pass-100
+manager had to tell the operator on the board that he could not carry out a
+written instruction to raise [654eb8f7] to p1. Added `scrum.py priority <id>
+<1-5> --note`, which records the old value as a note. [654eb8f7] is now p1 with
+its reason stored, and Cove took it the same pass.
+
+**Also:** declared `files` on six items that were being dealt BLIND, and removed
+`trading/bot.py` from [21d05469] (the clip is `services/roundtrip_cost.py`).
+Closed [8c1f4a8d], a result-carrier, against its own command (47 of 133, not
+132 -- the denominator moved, the 47 did not). **Next:** trading/bot.py is now
+declared by three top items, so they serialise onto one agent -- do the ban
+drain first, the other two ride on the entries it frees.
