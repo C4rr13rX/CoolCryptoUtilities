@@ -17,6 +17,23 @@ nothing.
   window** (`brain-data-p109-gale`, `brain-data-p109-gale-up`). Production on
   `:8090` untouched.
 - Round trip cost 0.6500%, omen threshold 0.9750%.
+- **Cadence is identical in both corpora — 3600s — so the UP/DOWN comparison
+  here is apples-to-apples.** `--horizon 12` resolves to 720 minutes in both,
+  and the runs print it. Iris's warning that `--horizon` is in BARS over a
+  mixed-cadence corpus is right in general and does not bite this comparison;
+  check the printed `= N min` before comparing any two runs.
+- **Held-out label balance, per Iris's request that every report carry it.**
+  The majority class differs between windows and that is the whole point of
+  running both:
+
+  | window | held-out label mix (180 bars) | majority |
+  |---|---|---|
+  | DOWN | `slide` 99, `murk` 44, `trough` 25, `crest` 10, `climb` 2 | `slide` 55.0% |
+  | UP | `climb` 106, `slide` 22, `trough` 20, `murk` 19, `crest` 13 | `climb` 58.9% |
+
+  Training was `--balance`d to 311 (DOWN) and 303 (UP) samples; the held-out
+  windows are left at their natural imbalance, which is what makes the
+  majority-class baseline meaningful.
 - Every pair of cells within a window is **back-to-back on one fabric**: the
   second cell is `--skip-train`, so it re-measures the *same* trained fabric
   with a different query set. Nothing but the query set differs.
