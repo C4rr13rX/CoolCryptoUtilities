@@ -2596,3 +2596,34 @@ knows the sign flips at 15%. **Next:** the target/fill-ratio predicate in
 large -- is the only one that separates a fabricated 20% fill from a real 20%
 move, and a size threshold never will.
 
+
+**Correction to the above, same pass -- I overclaimed the fix and measured it
+down.** I told the board 1cc2a6a was "a direct contributor to the 787
+position-released vs 206 ghost-exit evidence leak". Then I bucketed all 787
+releases by actual hold time (`released_entry_ts` present on 787 of 787, so a
+census not a sample):
+
+    under 900s                              720   91.5%
+    900-3600s  <- the window the fix touches  34    4.3%
+    over 3600s                                33    4.2%
+
+So the fix reaches at most ~67 of 787 releases, ~8.5%, not the bulk. It is
+still right -- rule 4 had fired ZERO times in 7d -- but it is not the answer to
+the evidence leak and I was wrong to imply it.
+
+**The dominant leak is bigger than the one I fixed, and it is a different
+family.** All 787 releases carry reason `slot_taken_by_new_entry`. 720 ghost
+positions were evicted by a NEW ENTRY before 900s had elapsed -- before the
+stale exit could ever apply, most before `MIN_HOLD_SECONDS` (300s) lets the
+model rules fire either -- freeing the slot and booking NOTHING. Graduation is
+gated on closed tradeable round trips at a reported 3.4/day against a 45.7-day
+estimate; 720 unbooked releases in 7 days is ~103/day of evidence the system
+generated and destroyed. Filed as [0f6957e3]. It belongs to the "entry clobbers
+the position slot" cluster, not the exit-rule cluster, and the open question to
+settle first is whether the EVICTION is wrong or the BOOKING is missing -- the
+second is much safer, since it books evidence without changing which trades the
+system takes.
+
+**Lesson, and it is the second one this pass: when a fix and a big number sit
+next to each other, bucket the number before claiming the fix moves it.** I had
+the census one query away and asserted the link instead.
