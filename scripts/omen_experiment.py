@@ -434,10 +434,20 @@ def main() -> int:
         f"{name}={distinctness[name]:.3f}"
         for name in sorted(distinctness, key=lambda k: -distinctness[k])))
     print(f"   measured query: {measured_query}   default: {PREDICT_COLLECTIONS}")
-    query = (tuple(n.strip() for n in args.query_collections.split(","))
-             if args.query_collections else None)
-    if query:
+    # THE MEASURED SET MUST BE THE SET THAT FIRES. Until 2026-09-10 this line
+    # computed measured_query, PRINTED it, and then passed None -- so every run
+    # reported the measured set and fired the hard-coded PREDICT_COLLECTIONS.
+    # That silently defeats the dilution law this script exists to apply, and
+    # it makes any experiment that CHANGES which collections discriminate
+    # unfalsifiable: the query set never moves, so the arms cannot differ.
+    # It is why the pass-108 relation arm came back byte-for-byte identical to
+    # the flat arm over 180 held-out predictions.
+    if args.query_collections:
+        query = tuple(n.strip() for n in args.query_collections.split(","))
         print(f"   OVERRIDE      : {query}")
+    else:
+        query = tuple(measured_query)
+        print(f"   FIRING        : {query} (measured on this corpus)")
 
     # Frame collisions cap recall no matter how good the substrate is: two
     # identical frame tuples carrying different labels cannot both be
@@ -595,7 +605,9 @@ def main() -> int:
         "skipped_training": bool(args.skip_train),
         "collection_distinctness": distinctness,
         "measured_query_collections": list(measured_query),
-        "query_collections": list(query or PREDICT_COLLECTIONS),
+        # What ACTUALLY fired, not what the default would have been.
+        "query_collections": list(query),
+        "query_source": "override" if args.query_collections else "measured",
         "regime_source": "stage1_guess" if args.guess_regime else "computed",
         "conflicting_frame_tuples": conflicts,
         "recall_ceiling": 1.0 - conflicts / max(1, len(balanced)),
