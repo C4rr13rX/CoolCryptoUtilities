@@ -557,6 +557,76 @@ class BusScheduler:
         except Exception:  # noqa: BLE001 - diagnostics must never stop a tick
             pass
 
+    def _log_arbitration(self, symbol: str, chain: str,
+                         candidates: List[Dict[str, Any]],
+                         chosen: Any, via: str) -> None:
+        """Record WHICH strategies were offered the tick and WHICH one spent it.
+
+        This is the allocation seam, and until now nothing wrote it down.
+        ``evaluate_all`` offers every registered strategy a chance on every
+        tick (:800), every candidate they return is collected into one list,
+        and then exactly ONE of them is spent -- ``_trident.select``, with a
+        ``max(score)`` fallback (:1030). The losers leave no trace at all:
+        the only per-strategy rows in ``trading_ops`` are the winner's
+        (``ghost_candidate``/``ghost-entry``) and the edge-ban predrop's, so a
+        census of who got a cycle can only ever see who WON one.
+
+        That is why the 2026-09-10 measurement of the decision budget read
+        "atf_static 179, everything else 7 between them" -- it counted
+        outcomes and called them offers. The two are not the same number and
+        the difference is the whole question the operator asked: a strategy
+        that is never offered a cycle needs a scheduler fix, and a strategy
+        that is offered one and loses the arbitration needs a scoring fix.
+        Nothing in this repo could tell those apart before this row existed.
+
+        BOUNDED BY THE CONTESTED RESOURCE, NOT BY THE TICK RATE. Only ticks
+        that produced at least one ENTER candidate are written: a tick where
+        no strategy wanted to open anything carries no allocation information,
+        and writing it would triple the log for nothing. In the 6h to
+        2026-09-10 09:40 that bound is 185 enter candidates against 1611
+        ticks, so this adds attribution rather than volume -- the same trade
+        ``_log_no_candidates`` makes just below.
+
+        ``offered`` counts candidates per strategy rather than listing them,
+        because one strategy can return several on a tick and the count is the
+        thing being compared. ``chosen`` is the strategy that actually spent
+        the tick, and ``via`` says whether the trident picked it or the
+        ``max(score)`` fallback did -- a fallback that fires often is itself a
+        finding, since it means the arbitrator abstained.
+
+        Diagnostics must never stop a tick; every failure here is swallowed.
+        """
+        try:
+            offered: Dict[str, int] = {}
+            for cand in candidates:
+                directive = cand.get("directive") if isinstance(cand, dict) else None
+                if str(getattr(directive, "action", "") or "") != "enter":
+                    continue
+                key = str(getattr(directive, "strategy_id", "") or "unattributed")
+                offered[key] = offered.get(key, 0) + 1
+            if not offered:
+                return
+            self.db.log_trade(
+                wallet="ghost",
+                chain=str(chain or PRIMARY_CHAIN),
+                symbol=str(symbol or ""),
+                action="hold",
+                status="entry-arbitration",
+                details={
+                    "symbol": str(symbol or ""),
+                    "reason": "one_tick_was_offered_to_many_and_spent_by_one",
+                    "offered": offered,
+                    "offered_total": int(sum(offered.values())),
+                    "chosen": str(getattr(chosen, "strategy_id", "") or "")
+                    or None,
+                    "chosen_action": str(getattr(chosen, "action", "") or "")
+                    or None,
+                    "via": str(via),
+                },
+            )
+        except Exception:  # noqa: BLE001 - diagnostics must never stop a tick
+            pass
+
     def _log_no_candidates(self, symbol: str, chain: str,
                            entry_block: Optional[Dict[str, Any]],
                            samples: int) -> None:
@@ -1031,9 +1101,15 @@ class BusScheduler:
         if chosen:
             state.last_filter_reason = ""
             state.last_directive = chosen
+            self._log_arbitration(
+                state.symbol, chain_name, candidates, chosen, "trident"
+            )
             return chosen
         fallback = max(candidates, key=lambda cand: cand.get("score", 0.0))
         state.last_directive = fallback["directive"]
+        self._log_arbitration(
+            state.symbol, chain_name, candidates, fallback["directive"], "max_score"
+        )
         return fallback["directive"]
 
     def record_trade(self, symbol: str, action: str, price: float, size: float = 0.0) -> None:
