@@ -2796,3 +2796,16 @@ instrument VVV-USDC and DRB-USDC. They are a third of the funnel, they are not
 banned, and the database does not say why they never enter. Recorded on
 [d7d87724] and [ed0d721e].
 
+**Ran the recommended query myself rather than handing it over.** 24h,
+`status='entry-refused-lattice'`, 246 rows, by symbol: AERO 91, **DRB-USDC 74**,
+ZORA 25, ALIGN 15, **VVV-USDC 10**, DOGE 8, XCAT 8, KEYCAT 6, CBMEGA 6, WTCOIN 1.
+DRB is now mostly explained (74 lattice + 21 edge-ban = 95 of ~108 proposals).
+**VVV is not**: 10 + 19 = 29 of ~111, so **~82 refusals a day on VVV-USDC have no
+record anywhere**, and both silent gates return None for it. And the defect to
+fix first: **all 246 lattice rows carry the identical reason string
+`failed_a_necessary_condition`, which names no condition.** A reason identical on
+every row and every symbol is a category, not a reason -- which is why 246
+refusals a day stayed invisible across three passes of census work, mine
+included. Name the condition and the largest refuser in the funnel becomes
+countable in one query, with no gate change. On [d7d87724].
+
