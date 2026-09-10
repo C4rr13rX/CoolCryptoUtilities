@@ -56,6 +56,21 @@ SPRINT_BUDGET_SEC = float(os.getenv("SPRINT_BUDGET_SEC", "600"))
 # not finish and reported "0 passed" -- which would have waved every pass
 # through. These are the files that pin the money path and run in seconds.
 GATE_TESTS = (
+    # THE ONLY WALL CLOCK THE EXIT RULES HAVE, POOL-WIDE.
+    #
+    # Every exit rule in this bot is sample-driven, so a position whose feed
+    # goes dark is unreachable by every rule that could end it. The dark-feed
+    # sweeps are the answer and they fire on ANY symbol's tick by design --
+    # which makes them the one clock that can reach such a position at all.
+    #
+    # That clock was sitting BELOW the window gate and the duplicate-tick
+    # return in _handle_sample (fixed in edd0a88), so a bot added by
+    # reconcile_pairs FOR A HELD SYMBOL had to fill a full 60-step window --
+    # over an hour at CBBTC-USDC's measured 50 ticks/h -- before it would
+    # sweep anything, while every dark position in the merged book waited.
+    # Slots held by positions no rule can reach produce no closed round trip,
+    # and closed TRADEABLE round trips are what graduation is gated on.
+    "test_a_dark_symbols_position_is_still_closed_on_its_clock.py",
     # STEP 8 OF THE PATH TO A PAID TRADE, AND IT WAS INVISIBLE HERE.
     #
     # This gate read 621 passed / 0 failed on 2026-09-10 while six tests in
