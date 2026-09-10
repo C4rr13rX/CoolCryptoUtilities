@@ -163,7 +163,7 @@ def load_rows(db_path: Path, since_ts: float) -> List[Dict[str, Any]]:
     try:
         cur = con.execute(
             "SELECT symbol, status, net_profit, gross_profit, fee_cost, "
-            "entry_price, quantity, details, ts "
+            "entry_price, exit_price, quantity, details, ts "
             "FROM trade_outcomes WHERE ts > ? ORDER BY ts",
             (since_ts,),
         )
@@ -181,6 +181,12 @@ def load_rows(db_path: Path, since_ts: float) -> List[Dict[str, Any]]:
                 "symbol": str(r["symbol"] or ""),
                 "strategy_id": str(det.get("strategy_id") or "") or "unclassified",
                 "mode": str(det.get("mode") or "").lower(),
+                # The exit reason and both legs' prices, so an overshoot fill
+                # can be re-priced at its own limit. See ``clamped_gross``.
+                "reason": str(det.get("reason") or ""),
+                "entry_price": float(r["entry_price"] or 0.0),
+                "exit_price": float(r["exit_price"] or 0.0),
+                "quantity": abs(float(r["quantity"] or 0.0)),
                 "net": float(r["net_profit"] or 0.0),
                 "gross": float(r["gross_profit"] or 0.0),
                 "fees": float(r["fee_cost"] or 0.0),
@@ -525,6 +531,336 @@ def render_rule(r: Dict[str, Any]) -> str:
     return "\n".join(out)
 
 
+# The graduation bar, restated here so the per-symbol verdict is judged against
+# the same three numbers ``_evaluate_graduation_locked`` reads and cannot drift.
+BAR_TRADES = 20
+BAR_WINRATE = 0.55
+
+# What a ghost take-profit limit was actually set at. ``atf_static`` builds
+# ``target_price`` as ``price * 1.05`` (trading/bot.py:8400, 8809, 8960), and a
+# limit exit may not book the distance the price ran PAST that limit -- that is
+# the gap between two samples, not a fill. Commit 5504769 fixed this forward;
+# rows already in ``trade_outcomes`` still carry the overshoot, and this is what
+# re-prices them for the report.
+GHOST_TP_LIMIT = 0.05
+
+# A symbol needs this many round trips before it may be called the best one.
+# Half the bar's depth: below it a single contaminated tick outranks a real
+# book, which is not a hypothetical -- ranked on de-contaminated net alone, a
+# ONE-trip AAVE-USDC row at +3.4700 came top of a book whose whole
+# de-contaminated total is +0.3035. Naming that symbol "best" is the precise
+# mistake this repo has made four times (see the AERO one-row memory).
+MIN_RANK_TRIPS = 10
+
+# A booked return this far from zero is not a fill any strategy here could have
+# produced, and is reported separately rather than silently averaged in.
+#
+# Every strategy in this book targets +5% (``GHOST_TP_LIMIT``) and stops at
+# 2-4%, so the reachable band is narrow. Measured 2026-09-10, the row that this
+# catches is AAVE-USDC entry 129.485 -> exit 354.990, +174.16%, booked
+# ``time_take_profit:1.7416`` -- while the SAME symbol's other two round trips
+# sit at 131.50 and 128.38. AAVE did not triple; the feed printed another
+# asset's price, which is the denomination-contamination family this repo has
+# already hit.
+#
+# It is NOT clamped, because ``time_take_profit`` is a TIME exit
+# (trading/triggers.py:230) -- a market order at the tick, not a limit. Commit
+# 1135a79 established that clamping a market exit invents a price. So the row
+# is flagged and excluded from the ranking, and both totals are printed.
+#
+# THE CONTAMINATION DOES NOT STOP AT ONE ROW -- IT BECOMES THE NEXT ENTRY.
+# The six rows this catches over 15 days are three pairs, and the AERO pair
+# shows the mechanism exactly:
+#
+#     AERO-USDC  entry 0.436805 -> exit 1.140000   +160.99%  net +3.2066
+#     AERO-USDC  entry 1.140000 -> exit 0.513839   -54.93%   net -1.1115
+#
+# The second trade's ENTRY IS THE FIRST TRADE'S CONTAMINATED EXIT. AERO trades
+# near 0.44; the feed printed 1.14, the book took a fake +161% win on it, and
+# then opened the next position at that fictional basis and booked a real-
+# looking -55% stop as the price "fell" back to 0.51. COMP is the same shape
+# (entry 42.82 -> exit 19.13, a -55.33% stop).
+#
+# So the filter is symmetric BY NECESSITY, not by preference: three of the six
+# are positive (+7.39) and three are negative (-2.03). Dropping only the
+# winners would be cherry-picking; dropping on |ret| removes both halves of
+# each event, for a net +5.3566 of fiction removed from a book whose
+# limit-re-priced total is +0.3035.
+IMPLAUSIBLE_RET = 0.50
+
+
+def clamped_gross(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Re-price one closed row's gross as if its limit exit filled at its limit.
+
+    Returns ``{"gross", "overshot", "booked_ret", "limit_ret"}``. Non-limit
+    exits and rows missing a leg are returned unchanged with
+    ``overshot=False``: a stop is a MARKET order and genuinely fills through
+    its level, so clamping one would invent a loss the book never took. That
+    distinction is the whole correction in commit 1135a79 and it is why only
+    ``LIMIT_EXIT_REASONS`` are touched here.
+
+    The clamp itself is delegated to ``trading.bot.limit_exit_fill_price`` --
+    the function the live path now runs -- so the report and the code being
+    reported on cannot disagree about what a limit may book.
+    """
+    out = {"gross": float(row.get("gross", 0.0) or 0.0), "overshot": False,
+           "booked_ret": 0.0, "limit_ret": GHOST_TP_LIMIT}
+    entry = float(row.get("entry_price", 0.0) or 0.0)
+    exit_px = float(row.get("exit_price", 0.0) or 0.0)
+    qty = float(row.get("quantity", 0.0) or 0.0)
+    if entry <= 0 or exit_px <= 0 or qty <= 0:
+        return out
+    out["booked_ret"] = exit_px / entry - 1.0
+    try:
+        from trading.bot import limit_exit_fill_price
+    except Exception:  # noqa: BLE001
+        # Unjudgeable rather than assumed clean: report the booked number and
+        # say nothing was clamped, so a missing import cannot silently produce
+        # a "de-contaminated" figure that is just the contaminated one.
+        return out
+    fill = float(limit_exit_fill_price(
+        price=exit_px, target=entry * (1.0 + GHOST_TP_LIMIT), entry=entry,
+        fee_rate=COST_VARIABLE, reason=row.get("reason", ""), is_live=False))
+    if fill < exit_px:
+        out["overshot"] = True
+        # Gross scales with the fill: the fee leg is charged separately and is
+        # unaffected by where inside its own limit the exit printed.
+        out["gross"] = (fill - entry) * qty
+    return out
+
+
+def symbol_edge(
+    *,
+    days: float = 7.0,
+    db_path: Optional[Path] = None,
+    now: Optional[float] = None,
+    rows: Optional[Iterable[Dict[str, Any]]] = None,
+    is_tradeable=None,
+) -> Dict[str, Any]:
+    """Per-symbol economics over LIVE-TRADEABLE symbols only, ranked.
+
+    This is the table the graduation question actually needs. ``collect``
+    answers "how big is the tradeable book"; this answers "is there a symbol
+    inside it that any single strategy could graduate on", which is the only
+    route to a live approval that survives its own demotion guards.
+
+    Every symbol carries two gross figures. ``gross`` is what the book booked.
+    ``gross_clamped`` re-prices limit exits at their limit. Reporting only the
+    first would repeat the finding of 5504769 -- that a handful of sampling
+    gaps ARE the book's entire edge -- and reporting only the second would hide
+    how much of the record is that artifact. The verdict is judged on the
+    clamped number, because that is the one a live limit order can reproduce.
+    """
+    now = time.time() if now is None else float(now)
+    if rows is None:
+        rows = load_rows(Path(db_path or DEFAULT_DB), now - days * 86400.0)
+    rows = [r for r in rows if str(r.get("mode", "")).lower() != "live"]
+
+    if is_tradeable is None:
+        is_tradeable = _tradeable_predicate()
+    if is_tradeable is None:
+        return {"error": "cannot import trading.pipeline.stop_is_unenforceable; "
+                         "tradeability is unjudgeable and no table is reported",
+                "days": days, "rows": len(rows)}
+
+    per_symbol: Dict[str, Dict[str, Any]] = {}
+    grid: Dict[tuple, Dict[str, Any]] = {}
+    refused = 0
+    for r in rows:
+        sym = r["symbol"]
+        if not is_tradeable(sym):
+            refused += 1
+            continue
+        c = clamped_gross(r)
+        net = float(r["net"])
+        gross = float(r.get("gross", 0.0) or 0.0)
+        fees = float(r.get("fees", 0.0) or 0.0)
+        notional = float(r.get("notional", 0.0) or 0.0)
+        # Net re-priced by the same delta as gross, so the two stay consistent.
+        net_c = net - (gross - c["gross"])
+
+        implausible = abs(c["booked_ret"]) > IMPLAUSIBLE_RET
+
+        for bucket, extra in ((per_symbol.setdefault(sym, {
+                "symbol": sym, "book": _blank(), "gross_clamped": 0.0,
+                "net_clamped": 0.0, "overshoots": 0, "wins_clamped": 0,
+                "implausible": 0, "net_sane": 0.0, "trips_sane": 0,
+                "wins_sane": 0}), None),
+                (grid.setdefault((sym, r["strategy_id"]), {
+                "symbol": sym, "strategy_id": r["strategy_id"],
+                "book": _blank(), "gross_clamped": 0.0, "net_clamped": 0.0,
+                "wins_clamped": 0, "implausible": 0, "net_sane": 0.0,
+                "trips_sane": 0, "wins_sane": 0}), None)):
+            _add(bucket["book"], net, gross, fees, notional)
+            bucket["gross_clamped"] += c["gross"]
+            bucket["net_clamped"] += net_c
+            bucket["overshoots"] = bucket.get("overshoots", 0) + (
+                1 if c["overshot"] else 0)
+            bucket["wins_clamped"] += 1 if net_c > 0 else 0
+            if implausible:
+                bucket["implausible"] += 1
+            else:
+                bucket["net_sane"] += net_c
+                bucket["trips_sane"] += 1
+                bucket["wins_sane"] += 1 if net_c > 0 else 0
+
+    def _finish(d: Dict[str, Any]) -> Dict[str, Any]:
+        b = d["book"]
+        b["win_rate"] = _win_rate(b)
+        b["rates"] = _rates(b)
+        n = b["trades"]
+        d["win_rate_clamped"] = d["wins_clamped"] / n if n else 0.0
+        # The clamped gross as a percentage of notional, against the variable
+        # cost floor no clip size can move. This is the QUALITY number.
+        d["gross_clamped_pct"] = (100.0 * d["gross_clamped"] / b["notional"]
+                                  if b["notional"] else 0.0)
+        d["clears_floor"] = d["gross_clamped_pct"] > 100.0 * COST_VARIABLE
+        ns = d["trips_sane"]
+        d["win_rate_sane"] = d["wins_sane"] / ns if ns else 0.0
+        # The bar is judged on the SANE, de-contaminated book: a licence to
+        # spend real money must not rest on a tick the feed misprinted.
+        d["clears_bar"] = bool(ns >= BAR_TRADES
+                               and d["win_rate_sane"] >= BAR_WINRATE
+                               and d["net_sane"] > 0.0)
+        d["rankable"] = ns >= MIN_RANK_TRIPS
+        return d
+
+    symbols = [_finish(s) for s in per_symbol.values()]
+    cells = [_finish(c) for c in grid.values()]
+    # Ranked on de-contaminated, plausibility-filtered NET -- the number a live
+    # round trip could actually keep. Ranking on gross, on the booked figure,
+    # or without the depth floor each puts a single artifact at the top, which
+    # is exactly the misreading this table exists to correct.
+    symbols.sort(key=lambda s: -s["net_sane"])
+    cells.sort(key=lambda c: -c["net_sane"])
+
+    rankable = [s for s in symbols if s["rankable"]]
+    best = rankable[0] if rankable else None
+    winners = [c for c in cells if c["clears_bar"]]
+    total = _blank()
+    for s in symbols:
+        for k in ("trades", "wins", "losses", "net", "gross", "fees", "notional"):
+            total[k] += s["book"][k]
+    total["win_rate"] = _win_rate(total)
+    total["rates"] = _rates(total)
+    total_clamped = sum(s["net_clamped"] for s in symbols)
+    total_wins_clamped = sum(s["wins_clamped"] for s in symbols)
+    total_sane = sum(s["net_sane"] for s in symbols)
+    trips_sane = sum(s["trips_sane"] for s in symbols)
+    wins_sane = sum(s["wins_sane"] for s in symbols)
+
+    return {
+        "generated_at": now, "days": days,
+        "untradeable_rows_excluded": refused,
+        "total": total,
+        "total_net_clamped": total_clamped,
+        "total_win_rate_clamped": (total_wins_clamped / total["trades"]
+                                   if total["trades"] else 0.0),
+        "total_net_sane": total_sane,
+        "total_trips_sane": trips_sane,
+        "total_win_rate_sane": wins_sane / trips_sane if trips_sane else 0.0,
+        "implausible_rows": total["trades"] - trips_sane,
+        "symbols": symbols,
+        "grid": cells,
+        "best_symbol": best,
+        "min_rank_trips": MIN_RANK_TRIPS,
+        "bar": {"trades": BAR_TRADES, "win_rate": BAR_WINRATE, "net": 0.0},
+        "strategies_clearing_bar": winners,
+    }
+
+
+def render_symbol_edge(r: Dict[str, Any]) -> str:
+    if r.get("error"):
+        return "ERROR: %s" % r["error"]
+    out: List[str] = []
+    out.append("=" * 92)
+    out.append("PER-SYMBOL EDGE over LIVE-TRADEABLE symbols only -- %.1f days"
+               % r["days"])
+    out.append("=" * 92)
+    out.append("  %d untradeable round trips excluded (the live lane refuses "
+               "these symbols on sight)" % r["untradeable_rows_excluded"])
+    t = r["total"]
+    out.append("  TRADEABLE BOOK  %d trips  %.0f%% win  net %+.4f booked"
+               % (t["trades"], 100.0 * t["win_rate"], t["net"]))
+    out.append("                  %s  %.0f%% win  net %+.4f limit-exits re-priced"
+               % (" " * (len(str(t["trades"])) + 6),
+                  100.0 * r["total_win_rate_clamped"], r["total_net_clamped"]))
+    out.append("                  %d trips  %.0f%% win  net %+.4f  ALSO dropping "
+               "%d implausible row(s) (|ret| > %.0f%%)"
+               % (r["total_trips_sane"], 100.0 * r["total_win_rate_sane"],
+                  r["total_net_sane"], r["implausible_rows"],
+                  100.0 * IMPLAUSIBLE_RET))
+    out.append("")
+    out.append("  %-20s %5s %5s %9s %9s %9s %7s %4s %4s" % (
+        "symbol", "trips", "win%", "gross", "gross_cl", "net_sane", "gr_cl%",
+        "ovs", "bad"))
+    out.append("  " + "-" * 92)
+    for s in r["symbols"]:
+        b = s["book"]
+        out.append("  %-20s %5d %4.0f%% %+9.4f %+9.4f %+9.4f %+6.3f%% %4d %4d%s" % (
+            s["symbol"][:20], b["trades"], 100.0 * s["win_rate_sane"],
+            b["gross"], s["gross_clamped"], s["net_sane"],
+            s["gross_clamped_pct"], s["overshoots"], s["implausible"],
+            "  <- clears cost floor" if s["clears_floor"] else ""))
+    out.append("")
+    best = r.get("best_symbol")
+    if best:
+        out.append("  BEST TRADEABLE SYMBOL (of those with >= %d round trips, "
+                   "de-contaminated): %s"
+                   % (r["min_rank_trips"], best["symbol"]))
+        out.append("      %d trips, %.0f%% win, net %+.4f"
+                   % (best["trips_sane"], 100.0 * best["win_rate_sane"],
+                      best["net_sane"]))
+        top = [c for c in r["grid"] if c["symbol"] == best["symbol"]][:4]
+        for c in top:
+            out.append("      %-26s %4d trips %4.0f%% win  net %+.4f  %s" % (
+                c["strategy_id"][:26], c["trips_sane"],
+                100.0 * c["win_rate_sane"], c["net_sane"],
+                "CLEARS BAR" if c["clears_bar"] else "below bar"))
+    else:
+        out.append("  NO tradeable symbol has %d round trips; none is rankable."
+                   % r["min_rank_trips"])
+    bar = r["bar"]
+    if r["strategies_clearing_bar"]:
+        out.append("")
+        out.append("  CLEARS %d/%.0f%%/positive ON ONE SYMBOL ALONE:"
+                   % (bar["trades"], 100.0 * bar["win_rate"]))
+        for c in r["strategies_clearing_bar"]:
+            out.append("      %s on %s -- %d trips %.0f%% net %+.4f" % (
+                c["strategy_id"], c["symbol"], c["trips_sane"],
+                100.0 * c["win_rate_sane"], c["net_sane"]))
+    else:
+        out.append("")
+        out.append("  NO strategy clears %d trades / %.0f%% / positive on ANY "
+                   "single tradeable symbol." % (bar["trades"],
+                                                 100.0 * bar["win_rate"]))
+        deepest = max(r["grid"], key=lambda c: c["trips_sane"], default=None)
+        if deepest is not None:
+            out.append("      deepest cell: %s on %s -- %d trips (bar is %d), "
+                       "%.0f%% win (bar is %.0f%%), net %+.4f"
+                       % (deepest["strategy_id"], deepest["symbol"],
+                          deepest["trips_sane"], bar["trades"],
+                          100.0 * deepest["win_rate_sane"],
+                          100.0 * bar["win_rate"], deepest["net_sane"]))
+        # What would have to change, in the units of the thing that is short.
+        need = [c for c in r["grid"] if c["net_sane"] > 0.0]
+        need.sort(key=lambda c: -c["trips_sane"])
+        if need:
+            c = need[0]
+            out.append("      the only POSITIVE cell with any depth: %s on %s "
+                       "-- %d trips %.0f%% net %+.4f; it needs %d more trips "
+                       "at >= %.0f%% to clear the bar."
+                       % (c["strategy_id"], c["symbol"], c["trips_sane"],
+                          100.0 * c["win_rate_sane"], c["net_sane"],
+                          max(0, bar["trades"] - c["trips_sane"]),
+                          100.0 * bar["win_rate"]))
+        else:
+            out.append("      NO strategy-on-symbol cell is positive at all, "
+                       "so more evidence cannot graduate one: the change has "
+                       "to be to the entry rule or the cost, not the volume.")
+    return "\n".join(out)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--days", type=float, default=7.0)
@@ -532,7 +868,15 @@ def main() -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--rule", action="store_true",
                     help="also apply the symbol-admission rule, in and out of sample")
+    ap.add_argument("--symbols", action="store_true",
+                    help="per-symbol edge over live-tradeable symbols only, "
+                         "ranked, with limit-exit overshoots re-priced")
     a = ap.parse_args()
+    if a.symbols:
+        rep = symbol_edge(days=a.days, db_path=Path(a.db))
+        print(json.dumps(rep, indent=2, default=str) if a.json
+              else render_symbol_edge(rep))
+        return 0
     rep = collect(days=a.days, db_path=Path(a.db))
     if a.rule:
         rep["admission_rule"] = with_admission_rule(days=a.days, db_path=Path(a.db))
