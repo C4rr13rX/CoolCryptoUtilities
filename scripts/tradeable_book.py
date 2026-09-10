@@ -347,6 +347,44 @@ def render(r: Dict[str, Any]) -> str:
 
 
 
+def _jackknife(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The book's gross edge with its single largest contributor removed.
+
+    A symbol-admission rule has a derived minimum sample and therefore cannot
+    judge a symbol with one round trip -- correctly, because one round trip is
+    not evidence. But a report that prints the surviving book's gross as an
+    EDGE is making exactly that claim on its behalf. Measured 2026-09-10, the
+    admitted book's +0.4711% of notional is +122.89% from a single UNI-USDC
+    row on a $0.59 notional; without it the same book is -0.0119% and below
+    the variable floor. The same shape has now been found three times in this
+    repo (AERO's +161% repricing row, BSTONK, this one), so the check is
+    printed beside every edge this script reports rather than rediscovered.
+
+    Leave-one-out on the largest |gross| row, which is the cheapest form of
+    the question "is this an edge or is it one row".
+    """
+    if len(rows) < 2:
+        return {"applies": False}
+    worst = max(rows, key=lambda r: abs(float(r.get("gross", 0.0) or 0.0)))
+    rest = [r for r in rows if r is not worst]
+    notional = sum(float(r.get("notional", 0.0) or 0.0) for r in rest)
+    gross = sum(float(r.get("gross", 0.0) or 0.0) for r in rest)
+    full_n = sum(float(r.get("notional", 0.0) or 0.0) for r in rows)
+    full_g = sum(float(r.get("gross", 0.0) or 0.0) for r in rows)
+    return {
+        "applies": True,
+        "symbol": worst["symbol"],
+        "row_gross": float(worst.get("gross", 0.0) or 0.0),
+        "row_return_pct": (100.0 * float(worst.get("gross", 0.0) or 0.0)
+                           / float(worst["notional"]) if worst.get("notional") else 0.0),
+        "gross_pct_without": 100.0 * gross / notional if notional else 0.0,
+        # What share of the whole book's gross edge that ONE row supplies. Over
+        # 100% means the rest of the book is negative and the row is carrying
+        # the sign, not just the size.
+        "share_of_edge": (100.0 * (full_g - gross) / full_g) if full_g else 0.0,
+    }
+
+
 def admission_refusals(rows: List[Dict[str, Any]]) -> Dict[str, str]:
     """Which symbols ``services.symbol_edge_gate`` refuses on THESE rows.
 
@@ -406,13 +444,13 @@ def with_admission_rule(
              and is_tradeable(r["symbol"])]
 
     def _book(rows: List[Dict[str, Any]], refused: Dict[str, str]) -> Dict[str, Any]:
+        kept = [r for r in rows if r["symbol"].upper() not in refused]
         acc = _blank()
-        for r in rows:
-            if r["symbol"].upper() in refused:
-                continue
+        for r in kept:
             _add(acc, r["net"], r["gross"], r["fees"], r["notional"])
         acc["win_rate"] = _win_rate(acc)
         acc["rates"] = _rates(acc)
+        acc["jackknife"] = _jackknife(kept)
         return acc
 
     base = _book(inside, {})
@@ -454,11 +492,30 @@ def render_rule(r: Dict[str, Any]) -> str:
         out.append(line("  admitted book", sec["book"]))
         acc = sec["book"]
         ra = acc["rates"]
-        if ra["gross_pct"] > ra["variable_floor_pct"] and ra["clip"] > 0:
+        jk = acc.get("jackknife") or {}
+        if jk.get("applies"):
+            out.append("  %-30s leave-one-out: drop %s (%+.2f%% on one row, "
+                       "%.0f%% of the edge) -> gross %+.4f%%"
+                       % ("", jk["symbol"], jk["row_return_pct"],
+                          jk["share_of_edge"], jk["gross_pct_without"]))
+            if jk["gross_pct_without"] <= ra["variable_floor_pct"] < ra["gross_pct"]:
+                out.append("  %-30s the edge above is ONE ROW. It does not clear "
+                           "the floor without it." % "")
+        # An edge that one row can take below the floor is not a clip problem,
+        # so the clip curve must not be offered for it: printing "profitable
+        # above $2.66" under "the edge above is ONE ROW" is the report
+        # contradicting itself, and the encouraging half is the one that gets
+        # quoted.
+        survives = (not jk.get("applies")) or \
+            jk["gross_pct_without"] > ra["variable_floor_pct"]
+        if ra["gross_pct"] > ra["variable_floor_pct"] and ra["clip"] > 0 and survives:
             # gross% > FIXED/clip + VARIABLE  =>  clip > FIXED / (gross - VARIABLE)
             need = COST_FIXED / ((ra["gross_pct"] - ra["variable_floor_pct"]) / 100.0)
             out.append("  %-30s clears the variable floor; profitable above a "
                        "$%.2f clip (now $%.2f)" % ("", need, ra["clip"]))
+        elif not survives:
+            out.append("  %-30s no clip curve is offered: the edge does not "
+                       "survive its own largest row" % "")
         else:
             out.append("  %-30s does NOT clear the variable floor -- no clip "
                        "size helps" % "")

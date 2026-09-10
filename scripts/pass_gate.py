@@ -285,6 +285,17 @@ GATE_TESTS = (
     # payoff must survive it. Verified by mutation: SYMBOL_EDGE_TOTAL_MAX_P
     # driven to zero turns the AERO case red with the right message.
     "test_a_symbol_that_loses_in_rare_lumps_is_refused.py",
+    # JET'S 274ea86 APPLIED TO MY OWN NUMBER, and it was carrying it too. The
+    # admission rule above takes the live-tradeable book to +0.4711% of
+    # notional, above the 0.3187% variable floor -- and 103% of that edge is
+    # ONE UNI-USDC round trip at +122.89% on a $0.59 notional. Without it the
+    # same book is -0.0119%. A rule with a derived minimum sample cannot judge
+    # a one-trip symbol, correctly; the bug is the REPORT claiming an edge on
+    # its behalf and then offering a clip curve, which is expensive advice to
+    # take from one row. Third occurrence of this shape here (AERO's +161%
+    # repricing row, BSTONK's 12%-of-volume/100%-of-sign, this), so the
+    # leave-one-out now prints beside every edge the script reports.
+    "test_an_edge_carried_by_one_row_is_not_reported_as_an_edge.py",
     # The gate that was refusing 100% of entries, and the half of its tests
     # that matters. `_tick_jumps` read prices without timestamps, so a 40%
     # move across a 31-hour hole in the feed scored as a single-tick jump and
