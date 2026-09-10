@@ -6,7 +6,8 @@ This finishes the arc Cove opened in pass 106 (`TOPOLOGY-DESIGN-pass106-cove.md`
 and half-closed in pass 107. The design is restated here in the form it ended up
 taking, the premise underneath it is re-verified from source rather than
 inherited, and — the part that was missing — **the relation arm is measured
-against the flat arm, in an UP window and a DOWN window.**
+against the flat arm, back-to-back, in the DOWN window.** The UP window was not
+run; §5 says so rather than implying otherwise.
 
 Nothing here claims an edge. The result is a negative, and it is stated plainly.
 
@@ -118,9 +119,10 @@ that has produced two fake edges in this repo already.
 
 ## 4. Results
 
-**One of the four cells produced a number. Three did not, and the reason is a
-resource fault on the box, not a property of the topology.** Both facts below
-are measured, and the second is the more useful of the two.
+**Two of the four cells produced numbers — both DOWN-window arms — after I
+cleared a resource fault on the box that had killed the first attempt.** §4.1 and
+§4.2 are the first attempt and its failure; §4.3 is the relation arm measured
+after the fix, and it is the most useful result in this document.
 
 ### 4.1 The cell that completed — DOWN window, flat arm (7 collections)
 
