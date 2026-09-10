@@ -3205,3 +3205,53 @@ instrument, not a wall — the wall the status command names is EVIDENCE
 (TRADEABLE) and rsi_reversal is still 6/20. Justification: the gate is how every
 other pass verifies it did not break the money path, and it was blind to step 8
 of the path to a paid trade.
+
+## 2026-09-10 — Cove, pass 104
+
+HYPOTHESIS: step 3 GHOST is FAIL because two of the four scheduler entry
+conjuncts are unsatisfiable on this feed (the standing pass-103 diagnosis,
+commit 7a9540b). FALSIFIED, and the instrument that produced it was the bug.
+
+DID: read all 5551 prediction blocks in organism_snapshots over 24h directly
+instead of through scripts/entry_conjunct_census.py. The census reads
+`ORDER BY ts DESC LIMIT 2000`, so against 5551 rows it scored the NEWEST 8.7
+HOURS and printed "in the last 24h", then declared direction_prob and
+confidence UNSATISFIABLE 0/2000.
+
+RESULT (numbers): over the whole window direction_prob clears its 0.6 floor on
+1673/5551 ticks (30.1%) and confidence on 314/5551 (5.7%); both clear TOGETHER
+on 141 ticks. Not unsatisfiable — satisfied 141 times. But every one of those
+141 is more than 10h old. Median direction_prob per 2h bucket, oldest first:
+0.7898 0.8741 0.7899 0.8123 0.8122 0.4707 0.4775 0.3885 0.2007 0.0434 0.0278
+0.0331. The ghost lane was openable half a day ago and the prediction head
+decayed to "97% confident DOWN on every symbol at once".
+
+Narrowed it twice more. (a) direction_prob_raw falls 0.7206 -> 0.0831 and
+direction_prob_calibrated tracks it (0.7420 -> 0.0796), so the calibrator at
+bot.py:2549-2562 is NOT the defect — it faithfully passes through a collapsing
+head. (b) models/active_model.keras is the only artifact, 13.51MB, mtime 16.47h
+ago and UNCHANGED across the whole collapse. Static weights producing
+monotonically decaying output means the INPUTS are drifting, not the model.
+
+Same head also emits price_mu -0.5758 / -2.5837 / -0.8811 where
+model_definition.py documents price_mu as a fractional return on the 0.01-0.1
+scale. net_margin = price_mu - 0.0065, hence net_margin p50 -1.17.
+direction_prob -> 0 and price_mu -> large-negative are ONE head failing.
+
+SHIPPED: 4a537fe — census defaults to the whole window, and WITHHOLDS the
+UNSATISFIABLE verdict on a partial read (the script already refused to score a
+conjunct whose input was missing, on the grounds that an unmeasured condition
+must not read as a failing one; a partly-read window is that error one level
+up). Coverage counted in rows, not predictions. 5 tests. Gate 627/0.
+
+NEXT: [618d4c4b] p1. Diff the feature vector fed to the model on a recent tick
+against one from 20-22h ago. If the recent features are stale or have collapsed
+variance, the FEED NARROWING [1c75811d] (symbols/10min 22 -> 8, ticks 116 -> 41)
+is upstream of this and must be raised above p2. Do not edit the head first:
+the artifact is static, so the input side is the likelier half.
+
+TRAP FOR THE NEXT READER: model_available is None on 5503/5548 rows
+(UNRECORDED, not False) and direction_prob_neutral is a NUMBER — a per-window
+baseline like 0.4326 / 0.7231 — NOT a boolean "fallback fired" flag. Counting
+either by truthiness gives a meaningless 100%/0%. I did this first and it was
+wrong.
