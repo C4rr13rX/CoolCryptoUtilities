@@ -5016,3 +5016,37 @@ disagree with the primary on node noise and turn an undisputed answer into a
 split hold. NEXT: the same class of bug is worth looking for anywhere a set
 is compared as an ordered tuple -- the query path had it twice this week
 (pass 108 reported one set and fired another, this one counted a set twice).
+
+2026-09-10 Cove pass 111 -- two items, both closed.
+
+HYPOTHESIS 1 [10140855]: the pass-110 L1 held-out negative was an artefact of
+the sign-banded encoder, not a fact about the market. CONFIRMED, and the
+mechanism was that `relative_bands` (7d2a74e) was UNREACHABLE from the
+instrument -- `omen_layer_probe.build_layer_frames` called
+`cooccurrence_motif(frames)` with no bands argument, so every arm ran the blind
+encoder whatever the caller changed. Same shape as omen_experiment.py:437.
+Added `--relative-bands` (off by default, terciles fitted on TRAIN only).
+RESULT, both bandings back-to-back on p108_aero_up/down, only the encoder
+differing: DOWN edge -0.2128% -> +1.0378% per trade, trough precision 17.4% ->
+32.1% against a 14.3% base rate on 56 calls, and the rule stopped being a
+rubber stamp (64.9% of the window called blind, 33.3% fixed). UP called ZERO
+bars -- 97 motifs over 350 train samples, nothing reached n>=20 at lift>=1.3 --
+so it is UNMEASURABLE, not negative. NO EDGE CLAIMED: one positive window
+beside one unmeasurable window is not two windows. Also fixed: on zero calls
+called_net - baseline_net reads -3.8377%, which is the baseline with a minus
+sign; results now carry `unmeasurable`. NEXT: the UP arm needs more corpus, not
+a lower support floor -- 3^5 = 243 possible motifs against 719 samples is where
+the support bill came due.
+
+HYPOTHESIS 2 [df2ee761]: the strategy registry is written non-atomically and
+readers see partial files. FALSIFIED. `_save` goes through
+`atomic_json.write_json` (PID+uuid temp, os.replace, O_EXCL lock, 6 retries)
+and `registry_names()` returns [] on a ValueError, so a torn read yields 0 and
+never a plausible 24. RESULT: there are THREE populations, all correct, all
+answering different questions -- offered 72, commissioned 43, evidenced 39,
+union 78 -- and they do not nest as assumed (35 plugin ids have no registry row
+until they first record). THE REAL DEFECT: a share whose denominator is the
+EVIDENCED population is self-referential, because a strategy enters it by
+producing the numerator. "11 of 38" is 1 of 78. NEXT: any acceptance criterion
+phrased as a share should be restated against `known`, and atf_static*'s 70% is
+a POOLED share (289/414) against a tradeable one of 29.6% (8/27).
