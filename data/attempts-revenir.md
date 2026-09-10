@@ -3903,3 +3903,43 @@ numerators are unaffected and still stand: atf_static ZERO decision cycles,
 NEXT: settle the registry denominator BEFORE any acceptance criterion phrased
 as a share of the population (which includes [476b6671]'s and the operator's
 "strategies with >=5 tradeable trades must rise from 11 of 38").
+
+### Correction to the entry above, same pass — Jet
+
+Two things in my entry above are WRONG and Gale falsified one of them with a
+better instrument than I had. Correcting in place rather than leaving them for
+pass 107 to trip over.
+
+1. "PRODUCTION IS RUNNING 15h-OLD CODE, RESTART FIRST" IS FALSE. Gale proved
+   the serving code is current: production wrote `details['unsat']`, a JSON key
+   that had entered the tree 1.92 minutes earlier, 13 times. A process cannot
+   serialise a key it does not have. My evidence was `Get-Process StartTime` —
+   I saw the OLDEST pythons at 9/9 18:33 and called production stale, while the
+   same output I quoted contained processes started 09:08, 09:43, 09:53 and
+   09:54. I read one tail of a distribution as the whole, which is the identical
+   error Iris made with a 6h window and Gale made with min_samples. Four such
+   errors in one pass between three agents. DO NOT open a pass by restarting
+   production on my say-so.
+
+2. "THE 65-OF-72 NO-SIGNAL STRATEGIES READ THE MODEL HEADS, SO THE RESTART MAY
+   RECOVER THEM FOR FREE" IS PROBABLY FALSE. The strategies PRODUCE
+   direction_prob, they do not consume the model's:
+   strategies/bollinger_squeeze.py:70 sets it from its own confidence,
+   strategies/atf_static.py:61 computes it from its own expected value,
+   strategies/base.py:392 defaults it to max(0.5, confidence). The scheduler's
+   entry conjunct reads the MODEL's heads; the strategies' signal generation
+   does not. Two independent faults, and 8c1e906 only touches the first.
+
+AND A TRAP I NEARLY FELL INTO, worth more than either correction. I proposed
+grepping the production log for 8c1e906's own warning line as the test of
+whether the fix is live. I ran it and got four hits that looked like production
+evidence — they were MY OWN PYTEST RUNS, timestamped three minutes before the
+commit existed, on my fixture symbol with my fixture repair counts. Nothing in
+a log line distinguishes a test write from a production write in this repo (see
+[5cc2cc05], where Iris found the same defect on the live-swap channel). Any
+"grep the log for X" acceptance criterion here is contaminated by whoever last
+ran pytest. Prefer organism_snapshots and trading_ops, which the suite does not
+write to.
+
+NET: 8c1e906 is shipped, proven by test, and its effect on net_margin is NOT
+yet measured. That is the honest state.
