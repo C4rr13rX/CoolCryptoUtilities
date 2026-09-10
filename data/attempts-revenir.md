@@ -4174,3 +4174,18 @@ anyone bets on it.
 NEXT: re-run --horizon-table over an UP window. If the 5/10-minute ceiling is
 negative there too, the horizon target is wrong rather than the market, and that
 is a bigger lever than any head fix on the board.
+
+- 2026-09-10, Iris, pass 107 (third entry). Shipped the regime split as the
+  census's DEFAULT output (51325ff) and re-ran it at a second horizon, which
+  produced the cleanest statement of the whole pass. 30m horizon, 26h, live
+  head: UP windows 4 of 6 net-positive (mean -0.0977%), DOWN windows 1 of 7
+  (mean -0.8089%). A MAJORITY OF UP WINDOWS PAY. Measured up-windows-only,
+  that reads as an edge -- it is the exact fake-78% shape -- and it is simply
+  being long. The 15m horizon says the same thing more bluntly (1/8 up, 0/5
+  down). Both verdicts: NO EDGE. Feed healthy at the same moment (age 1.5s,
+  60 ticks/10m, 23 python processes up), so none of this is a dark-pipeline
+  artifact. NEXT: the only untried lever on this head is the retrain itself.
+  models/active_model.keras was rewritten 12:36 post-foreign-row-repair and
+  scores AUC 0.7275/0.8504/0.7517 on its own hour, but that hour is 74.0% up
+  -- re-run head_skill_census once a down window has accumulated under that
+  artifact and let regime_verdict decide. Do not quote the 0.85 before then.
