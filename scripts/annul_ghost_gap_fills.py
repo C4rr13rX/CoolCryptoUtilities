@@ -114,6 +114,37 @@ def target_for_trade(conn: sqlite3.Connection, trade_id: Any) -> Optional[float]
     return found
 
 
+def strategy_for_trade(conn: sqlite3.Connection, trade_id: Any) -> Optional[str]:
+    """Who owns this round trip, from the ops rather than the outcome row.
+
+    ``trade_outcomes.details.strategy_id`` is absent on 96 of 214 rows, and
+    every previous census read that field alone and called the row
+    unattributed. The SAME position hash reaches ops rows that DO carry
+    ``strategy_id``: BASELINE +57.94% is rsi_reversal's and BASECAT +17.31% is
+    atf_static's, both of which read as owned by nobody in the outcome table.
+
+    Returning None here therefore means genuinely unowned -- no row in either
+    table names a strategy -- which is a much stronger statement than the
+    outcome row being blank, and it is the one that decides whether annulling
+    a row can move any strategy's ledger at all.
+    """
+    hsh = _position_hash(trade_id)
+    if not hsh:
+        return None
+    for row in conn.execute(
+        "SELECT details FROM trading_ops WHERE details LIKE ? ORDER BY ts",
+        ("%" + hsh + "%",),
+    ):
+        try:
+            det = json.loads(row["details"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        sid = det.get("strategy_id")
+        if sid:
+            return str(sid)
+    return None
+
+
 def classify(entry: float, exit_price: float, target: Optional[float],
              *, fee_rate: float = DEFAULT_FEE_RATE) -> Dict[str, Any]:
     """How far past its own limit did this row book, and by which bound.
@@ -160,9 +191,11 @@ def census(conn: sqlite3.Connection, *, fee_rate: float = DEFAULT_FEE_RATE) -> L
             continue
         target = target_for_trade(conn, row["trade_id"])
         info = classify(row["entry_price"], row["exit_price"], target, fee_rate=fee_rate)
+        owner = det.get("strategy_id") or strategy_for_trade(conn, row["trade_id"])
         info.update({
             "symbol": row["symbol"],
-            "strategy_id": det.get("strategy_id"),
+            "strategy_id": owner,
+            "owned": owner is not None,
             "reason": reason,
             "net_profit": float(row["net_profit"] or 0.0),
             "outcome_id": row["outcome_id"],
@@ -218,6 +251,20 @@ def main() -> int:
         per.setdefault(str(r["strategy_id"]), []).append(r)
     for sid, rs in sorted(per.items()):
         print("  %-22s %d rows  net %+.5f" % (sid, len(rs), sum(x["net_profit"] for x in rs)))
+
+    # The number that decides whether annulling anything can move graduation.
+    # A row no strategy owns is in the POOLED book and in no strategy's ledger,
+    # so striking it changes the headline and moves no strategy toward the bar.
+    unowned = [r for r in gap if not r.get("owned")]
+    if unowned:
+        print(
+            "\n  UNOWNED (no strategy_id in trade_outcomes OR trading_ops): "
+            "%d rows, net %+.5f" % (len(unowned), sum(r["net_profit"] for r in unowned))
+        )
+        for r in unowned:
+            print("    %-14s %.3fx target  net %+.5f" % (r["symbol"], r["ratio"], r["net_profit"]))
+        print("  These are in the pooled book and in NO strategy's ledger: annulling")
+        print("  them moves the headline and moves no strategy toward the bar.")
 
     if args.apply:
         print(
