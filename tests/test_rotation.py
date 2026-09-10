@@ -128,13 +128,66 @@ class TestRotationUNSAT:
         rot.register_bot(holding)
         assert rot.on_exit(source, symbol="AAA-USDC", chain="base", freed_quote=50.0, profit=1.0) is None
 
-    def test_losing_exit_never_rotates(self):
+    def test_a_losing_exit_still_rotates_because_profit_is_not_a_condition(self):
+        """Replaces test_losing_exit_never_rotates, which encoded retired behaviour.
+
+        ``profit`` was a condition until 2026-09-04 and was removed with a
+        measurement: requiring it blocked rotation on 51% of closed round trips
+        (70 of 137 were not profitable), parking that capital in USDC until
+        some later entry happened to find it. A losing exit frees exactly the
+        same capital as a winning one.
+
+        The old test kept asserting None and had been red ever since, invisible
+        because the pass gate ran only its hand-picked GATE_TESTS. It is
+        replaced rather than deleted: the behaviour it guarded still needs a
+        guard, and that guard is the three clauses, not the sign of the last
+        trade -- so they are asserted directly below.
+        """
         rot = PortfolioRotator()
         source = make_bot("AAA-USDC")
         d = make_directive("BBB-USDC", 0.05)
         rot.register_bot(source)
         rot.register_bot(make_bot("BBB-USDC", candidates=[make_candidate(d)]))
-        assert rot.on_exit(source, symbol="AAA-USDC", chain="base", freed_quote=50.0, profit=-1.0) is None
+
+        got = rot.on_exit(source, symbol="AAA-USDC", chain="base",
+                          freed_quote=50.0, profit=-1.0)
+        assert got is not None, (
+            "a losing exit must still rotate: profit is deliberately not a "
+            "condition, and requiring it stranded 51% of freed capital")
+        assert got["result"] == "sat"
+
+        won = rot.on_exit(source, symbol="AAA-USDC", chain="base",
+                          freed_quote=50.0, profit=+1.0)
+        assert won is not None
+        assert won["result"] == got["result"], (
+            "the sign of the last trade must not change the rotation decision")
+
+    def test_the_clauses_and_not_the_profit_sign_are_what_block_a_rotation(self):
+        """The safety the profit condition looked like it provided.
+
+        Each of these blocks a LOSING exit, which is the case the retired
+        test claimed to cover. If any of them stops blocking, rotation has no
+        guard left at all.
+        """
+        d = make_directive("BBB-USDC", 0.05)
+
+        # rotation_freshness -- the candidate is older than its TTL.
+        rot = PortfolioRotator()
+        source = make_bot("AAA-USDC")
+        rot.register_bot(source)
+        rot.register_bot(make_bot("BBB-USDC", candidates=[make_candidate(d)],
+                                  candidate_ts=time.time() - 3600))
+        assert rot.on_exit(source, symbol="AAA-USDC", chain="base",
+                           freed_quote=50.0, profit=-1.0) is None
+
+        # rotation_no_open_position -- never double up on a symbol held.
+        rot = PortfolioRotator()
+        source = make_bot("AAA-USDC")
+        rot.register_bot(source)
+        rot.register_bot(make_bot("BBB-USDC", candidates=[make_candidate(d)],
+                                  positions={"BBB-USDC": {"size": 1.0}}))
+        assert rot.on_exit(source, symbol="AAA-USDC", chain="base",
+                           freed_quote=50.0, profit=-1.0) is None
 
     def test_disabled_by_env(self, monkeypatch):
         monkeypatch.setenv("ROTATION_ENABLED", "0")

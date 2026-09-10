@@ -208,14 +208,22 @@ def test_a_resolvable_token_is_not_demoted_to_ghost() -> None:
     With an address in hand the entry stays on the live path and fails later
     and louder (here: no bridge). If this ever returns a ghost entry, the
     fallback has swallowed the live lane entirely and no live trade can happen.
+
+    The symbol is deliberately one with NO ledger history. This test used
+    BASECAT-USDC and went red the moment the symbol-edge gate learned enough
+    about it to refuse it -- 35 closed round trips at -0.852% against 0.465%
+    of cost -- because the entry was then refused as entry-refused-symbol-edge
+    before it ever reached the bridge branch under test. That refusal is
+    correct; a unit test whose verdict depends on the live ledger's current
+    contents is not. Do not put a traded symbol back here.
     """
     bot = _bot()
 
-    decision = _enter(bot, _directive("BASECAT-USDC", "BASECAT"),
-                      "BASECAT-USDC", swap_token="0x" + "b2" * 20)
+    decision = _enter(bot, _directive("ZQTESTLIVE-USDC", "ZQTESTLIVE"),
+                      "ZQTESTLIVE-USDC", swap_token="0x" + "b2" * 20)
 
     assert decision["status"] == "live-entry-blocked"
     assert decision["reason"] == "bridge_unavailable"
     assert decision["wallet"] == "live"
     # Critically: it did NOT quietly become a ghost trade.
-    assert "BASECAT-USDC" not in bot.positions
+    assert "ZQTESTLIVE-USDC" not in bot.positions

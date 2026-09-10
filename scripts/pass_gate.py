@@ -425,6 +425,13 @@ GATE_TESTS = (
     "test_wallet_websocket.py",
     # The gate's own blindness. It printed OK on a run in which nothing ran.
     "test_the_gate_cannot_go_green_on_tests_that_never_ran.py",
+    # The graduation-path files named in [654eb8f7], added now that they are
+    # green. They were failing outside the gate's view: the demotion rule that
+    # holds atf_static down had SIX red tests while the gate printed OK.
+    "test_live_profitability_decides.py",
+    "test_rotation.py",
+    "test_unresolved_token_falls_back_to_ghost.py",
+    "test_the_two_books_agree_on_live_pl.py",
 )
 
 
