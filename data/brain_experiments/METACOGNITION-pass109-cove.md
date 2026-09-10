@@ -158,3 +158,39 @@ small deliberately: the question this pass had budget for was *does the
 mechanism work*, and that question is answered. The skill number is a first
 reading on a thin sample, not a verdict on the topology — but it is a reading
 taken in both directions, and it is below baseline in both.
+
+---
+
+## 9. ADDENDUM, same pass: pool 18 sharpened and re-measured
+
+The frame-resolution fix from §6.1 was made and the two windows re-run on a
+fresh fabric (`brain-data-meta-p109-scale`, `:8094`), same corpus, same pinned
+train window, same two windows.
+
+`temporal_scale` distinctness **0.045 -> 0.303**, and the measured query set
+now selects it on its own merit:
+`(geometry, temporal, flow, cross, temporal_sequence, temporal_scale)`.
+
+| | UP before | UP after | DOWN before | DOWN after |
+|---|---|---|---|---|
+| held-out exact | 25.8% | **30.8%** | 19.2% | 19.2% |
+| majority baseline | 26.7% | 26.7% | 65.0% | 65.0% |
+| vs baseline | below | **above** | far below | far below |
+| buy omens | 15 | 14 | 50 | 50 |
+| omens that paid | 53.3% | 71.4% | 6.0% | 12.0% |
+| per-trade net | +1.4610% | +3.3406% | -3.7937% | -3.5850% |
+| every-bar buy | +0.7293% | +0.7293% | -3.3221% | -3.3221% |
+
+**The verdict does not change: there is no edge.** Firing pool 18 lifted the UP
+window above its baseline and left the DOWN window exactly where it was --
+19.2% against a 65.0% majority, with 50 buy omens still losing more per trade
+(-3.5850%) than buying every bar (-3.3221%).
+
+That asymmetry is the finding. A change that helps only in the up window is the
+signature this repo has been fooled by twice, and it is why the two-window rule
+exists. The brain still calls `trough` 50 times into a window where 14.2% of
+bars rise. Sharpening the regime pool made it a better *long* predictor, not a
+regime-aware one.
+
+What it did buy, and it is worth keeping: the mechanical reason pool 18 could
+never contribute is gone, so the next attempt starts from a pool that fires.

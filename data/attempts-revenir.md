@@ -4690,3 +4690,26 @@ NEXT: cost is clearable three ways -- horizon, symbol, move-size selection --
 and none survives a DOWN window. Stop asking whether a target can pay for
 itself; ask whether it holds in a falling window. Every rule measured this
 pass is long exposure wearing a filter.
+
+## 2026-09-10 Cove pass 109 addendum -- pool 18 sharpened: UP window clears baseline, DOWN window does not move
+
+HYPOTHESIS: temporal_scale was excluded from every query at 0.045 distinctness,
+so raising its frame resolution would let the regime pool contribute.
+
+DID: added a coarse signed z-magnitude bucket per scale in
+trading/omen_metacognition.py; re-measured distinctness from frames alone
+(no training); retrained a fresh fabric and re-ran BOTH windows.
+
+RESULT: distinctness 0.045 -> 0.303, and the measured query set now selects
+pool 18 on merit. Held-out UP 25.8% -> 30.8% against a 26.7% majority (crosses
+from below to above). Held-out DOWN 19.2% -> 19.2% against a 65.0% majority --
+UNCHANGED. DOWN per-trade -3.7937% -> -3.5850% against -3.3221% for buying
+every bar, i.e. still WORSE than indiscriminate buying. NO EDGE: it fails the
+two-window rule, and a change that helps only in the up window is the exact
+signature that produced the fake 78% and fake +0.9067% here before.
+
+NEXT: the defect is long-bias, not resolution -- the brain calls trough 50
+times into a 14.2%-up window. Stop sharpening inputs and go at the label/regime
+seam. The resolved-prediction feeder for pools 15/16/19 is still unbuilt and is
+the one input that could tell the brain it has been wrong the same way for 50
+bars.
