@@ -364,8 +364,8 @@ def _bucket_ratio(value: Optional[float]) -> str:
     return f"r{max(0, min(24, level))}"
 
 
-def _bucket_signed(value: Optional[float], span: float = 4.0,
-                   levels: int = 20) -> str:
+def _bucket_signed(value: Optional[float], span: float = 2.0,
+                   levels: int = 40) -> str:
     """Bucket a SIGNED, already-dimensionless quantity (a z-score).
 
     ``_bucket_return`` is wrong for these: it is log-spaced and calibrated for
@@ -373,6 +373,25 @@ def _bucket_signed(value: Optional[float], span: float = 4.0,
     z-score -- roughly 0.5 to 3 -- lands in about four adjacent levels. This
     maps ``[-span, +span]`` linearly onto ``levels`` buckets instead, so a
     z-score gets even resolution where it is actually informative.
+
+    The 2.0/40 default is MEASURED, not guessed. Distinctness of the relation
+    streams over 13219 samples (4 corpus files, horizon 12), against the 0.2
+    query floor:
+
+        span/levels   rel_move_vol  rel_shape_flow  rel_trend_noise
+        4.0/20            0.089         0.119            0.030
+        2.0/20            0.161         0.119            0.072
+        1.0/40            0.306         0.208            0.268
+        2.0/40            0.314         0.208            0.165
+
+    At 4.0/20 all three were below the floor -- train-only streams by the
+    dilution law. 1.0/40 lifts all three, but it saturates every |z| > 1,
+    which throws away exactly the large moves the relation exists to flag.
+    2.0/40 keeps the tail out to |z| = 2 and still clears the floor on two of
+    three. rel_trend_noise stays under it either way; that stream is
+    near-constant for its own reasons (slow long-baseline z-scores, plus an
+    ``exp`` field duplicated from volatility) and wants redesigning rather
+    than re-bucketing.
     """
     if value is None or not math.isfinite(value):
         return "na"

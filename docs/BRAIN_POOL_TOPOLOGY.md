@@ -302,10 +302,45 @@ Two things stop this from being a verdict on the idea:
    its `exp` field duplicates one already in `volatility`. It is the first
    candidate to redesign or drop.
 
-The actionable next step is therefore **bucket resolution, not more pools**:
-`_bucket_signed` currently spans [-4, +4] over 20 levels, and a narrower span
-would spread real mass across more buckets. That is a one-change pass with a
-number to move — distinctness — before any accuracy claim is attempted.
+### FIXED, same pass: the relations are now queryable
+
+The lever was bucket resolution, not more pools, and it was cheap enough to
+measure and ship immediately. Sweeping `_bucket_signed`, same 13,219 samples:
+
+| span/levels | rel_move_vol | rel_shape_flow | rel_trend_noise |
+|---|---|---|---|
+| 4.0/20 *(was)* | 0.089 | 0.119 | 0.030 |
+| 2.0/20 | 0.161 | 0.119 | 0.072 |
+| 1.0/40 | 0.306 | **0.208** | **0.268** |
+| **2.0/40 *(shipped)*** | **0.314** | **0.208** | 0.165 |
+
+**2.0/40 is now the default.** 1.0/40 lifts all three, but it saturates every
+`|z| > 1` — throwing away exactly the large moves the relation exists to
+flag. 2.0/40 keeps the tail out to `|z| = 2` and still clears the floor on
+two of three. Choosing the config that scores worse on the metric, because
+the metric is a proxy and the tail is the point, is the trade being made
+here deliberately.
+
+The number that moved, verified through the shipped code path with no
+monkeypatching:
+
+```
+rel_move_vol     0.314  CLEARS 0.2
+rel_shape_flow   0.208  CLEARS 0.2
+rel_trend_noise  0.165  below floor (train-only)
+
+query set: ('geometry','temporal')
+        -> ('geometry','temporal','rel_move_vol','rel_shape_flow')
+```
+
+`discriminating_collections` now admits two of the three relations. The
+association layer went from three dead train-only streams to two live query
+streams in the same pass that built it.
+
+`rel_trend_noise` stays below the floor either way. It is near-constant for
+structural reasons — slow long-baseline z-scores, plus an `exp` field
+duplicated from `volatility` — so it wants redesigning, not re-bucketing.
+That is a named, scoped next change.
 
 ### Where the next pass starts
 
