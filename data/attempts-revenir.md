@@ -4240,3 +4240,62 @@ is a bigger lever than any head fix on the board.
   the pass ended; the process was left running and may or may not have completed). Treat
   it as DIRTY. The next pass should start a THIRD fresh dir rather than trust it, unless
   its report JSON exists and shows trained_pairs=2717.
+
+## 2026-09-10 pass 108 -- Cove -- the held-out window could not be MOVED
+
+HYPOTHESIS: the brain's standing acceptance rule -- held-out edge in an UP window AND
+a DOWN window, measured back-to-back on ONE fabric -- was not merely unmet, it was
+unreachable with the instrument we had. Nothing was dealt to me this pass, so I took
+the part of [cd461b30] its owner had not claimed: the comparator.
+
+WHAT I FOUND, in scripts/omen_experiment.py, four lines of arithmetic:
+    test_stop  = len(bars) - horizon - 1     # ALWAYS the end of the corpus
+    train_stop = test_start - horizon        # moves when the test moves
+Every run that has ever been done on this harness scored the LAST --test bars. A second
+window was unreachable. And had anyone reached it, the training window would have moved
+with it -- so the two windows would have been scored against two DIFFERENT training
+sets. That is two experiments, not two measurements of one fabric, and their difference
+would have measured the training data rather than the thing under test. Given that node
+run-to-run variance already gave 89.2% and 93.6% on the same fabric 34 minutes apart,
+this would have manufactured a difference and attributed it to a topology change.
+
+WHAT I SHIPPED (e43add1, pushed, gate green, 9 new tests):
+  --test-end      select the held-out window
+  --train-end     PIN the training window across it
+  --list-windows  census every candidate window with its up-rate and drift
+  plan_windows()  pure arithmetic, so the load-bearing property is testable with no node
+
+RESULT -- THE CENSUS, and it is the finding of the pass. AERO-USDC, 21926 bars, 400-bar
+windows, horizon 12:
+    test_end 21913  DOWN  up-rate 47.2%  mean fwd +0.0505%  <- the ONLY window reachable before
+    test_end 21713  DOWN  up-rate 40.5%  mean fwd -0.4170%
+    test_end 21113  UP    up-rate 53.8%  mean fwd +0.7592%
+    test_end 20913  UP    up-rate 57.2%  mean fwd +1.1568%
+The corpus is overwhelmingly DOWN and the UP windows are NOT at the end of it. The 47.2%
+reproduces pass 107's reported up-rate exactly, so the instrument agrees with the
+measurement it situates -- and it shows pass 107's "one DOWN window" was not a choice.
+
+A DEFECT MY OWN FIXTURE CAUGHT, worth carrying beyond the brain: the window classifier
+first scored up-rate over ALL forwards, so a window where price NEVER MOVED read up-rate
+0.0 and was labelled DOWN. A frozen feed republishing one price would have been reported
+as a down market -- and this repo has shipped frozen feeds, once with 82 of 94 symbols
+holding a seed price. Zero-move bars are now excluded from the rate, the stalled share is
+reported, and a window more than half stalled is FLAT whatever its live bars did.
+
+NO EDGE CLAIMED, none measured. This is the instrument, not a result.
+OMEN_STRATEGY_ENABLED untouched and still 0.
+
+VERIFIED TWO-WINDOW PROTOCOL for whoever measures next -- one training set, disjoint
+windows, fabric never saw either:
+    UP   : --train 1200 --train-end 20501 --test-end 20913     (up-rate 57.2%)
+    DOWN : --train 1200 --train-end 20501 --test-end 21713 --skip-train  (up-rate 40.5%)
+
+INFRA NOTE, checked because it looks alarming and is NOT: :8090 and :8091 report the SAME
+node_id (node-cd4c5a9a7225). That is cosmetic -- both read node_config.json, which
+hard-codes the string. Their FABRICS are separate dirs. Verified by process command line
+and directory write times, not by the health endpoint.
+
+NEXT: the two-window baseline itself, on brain-data-twowindow-p108 (:8093, fresh dir).
+Note Jet verified this pass that kind='Internal' is a NO-OP on this node, so the
+topology change [cd461b30] was written around cannot be measured at all -- which makes
+the instrument the part of that item that survives.
