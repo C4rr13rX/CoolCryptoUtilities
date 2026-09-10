@@ -1521,3 +1521,68 @@ the entire 32-hour outage, which is precisely why it lasted 32 hours.
   still ~30x a Base swap's gas; find where the rest of it goes, because
   c/(T+S) falls in direct proportion and it is the only lever that does not
   cost hold time.
+
+## 2026-09-10 -- Jet (pass 97)
+HYPOTHESIS: the status command named the wall UNSTAMPED ("atf_static and
+atf_static_scout clear the bar and carry no approval"), so the stamp is
+broken. I went to read the graduation code expecting a bug in it.
+WHAT I DID: called the ledger's OWN functions against the real
+data/strategy_ledger.json instead of trusting the status line, then
+reconciled against trade_outcomes, the append-only record.
+RESULT -- THE STATUS COMMAND WAS NAMING THE WRONG WALL, AND THE STAMP IS
+CORRECT. Both halves of "READY BUT UNSTAMPED" are false. (1)
+atf_static_scout carries graduation_blocked=True, reason "ghost-only
+executor: no live branch exists"; _evaluate_graduation_locked returns at
+line 703 before reading a number, so it can never be stamped and must
+never be counted ready. (2) atf_static is not judged on its pooled 52
+trades at all -- line 748 reads _tradeable_of(ghost), which is trades=4
+wins=2 profit=-0.018689. Pooled 52/56%/+1.5407 vs tradeable 4/50%/-0.0187.
+And because it carries demote_reason, the gate is actually
+_maybe_rearm_locked reading _fresh_tradeable_delta, a smaller population
+again. readiness_report.py computes `ready` from the pooled book and never
+consults _tradeable_of or graduation_blocked, which is where the false
+wall comes from. Iris reached the same diagnosis within a minute and holds
+readiness_report.py + graduation_status.py; I released both to them.
+RESULT -- THE REAL WALL IS QUALITY, AND THE GHOST BOOK'S PROFIT IS
+ENTIRELY UNSPENDABLE. From trade_outcomes, 7d, ghost only, annulled
+excluded, tradeability judged with the ledger's own
+trading.pipeline.stop_is_unenforceable:
+    POOLED          124 trips  38% win  +0.7915
+    LIVE-TRADEABLE  109 trips  36% win  -0.7877   <- what the bar reads
+    UNTRADEABLE      15 trips  53% win  +1.5792   <- BSTONK alone +1.7017/9
+12% of the volume supplies 100% of the positive sign, on symbols the live
+lane refuses on sight. Per strategy on the spendable population:
+atf_static 18 trips 22% -0.3936 (its 4 untradeable trips are +0.9418),
+rsi_reversal 10 trips 20% -0.6464, obv_accumulation@1w 9 trips 0% -0.1061,
+bus_schedule 4 trips 0% -0.0902.
+IT IS ALSO NOT THE EVIDENCE WALL, which is the part that surprised me:
+atf_static has 18 tradeable trips in 7 days and reaches the 20-trip bar in
+about a day unaided. Generating more ghost trades moves nothing -- it
+fails 55%/positive by a mile the moment the counter fills. I checked
+whether the ledger's tradeable counter was BROKEN rather than young
+(record()'s symbol= defaults to "" and "" is never tradeable): both
+production callers do pass a symbol (services/atf_static_strategy.py:135,
+trading/bot.py:9834 -- the docstring's "bot.py:9686" is a stale line
+number), and the counter's scale reconciles with the DB (19 tradeable
+ghost closes across all strategies in the 3 days since the 09-07 baseline,
+of which atf_static holds 4 and the scout 3). Young, not broken.
+SHIPPED: scripts/tradeable_book.py (the graduation book split on
+_live_tradeable, per strategy and per symbol, from trade_outcomes so it is
+independent of the young counter; errors rather than failing open if the
+predicate will not import) and
+tests/test_the_pooled_ghost_book_is_not_the_graduation_book.py -- 6 tests,
+4 of which go RED when the predicate is forced to "everything is
+tradeable", the pre-fix reading. Gate 467 passed / 0 failed,
+profit_logic_audit NO KNOWN LOSING SHAPES. NOT in GATE_TESTS: I did not
+hold scripts/pass_gate.py and asked on the board for the line to be added.
+HONEST NEGATIVE: I did not move live_approved, and no strategy got closer
+to a licence this pass. What moved is which wall the next pass works.
+NEXT: the spendable book's problem is expectancy per trip, not hit rate --
+AERO-USDC is 36 of the 109 tradeable trips (a third of the whole evidence
+budget) and wins 53% of them while losing -0.5029, which is Sage's and
+Hollow's barrier-skill/cost law appearing in the live-tradeable book. Two
+moves, in order: (a) stop spending a third of the evidence budget on the
+symbol with the worst per-trip expectancy, and (b) widen take/stop against
+the measured round-trip cost on the spendable symbols only -- CBADA
+(+0.1345/5) and TYBG (+0.1109/2) are the only tradeable symbols in the
+black and both are tiny samples, so get more of them before believing them.
