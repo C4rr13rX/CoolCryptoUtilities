@@ -3553,3 +3553,64 @@ measure held-out BACK-TO-BACK on one fabric in an up AND a down window, both
 baselines reported, and check the relation streams clear MIN_QUERY_DISTINCTNESS
 before concluding anything (a near-constant relation dilutes: train on it, do
 not query it).
+
+## 2026-09-10 -- Iris, pass 106
+
+HYPOTHESIS (from the operator's 09:37 brief): the population is evidence-starved
+because atf_static takes 70% of the decision budget, so a fairer per-strategy
+allocation would let the other 36 build books and become rankable.
+
+WHAT I DID: measured step (1) of the brief -- where the decision budget actually
+goes, per strategy per hour -- before changing anything. Shipped
+`scripts/decision_budget_census.py` (03a4ff9, extended 1ecd8af) plus
+`tests/test_a_strategy_with_no_symbol_slot_gets_no_cycles.py` (9 tests). The
+census reads `organism_snapshots`, where one row IS one `evaluate()` that
+reached a decision, and attributes each cycle to the strategy holding that
+symbol's scheduler slot. It also harvests the second producer -- `trading_ops`
+payload `strategy_id` plus the `dropped`/`bus_actions`/`candidates` lists -- and
+prints the union against the registry.
+
+RESULT -- THE HYPOTHESIS IS FALSE, AND ON A POINT OF FACT.
+
+  cycles 1578 / 6h    holds 1576 (99.9%)    entries 1
+  atf_static cycles: ZERO. It holds no symbol slot and never did in the window.
+
+The brief's "atf_static 179 vs 7 for everyone else" is from `trading_ops`, which
+is an append-only op LOG and not a cycle table: a hold writes no row, one tick
+writes four (Cove, pass 105: 96 ban rows against 34 ticks), and atf_static's
+rows are `evaluate_atf_static_entry` BUS ACTIONS from the c0d3rv2 publisher on a
+separate channel. The comparison put a publish rate beside a decision rate.
+
+THE REAL MECHANISM IS A FOURTH ONE, none of the three the brief listed:
+
+  registry 42   proposed anywhere 13   NEVER PROPOSED 32
+
+Not slot contention -- `entry-refused-slot-busy` is 3 rows in 6h naming 1
+distinct strategy. Not a scheduler re-picking. Not strategies refusing offered
+cycles -- they are never offered one. CANDIDATE GENERATION NEVER EMITS THEM.
+I called it "contention" in my first commit and Gale falsified that word by
+measurement within minutes; the union above is the correction.
+
+WHY IT MATTERS TO GRADUATION: the status command's closest-to-the-bar strategy
+is rsi_reversal at 6/20 tradeable trades, and rsi_reversal is IN the 32 -- not
+proposed once in six hours, while its @5h and @1d variants draw 36.3 and 26.2
+cycles/hour. No re-weighting between the 13 that appear can ever reach it.
+Separately, 245 of 1578 cycles (15.5% of the whole budget) are spent on symbols
+with NO directive owner; STEVE-USDC held a slot for the full 6h and never got
+one.
+
+ORDERING, AND IT IS THE USEFUL PART: this is DOWNSTREAM of the collapsed head.
+1576 of 1578 cycles hold because `net_margin` max is negative on every symbol
+for 12h, so the entry conjunct is unsatisfiable for everyone. Give all 42 a
+perfect fair share today and you get 42 strategies holding. Two independent
+walls, neither fixing the other: the head shuts the 13 that get proposed,
+candidate generation shuts the other 32.
+
+NEXT: filed [476b6671] against trading/selector.py + trading/scheduler.py --
+name in CODE what builds the candidate list and why it holds 13 names out of 42.
+Do the head first. And Jet's trap, which is worth more than my finding: any
+criterion of the form "ghost entries per hour before and after" is contaminated
+unless feed breadth is measured in the SAME window.
+
+DO NOT RE-DERIVE THE PER-STRATEGY BUDGET FROM trading_ops. That is the mistake
+this pass existed to correct, and the census now refuses to make it.
