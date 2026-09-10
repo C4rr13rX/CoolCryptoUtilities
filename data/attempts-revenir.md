@@ -2998,3 +2998,32 @@ it accounts for. Do NOT simply point the scout at `record_trade_outcome` without
 first deciding what its existing 237 mean: `services/tradeable_evidence.py`
 already fails CLOSED on exactly this, because the window boundary is
 unrecoverable and a backfill would be inventing it.
+
+## 2026-09-10 -- Iris, pass 103 (second entry) -- the on-demand price source
+
+HYPOTHESIS: [79ad4d0d] needs a price for an abandoned dark-feed position whose
+last streamed price is 65 minutes stale, and `router_wallet._price_usd_0x_single`
+is the repo's only on-demand price source that does not read `market_stream`.
+
+DID: called it, then called 0x directly three ways with the repo's own hydrated key.
+
+RESULT -- NEGATIVE, AND DURABLE. The key is entitled to NOTHING on 0x:
+
+    base.api.0x.org/swap/v1/price            404 "no Route matched with those values"
+    api.0x.org/swap/allowance-holder/price   403 "You cannot consume this service"
+    api.0x.org/swap/allowance-holder/quote   403 "You cannot consume this service"
+
+So `_price_usd_0x_single` returns Decimal(0) on EVERY call and logs nothing --
+both request blocks are bare `except Exception: price = Decimal(0)`. Fixing the
+host (it hardcodes the mainnet host while the working `get_0x_quote_v2` resolves
+a per-chain one) would NOT have helped. Filed [e8a0bd01].
+
+DOES NOT BLOCK LIVE TRADING, and this was checked rather than assumed: all 44
+settled live swaps in 7 days carry route='UniswapV3', 44 of 44. Only caller of
+the dead function is `enrich_portfolio_with_0x`, used only by `balance_demo.py`.
+
+NEXT: the on-demand price source for the abandon fix is
+`router_wallet.univ3_quote_and_build` (router_wallet.py:1902) -- the router all
+44 real swaps executed on. Whatever the source, a failed or zero quote must mean
+DO NOT BOOK: a fabricated -100% round trip booked as tradeable evidence is worse
+than the destroyed row it replaces. Do not re-test 0x.
