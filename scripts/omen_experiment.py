@@ -81,6 +81,90 @@ def bar_seconds(bars: Sequence[Mapping[str, Any]]) -> int:
     return int(sorted(gaps)[len(gaps) // 2]) if gaps else 3600
 
 
+class WindowError(ValueError):
+    """The requested train/test split does not fit the corpus."""
+
+
+def plan_windows(total_bars: int, train: int, test: int, horizon: int,
+                 train_end: int | None = None,
+                 test_end: int | None = None) -> Dict[str, int]:
+    """Bar indices for the train and held-out windows.
+
+    Pure arithmetic, kept out of ``main`` so the one property this whole
+    two-window protocol rests on can be tested without a node: with
+    ``train_end`` pinned, moving ``test_end`` must NOT move the train
+    window. Two held-out windows measured against DIFFERENT training data
+    are not two measurements of one fabric, they are two experiments, and
+    comparing them says nothing -- which is the trap the default derivation
+    walks into, because it computes ``train_stop`` from ``test_start``.
+
+    A full ``horizon`` gap sits between train_stop and test_start so no
+    training sample's future overlaps a held-out bar.
+    """
+    test_stop = (total_bars - horizon - 1) if test_end is None else int(test_end)
+    test_stop = min(test_stop, total_bars - horizon - 1)
+    test_start = test_stop - test
+    if train_end is None:
+        train_stop = test_start - horizon
+    else:
+        train_stop = int(train_end)
+        if train_stop + horizon > test_start:
+            raise WindowError(
+                f"train_end {train_stop} + horizon {horizon} overruns "
+                f"test_start {test_start}: the training window's future would "
+                f"overlap the held-out window, which leaks the answer")
+    train_start = train_stop - train
+    if train_start < LOOKBACK_BARS:
+        raise WindowError(
+            f"train window starts at {train_start}, before the {LOOKBACK_BARS}-bar "
+            f"lookback: need {LOOKBACK_BARS + train + horizon + test + horizon} "
+            f"bars before this test window, have {total_bars}")
+    return {"train_start": train_start, "train_stop": train_stop,
+            "test_start": test_start, "test_stop": test_stop}
+
+
+def window_regime(bars: Sequence[Mapping[str, Any]], start: int, stop: int,
+                  horizon: int) -> Dict[str, Any]:
+    """Up-rate and drift of a bar range, so a window's DIRECTION is stated.
+
+    The standing rule here is that a single window is never evidence: a
+    long-only rule flatters itself in an up window, and that error has
+    already produced a fake 78% and a fake +0.9067% in this repo. So every
+    window a run touches reports whether it was UP or DOWN, measured, and
+    the report carries it.
+    """
+    forwards = []
+    for index in range(max(start, 0), min(stop, len(bars) - horizon)):
+        close = float(bars[index]["close"])
+        if close <= 0:
+            continue
+        forwards.append((float(bars[index + horizon]["close"]) - close) / close)
+    if not forwards:
+        return {"bars": 0, "up_rate": 0.0, "mean_forward": 0.0,
+                "zero_share": 0.0, "regime": "EMPTY"}
+    # Bars that did not MOVE are neither up nor down, and they must not be
+    # counted as down. A frozen feed republishing one price gives every bar
+    # a forward of exactly 0.0; scoring those as "not up" reads up_rate 0.0
+    # and would name a dead feed the DOWN window. This repo has shipped
+    # frozen feeds before -- 82 of 94 symbols once held a seed price -- so
+    # the zero share is measured, reported, and gates the verdict.
+    moved = [f for f in forwards if f != 0.0]
+    zero_share = 1.0 - len(moved) / len(forwards)
+    up_rate = (sum(1 for f in moved if f > 0) / len(moved)) if moved else 0.0
+    if zero_share > 0.5:
+        # More than half the window did not move: that is not a direction,
+        # and it is a reason to distrust the corpus slice.
+        regime = "FLAT"
+    else:
+        # 50% +/- 2 points is not a direction either, it is a coin. Naming
+        # that band FLAT stops a 50.4% window being called "the UP window".
+        regime = "UP" if up_rate > 0.52 else "DOWN" if up_rate < 0.48 else "FLAT"
+    return {"bars": len(forwards), "up_rate": up_rate, "zero_share": zero_share,
+            "mean_forward": sum(forwards) / len(forwards), "regime": regime,
+            "ts_start": int(bars[max(start, 0)]["timestamp"]),
+            "ts_stop": int(bars[min(stop, len(bars)) - 1]["timestamp"])}
+
+
 def build_samples(bars, symbol, chain, horizon, start, stop):
     """Frames + true label for every bar in [start, stop) that has both."""
     samples = []
@@ -172,6 +256,21 @@ def main() -> int:
     parser.add_argument("--consensus", action="store_true",
                         help="require CONSENSUS_QUERIES to agree; abstains "
                              "with verdict='split' when they do not")
+    parser.add_argument("--train-end", type=int, default=None,
+                        help="PIN the last bar of the training window. Use with "
+                             "--test-end to measure a second held-out window on "
+                             "the SAME fabric: without it the train window is "
+                             "derived from the test window, so moving the test "
+                             "window silently retrains on different data")
+    parser.add_argument("--test-end", type=int, default=None,
+                        help="last bar of the held-out window (default: end of "
+                             "corpus). This is how an UP window and a DOWN "
+                             "window are each measured")
+    parser.add_argument("--list-windows", action="store_true",
+                        help="census the corpus for candidate held-out windows "
+                             "with their up-rate and drift, then exit -- so an "
+                             "UP and a DOWN window are PICKED from measurement "
+                             "rather than hoped for")
     parser.add_argument("--guess-regime", action="store_true",
                         help="let stage 1 guess the regime instead of "
                              "computing it -- the pre-2026-09-07 behaviour, "
@@ -191,23 +290,59 @@ def main() -> int:
           f"omen threshold {threshold:.4%} "
           f"(round trip {ROUND_TRIP_COST:.4%})")
 
+    # A census of where the UP and DOWN windows actually ARE, so the two
+    # windows the standing rule demands are picked from measurement.
+    if args.list_windows:
+        earliest = LOOKBACK_BARS + args.train + args.horizon + args.test
+        latest = len(bars) - args.horizon - 1
+        if latest < earliest:
+            print(f"corpus too short for any window: need {earliest} bars "
+                  f"before the first candidate, have {len(bars)}")
+            return 2
+        print(f"\ncandidate held-out windows of {args.test} bars "
+              f"(train {args.train} + {args.horizon}-bar purge before each):")
+        print(f"{'test_end':>9} {'regime':>7} {'up_rate':>8} {'mean_fwd':>10}  window")
+        step = max(1, args.test // 2)
+        for end in range(latest, earliest - 1, -step):
+            info = window_regime(bars, end - args.test, end, args.horizon)
+            if not info["bars"]:
+                continue
+            print(f"{end:>9} {info['regime']:>7} {info['up_rate']:>7.1%} "
+                  f"{info['mean_forward']:>+9.4%}  "
+                  f"[{end - args.test}, {end})")
+        print("\nPick one UP and one DOWN end, then measure BOTH on ONE fabric:")
+        print(f"  run 1: --train-end <T> --test-end <UP>")
+        print(f"  run 2: --train-end <T> --test-end <DOWN> --skip-train")
+        print("  <T> must satisfy T + horizon <= min(UP, DOWN) - test, so the "
+              "fabric never saw either window.")
+        return 0
+
     # Chronological split: train strictly before test, and leave a horizon
     # gap so no training sample's FUTURE overlaps a test bar.
-    need = args.train + args.horizon + args.test + LOOKBACK_BARS + args.horizon
-    if len(bars) < need:
-        print(f"corpus too short: need {need} bars, have {len(bars)}")
+    try:
+        plan = plan_windows(len(bars), args.train, args.test, args.horizon,
+                            train_end=args.train_end, test_end=args.test_end)
+    except WindowError as exc:
+        print(f"cannot plan windows: {exc}")
         return 2
-    test_stop = len(bars) - args.horizon - 1
-    test_start = test_stop - args.test
-    train_stop = test_start - args.horizon
-    train_start = train_stop - args.train
+    train_start = plan["train_start"]
+    train_stop = plan["train_stop"]
+    test_start = plan["test_start"]
+    test_stop = plan["test_stop"]
 
     train_samples = build_samples(bars, symbol, args.chain, args.horizon,
                                   train_start, train_stop)
     test_samples = build_samples(bars, symbol, args.chain, args.horizon,
                                  test_start, test_stop)
-    print(f"train bars [{train_start}, {train_stop}) -> {len(train_samples)} samples")
+    heldout_regime = window_regime(bars, test_start, test_stop, args.horizon)
+    print(f"train bars [{train_start}, {train_stop}) -> {len(train_samples)} samples"
+          + ("  (train_end PINNED)" if args.train_end is not None else ""))
     print(f"test  bars [{test_start}, {test_stop}) -> {len(test_samples)} samples")
+    print(f"HELD-OUT WINDOW IS {heldout_regime['regime']}: up-rate "
+          f"{heldout_regime['up_rate']:.1%}, mean forward "
+          f"{heldout_regime['mean_forward']:+.4%} over "
+          f"{heldout_regime['bars']} bars. ONE WINDOW IS NOT EVIDENCE -- "
+          f"a long-only rule flatters itself in an UP window.")
     print("train label mix :", dict(Counter(s['label'] for s in train_samples)))
     print("test  label mix :", dict(Counter(s['label'] for s in test_samples)))
 
@@ -380,6 +515,12 @@ def main() -> int:
         "round_trip_cost": ROUND_TRIP_COST, "omen_threshold": threshold,
         "train_window": [train_start, train_stop],
         "test_window": [test_start, test_stop],
+        "train_end_pinned": args.train_end is not None,
+        "heldout_regime": heldout_regime["regime"],
+        "heldout_window_up_rate": heldout_regime["up_rate"],
+        "heldout_window_mean_forward": heldout_regime["mean_forward"],
+        "heldout_ts_range": [heldout_regime.get("ts_start"),
+                             heldout_regime.get("ts_stop")],
         "trained_pairs": brain.trained_pairs, "failed_pairs": brain.failed_pairs,
         "train_seconds": round(train_secs, 1),
         "skipped_training": bool(args.skip_train),
@@ -412,7 +553,11 @@ def main() -> int:
     report_dir = ROOT / args.report_dir
     report_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    out = report_dir / f"omen-{symbol}-h{args.horizon}-{stamp}.json"
+    # The regime goes in the FILENAME: two windows measured on one fabric
+    # produce two reports, and a reader must not have to open them to see
+    # which is the UP one.
+    out = (report_dir /
+           f"omen-{symbol}-h{args.horizon}-{heldout_regime['regime']}-{stamp}.json")
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"\nreport -> {out}")
     return 0
