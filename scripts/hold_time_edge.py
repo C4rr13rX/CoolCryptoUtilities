@@ -165,6 +165,25 @@ def abandoned_positions(
             "silent_mins": float(d.get("silent_sec", 0.0) or 0.0) / 60.0,
         }
 
+    # THE ONLY HALF OF THIS THAT IS GRADUATION EVIDENCE. The bar reads
+    # _tradeable_of(ghost) -- round trips the LIVE LANE COULD HAVE PLACED --
+    # so an abandoned position in a symbol the live lane refuses was never
+    # progress and its loss costs nothing. Measured 2026-09-10 the split is
+    # 16 of 20, so the destroyed evidence is overwhelmingly the kind that
+    # counts, and reporting the raw 20 would have understated that rather than
+    # overstated it. Judged with the same predicate the rest of this report
+    # filters on, not a second definition.
+    tradeable = None
+    try:
+        import scripts.tradeable_book as _tb
+
+        is_tradeable = _tb._tradeable_predicate()
+        if is_tradeable is not None:
+            tradeable = sum(1 for v in seen.values()
+                            if is_tradeable(v.get("symbol", "")))
+    except Exception:      # an unjudgeable population is reported as unknown
+        tradeable = None
+
     held = sorted(v["held_mins"] for v in seen.values())
     by_strategy: Dict[str, int] = {}
     for v in seen.values():
@@ -177,6 +196,7 @@ def abandoned_positions(
         "median_held_mins": statistics.median(held) if held else 0.0,
         "max_held_mins": max(held) if held else 0.0,
         "over_4x_stale": sum(1 for h in held if h > 4.0 * STALE_EXIT_MINS),
+        "tradeable": tradeable,
     })
     return out
 
@@ -319,6 +339,12 @@ def render(rep: Dict[str, Any]) -> str:
                 f"{ab['max_held_mins']:.1f} min longest",
                 f"  {ab['over_4x_stale']:4d} of them held past 4x stale_exit_secs "
                 f"({4.0 * rep['stale_exit_mins']:.0f} min)"]
+        if ab.get("tradeable") is not None:
+            out.append(
+                f"  {ab['tradeable']:4d} of them TRADEABLE -- the live lane "
+                "could have placed these, so they are")
+            out.append(
+                "       the evidence graduation actually counts, not pooled volume")
         for sid, n in list((ab.get("by_strategy") or {}).items())[:5]:
             out.append(f"       {n:3d}  {sid}")
         out += ["",
