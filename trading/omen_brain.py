@@ -1144,9 +1144,26 @@ class OmenBrain:
         # The first member is always the primary answer, so a consensus read
         # and a plain read agree on WHAT was predicted and differ only on
         # whether it is admitted.
-        members = ([tuple(names)] + [m for m in CONSENSUS_QUERIES
-                                     if tuple(m) != tuple(names)]
-                   if consensus else [tuple(names)])
+        #
+        # Deduped by SET, not by tuple. ``discriminating_collections`` returns
+        # the measured query in DISTINCTNESS order, so on AERO-USDC the primary
+        # arrives as ('geometry','temporal','cross') while CONSENSUS_QUERIES[0]
+        # is ('temporal','geometry','cross') -- the same query, a different
+        # tuple. Comparing tuples kept it as a fifth member, and it cost more
+        # than a round trip: a member that IS the primary cannot disagree with
+        # it on the merits, so it inflated every unanimity rate; and because
+        # the node is not perfectly deterministic (an A-vs-A control moved
+        # 4/100 held-out predictions, pass 111) it turned node noise into
+        # spurious ``split`` abstentions on a query that was never in doubt.
+        if consensus:
+            members = [tuple(names)]
+            seen = {frozenset(names)}
+            for candidate in CONSENSUS_QUERIES:
+                if frozenset(candidate) not in seen:
+                    seen.add(frozenset(candidate))
+                    members.append(tuple(candidate))
+        else:
+            members = [tuple(names)]
         member_labels: List[Optional[str]] = []
         stage2: List[Dict[str, Any]] = []
         answer: Optional[str] = None
