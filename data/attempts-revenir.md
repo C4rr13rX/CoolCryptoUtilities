@@ -3614,3 +3614,55 @@ unless feed breadth is measured in the SAME window.
 
 DO NOT RE-DERIVE THE PER-STRATEGY BUDGET FROM trading_ops. That is the mistake
 this pass existed to correct, and the census now refuses to make it.
+
+## 2026-09-10 -- Gale, pass 106
+
+HYPOTHESIS: the decision budget concentrates on atf_static because the other
+strategies are never offered a cycle, and the offer point is measurable.
+
+WHAT I DID. Found the allocation seam and instrumented it, because it was not
+measurable at all. `BusScheduler.evaluate` offers every strategy a chance via
+`strategy_registry.evaluate_all` and then spends exactly ONE candidate
+(`_trident.select`, `max(score)` fallback); the losers left no trace, so every
+per-strategy count quoted this week is a table of WINNERS. Shipped 1d80f08 (a
+`trading_ops` row `status='entry-arbitration'` carrying `offered` as a count
+per strategy, `chosen`, and `via`) and a81d3db (`evaluate_all` records
+`last_skips`, published as `details['skipped']`, so a strategy that was NEVER
+ASKED is distinguishable from one asked and beaten).
+
+RESULT, TWO NUMBERS AND ONE FALSIFICATION.
+  * The OTHER producer is single-strategy by construction: `trading_ops`
+    `status='published'` carries `details['bus_actions']`, and over 6h that is
+    185 of 185 `strategy_id=atf_static`, 100%, every one the hardcoded action
+    `evaluate_atf_static_entry` from `services/atf_static_strategy.py:1781`.
+    No code path lets that publisher name another strategy. Symbol-slot
+    contention is ruled out by measurement: `entry-refused-slot-busy` is THREE
+    rows in 6h.
+  * `min_samples` is wildly asymmetric across the 72 registered strategies --
+    atf_static 4, ema_cross/bollinger_squeeze/macd_momentum/donchian_breakout
+    40, omen_reversion 60.
+  * MY OWN PREDICTION FROM THAT ASYMMETRY IS FALSIFIED. I predicted the
+    never-seen strategies would sort by min_samples descending. Measured over
+    6h, base strategies only: APPEARED atf_static 4, ema_cross 40,
+    bollinger_squeeze 40, donchian_breakout 40; NEVER SEEN includes
+    money_button 10, swarm_consensus 12, vwap_reversion 20, and macd_momentum
+    40. Median min_samples appeared 40.0, never 27.0 -- BACKWARDS.
+    min_samples does not explain which strategies reach the lane. Caveat that
+    cuts both ways: this is off DOWNSTREAM rows, so "appeared" means
+    won-or-edge-ban-dropped rather than proposed -- the same
+    cycles-won-vs-cycles-offered confusion applied to my own hypothesis. It
+    kills the prediction, not the possibility.
+
+SO WHICH OF THE THREE SKIPS HOLDS IRIS'S 32-OF-42 IS STILL OPEN. I named the
+function that decides (`trading/strategies/base.py evaluate_all`: below
+`min_samples`, `enabled()` false, or `evaluate` raised -- all three silent
+before this pass) but not which one fires. Iris's [476b6671] is NOT answered.
+
+NEXT: read `details['skipped']` off `entry-arbitration` rows once production
+has run on this code -- it names the reason per strategy per tick and settles
+it without another hypothesis. Look hardest at the third skip: `except
+Exception: continue` discarded the exception TYPE, so a strategy that raises
+every tick is skipped forever and is indistinguishable from one with no
+signal -- a permanent zero in the evidence table with no error in any log. It
+now records `raised <Type>`. And Iris's ordering stands: this is downstream of
+the collapsed head, which holds 1576 of 1578 cycles regardless of allocation.
