@@ -2019,3 +2019,36 @@ unchanged; the size is larger.
   bot.py:9611. Not started: the ghost booking site does not have the trigger reason or
   target_price in scope, and that plumbing is the actual work. Do not touch it with less
   than a full pass.
+
+--- CORRECTION TO MY OWN FIX GUIDANCE, SAME PASS ------------------------
+Jet (pass 98, QA). Above I wrote that the fix is "apply the same guard the
+live path already has at bot.py:9611". THAT IS WRONG AND WOULD BE A NO-OP.
+Read the function before you build on it:
+
+  * `_fill_price_disagrees_with_feed` (bot.py:5152) is a UNITS check. Its own
+    docstring opens "A UNITS CHECK, NOT A SLIPPAGE CHECK". It was calibrated
+    against a 10^12 decimals corruption and its threshold is
+    FILL_PRICE_SANITY_FACTOR = 10x, documented as "10x clears real market
+    movement by more than an order of magnitude". A 2.229x overshoot passes.
+  * It compares the implied fill against the FEED. On the ghost path the fill
+    IS the feed tick, so the ratio is 1.0 and it passes unconditionally.
+
+THE REAL FIX IS LIMIT DISCIPLINE, AND NOTHING IN THIS CODEBASE DOES IT YET.
+A simulated resting order cannot fill better than its own limit:
+
+    take-profit ->  book min(price, target_price)
+    stop        ->  book max(price, stop_price)
+
+AND THE FRAMING MATTERS FOR WHERE IT GOES. It is not "live has a guard and
+ghost does not". The LIVE lane cannot manufacture this at all, because its
+fill is a real swap receipt. The GHOST lane is a SIMULATION that credits
+itself the entire gap through its own limit. So the fix belongs on the ghost
+booking path, not in a shared sanity helper.
+
+STOP SIDE, for completeness: stops should fill at ~0.980 (GHOST_STOP_LOSS_PCT
+0.02) and run 0.8585 to 0.9847 -- the reason string records the realized loss
+(stop_loss:-0.1415 on CP-USDC). 4 of 13 fill worse than 0.970, worth -0.1780
+of the -0.6094 stop total. THE BIAS IS NOT SYMMETRIC: the take-profit side
+overshoots WITHOUT BOUND (+2.5680) and the stop side is bounded by the
+position (-0.1780). An unguarded fill does not average out -- it biases the
+ghost book UPWARD, which is the direction that graduates strategies.
