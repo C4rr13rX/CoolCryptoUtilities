@@ -846,16 +846,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     # the fixed leg alone dominates, so quote both.
     post = eras["post_collapse"]
     if post.get("n"):
-        pct_cost = 0.3187
+        # Honour the flags rather than the constants, and print the ALL-IN
+        # count beside the proportional one: "moved further than the rate"
+        # is a weaker statement than "cleared the round trip", and quoting
+        # only the first is how the horizon table published a positive
+        # 15-minute row that is really negative.
+        pct_cost = args.pct_cost
+        all_in = total_cost_pct(args.pct_cost, args.fixed_cost, args.clip)
         print(
             f"  COST FLOOR: median |{args.horizon_min:.0f}min return| is "
             f"{post['abs_ret_p50'] * 100:.4f}% against a {pct_cost:.4f}% proportional "
-            f"round trip (plus 0.004047 fixed)."
+            f"round trip, {all_in:.4f}% ALL IN over the ${args.clip:.2f} clip."
         )
-        payers = sum(1 for r in matched if r["ts"] >= boundary and abs(r["realised"]) * 100 > pct_cost)
+        post_rows = [r for r in matched if r["ts"] >= boundary]
+        payers = sum(1 for r in post_rows if abs(r["realised"]) * 100 > pct_cost)
+        payers_all_in = sum(1 for r in post_rows if abs(r["realised"]) * 100 > all_in)
         print(
             f"  {payers} of {post['n']} post-collapse ticks moved further than the "
-            f"proportional cost alone ({payers / post['n'] * 100:.1f}%) -- a perfect "
+            f"proportional cost alone ({payers / post['n'] * 100:.1f}%), and only "
+            f"{payers_all_in} cleared the ALL-IN cost "
+            f"({payers_all_in / post['n'] * 100:.1f}%) -- a perfect "
             "direction call on the rest still loses money."
         )
         print("  BUY LOW / SELL HIGH -- the head as a MONEY rule, not as an accuracy score.")
