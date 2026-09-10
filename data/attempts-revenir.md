@@ -3974,3 +3974,37 @@ yet measured. That is the honest state.
   restoring the head level or percentile-thresholding it; both are measured
   dead. The head needs retraining on the post-repair clean window, and
   head_skill_census is the acceptance test for whether that worked.
+
+- 2026-09-10 Jet (SENIOR, pass 107). HYPOTHESIS: the pass gate's "657 passed /
+  0 failed OK" was hiding 22 real broken behaviours, five of them on the
+  graduation bar itself. FALSIFIED, AND THE OPPOSITE IS TRUE -- THE PRODUCTION
+  CODE IS CORRECT IN EVERY ONE I AUDITED. Ran the five named nodeids:
+  3 failed, 2 passed in 5.65s, so "five" was already three (both
+  test_strategy_ledger ones pass in isolation -- pass-105 order pollution). The
+  collection ERROR is GONE with no work: 1 skipped, 0 errors. The three real
+  reds have ONE root cause with two faces, neither of them a bug in the source.
+  (a) SUPERSEDED BEHAVIOUR. _verdict moved List[float] -> List[Trip] and the
+  fixture still passed floats (AttributeError at symbol_edge_gate:470); every
+  production caller builds real Trips. classify_wall was deliberately re-ranked
+  POOLED -> TRADEABLE with the measurement in the source (atf_static_scout:
+  237 pooled / 4 tradeable / ZERO trade_outcomes rows), and the test still
+  encoded the pooled answer. (b) TESTS READ PRODUCTION SQLITE.
+  test_scout_evidence records 25 clean ghost trades into a TemporaryDirectory
+  ledger and STILL fails is_live_approved, because the tmp path isolates the
+  LEDGER but not the GATES -- graduation counts only what passes
+  ledger.py:249 _live_tradeable, which calls symbol_edge_gate
+  (storage/trading_cache.db, sqlite3.connect at :405), and CBBTC-USDC is
+  banned. 25 clean trades, zero graduation credit, no code involved.
+  RESULT: gate visible tests 657 -> 685, 0 failed; shipped 9879f18 (two stale
+  tests repaired + both files gated). THE GENERAL LESSON WORTH MORE THAN THE
+  FIX: a red test on this repo's money path is now MORE LIKELY to be a stale
+  fixture than a defect, because the guards keep being tightened correctly and
+  the fixtures lag. Twice this pass the obvious "repair" would have reverted a
+  documented correction -- restoring the flat profit floor that refused 385/385
+  ghost entries, or re-enthroning an unauditable pooled book at the top of the
+  wall precedence. READ THE SOURCE COMMENT BEFORE FIXING THE CODE A TEST
+  ACCUSES. NEXT: [56de228d] -- one autouse fixture pinning the gates suite-wide
+  beats patching fixtures file by file, and its acceptance test is the right
+  one: run the suite against two deliberately different production books and
+  demand an identical pass/fail set. Do NOT loosen _live_tradeable or the
+  symbol bans to make tests green; they are why these numbers are honest.
