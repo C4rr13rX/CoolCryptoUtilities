@@ -4609,3 +4609,43 @@ NEXT: raise pool 18's frame resolution (magnitude buckets per scale, not a
 3-token direction) and re-measure distinctness BEFORE training; build the
 resolved-prediction feeder for 15/16/19; re-run the relation arm on 6be5357.
 Report: data/brain_experiments/METACOGNITION-pass109-cove.md
+
+## 2026-09-10 | Jet | pass 109 | hypothesis: the gate's green verdict is hiding failures that are BROKEN PRODUCTION CODE
+
+RESULT: FALSIFIED, and the opposite is true. 20 of the suite's 22 failures were
+STALE TEST FIXTURES and the production code was correct in every single one. I
+verified each against the live database before touching anything.
+
+Numbers: suite failures 22 -> 2. Whole-suite collection 2736 tests / 1 error ->
+2736 / 0 errors. Gate 657 -> 711 visible tests, 0 failed.
+
+Four distinct causes, each of which will bite the next fixture:
+  * 12 failures: a `live-swap-settled` fixture row with no `purpose` key.
+    `_unmatched_live_entry_details` keeps only purpose=='live_entry' and breaks
+    on 'live_exit'; purpose is present on 40 of 40 recent real rows
+    (live_entry 20, live_exit 19, quote_topup 1). Scan returned [], adoption
+    returned None before reading any balance.
+  * 3 failures: `_position(held_secs=20.0)` is exactly the age
+    `_ghost_min_life_sec()` (180s) protects, so a live entry MERGED instead of
+    displacing and three tests read live-entry-merged.
+  * 1 failure: a test asserting a graduation outcome whose verdict was really
+    set by today's market history -- graduation scores ghost["tradeable"], and
+    `_live_tradeable` consults symbol_edge_gate, which reads PRODUCTION.
+  * 1 collection ERROR: cross-test pollution, not a missing dependency.
+    tests/test_production_manager.py:92 installs a synthetic tensorflow into
+    sys.modules at MODULE SCOPE and never unwinds it, so importorskip
+    ("tensorflow") succeeded against the stub and the real top-level `keras`
+    was then missing. That is why the file collected ALONE and errored in the
+    sweep.
+
+NEXT: the last 2 are not fixtures. test_held_positions_keep_a_bot is reordered
+by the new (untracked) services/symbol_motion_gate.py, which reads live market
+data -- the same non-hermetic defect, in a brand-new gate. test_matrix_binding
+needs the django_db mark registered. Filed as [4deebe47]. The generalisable
+lesson: THREE separate tests now take their verdict from live market data
+through a gate. That class deserves a sweep of its own.
+
+Also changed [54aaf3b7]'s criterion demanding a full unfiltered pytest sweep
+(forbidden -- the one 598s run took the price feed dark ~12 min). Substitute:
+`pytest tests/ -q --collect-only --continue-on-collection-errors`, 13 seconds,
+proves 0 uncollectable files across all 2736, cannot starve the box.
