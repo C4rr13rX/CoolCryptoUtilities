@@ -190,6 +190,32 @@ MAX_JUMP_RATIO = float(os.getenv("STOP_SURVIVE_MAX_JUMP_RATIO", "2.0"))
 #: breach observed across a 31-hour hole is the same non-evidence as a
 #: percentile computed from one, and letting it ban while the percentile may
 #: not would put the old bug back through the thin-feed door.
+#:
+#: WHY BASECAT-USDC IS ALLOWED AND BSTONK-USDC IS NOT -- ANSWERED, do not
+#: re-measure it. A 7-day census counting ADJACENT ROWS reported BASECAT at a
+#: p99 of 5.559% with 31 jumps above 5%, against this module's 4.00% ceiling,
+#: while ``refusal_reason('BASECAT-USDC')`` returned None, and the gate was
+#: suspected of reading too short a window. IT IS NOT A WINDOW DISAGREEMENT:
+#: ``WINDOW_SEC`` is 604800.0 and the gate reads the SAME seven days. The whole
+#: difference is this constant. Re-measured 2026-09-10 over one 7d window,
+#: splitting each symbol's >5% jumps by the gap they span:
+#:
+#:     symbol         pairs   p99 by row   p99 <=120s   >5% jumps   <=120s
+#:     BASECAT-USDC    1809       5.272%       2.646%          23        0
+#:     BSTONK-USDC     1455      12.318%       4.788%          79       10
+#:     AERO-USDC       3668       0.862%       0.426%           1        0
+#:
+#: BASECAT's 23 large jumps span a MINIMUM of 281s and a median of 2135s;
+#: inside 120s its largest move all week is 4.472%. AERO's single large jump
+#: spans 22 hours. BSTONK's do not need a gap -- ten land between ticks as
+#: little as 17s apart, which is why its capped p99 stays at 4.788% and it is
+#: refused. The 120s measure is the right one: a stop is only enforceable on a
+#: tick that ARRIVES, so a 5% move accumulated over 35 minutes of feed silence
+#: is not a move the stop failed to bind on, it is one nobody was there to
+#: evaluate. The discriminator is load-bearing rather than cosmetic -- it is
+#: what separates the symbol that booked six 17-25% gross ghost rows from the
+#: one that booked a single row, and row-adjacent p99 does not separate them.
+#: Locked in by test_a_jump_nobody_could_trade_through_cannot_ban_a_symbol.py.
 MAX_TICK_GAP_SEC = float(os.getenv("STOP_SURVIVE_MAX_TICK_GAP_SEC", "120"))
 
 #: Symbols never refused regardless of feed. Empty by default.
