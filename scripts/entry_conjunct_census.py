@@ -77,22 +77,58 @@ def _floor(env_var: str, default: float) -> float:
         return float(default)
 
 
+def count_snapshots(
+    db_path: str = DEFAULT_DB,
+    *,
+    hours: float = 6.0,
+    now: Optional[float] = None,
+) -> int:
+    """How many snapshot rows the window holds, ignoring any read limit.
+
+    The census compares this against what it actually read. A verdict of
+    "never cleared its floor in the window" is only honest when those two
+    numbers agree; see ``render``.
+    """
+    cutoff = (now if now is not None else time.time()) - float(hours) * 3600.0
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM organism_snapshots WHERE ts > ?",
+            (float(cutoff),),
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row else 0
+
+
 def read_predictions(
     db_path: str = DEFAULT_DB,
     *,
     hours: float = 6.0,
-    limit: int = 2000,
+    limit: int = 0,
     now: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
-    """Every ``prediction`` block written in the window, newest first."""
+    """Every ``prediction`` block written in the window, newest first.
+
+    ``limit`` of 0 means the WHOLE window, and that is the default because a
+    limit here does not sample the window -- ``ORDER BY ts DESC LIMIT n``
+    takes the newest ``n`` rows, i.e. a shorter window wearing the requested
+    window's label. The old default of 2000 against 5540 rows in 24h read the
+    newest 8.7h and reported it as 24h, which inverted this census's verdict:
+    the truncated read said direction_prob and confidence were UNSATISFIABLE
+    0/2000, while the full window had them clearing together on 141 ticks.
+    Every one of those 141 was older than the truncation point.
+    """
     cutoff = (now if now is not None else time.time()) - float(hours) * 3600.0
     conn = sqlite3.connect(db_path)
     try:
-        rows = conn.execute(
-            "SELECT payload FROM organism_snapshots WHERE ts > ? "
-            "ORDER BY ts DESC LIMIT ?",
-            (float(cutoff), int(limit)),
-        ).fetchall()
+        sql = ("SELECT payload FROM organism_snapshots WHERE ts > ? "
+               "ORDER BY ts DESC")
+        params: Tuple[Any, ...] = (float(cutoff),)
+        if int(limit) > 0:
+            sql += " LIMIT ?"
+            params = (float(cutoff), int(limit))
+        rows = conn.execute(sql, params).fetchall()
     finally:
         conn.close()
     out: List[Dict[str, Any]] = []
@@ -105,6 +141,27 @@ def read_predictions(
         if isinstance(pred, dict):
             out.append(pred)
     return out
+
+
+def read_window(
+    db_path: str = DEFAULT_DB,
+    *,
+    hours: float = 6.0,
+    limit: int = 0,
+    now: Optional[float] = None,
+) -> Tuple[List[Dict[str, Any]], int, int]:
+    """``(predictions, rows_read, rows_in_window)`` for the window.
+
+    ``rows_read`` is deliberately the ROW count, not the prediction count.
+    Truncation is a property of the SQL ``LIMIT``, and a row that carries no
+    ``prediction`` block is fully read -- it just has nothing to score. Scoring
+    coverage on predictions instead reported "5550 of 5552" on a complete read
+    and withheld a verdict that was owed.
+    """
+    preds = read_predictions(db_path, hours=hours, limit=limit, now=now)
+    in_window = count_snapshots(db_path, hours=hours, now=now)
+    rows_read = min(int(limit), in_window) if int(limit) > 0 else in_window
+    return preds, rows_read, in_window
 
 
 def census(predictions: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -160,7 +217,24 @@ def unsatisfiable(report: Dict[str, Dict[str, Any]]) -> List[str]:
     ]
 
 
-def render(report: Dict[str, Dict[str, Any]]) -> str:
+def render(
+    report: Dict[str, Dict[str, Any]],
+    *,
+    read: int = 0,
+    in_window: int = 0,
+) -> str:
+    """The census table, and a verdict only when the whole window was read.
+
+    ``read``/``in_window`` are how many rows the census got against how many
+    the window holds. When they disagree the UNSATISFIABLE verdict is
+    WITHHELD rather than printed: this script already refuses to score a
+    conjunct whose input is absent from the payload, on the grounds that an
+    unmeasured condition must not read as a failing one, and a window that
+    was only partly read is the same error one level up. Printing it anyway
+    is what sent three passes after a floor that had been clearing fine
+    twelve hours earlier.
+    """
+    truncated = bool(in_window) and read < in_window
     lines = [
         f"{'conjunct':<18}{'min':>10}{'p50':>10}{'max':>10}"
         f"{'floor':>10}{'reachable':>16}",
@@ -176,7 +250,17 @@ def render(report: Dict[str, Dict[str, Any]]) -> str:
         )
     dead = unsatisfiable(report)
     lines.append("")
-    if dead:
+    if truncated:
+        lines.append(
+            f"WINDOW ONLY PARTLY READ: {read} of {in_window} snapshot rows."
+            " ORDER BY ts DESC LIMIT takes the NEWEST rows, so this is a"
+            " shorter window wearing the requested window's label."
+        )
+        lines.append(
+            "No UNSATISFIABLE verdict is printed on a partial read -- re-run"
+            " with --limit 0 to score the whole window."
+        )
+    elif dead:
         lines.append(
             "UNSATISFIABLE ON THIS FEED: " + ", ".join(dead)
             + " -- never cleared its floor once in the window."
@@ -194,19 +278,29 @@ def render(report: Dict[str, Dict[str, Any]]) -> str:
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--hours", type=float, default=6.0)
-    parser.add_argument("--limit", type=int, default=2000)
+    parser.add_argument("--limit", type=int, default=0,
+                        help="0 (default) reads the whole window; a positive"
+                             " limit takes only the NEWEST n rows")
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
-    preds = read_predictions(args.db, hours=args.hours, limit=args.limit)
+    preds, rows_read, in_window = read_window(
+        args.db, hours=args.hours, limit=args.limit
+    )
     report = census(preds)
     if args.json:
-        print(json.dumps({"snapshots": len(preds), "conjuncts": report}, indent=2))
+        print(json.dumps({
+            "snapshots": len(preds),
+            "rows_read": rows_read,
+            "rows_in_window": in_window,
+            "truncated": bool(in_window) and rows_read < in_window,
+            "conjuncts": report,
+        }, indent=2))
     else:
         print(f"{len(preds)} snapshots with a prediction block in the last "
               f"{args.hours:g}h\n")
-        print(render(report))
+        print(render(report, read=rows_read, in_window=in_window))
     return 0
 
 
