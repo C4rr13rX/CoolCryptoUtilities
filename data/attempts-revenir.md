@@ -2202,3 +2202,39 @@ threshold can separate and which needs contract-level symbol identity. Do NOT
 reach for another exit clamp: two of the six book `time_take_profit`, a TIME
 exit (triggers.py:230) and therefore a market order, and 1135a79 already
 established that clamping one invents a price.
+
+### Iris, pass 99 — second finding, after the entry-basis work
+
+HYPOTHESIS: COMP's two price regimes are a one-symbol ticker-squatting bug.
+
+RESULT: **NOT ONE SYMBOL — 47 of 132 (36%).** `scripts/feed_regime_census.py`
+(3ad6172). Two distinct defects:
+
+- **Two assets under one ticker.** COMP-USDC: 4468 ticks median 19.98 plus 170
+  at 42.82–55.34, separated in TIME, and BOTH providers publish BOTH regimes
+  (dexscreener 169/4083, geckoterminal 1/215). The feed changed which asset it
+  calls COMP around 08-27.
+- **One asset in two denominations.** CBETH-WETH median 1.1386 with 5 ticks at
+  2687–2851 — cbETH in WETH and in USD under one symbol. EURC-WETH,
+  CBETH-CBBTC, SOL-CBBTC, JITOSOL-CBBTC identical.
+
+**THIS IS THE QUALITY WALL.** The two deepest and worst symbols in the
+de-contaminated tradeable book are BOTH heavily regime-split: BASECAT-USDC
+(1513 of 6339 ticks off-regime, 23.9%; 36 trips, -1.9019) and COMP-USDC (170 of
+4468; 16 trips, -1.1173). They carry most of the book's losses. No stop, clip or
+cost-model change reaches a symbol whose price series is two series interleaved
+— which is why the tradeable book prices at -4.1813.
+
+BLOCKER, and it is a schema gap: `market_stream` stores no pool or contract per
+tick — the row is {ts,symbol,chain,price,volume,rest,consensus_confidence} — so
+NOBODY can say which regime is the real asset. Filed 78599ead (persist the pool
+at ingest), which BLOCKS 57d69341 (COMP identity). The address book is fine:
+base/COMP is 0x9e1028f5…840e0, genuine Compound. The tick stream is what cannot
+be attributed.
+
+NEXT: do 78599ead first. It is upstream of the cost model, the stop, the
+symbol-admission rule and every price-plausibility gate — including my own
+entry_price_corroboration, which CORRECTLY corroborates the contaminated COMP
+entry 42.82 because the feed genuinely carries that regime. Until a tick can be
+attributed to a pool, every symbol-level edge measurement in this repo is
+measuring a blend of two assets.
