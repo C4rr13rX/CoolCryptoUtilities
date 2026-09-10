@@ -92,6 +92,95 @@ def _acc(rows: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def abandoned_positions(
+    db: Path, since: float, *, now: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Positions the dark-feed sweep DROPPED, which book no outcome at all.
+
+    THE REST OF THIS REPORT CANNOT SEE THESE, AND THAT IS THE POINT. Every
+    other number here is drawn from ``trade_outcomes`` via
+    ``tradeable_book.load_rows``, so it can only ever describe round trips that
+    BOOKED. ``_abandon_dark_feed_positions`` deliberately books nothing -- it
+    frees the slot and adds nothing to any strategy's record, because closing
+    against an hour-old price is the stale-entry repricing
+    ``StrategyLedger._is_implausible`` exists to reject. That choice is right,
+    and it means the hold-time table above is a survivorship sample: the
+    positions held longest are exactly the ones most likely to have gone dark
+    and been dropped out of the book before they could appear in it.
+
+    So this section reports the population the booked book is missing, and it
+    is measured, not assumed. Two numbers matter and they are different:
+
+      POSITIONS   distinct ``released_trade_id``s -- actual destroyed evidence.
+      LOG ROWS    rows in ``trading_ops``. Measured 2026-09-10 these were 90
+                  rows for 20 positions: the sweep walks ``self.positions``,
+                  which is the MERGED book of every bot in the pool, so N bots
+                  each log the same drop, and a position re-added from the
+                  persisted book is dropped again on a later sweep
+                  (CRV-USDC: 17 rows over 8.2 hours for ONE trade_id).
+
+    Counting rows would overstate the loss by 4.5x, which is why this dedupes
+    by trade_id and reports both.
+    """
+    now = time.time() if now is None else float(now)
+    out: Dict[str, Any] = {
+        "rows": 0, "positions": 0, "held_mins": [], "by_strategy": {},
+        "median_held_mins": 0.0, "max_held_mins": 0.0, "over_4x_stale": 0,
+    }
+    if not db.exists():
+        return out
+    con = sqlite3.connect(str(db))
+    try:
+        try:
+            raw = con.execute(
+                "select ts, details from trading_ops "
+                "where status='position-abandoned-dark-feed' and ts>? order by ts",
+                (since,)).fetchall()
+        except sqlite3.Error:
+            return out
+    finally:
+        con.close()
+
+    # LAST row wins per trade_id: a position dropped repeatedly was held for
+    # the span up to its final drop, and the earlier rows are the same
+    # position, not more of them.
+    seen: Dict[str, Dict[str, Any]] = {}
+    for ts, det in raw:
+        try:
+            d = json.loads(det) if det else {}
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(d, dict):
+            continue
+        # A LIVE position is never abandoned by that sweep, but the mode is
+        # recorded, so filter on it rather than trusting the sweep's contract.
+        if str(d.get("released_mode", "")).lower() == "live":
+            continue
+        tid = str(d.get("released_trade_id") or "")
+        key = tid or f"{d.get('symbol', '?')}@{ts}"
+        seen[key] = {
+            "symbol": str(d.get("symbol", "?")),
+            "strategy_id": str(d.get("released_strategy_id") or "unclassified"),
+            "held_mins": float(d.get("held_sec", 0.0) or 0.0) / 60.0,
+            "silent_mins": float(d.get("silent_sec", 0.0) or 0.0) / 60.0,
+        }
+
+    held = sorted(v["held_mins"] for v in seen.values())
+    by_strategy: Dict[str, int] = {}
+    for v in seen.values():
+        by_strategy[v["strategy_id"]] = by_strategy.get(v["strategy_id"], 0) + 1
+    out.update({
+        "rows": len(raw),
+        "positions": len(seen),
+        "held_mins": held,
+        "by_strategy": dict(sorted(by_strategy.items(), key=lambda kv: -kv[1])),
+        "median_held_mins": statistics.median(held) if held else 0.0,
+        "max_held_mins": max(held) if held else 0.0,
+        "over_4x_stale": sum(1 for h in held if h > 4.0 * STALE_EXIT_MINS),
+    })
+    return out
+
+
 def hold_time_edge(
     *,
     days: float = 7.0,
@@ -176,6 +265,7 @@ def hold_time_edge(
         "longest": ({"symbol": longest["symbol"],
                      "held_mins": longest["held_mins"],
                      "ticks": longest["ticks"]} if longest else None),
+        "abandoned": abandoned_positions(db, now - days * 86400.0, now=now),
     }
 
 
@@ -214,8 +304,29 @@ def render(rep: Dict[str, Any]) -> str:
     out += ["",
             "  Exits are evaluated only when a tick arrives, so stale_exit_secs is a",
             "  WALL-CLOCK promise on a TICK-DRIVEN schedule. See the module docstring",
-            "  for the selection effect this table does and does not survive.",
-            "=" * 88]
+            "  for the selection effect this table does and does not survive."]
+
+    ab = rep.get("abandoned") or {}
+    if ab.get("positions"):
+        out += ["",
+                "  DESTROYED EVIDENCE -- dropped by the dark-feed sweep, booked nowhere.",
+                "  The table above cannot see these: they never reach trade_outcomes,",
+                "  so the longest-held positions are systematically missing from it.",
+                "",
+                f"  {ab['positions']:4d} positions abandoned "
+                f"({ab['rows']} log rows -- the sweep re-logs the same trade_id)",
+                f"  {ab['median_held_mins']:7.1f} min median held   "
+                f"{ab['max_held_mins']:.1f} min longest",
+                f"  {ab['over_4x_stale']:4d} of them held past 4x stale_exit_secs "
+                f"({4.0 * rep['stale_exit_mins']:.0f} min)"]
+        for sid, n in list((ab.get("by_strategy") or {}).items())[:5]:
+            out.append(f"       {n:3d}  {sid}")
+        out += ["",
+                f"  Booked round trips in the same window: {rep['placed']}. "
+                f"Evidence lost to the sweep is",
+                f"  {100.0 * ab['positions'] / max(rep['placed'] + ab['positions'], 1):.0f}% "
+                "of every position that ended."]
+    out.append("=" * 88)
     return "\n".join(out)
 
 

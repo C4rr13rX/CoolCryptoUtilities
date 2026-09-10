@@ -71,6 +71,23 @@ GATE_TESTS = (
     # Slots held by positions no rule can reach produce no closed round trip,
     # and closed TRADEABLE round trips are what graduation is gated on.
     "test_a_dark_symbols_position_is_still_closed_on_its_clock.py",
+    # THE ONLY VIEW OF THE POSITIONS THAT BOOK NOTHING, AND IT COUNTS THEM.
+    #
+    # `hold_time_edge` is drawn from `trade_outcomes`, so it can only describe
+    # round trips that BOOKED -- and the dark-feed sweep deliberately books
+    # nothing, which makes the hold-time table a survivorship sample missing
+    # exactly the longest-held positions. Measured 2026-09-10: 20 abandoned
+    # positions against 67 booked round trips, so 23% of everything that ended
+    # is invisible to the report this loop reasons about hold time with.
+    #
+    # The count has to be POSITIONS, not `trading_ops` rows. The sweep walks
+    # the MERGED book of every bot, so N bots log the same drop, and a position
+    # re-added from the persisted book is dropped again later -- CRV-USDC is 17
+    # rows over 8.2 hours for one trade_id, and the live table is 90 rows for
+    # 20 positions. A report counting rows would claim 4.5x the evidence loss
+    # that happened, and this number is an argument ABOUT a guard that is
+    # behaving correctly -- inflating it would argue for weakening it.
+    "test_the_hold_time_report_counts_positions_not_log_rows.py",
     # STEP 8 OF THE PATH TO A PAID TRADE, AND IT WAS INVISIBLE HERE.
     #
     # This gate read 621 passed / 0 failed on 2026-09-10 while six tests in
