@@ -2413,3 +2413,33 @@ now reports de-contaminated gross of **-0.3416% of notional**, i.e. the book
 loses BEFORE fees, so no admission rule and no clip can reach it — I rejected
 [cce4bf04] and [8810a066] on that measurement. The live question is WHICH
 STRATEGY supplies the negative gross ([aee0af15], Iris).
+
+### Pass 100, final: chasing the immortal losers found an EVIDENCE defect
+
+Ran the split query rather than handing it over. `trading_ops` already records
+`silent_sec` on ghost position RELEASE ops, beside `released_trade_id` /
+`released_entry_ts`. Of the 20 such ops in 7 days, only 12 join to a closed row
+in `trade_outcomes`. **Eight booked nothing at all** -- HIGH-USDC held 16754.2
+min (11.6 DAYS), VIRTUAL-USDC 2564.7, XCHAT-USDC 1544.5, AAVE-USDC 1426.4,
+GRASS-USDC 1160.3, ARB-USDC 1089.2, PEPE-USDC 395.8, CBZEC-USDC 80.1. Each held
+a symbol slot for hours to days and produced no round trip. **That is 40% of
+released ghost positions producing zero evidence**, against a tradeable evidence
+rate of only 3.3/day. Filed as **[6fc557d5]**.
+
+Dark-vs-awake split for [71975c13]: DARK (silent >= 50% of hold) 11 positions,
+gross -0.1066; AWAKE 9 positions, gross -0.1496. **Both fixes are needed and
+neither dominates.** Caveat stated rather than hidden: `silent_sec` is measured
+to the RELEASE, not the exit, so several rows exceed 100% of the hold computed
+to the outcome. Re-derive against the exit ts before building on it.
+
+Structural fact found read-only: `bot.py:9396` -- the `est_profit <= 0.0 and not
+protective_exit and not forced_by_age` refusal carrying
+`MAX_HOLD_FORCE_SECONDS`=2700 -- is inside `if pos_is_live:` at :9352. The GHOST
+path is the `else:` at :9767. **The 45-minute age override is LIVE-ONLY, and the
+ghost book is what gates graduation.** A loser cannot pay for its own close, so
+`est_profit <= 0` by construction and every non-protective exit is refused --
+which is how CRV closed on `stop_loss:-0.0272` after 17.7 hours.
+
+Third independent validation of the tick-path method: CRV's release op gives a
+1073.7-minute hold against the 1064.8 recovered from `market_stream` by price
+match. Two unrelated sources, agreement within 9 minutes.
