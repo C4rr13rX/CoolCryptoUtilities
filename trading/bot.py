@@ -5531,7 +5531,29 @@ class TradingBot:
             "net_margin":      0.0,
             "net_pnl":         0.0,
             "expected_return": 0.0,
-            "price_mu":        float(current_price or 0.0),
+            # A RETURN, NOT A PRICE. Every other field here is a dimensionless
+            # neutral, and `price_mu` used to be `float(current_price or 0.0)`
+            # -- the price, in dollars, in a summary whose whole contract is
+            # "zero expected return". Downstream it is read as a return:
+            # `_summarise_predictions` sets `delta = price_mu` outright, the
+            # net_margin head tracks it to a constant fee (measured 2026-09-10
+            # at 0.006-0.007 in every 2h bucket over 24h), and
+            # `pipeline.horizon_forecast` takes it as its first positional
+            # argument with `current_price` passed separately beside it.
+            #
+            # Measured 2026-09-10 over 5634 `organism_snapshots` cycles: 14
+            # carried `abs(price_mu) > 10` and every one of them was this
+            # summary -- exit_conf 0.5, direction_prob 0.5, net_margin 0.0 --
+            # topping out at WBTC-USDC 78143.700 and CBBTC-USDC 77970.870
+            # against a target scale of ~0.01. The bug is invisible on a
+            # $0.00003 token, which is why it survived: on those symbols the
+            # price and a return are the same order of magnitude.
+            #
+            # `_summarise_predictions` already uses 0.0 as this field's
+            # neutral when the head cannot be read, so this makes the two
+            # agree. The price is not lost -- `current_price` below carries
+            # it, and that is the key consumers wanting a price already read.
+            "price_mu":        0.0,
             "price_log_var":   0.0,
             "current_price":   float(current_price or 0.0),
             "model_available": False,
