@@ -126,6 +126,15 @@ def test_both_edge_gates_charge_the_same_cost(gate):
     Asserts on what the two modules COMPUTE, not on what either says about
     itself -- the comment claiming they agreed outlived the agreement by
     however long it took to measure this.
+
+    THIS TEST IS TAPE-INDEPENDENT AND WAS BRIEFLY MISREPORTED AS TAPE-DEPENDENT
+    on 2026-09-10. ``scripts/live_data_predicate_census.py --prove`` flagged it
+    because the first version of ``scripts/_live_data_isolation.py`` repointed
+    ``symbol_edge_gate.DB_PATH`` and not ``strategy_edge_gate.DB_PATH``, so the
+    two gates really were reading two databases and the test correctly said so
+    -- 0.004653 against 0.0065. The instrument was fixed, not this assertion.
+    Which is the point of the invariant: it fires on a divergence between the
+    two gates' databases whoever causes it, including the person measuring.
     """
     symbol_gate = importlib.import_module("services.symbol_edge_gate")
     from services.round_trip_cost import round_trip_cost

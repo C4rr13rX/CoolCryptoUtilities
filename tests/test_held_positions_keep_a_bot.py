@@ -96,9 +96,33 @@ def test_empty_book_yields_no_symbols():
 # ------------------------------------------------------- the ordering + limit
 
 
-def _build_pool(monkeypatch, *, held, selected, atf, pair_limit):
-    """Run build() against stubbed selection and capture the bot pool."""
+def _build_pool(monkeypatch, *, held, selected, atf, pair_limit, condemned=()):
+    """Run build() against stubbed selection and capture the bot pool.
+
+    ``condemned`` is the FIXTURE for ``_no_strategy_may_enter``. Patching it is
+    not tidiness: unpatched, it asks ``symbol_edge_gate``,
+    ``stop_survivability_gate`` and ``symbol_motion_gate``, all three of which
+    read ``storage/trading_cache.db`` -- so every assertion below about ORDER
+    was being decided by this week's prices. Measured 2026-09-10 with
+    ``scripts/live_data_predicate_census.py --prove``: against the live
+    database ``test_an_empty_book_leaves_selection_untouched`` FAILED and
+    against an empty one it PASSED, because the motion gate condemns
+    CBBTC-USDC today ("0.7% of 2389 15-minute windows cleared the 0.65% round
+    trip") and ``_sink_condemned`` correctly moved it to the back.
+
+    The sinking is production behaviour and is deliberate (commit 8060697,
+    "379 of 596 decision cycles in 6h ran on symbols no strategy may enter"),
+    so it is PINNED by ``test_a_condemned_candidate_sinks_below_a_clean_one``
+    below rather than suppressed -- from this fixture, never from the tape.
+    """
     monkeypatch.setattr(selector, "_held_position_symbols", lambda db: list(held))
+    condemned_upper = {str(s).strip().upper() for s in condemned}
+    monkeypatch.setattr(
+        selector, "_no_strategy_may_enter",
+        lambda symbol: ("fixture: condemned"
+                        if str(symbol or "").strip().upper() in condemned_upper
+                        else None),
+    )
     monkeypatch.setattr(
         selector,
         "select_pairs",
@@ -209,9 +233,45 @@ def test_a_held_symbol_is_not_given_two_bots(monkeypatch):
 
 
 def test_an_empty_book_leaves_selection_untouched(monkeypatch):
-    """No positions held -> exactly the pairs selection asked for."""
+    """No positions held -> exactly the pairs selection asked for.
+
+    With nothing condemned, so that this measures what its name says -- the
+    POSITION BOOK's effect on selection -- and not the market.
+    """
     built = _build_pool(
         monkeypatch, held=[], selected=["CBBTC-USDC", "AERO-USDC"],
         atf=[], pair_limit=4,
     )
     assert built == ["CBBTC-USDC", "AERO-USDC"]
+
+
+def test_a_condemned_candidate_sinks_below_a_clean_one(monkeypatch):
+    """The behaviour the live gates were silently exercising, pinned.
+
+    ``_sink_condemned`` moves a symbol no strategy may enter to the back of
+    the pool rather than dropping it, so a slot is not spent on a symbol the
+    entry gate refuses on sight. Fed from the fixture, this holds whatever the
+    tape says today; before the fixture existed it was being asserted by
+    accident, in the opposite direction, by a test about something else.
+    """
+    built = _build_pool(
+        monkeypatch, held=[], selected=["CBBTC-USDC", "AERO-USDC"],
+        atf=[], pair_limit=4, condemned=["CBBTC-USDC"],
+    )
+    assert built == ["AERO-USDC", "CBBTC-USDC"]
+    assert set(built) == {"CBBTC-USDC", "AERO-USDC"}, "condemned means sunk, never dropped"
+
+
+def test_a_held_position_outranks_its_own_condemnation(monkeypatch):
+    """``protected`` exists so a gate cannot strand the position it holds.
+
+    A held symbol is condemned by the same gates as anything else -- CBBTC-USDC
+    is condemned today -- and sinking it below the pair limit would take away
+    the only bot that can close it, which is the exact failure this file is
+    named for.
+    """
+    built = _build_pool(
+        monkeypatch, held=["CBBTC-USDC"], selected=["AERO-USDC"],
+        atf=[], pair_limit=4, condemned=["CBBTC-USDC"],
+    )
+    assert built[0] == "CBBTC-USDC", "a held position lost its place to a gate"

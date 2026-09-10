@@ -29,6 +29,7 @@ rule without a derived floor fits fourteen buckets of noise.
 
 from __future__ import annotations
 
+import importlib
 import sqlite3
 import sys
 from pathlib import Path
@@ -40,6 +41,35 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from services import symbol_edge_gate as gate  # noqa: E402
+
+#: The measured round trip on 2026-09-10, the day the AERO_7D book below was
+#: copied out of ``trade_outcomes``. See ``_pinned_cost``.
+MEASURED_COST_2026_09_10 = 0.004653005333880809
+
+
+@pytest.fixture(autouse=True)
+def _pinned_cost(monkeypatch):
+    """Charge the cost this file's fixtures were measured against.
+
+    The book is pinned by hand -- the comment on ``AERO_7D`` gives the reason,
+    "a test that re-read the live table would stop testing it the moment the
+    window rolled" -- and the COST it is judged against was left reading the
+    live receipts, where exactly the same argument applies. Every assertion
+    here is of the form "this shape slips past stage N", and whether it slips
+    past is a function of the cost subtracted from it.
+
+    Measured 2026-09-10 with ``scripts/live_data_predicate_census.py --prove``:
+    at the receipts' 0.4653% the t-statistic on the lumpy loser is -1.44 and
+    the test's premise holds; at the 0.65% default it is -2.63, stage one
+    catches the shape, and the file goes red reporting that "the fixture no
+    longer reproduces the AERO case" -- which would be a true statement about
+    the fee schedule and a false one about the gate.
+    """
+    rtc = importlib.import_module("services.round_trip_cost")
+    monkeypatch.setattr(rtc, "round_trip_cost",
+                        lambda *a, **k: MEASURED_COST_2026_09_10)
+    monkeypatch.setattr(gate, "round_trip_cost",
+                        lambda *a, **k: MEASURED_COST_2026_09_10)
 
 
 def _trip(gross_pct: float, notional: float = 2.0) -> gate.Trip:

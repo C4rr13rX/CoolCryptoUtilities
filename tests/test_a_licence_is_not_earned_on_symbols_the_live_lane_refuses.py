@@ -60,6 +60,44 @@ class LicenceNeedsSpendableEvidence(unittest.TestCase):
         )
         self._env.start()
         self.addCleanup(self._env.stop)
+        self._fixture_the_live_lane()
+
+    def _fixture_the_live_lane(self) -> None:
+        """Say which symbols the live lane refuses, instead of asking the tape.
+
+        WHAT THIS REPLACES. ``_live_tradeable`` asks two predicates that both
+        read ``storage/trading_cache.db``: ``stop_is_unenforceable`` (the price
+        feed, via ``stop_survivability_gate``) and
+        ``symbol_edge_gate.refusal_reason`` (the closed round-trip book). So
+        every assertion in this file was decided by this week's market, and the
+        premise test below was asserting a fact about the tape while claiming
+        to pin a fixture. Measured 2026-09-10 with
+        ``scripts/live_data_predicate_census.py --prove``: change the database
+        and four of these tests change their verdict.
+
+        WHAT IT DELIBERATELY DOES NOT REPLACE. The fixture is installed at the
+        two PREDICATES, never at ``_live_tradeable`` itself -- that function is
+        the code under test, and stubbing it would leave this file asserting
+        that a lambda returns what the lambda returns. It still has to combine
+        the two answers, still has to refuse the unknown symbol, and the
+        premise test below still measures it doing so.
+        """
+        # Patched where they are DEFINED, not where they are used:
+        # ``_live_tradeable`` imports both inside the function body, so a
+        # rebind on ``ledger`` is never read.
+        refused = {UNTRADEABLE.upper()}
+        stop = mock.patch(
+            "trading.pipeline.stop_is_unenforceable",
+            side_effect=lambda symbol: str(symbol or "").upper() in refused,
+        )
+        stop.start()
+        self.addCleanup(stop.stop)
+        edge = mock.patch(
+            "services.symbol_edge_gate.refusal_reason",
+            side_effect=lambda symbol, strategy_id=None: None,
+        )
+        edge.start()
+        self.addCleanup(edge.stop)
 
     def _ledger(self) -> StrategyLedger:
         return StrategyLedger(path=str(self.path))
@@ -278,6 +316,17 @@ class LicenceNeedsSpendableEvidence(unittest.TestCase):
         A test whose fixture silently stops exercising the branch it names is
         the failure mode this repo has already shipped -- a gating test that
         passed while its candidate was rejected upstream.
+
+        THIS NOW MEASURES ``_live_tradeable``, NOT THE MARKET. It used to ask
+        the live gates whether BSTONK still had an unenforceable stop, so the
+        premise it pinned was a fact about the week rather than about the code
+        -- and when the tape moved, all four tests in this file changed their
+        verdict together (measured with
+        ``scripts/live_data_predicate_census.py --prove``). With the two
+        predicates fixtured in ``setUp``, what is left under test is the thing
+        that was always the point: that ``_live_tradeable`` reads them, and
+        that a refusal from either one is enough to make the evidence
+        unspendable.
         """
         self.assertFalse(
             ledger_mod._live_tradeable(UNTRADEABLE),
