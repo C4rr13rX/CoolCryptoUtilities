@@ -94,6 +94,30 @@ best flat arm measured back-to-back on the same corpus and windows:
 Same direction in both windows, which is more than any previous topology
 change here has managed. It is also small, on 180 predictions per cell.
 
+**And it is NOT noise — this rig is deterministic.** A +1.7 point effect is
+worthless if run-to-run variance is the 4.4 points the standing orders cite
+(89.2% and 93.6% on the same fabric 34 minutes apart), so I replicated the
+DOWN relation arm on a **fourth fresh brain dir**
+(`brain-data-p109-gale-rep1`), node restarted, fabric rebuilt from empty:
+
+| run | brain dir | exact | buy omens | total | per-trade |
+|---|---|---|---|---|---|
+| original | `brain-data-p109-gale-downrel` | 31.7% | 42 | -1.0696 | -2.5468% |
+| replicate | `brain-data-p109-gale-rep1` | 31.7% | 42 | -1.0696 | -2.5468% |
+
+Identical in every figure. At this scale — 311 training pairs, 180 held-out,
+default `--seed 7`, one consolidation epoch — the pipeline reproduces exactly
+and **observed variance is 0.0 points, not 4.4**.
+
+Two consequences. First, the relation effect above is a real reproducible
+difference rather than a lucky draw, which is the only reason a 1.7-point
+result is worth writing down at all. Second, the 89.2%/93.6% variance in the
+standing orders does not describe this configuration — whatever produced it
+(a larger run, a shared or dirty fabric, a different seed or `--balance`
+draw), it is not an inherent property of the rig, and small back-to-back
+effects here should not be dismissed as noise by default. Anyone citing that
+4.4-point band should say which configuration they measured it in.
+
 ## 4. Did it beat baseline? NO — and the one cell that did is a single window
 
 State it plainly, because at-or-below baseline is the normal outcome here.
