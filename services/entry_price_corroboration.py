@@ -99,8 +99,49 @@ DEFAULT_WINDOW_SEC = 7200.0
 #     ticker. That is the ticker-squatting defect and it needs a symbol-identity
 #     fix, not a tolerance change -- no threshold on a single price can separate
 #     two regimes that are both present in the feed.
-UNCAUGHT = ("AERO-USDC entry 0.436805 (no feed coverage yet)",
-            "COMP-USDC entry 42.82 (feed carries two regimes for this ticker)")
+UNCAUGHT = ("COMP-USDC entry 42.82 (feed carries two regimes for this ticker)",)
+
+# ---------------------------------------------------------------------------
+# THE SECOND SOURCE: THE BOOK'S OWN PRIOR ENTRIES
+# ---------------------------------------------------------------------------
+# The feed check above cannot judge a symbol the feed has not reached, and that
+# hole contains the row this whole item is about. AERO-USDC entry 1.140000 was
+# booked at 08-26 10:2x; the feed's first AERO tick is 08-26 17:02. There is no
+# feed evidence to weigh at the moment of that decision, so the shipped gate
+# returns unjudgeable and the GHOST lane -- the lane that produces every row
+# graduation reads -- accepts it.
+#
+# But the BOOK knew. The trade immediately before it opened AERO at 0.436805.
+#
+# WHY *ENTRIES*, NOT ALL BOOKED PRICES. Measured with
+# scripts/entry_basis_census.py over 216 closed round trips:
+#
+#   peers            min support  AERO 1.140000 reads   verdict
+#   entries+exits              2  1.45x                 MISSED -- below BSTONK's
+#                                                       legitimate 1.81x
+#   entries only               1  2.61x                 CAUGHT
+#
+# The contaminated tick IS trade 1's EXIT price, so including exits feeds the
+# contamination into the median that is supposed to detect it and drags the
+# median from 0.436805 to 0.788402. Entries only, and the separation is clean.
+#
+# WHY 2.5. Over the 175 judgeable rows the largest LEGITIMATE ratio is
+# BSTONK-USDC 0.006106 at 2.03x -- a genuinely volatile symbol, not a bad tick.
+# p99 of the whole distribution is 1.52. 2.5 sits above the worst honest row
+# and below the contaminated one, and refuses 2 of 175 (1.1%):
+#
+#   python -X utf8 scripts/entry_basis_census.py --min-support 1 --peers entries
+#
+# The gate looks BACKWARD only, which the census's symmetric window does not.
+# Chronologically that matters and it is the right answer: AERO 0.436805 has no
+# prior AERO entry, so it is unjudgeable and allowed; AERO 1.140000 has 0.436805
+# behind it and is REFUSED. The fiction is stopped at the row that invented it.
+BOOK_MAX_RATIO = 2.5
+
+# How far back a prior booked entry counts. A day, because a basis a week old is
+# not evidence about today's price in a symbol that moves, and a window shorter
+# than the gap between this harness's trades in one symbol would find nothing.
+BOOK_WINDOW_SEC = 86400.0
 
 
 def corroborating_ticks(
@@ -197,5 +238,88 @@ def entry_price_is_corroborated(
     """
     r = corroborating_ticks(symbol, price, at_ts=at_ts, **kw)
     if r["corroborated"] is None:
+        # The feed cannot judge this one. Ask the book before falling back to
+        # the strict/lenient default -- a prior entry in the same symbol is
+        # evidence even when no tick is.
+        b = book_disagreement(symbol, price, at_ts=at_ts,
+                             db_path=kw.get("db_path"), con=kw.get("con"))
+        if b["ratio"] is not None:
+            return not b["disagrees"]
         return not strict
     return bool(r["corroborated"])
+
+
+def book_disagreement(
+    symbol: str,
+    price: float,
+    *,
+    at_ts: float,
+    max_ratio: float = BOOK_MAX_RATIO,
+    window_sec: float = BOOK_WINDOW_SEC,
+    db_path: Optional[Path] = None,
+    con: Optional[sqlite3.Connection] = None,
+) -> Dict[str, Any]:
+    """How far ``price`` sits from what this symbol's own PRIOR entries cost.
+
+    Returns ``{"ratio", "median", "support", "disagrees", "reason"}``. ``ratio``
+    is None when the book holds no prior entry for the symbol in the window --
+    unjudgeable, which is not the same as contaminated. Only entries BEFORE
+    ``at_ts`` count, and only entries: see BOOK_MAX_RATIO for why exits are
+    excluded and where 2.5 comes from.
+    """
+    import statistics
+
+    sym = str(symbol or "").strip()
+    out: Dict[str, Any] = {"ratio": None, "median": None, "support": 0,
+                           "disagrees": False, "reason": ""}
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        out["reason"] = "price is not a number"
+        return out
+    if not sym or px <= 0:
+        out["reason"] = "no symbol, or price is not positive"
+        return out
+
+    owned = con is None
+    if con is None:
+        con = sqlite3.connect(str(db_path or DEFAULT_DB))
+    try:
+        peers = [float(p) for (p,) in con.execute(
+            "SELECT entry_price FROM trade_outcomes "
+            "WHERE symbol = ? AND ts < ? AND ts >= ? AND entry_price > 0",
+            (sym, at_ts, at_ts - float(window_sec)),
+        )]
+    except sqlite3.Error as exc:
+        # Unjudgeable, never refused: a database problem must not masquerade as
+        # a contaminated price and halt every entry.
+        out["reason"] = "cannot read trade_outcomes: %s" % (exc,)
+        return out
+    finally:
+        if owned:
+            con.close()
+
+    out["support"] = len(peers)
+    if not peers:
+        out["reason"] = ("no prior %s entry booked in the %.0fs before this one; "
+                         "unjudgeable" % (sym, window_sec))
+        return out
+
+    med = statistics.median(peers)
+    if med <= 0:
+        out["reason"] = "prior entries median to zero; unjudgeable"
+        return out
+    ratio = px / med
+    out["median"] = med
+    out["ratio"] = ratio
+    out["disagrees"] = bool(ratio > max_ratio or ratio < 1.0 / max_ratio)
+    if out["disagrees"]:
+        out["reason"] = (
+            "entry basis %.6f for %s is %.2fx the median of the %d entries this "
+            "book opened in the preceding %.0fs (%.6f) -- beyond %.2fx, so this "
+            "is not a price the symbol trades at"
+            % (px, sym, ratio, len(peers), window_sec, med, max_ratio))
+    else:
+        out["reason"] = ("%.6f is %.2fx the median of %d prior %s entries (%.6f)"
+                         % (px, ratio, len(peers), sym, med))
+    return out
