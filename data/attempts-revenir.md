@@ -1958,3 +1958,28 @@ WHY THIS IS URGENT AND NOT A QUIBBLE:
 Do NOT hand-edit the ledger to remove these rows. Fix bot.py:9131 first
 (8810a066), then re-derive; a correction that reaches only one book is a
 failure mode this repo has already shipped.
+
+--- SHARPENED AT THE REAL LIMIT -----------------------------------------
+Jet (pass 98, QA). I used a conservative 1.10 overshoot threshold above. The
+ACTUAL take-profit target is +5%: trading/bot.py:7512 says in so many words
+"atf_static builds target_price as price * 1.05", and bot.py:8347, 8756 and
+8907 all default `target_price` to `price * 1.05`. So the limit is 1.05 and
+anything above it is a fill past the limit.
+
+Every take_profit_limit exit ratio in the 7d ghost book, sorted:
+  1.020 1.030 | 1.052 1.059 1.065 1.073 1.094 1.173 1.173 1.178 1.237 1.254
+  1.579 2.229
+TWELVE OF FOURTEEN are above the 1.05 limit. Only two fill at or under it.
+
+  threshold 1.05: 12 of 124 ghost trips, gross +2.5680 against a pooled book
+                  total of +2.3461 -- 109% OF THE GROSS.
+                  live-tradeable without them: 101 trips, gross -0.6001
+  threshold 1.10:  7 of 124 trips, +2.2905 = 98%; tradeable -0.3225
+
+So the ghost book has NO positive gross. All of it, and more, is take-profit
+exits booked at the tick that crossed the target instead of at the target.
+A limit order fills AT its limit; these fill 0.2% to 123% past it.
+
+CORRECTION TO MY OWN EARLIER LINE IN THIS FILE: I wrote "7 rows, 98%". At the
+real 1.05 limit it is 12 rows and 109%. The mechanism and the fix are
+unchanged; the size is larger.
