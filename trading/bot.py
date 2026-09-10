@@ -6049,7 +6049,44 @@ class TradingBot:
             raise _InsufficientHistory(
                 f"have {len(window)} samples, model needs {self.window_size}")
 
-        prices = np.array([float(row.get("price", 0.0)) for row in window], dtype=np.float32)
+        # ONE FOREIGN ROW IN SIXTY SATURATES EVERY HEAD, AND THAT IS THE -1.2.
+        #
+        # The price channel is scale-free (log(p_t / p_0)) and that works
+        # across eight orders of magnitude -- but only if every row in the
+        # window is the same asset. A single row from a differently-priced
+        # feed becomes a log return of ten or more, the convolutions see a
+        # move no market makes, and ALL SIX heads come off that one tensor:
+        # price_mu, net_margin, direction_prob and exit_conf saturate
+        # together. That is why net_margin's MAXIMUM was negative across
+        # ~3350 cycles and every symbol for 12h, so the entry conjunct
+        # net_margin >= 0 at trading/scheduler.py:809 could not fire for any
+        # symbol at any price, and 1572 of 1574 cycles were holds.
+        #
+        # Repair carries the last good price forward: the window keeps its
+        # length, so the caller never sees a short buffer (that is what
+        # _InsufficientHistory means, and it means something else).
+        raw_prices = [float(row.get("price", 0.0)) for row in window]
+        try:
+            from trading.data_loader import sanitize_model_price_window
+
+            repaired_prices, repaired_count = sanitize_model_price_window(raw_prices)
+        except Exception as exc:  # noqa: BLE001 - serving must not die on the guard
+            log_message(
+                "trading",
+                f"price window sanitize failed, serving raw: {exc}",
+                severity="warning",
+            )
+            repaired_prices, repaired_count = raw_prices, 0
+        if repaired_count:
+            # A serving path quietly repairing rows every tick has an upstream
+            # feed bug; the count is how anyone finds out.
+            log_message(
+                "trading",
+                f"repaired {repaired_count} foreign row(s) in the model price "
+                f"window for {window[-1].get('symbol', 'asset')}",
+                severity="warning",
+            )
+        prices = np.array(repaired_prices, dtype=np.float32)
         volumes = np.array([float(row.get("volume", 0.0)) for row in window], dtype=np.float32)
         price_vol = np.stack([prices, volumes], axis=-1).reshape(1, self.window_size, 2)
 
