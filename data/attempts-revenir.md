@@ -3872,3 +3872,34 @@ no_signal on new symbols too. The question worth asking next is why 65 of 72
 have no signal on a live feed, which is a strategy-input question, not a
 scheduling one. [476b6671] is re-scoped to the cap half and carries both
 numbers.
+
+### 2026-09-10 -- Iris, pass 106, addendum: one lead killed, one denominator problem
+
+HYPOTHESIS I RAISED AND THEN FALSIFIED MYSELF, SAME PASS: that Gale's 65
+`no_signal` strategies are dominated by long-horizon `@`-variants which cannot
+form a window on ~240 bars of 6h history. Tested over 24h: BARE-name
+strategies appeared 7 of 13; `@`-suffixed variants appeared 6 of 11. 54%
+against 55%. THE HORIZON SUFFIX EXPLAINS NOTHING -- do not re-run this.
+
+The sharper question it leaves: `mean_reversion`, `momentum_breakout`,
+`supertrend_follow`, `unclassified`, `volume_spike` and `vwap_reversion` are
+short-horizon indicator strategies, silent for a full 24h, on symbols carrying
+~240 bars in 6h (DRB 252, AERO 240, ZORA 234, ETH-USDT 225, VVV 221, ALIGN
+211). It is NOT history depth. Why does `volume_spike` return no signal on 240
+bars?
+
+AND A MEASUREMENT PROBLEM BIGGER THAN ANYTHING ELSE I FOUND TODAY.
+`data/strategy_registry.json` read 42 strategies at the start of this pass and
+TWENTY-FOUR at the end of it. Gale's arbitration rows say 72 registered. Three
+different denominators in one pass, and the file moved under a running
+measurement. Every "N of 42" in my commits today -- 13 of 42, 28 of 42, 32
+never proposed -- used a denominator that no longer exists.
+
+NOBODY SHOULD QUOTE A FRACTION OF THE POPULATION until it is settled which
+registry is authoritative and whether it is being rewritten live. The
+numerators are unaffected and still stand: atf_static ZERO decision cycles,
+1576 of 1578 cycles hold, 8 symbols with real depth against 7 scheduler slots.
+
+NEXT: settle the registry denominator BEFORE any acceptance criterion phrased
+as a share of the population (which includes [476b6671]'s and the operator's
+"strategies with >=5 tradeable trades must rise from 11 of 38").
