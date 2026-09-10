@@ -3085,3 +3085,74 @@ tick: the reaper's docstring is right that an hours-old mark is the AERO +161%
 artifact `StrategyLedger._is_implausible` exists to reject. The live lane
 already solves this honestly — `_queue_forced_live_exit(..., reason="dark_feed")`
 at `bot.py:~12085`, "Selling at the chain price". Reuse that for ghost.
+
+---
+
+## 2026-09-10 — Gale, pass 104 — [b6d3dd84] the scout's ghost book
+
+**Hypothesis:** `atf_static_scout` has 237 ghost trades and +6.4498 in the
+ledger but ZERO rows in `trade_outcomes`, so the biggest book in the system has
+never been read by any de-contamination instrument. Either it books receipts
+somewhere else, or the ledger book is inflated.
+
+**What I did:** Cove answered criteria 1 and 2 in pass 103 (the scout never
+calls `db.record_trade_outcome`; the 44% unattributed tail is historical and
+stopped ~6.6 days ago). The antecedent of criterion 3 is therefore FALSE — the
+scout books under no id at all — so instead of declaring it vacuous I
+reconstructed its book from the one table that holds its exits
+(`trading_ops` `ghost-exit`) and fed it to `scripts/tradeable_book.collect(rows=...)`
+**unmodified**: same tradeable predicate, same overshoot clamp, same
+implausibility test, same per-strategy scale. No rule, bar or predicate changed.
+Shipped as `scripts/scout_book_audit.py` + `tests/test_the_scout_book_is_not_read_as_dollars.py`
+(commit `a315455`).
+
+**RESULT — the ledger's +6.4498 is percentages summed as dollars.**
+- Only **109 exits exist**, not 237 (~2.2x inflation, independently
+  corroborating `services/tradeable_evidence.py:289`'s 235-vs-107 from two days
+  earlier). 109 and not the 120 a `LIKE` over the details blob returns: 11 of
+  those are *other* writers' rows that MENTION the scout. Attribution is
+  `details.strategy_id` and nothing else.
+- **105 of the 109 carry no `profit_unit`** — bare fractions, never charged a
+  fee, summing to +2.0705 — against 4 cost-charged USD rows summing to
+  **-0.1097**. The writer was corrected ~3.3 days ago at
+  `atf_static_strategy.py:945`; both populations sit in an append-only table
+  forever, so every naive reader hits this.
+- Split on the live-lane predicate, in **return space** so no notional is
+  assumed (cost 0.3862% at its $6 clip):
+
+  | half | trips | sum ret | mean excess | t | win after cost |
+  |---|---|---|---|---|---|
+  | TRADEABLE | 55 | +23.16% | +0.0349% | **+0.24** | 29% |
+  | UNTRADEABLE | 54 | +183.60% | +3.0139% | +3.02 | 70% |
+  | tradeable ex-AERO | 28 | +12.29% | +0.0527% | +0.20 | 18% |
+
+  **89% of the raw return is in symbols the live lane REFUSES** (BSTONK
+  +89.18%, BASECAT +38.51%, BPAD +37.77%, MOONBASE +16.08%). The tradeable half
+  — the only half graduation could ever spend — is indistinguishable from zero
+  at a 29% win rate against a 55% bar, and dropping AERO does not rescue it.
+
+**This REMOVES a candidate rather than adding one.** The scoreboard's
+`atf_static_scout 4/237` and the STRUCTURALLY BLOCKED note were already right;
+now the book behind them is too. No backfill of `trade_outcomes` — the
+237-vs-109 window boundary is unrecoverable and `tradeable_evidence.py` already
+fails closed there.
+
+**Also, on the operator's p1 [654eb8f7]:** `tests/test_wallet_websocket.py` had
+**never run once** — it died at collection with `ModuleNotFoundError: daphne`,
+and `pass_gate` omits an uncollectable file rather than failing it. `daphne>=4.1.0`
+was already pinned at `requirements.txt:43` and simply was not installed.
+Installed it: the file now **passes** (1 passed). The other file the operator
+named, `test_the_model_reads_the_price_move_not_the_price_tag.py`, is NOT a
+collection error — it skips cleanly on absent `tensorflow`, which is deliberate
+here (broken cp313 wheel; prod runs without it). Do not install TF to "fix" it.
+Gate went 620 passed/1 failed → **644 passed/0 failed**.
+
+**What I would try next:** the scout question is closed, so stop mining its
+book for evidence. The live number to move is step 3 GHOST, and Jet's 24h
+census is the sharpest thing pointing at it: two of the four scheduler entry
+conjuncts (`direction_prob` max 0.5194, `confidence`/`exit_conf` max 0.5392)
+never once reached their 0.6 thresholds over 2000 snapshots, so the lane cannot
+open regardless of how many candidates arrive. That is a *threshold vs.
+achievable-distribution* mismatch, not a plumbing bug — measure what those two
+heads actually emit before touching the funnel, and do NOT simply lower 0.6,
+which would be moving the bar to move the number.
