@@ -1,0 +1,21 @@
+{
+  "corpus": "p108_aero_down.json",
+  "samples": 719,
+  "horizon": 12,
+  "l0": {
+    "geometry": 0.9680111265646731,
+    "temporal": 1.0,
+    "flow": 0.22531293463143254,
+    "volatility": 0.12378303198887343,
+    "cross": 0.4102920723226704,
+    "horizon": 0.0013908205841446453,
+    "instrument": 0.0013908205841446453
+  },
+  "l0_mean_inputs": 0.5454798331015299,
+  "l1": 0.013908205841446454,
+  "l2": 0.25591098748261476,
+  "l1_vocabulary": 10,
+  "l2_vocabulary": 184,
+  "l1_abstracts": true,
+  "l2_abstracts": true
+}

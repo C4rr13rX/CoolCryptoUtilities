@@ -1,0 +1,24 @@
+{
+  "train_window": [
+    357,
+    707
+  ],
+  "train_n": 350,
+  "test_window": [
+    719,
+    887
+  ],
+  "test_n": 168,
+  "train_base_trough": 0.11142857142857143,
+  "buyable_motifs": [
+    "co1 geo=mid tem=lo flo=lo vol=hi cro=lo",
+    "co1 geo=mid tem=lo flo=mid vol=hi cro=lo"
+  ],
+  "called_n": 109,
+  "called_share": 0.6488095238095238,
+  "called_net": -0.031416100861950104,
+  "baseline_net": -0.029287886774760703,
+  "called_trough_precision": 0.1743119266055046,
+  "baseline_trough_rate": 0.14285714285714285,
+  "cost": 0.0065
+}
