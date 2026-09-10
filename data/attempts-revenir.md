@@ -1754,3 +1754,29 @@ did not touch the graduation stamp, _live_tradeable, _tradeable_of or the
 demotion/re-arm rules -- the operator's 03:46 steering ruled that out and
 I had already concluded the same from reading them. What moved is which
 wall the next pass works, and the wall now has a number: 0.2625% -> 0.3187%.
+LATE FINDING, and it is the most important one of the pass. Iris measured
+"AERO-USDC is the one symbol we can spend on that pays: 52 round trips,
++1.5706 after cost" (3653128) while I measured AERO losing. Both readings
+are correct on their own window and the entire difference is ONE ROW:
+2026-08-26 10:27, ghost, gross +3.2196, entry 0.436805 -> exit 1.140000,
++161.0% on 4.5786 units. That is the stale-entry repricing artifact
+documented VERBATIM in trading/strategies/ledger.py::record's
+_is_implausible block -- same date, same entry price to six decimals, same
+exit, same quantity, same profit. The ledger added a guard to REJECT that
+shape; trade_outcomes is append-only and still holds the row, so any
+all-time query reads it as real.
+    AERO ghost, 7d    36 trips  gross -0.0802  net -0.5029
+    AERO ghost, 14d   41 trips  gross -0.0570  net -0.5335
+    AERO ghost, 30d+  43 trips  gross +2.0641  net +1.5616   <- the artifact
+    all-time minus that one row:  gross -1.1555
+So AERO is negative on every honest window, and "the one symbol that pays"
+is fiction. Filed as backlog b9295f16: a shared filter applying the
+ledger's implausibility test to trade_outcomes reads, so a per-symbol
+table cannot be carried by a row the system already decided did not
+happen. NOT FIXED -- I ran out of clock and said so on the board and by DM
+to Iris rather than leaving the contradiction standing.
+GENERAL LESSON for the next pass: trade_outcomes keeps pre-guard artifacts
+forever, exactly like trading_ops. Two agents measured the same symbol in
+opposite directions this pass purely by choosing different windows over
+it. Apply the implausibility filter, or state the window and know that an
+all-time number over this table can be fiction.
