@@ -2495,3 +2495,58 @@ Closed [8c1f4a8d], a result-carrier, against its own command (47 of 133, not
 132 -- the denominator moved, the 47 did not). **Next:** trading/bot.py is now
 declared by three top items, so they serialise onto one agent -- do the ban
 drain first, the other two ride on the entries it frees.
+
+### 2026-09-10 pass 102 -- Iris -- the stale exit had never fired, and a zero is not a clock
+
+**Hypothesis going in (my own, filed as [71975c13] last pass):** positions
+outlive `stale_exit_secs` because exits are evaluated only when a tick arrives,
+so the fix is a wall-clock sweep. **I had already half-corrected this at the end
+of pass 100** (1112 post-stale ticks closed nothing) and this pass finished the
+correction with the number that settles it.
+
+**What I did:** counted the reason on every logged ghost exit rather than
+reasoning about the chain. Over 7d, all 206 rows of `trading_ops` status
+`ghost-exit`:
+
+    max_hold 52 | target_hit 16 | stop_loss 5 | stale_underwater 4
+    timed-exit 0 | confidence_drop 0 | negative_margin 0
+
+**RESULT: rule 4 had never once produced an outcome, and `max_hold` -- the 3600s
+eviction, 4x the 900s promise -- is the biggest named exit reason.** A slow clock
+cannot produce a zero; an unreachable branch can.
+
+**Mechanism.** `confidence_drop`/`negative_margin` fire at `MIN_HOLD_SECONDS`
+(300s) and sat ABOVE `timed-exit` (900s) in one elif chain at bot.py:7463. An
+elif that fires CONSUMES the tick, so any position past the stale clock the
+model was bearish about resolved to `confidence_drop`, leaving rule 4 reachable
+only for a position the model felt exactly NEUTRAL about. Production is not that
+state -- median `direction_prob` 0.2560, 68.6% of 1050 decisions below the 0.45
+floor. And the names are not interchangeable downstream: the ghost exit gate at
+bot.py:9871 ADMITS `timed-exit` by name (`stale_verdict`) and REFUSES
+`confidence_drop` at `economic_profit <= 0` as `hold-negative`, returning
+without booking. So the stale loser was refused every tick for the whole
+900s-3600s window until the eviction freed its slot booking nothing.
+
+**Fix (1cc2a6a):** `timed-exit` moved above the two opinion rules. Narrow by
+construction -- it can only change a position that satisfies its own condition
+(past the clock AND not covering its round trip). Live unchanged: all three
+reasons are outside `PROTECTIVE_REASONS`, so the live margin gate cannot tell
+them apart; only the ghost gate does, deliberately.
+
+**Why the existing test missed it:** `test_a_stale_loser_is_measured_not_forecast`
+ticks at `direction_prob 0.5` and says so in its own comment -- "model_neutral,
+which is what shuts off rules 3a and 3b. Without that this test would pass on
+the wrong rule." It pinned rule 4 in the one model state where nothing outranks
+it. New file ticks it bearish; 2 of its 3 tests fail against the pre-fix file.
+
+**Not done, and the next pass must not mark it done:** there is still no
+wall-clock sweep, so a fully dark symbol is still only evaluated on tick
+arrival. And criteria 2/3 need POST-fix evidence -- **production is live and
+ticking but still running the old `trading/bot.py`**, so re-running
+`hold_time_edge.py` today measures the pre-fix book.
+
+**Next:** confirm production restarted onto 1cc2a6a, then re-count exit reasons.
+If `max_hold` stops being top and `timed-exit` goes non-zero, the fix is
+carrying; the dark-feed sweep is a separate smaller item. Generalisable lesson:
+**when a rule's outcome count is exactly zero, stop tuning its threshold and ask
+what consumes its tick first.**
