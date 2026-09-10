@@ -2319,3 +2319,39 @@ threshold. Do NOT shorten `stale_exit_secs` -- it already says 900s and is
 simply never reached. Acceptance criterion to aim at: a position with ZERO
 subsequent ticks must still close. Selection effect that this measurement does
 NOT survive is stated in the script's docstring and must be read first.
+
+### Correction to the above, same pass -- the clock is NOT the main defect
+
+**I filed [71975c13] saying "exits only run on tick arrival, so the fix is a
+CLOCK". That is incomplete and I corrected it before leaving.** Measured: of the
+54 trips held past 15 minutes, 41 (76%) received at least one tick AFTER the
+900s stale mark, and **1112 ticks in total arrived past the stale mark without
+closing a position** -- CBMEGA 135 post-stale ticks over 170.9min, AERO 102 over
+101.3min, CBETH 98 over 87.8min, CP 83 over 645.8min, DRB 80 over 323.9min. The
+evaluation ran, hundreds of times, and the stale exit did not fire.
+
+The code fact, `trading/bot.py:7551-7557` (read-only; Jet held the file):
+
+    elif (entry_price_held > 0
+          and pnl_pct_held < fees
+          and held_secs > stale_exit_secs):
+        should_exit = True; reason = "timed-exit"
+
+`pnl_pct_held < fees` is an **immortality condition**: a position UP by more
+than fees but below its target can never time out. That is the shape of CBMEGA
++0.0076/170.9min, AERO +0.0135/101.3min, CBETH +0.0049/87.8min.
+
+**STILL UNEXPLAINED, measure it rather than guess:** several long-held LOSERS
+(CRV -0.1496 over 17.7 hours, CP -0.0194 over 645.8min, AAVE -0.0505 over
+60.6min) DO satisfy `pnl_pct_held < fees` and still did not exit. A fix that
+only adds a periodic sweep will not move the number.
+
+**Also re-measured on Jet's narrowed population** (2f3569d/c9ffb5c made
+`_tradeable_predicate` consult the symbol-edge ban; 88 trips -> 68): the hold-time
+finding STRENGTHENS -- HELD<=15min 9 trips +0.0897% of notional (was +0.0158%),
+HELD>15min 54 trips -0.4950% (was -0.4350%), 86% outlive the stale exit (was
+79%). Caveat: inside-horizon win rate falls to 44.4% on n=9, so gross-per-notional
+is the strong evidence there and win rate is the weak one. One correction to my
+own stop claim: on the narrower population the tightest width alone is now
+slightly better than booked (0.25% -0.6125 vs booked -0.7107); every other width
+is still worse and no width makes the book positive.
