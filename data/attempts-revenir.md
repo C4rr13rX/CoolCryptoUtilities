@@ -3280,3 +3280,47 @@ stale-entry repricing that made AERO's +161% row; the sweep books nothing ON
 PURPOSE and is right). Give the GHOST sweep the chain-price read that
 _exit_dark_live_positions already uses for the live side, so it closes a real
 round trip instead of destroying one. In trading/bot.py.
+
+## 2026-09-10, Jet (AUDITOR, pass 105)
+HYPOTHESIS: the last few passes' reported numbers are reproducible, and the
+sprint's P1 item [0f6957e3] (720 evicted ghost positions = destroyed evidence)
+is real work worth doing.
+DID: re-ran the gate, the five live-exit tests, profit_logic_audit, the entry
+conjunct census, and re-measured [0f6957e3]'s population from trading_ops.
+RESULT -- WHAT REPRODUCED: pass_gate --check 646 passed / 0 failed, exactly as
+Iris reported. profit_logic_audit NO KNOWN LOSING SHAPES, 0 findings.
+tests/test_live_exit_books_the_receipt_fill.py 7 passed and IS in GATE_TESTS;
+commit 99b1eb6 fixed it in the FIXTURE and left the phantom guard untouched, as
+the operator required -- and it corrected the operator's own diagnosis (the mock
+wallet already held AERO 1.546; the unmocked RPC in _position_is_real_on_chain
+was the real cause, so topping up the wallet would have fixed nothing).
+RESULT -- WHAT DID NOT SURVIVE: [0f6957e3] is STALE and I REJECTED it (not done
+-- it must not count as throughput). position-released n=788 LAST fired 126.17h
+ago; entry-refused-slot-busy n=164 fired 3.61h ago (trading/bot.py:7099). A new
+entry at a busy slot stopped EVICTING the holder and started REFUSING ITSELF
+5.3 days ago -- the item's own second branch, already shipped. Daily
+ghost-entry/ghost-exit/position-released over 7d, oldest first: 768/81/667,
+96/46/29, 46/28/0, 24/19/0, 1/1/0, 14/9/0, 9/10/0.
+I ALSO REDISCOVERED, NOT DISCOVERED, the 21s median hold: commit 59bd55c said 22
+SECONDS two hours before me, with more (price at eviction is FRESH, median
+staleness 3.0s). The hygiene defect is that 59bd55c landed at 06:55 and the item
+still carried "books a round trip at the eviction price" as a live criterion at
+09:00. A conclusion committed to git did not reach the backlog item it answered.
+STEP 3 GHOST=FAIL IS THE PREDICTION HEAD AND NOTHING ELSE. Conjuncts last
+cleared TOGETHER 11.68h ago (48h window, census's own keys direction_prob and
+exit_conf -- it is exit_conf, NOT confidence). ghost-entry vs ticks clearing BOTH
+floors per 2h over 24h, oldest first: 2/44 2/29 1/10 0/0 1/8 0/21 1/9 1/0 0/0
+0/0 1/0 0/0. Zero ghost-entry AND zero ghost-exit in the last 2h while the feed
+is HEALTHY (45 ticks/10min, newest 3.2 min). Entries and exits now MATCH (9 vs
+10 in 24h) so the close rate is NOT the problem; entry VOLUME is.
+TWO CAUSES RULED OUT: no commit landed near the onset (~21:00-23:00 on 09-09;
+git log has a clean gap from 09-09 to 06:50 on 09-10), and the only model
+artifact, models/active_model.keras, has mtime 16.98h ago -- 5-7h BEFORE the
+onset, so the same weights cleared both floors for hours before stopping.
+NEXT: same weights, same code, output flat across EVERY symbol at once is the
+signature of a SHARED INPUT going degenerate. Diff a recorded feature vector
+from before the onset against one after, out of organism_snapshots -- no bot.py
+edit needed -- and find WHICH input into the direction head went constant. Cove
+had the right shape on swarm_score and correctly retracted the variable; keep
+the shape, change the variable. Do NOT lower the 0.6 floors to admit an input
+this far out of range.
