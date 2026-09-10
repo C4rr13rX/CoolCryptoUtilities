@@ -74,3 +74,34 @@ def test_the_live_booking_site_is_not_guarded_this_way():
     assert "book_disagreement" not in live, (
         "guarding the live booking site refuses a position whose money has "
         "already left the wallet -- the live check belongs before the swap")
+
+
+def test_every_name_the_guard_reads_is_bound_before_it_runs():
+    """The guard's own ``except Exception`` would hide a NameError.
+
+    Falling through to allowed on failure is right -- unjudgeable is not
+    contaminated -- but it means a typo in one of the four names the call reads
+    disables the gate SILENTLY: every entry sails through and nothing is logged.
+    That is the class where enabling something against the wrong shape does not
+    degrade the run, it stops it without saying so. This walks the enclosing
+    function's AST and proves each name is bound before the guard's line.
+    """
+    import ast
+
+    line = SRC[:SRC.index("# ghost / paper entry")].count("\n") + 1
+    fn = max(
+        (n for n in ast.walk(ast.parse(SRC))
+         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+         and n.lineno <= line <= (n.end_lineno or 0)),
+        key=lambda n: n.lineno)
+
+    bound = {a.arg for a in fn.args.args + fn.args.kwonlyargs}
+    bound |= {n.id for n in ast.walk(fn)
+              if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+              and n.lineno < line}
+
+    for name in ("symbol", "price", "sample_ts", "decision"):
+        assert name in bound, (
+            "%s is not bound before the ghost entry guard in %s -- the guard's "
+            "except Exception would swallow the NameError and allow every "
+            "entry" % (name, fn.name))
