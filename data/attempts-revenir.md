@@ -4455,3 +4455,25 @@ negative at 5 and 10 minutes) reach the same wall from two other directions.
 Jet's [8b1846d8], which horizon can clear the cost floor at all, is the item I
 would rank first in the trading lane. If the honest answer is "none", that
 redirects the whole lane and is worth more than another head fix.
+
+- 2026-09-10 Gale pass 108 (brain, [cd461b30]). HYPOTHESIS: client-computed relation
+  collections (pools 12/13/14, OMEN_RELATION_COLLECTIONS=1) beat the flat 7-collection
+  arm on held-out data. DID: re-verified from source that PoolKind::Internal is inert
+  (grep -rn "PoolKind::Internal" crates/ -> 0; only behavioural match is Action at
+  brain.rs:7417), so association must be client-computed and SENT, not declared. Cut two
+  900-bar AERO-USDC slices by realised held-out direction (UP +89.7%, DOWN -33.3%) and
+  ran 4 cells = {flat,+relations} x {UP,DOWN}, one fresh fabric each. RESULT: 1 of 4
+  cells completed. DOWN/flat = 30.0% held-out exact vs a 55.0% MAJORITY CLASS, and
+  -3.1565%/trade vs -2.8336% for buying every bar -- below both baselines, and in a
+  DOWN window the omens lose MORE than indiscriminate buying. Train recall 100% beside
+  that is the same reproduce-everything/generalise-at-chance signature. Confidence sweep
+  flat 0.00-0.50 (no correctness information). The other 3 cells DIED: box at 2.5GB free
+  of 31.8GB, nodes :8095/:8096 answered /health at uptime 6 then vanished (NO LISTENER),
+  :8093 kept its listener but stopped answering /stats. Cove's idle :8091 pass-106 node
+  alone holds 6.8GB. THIS RE-READS PASS 107: "relations train 3.3x slower" is at least
+  partly memory, not throughput -- past a threshold the node does not slow, it dies.
+  NEXT: retire idle experiment nodes FIRST, then run the 4 cells SEQUENTIALLY on one
+  port with a fresh brain dir per cell. Never 4 concurrent nodes on this box.
+  ALSO: :8090 production is healthy (uptime 72045s) -- a 4s curl timeout reads as dead;
+  give it 10s+. And check uptime_secs after starting a node: my :8092 launch lost the
+  bind and the OLD node answered, which would have trained into a stranger's fabric.
