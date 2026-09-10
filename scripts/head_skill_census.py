@@ -274,6 +274,131 @@ def verdict(window: Dict[str, Any]) -> str:
     return "NO INFORMATION -- ordering is inside noise at some horizon"
 
 
+def regime_split(
+    preds: Sequence[Dict[str, Any]],
+    series: Dict[str, List[Tuple[float, float]]],
+    *,
+    now: float,
+    hours: float,
+    bucket_sec: float = 2 * 3600.0,
+    horizon_sec: int = 900,
+    decile: float = 0.10,
+    cost: float = 0.003187,
+    field: str = "direction_prob_raw",
+    min_rows: int = 80,
+) -> Dict[str, Any]:
+    """Would entering on the head's top decile have paid, window by window?
+
+    THIS IS THE DEFAULT OUTPUT BECAUSE POOLING IS THE TRAP.
+
+    Twice in one pass on 2026-09-10 a pooled read produced an edge that this
+    split killed. Excluding the over-concentrated symbol DRB-USDC, the pooled
+    top decile came out at +0.1042% net of cost at 15m and +0.2931% at 30m,
+    both beating the buy-every-bar baseline -- a clean, shippable-looking
+    result. Split into twelve 2h windows, the SAME data gave::
+
+        UP windows   (7)   mean top-decile net -0.0725%   2 of 7 positive
+        DOWN windows (5)   mean top-decile net -0.5982%   0 of 5 positive
+
+    The pooled positive was one recent 2h window (+0.4460%, 62.7% up-share)
+    carrying the average. A long-only rule flatters itself in an up window,
+    and this repo has already shipped a fake 78% and a fake +0.9067% that way.
+
+    Each window is classified by ITS OWN realised all-bar mean rather than by
+    a global regime label, so the split cannot be gamed by choosing where the
+    boundary falls. What matters in the output is the COUNT of net-positive
+    windows in each regime, not the mean across them -- one window with a big
+    number is exactly what the mean hides.
+    """
+    buckets: Dict[int, List[Tuple[float, float]]] = defaultdict(list)
+    for pred in preds:
+        age = now - pred["ts"]
+        if age < 0 or age >= hours * 3600.0:
+            continue
+        ret = forward_return(series, pred["symbol"], pred["ts"], horizon_sec)
+        if ret is not None:
+            buckets[int(age // bucket_sec)].append((pred[field], ret))
+
+    windows: List[Dict[str, Any]] = []
+    for index in sorted(buckets):
+        rows = buckets[index]
+        if len(rows) < min_rows:
+            continue
+        ups = sum(1 for _, ret in rows if ret > 0)
+        downs = sum(1 for _, ret in rows if ret < 0)
+        all_bar = statistics.mean([ret for _, ret in rows])
+        ordered = sorted(rows, key=lambda item: -item[0])
+        take = max(1, int(len(ordered) * decile))
+        top_mean = statistics.mean([ret for _, ret in ordered[:take]])
+        windows.append(
+            {
+                "hours_ago": (index + 1) * bucket_sec / 3600.0,
+                "n": len(rows),
+                "up_share": ups / max(1, ups + downs),
+                "all_bar_mean": all_bar,
+                "top_mean": top_mean,
+                "top_net": top_mean - cost,
+                "regime": "UP" if all_bar > 0 else "DOWN",
+            }
+        )
+
+    summary: Dict[str, Any] = {"windows": windows, "regimes": {}}
+    for regime in ("UP", "DOWN"):
+        subset = [w for w in windows if w["regime"] == regime]
+        summary["regimes"][regime] = {
+            "n_windows": len(subset),
+            "n_positive": sum(1 for w in subset if w["top_net"] > 0),
+            "mean_net": statistics.mean([w["top_net"] for w in subset]) if subset else float("nan"),
+        }
+    return summary
+
+
+def regime_verdict(summary: Dict[str, Any]) -> str:
+    """An edge must hold in an UP window AND a DOWN window, or it is not one.
+
+    The standing bar for this loop: "never report a single window -- a
+    long-only rule flatters itself in an up window". A majority of windows
+    positive in BOTH regimes is the weakest claim worth making here.
+    """
+    up = summary["regimes"].get("UP", {})
+    down = summary["regimes"].get("DOWN", {})
+    if not up.get("n_windows") or not down.get("n_windows"):
+        return "UNPROVEN -- the window carries only one regime, so no claim is possible"
+    up_ok = up["n_positive"] * 2 > up["n_windows"]
+    down_ok = down["n_positive"] * 2 > down["n_windows"]
+    if up_ok and down_ok:
+        return "EDGE HOLDS IN BOTH REGIMES -- the weakest claim worth making"
+    return (
+        "NO EDGE -- positive in "
+        f"{up['n_positive']}/{up['n_windows']} up and "
+        f"{down['n_positive']}/{down['n_windows']} down windows"
+    )
+
+
+def render_regimes(summary: Dict[str, Any], *, horizon_sec: int, cost: float) -> str:
+    lines = [
+        f"TOP-DECILE ENTRY, {horizon_sec // 60}m horizon, net of {cost * 100:.4f}% notional cost",
+        "  window   up-share   all-bar    top-decile      NET   regime",
+    ]
+    for win in summary["windows"]:
+        lines.append(
+            f"  -{win['hours_ago']:4.0f}h    {win['up_share'] * 100:5.1f}%   "
+            f"{win['all_bar_mean'] * 100:+.4f}%   {win['top_mean'] * 100:+.4f}%   "
+            f"{win['top_net'] * 100:+.4f}%   {win['regime']}"
+        )
+    lines.append("")
+    for regime in ("UP", "DOWN"):
+        slot = summary["regimes"][regime]
+        if not slot["n_windows"]:
+            continue
+        lines.append(
+            f"  {regime:5s} windows: {slot['n_positive']}/{slot['n_windows']} net-positive"
+            f"   mean net {slot['mean_net'] * 100:+.4f}%"
+        )
+    lines.append(f"  VERDICT: {regime_verdict(summary)}")
+    return "\n".join(lines)
+
+
 def render(windows: Sequence[Tuple[str, Dict[str, Any]]]) -> str:
     lines: List[str] = []
     for label, win in windows:
@@ -313,11 +438,27 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="hours ago separating the RECENT window from the EARLIER one",
     )
     parser.add_argument("--field", default="direction_prob_raw")
+    parser.add_argument(
+        "--regime-horizon", type=int, default=900,
+        help="horizon in seconds for the regime split (default 900)",
+    )
+    parser.add_argument(
+        "--cost", type=float, default=0.003187,
+        help="round-trip cost as a fraction of notional, from receipts",
+    )
+    parser.add_argument(
+        "--exclude", action="append", default=[],
+        help="symbol to drop, repeatable; excluding one still has to survive "
+             "the regime split, which is where DRB-USDC's apparent edge died",
+    )
     args = parser.parse_args(argv)
 
     now = time.time()
     series = load_price_series(args.db, hours=args.hours, now=now)
     preds = load_predictions(args.db, hours=args.hours, now=now)
+    if args.exclude:
+        dropped = set(args.exclude)
+        preds = [p for p in preds if p["symbol"] not in dropped]
     recent = [p for p in preds if now - p["ts"] < args.split * 3600.0]
     earlier = [p for p in preds if now - p["ts"] >= args.split * 3600.0]
 
@@ -329,6 +470,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 (f"LAST {args.split:g}h", score_window(recent, series, field=args.field)),
                 (f"EARLIER (>{args.split:g}h ago)", score_window(earlier, series, field=args.field)),
             ]
+        )
+    )
+    print()
+    # PRINTED EVERY RUN, NOT BEHIND A FLAG. The AUCs above are pooled, and a
+    # pooled read on this feed is the trap -- it produced two apparent edges
+    # on 2026-09-10 that this split killed. A reader who sees only the block
+    # above will believe the first one.
+    print(
+        render_regimes(
+            regime_split(
+                preds, series, now=now, hours=args.hours,
+                horizon_sec=args.regime_horizon, cost=args.cost, field=args.field,
+            ),
+            horizon_sec=args.regime_horizon,
+            cost=args.cost,
         )
     )
     return 0

@@ -156,3 +156,76 @@ def test_the_forward_return_anchors_on_a_tradeable_quote():
     # Prediction at t=50 lands between the first two quotes; the anchor is the
     # quote at t=100, and 60s later the tape is at 102.
     assert forward_return(series, "FAKE-USDC", 50.0, 60.0) == pytest.approx(0.02)
+
+
+def test_a_pooled_edge_that_lives_in_one_up_window_is_called_no_edge():
+    """The trap that killed two apparent edges on 2026-09-10, both in one pass.
+
+    One window carries a large positive; every other window is negative. The
+    POOLED mean is positive, so a pooled read reports an edge. The regime
+    split must refuse it, because the count of net-positive windows -- not
+    their mean -- is what says whether a rule would have paid repeatedly.
+    """
+    from scripts.head_skill_census import regime_split, regime_verdict
+
+    series = {"FAKE-USDC": []}
+    preds = []
+    now = 100_000.0
+    # Six 2h windows. Window 0 (newest) rises hard; the rest drift down.
+    for window in range(6):
+        rising = window == 0
+        for index in range(100):
+            ts = now - (window * 7200.0 + 3600.0) - index
+            price_move = 0.05 if rising else -0.01
+            series["FAKE-USDC"].append((ts, 100.0))
+            series["FAKE-USDC"].append((ts + 900.0, 100.0 * (1 + price_move)))
+            preds.append(
+                {
+                    "ts": ts,
+                    "symbol": "FAKE-USDC",
+                    "direction_prob": 0.3,
+                    "direction_prob_raw": 0.3,
+                    "price_mu": -0.1,
+                }
+            )
+    series["FAKE-USDC"].sort()
+
+    summary = regime_split(preds, series, now=now, hours=24.0, min_rows=50)
+    ups = summary["regimes"]["UP"]
+    downs = summary["regimes"]["DOWN"]
+
+    assert ups["n_windows"] >= 1 and downs["n_windows"] >= 1, "fixture needs both regimes"
+    assert downs["n_positive"] == 0, "every down window here loses"
+    assert "NO EDGE" in regime_verdict(summary)
+
+
+def test_a_single_regime_window_cannot_claim_an_edge():
+    """An up-only sample is UNPROVEN, never EDGE HOLDS.
+
+    A verdict of "positive in 3/3 up windows" with no down window is exactly
+    the shape of this repo's fake 78%.
+    """
+    from scripts.head_skill_census import regime_verdict
+
+    summary = {
+        "windows": [],
+        "regimes": {
+            "UP": {"n_windows": 3, "n_positive": 3, "mean_net": 0.004},
+            "DOWN": {"n_windows": 0, "n_positive": 0, "mean_net": float("nan")},
+        },
+    }
+    assert "UNPROVEN" in regime_verdict(summary)
+
+
+def test_an_edge_is_only_claimed_when_both_regimes_hold():
+    """The mirror, so the verdict is not merely a pessimist."""
+    from scripts.head_skill_census import regime_verdict
+
+    summary = {
+        "windows": [],
+        "regimes": {
+            "UP": {"n_windows": 4, "n_positive": 3, "mean_net": 0.004},
+            "DOWN": {"n_windows": 4, "n_positive": 3, "mean_net": 0.002},
+        },
+    }
+    assert "EDGE HOLDS IN BOTH REGIMES" in regime_verdict(summary)
