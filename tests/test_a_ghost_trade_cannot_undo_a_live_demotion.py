@@ -40,6 +40,19 @@ from unittest import mock
 
 from trading.strategies.ledger import StrategyLedger
 
+#: A symbol with NO ledger history, so the symbol-edge gate has nothing to
+#: refuse it on.
+#:
+#: Every record() here used to name AERO-USDC, and the gate now refuses
+#: atf_static on it correctly -- 17 round trips at -0.470% against 0.465% of
+#: cost, t=-3.61. A refused symbol is not counted as live-tradeable evidence,
+#: so a 20-trade re-earned book bought ZERO fresh evidence and the re-arm rule
+#: never fired. Worse, the two tests that assert a demotion STANDS were then
+#: passing for the wrong reason: the symbol was refused, not the rule obeyed.
+#: Never key a unit test to a traded symbol -- the gate reads the live book and
+#: the test goes red the day that symbol starts losing.
+REARM_SYMBOL = "ZQTESTREARM-USDC"
+
 
 class GhostCannotUndoALiveDemotionTest(unittest.TestCase):
     def setUp(self):
@@ -79,7 +92,7 @@ class GhostCannotUndoALiveDemotionTest(unittest.TestCase):
 
     def test_one_ghost_trade_does_not_re_approve_a_demoted_strategy(self):
         led, sid = self._atf_static_as_measured()
-        led.record(sid, profit=0.001, mode="ghost", symbol="AERO-USDC",
+        led.record(sid, profit=0.001, mode="ghost", symbol=REARM_SYMBOL,
                    mirror_registry=False)
         ent = led._entry(sid)
         self.assertFalse(ent["live_approved"],
@@ -91,7 +104,7 @@ class GhostCannotUndoALiveDemotionTest(unittest.TestCase):
         """The two fields have to agree; the thrash left them contradicting."""
         led, sid = self._atf_static_as_measured()
         for _ in range(10):
-            led.record(sid, profit=0.001, mode="ghost", symbol="AERO-USDC",
+            led.record(sid, profit=0.001, mode="ghost", symbol=REARM_SYMBOL,
                        mirror_registry=False)
             ent = led._entry(sid)
             if ent["live_approved"]:
@@ -103,11 +116,11 @@ class GhostCannotUndoALiveDemotionTest(unittest.TestCase):
         """Demotion is a pause. Twenty fresh winning ghost trades end it."""
         led, sid = self._atf_static_as_measured()
         for _ in range(19):
-            led.record(sid, profit=0.001, mode="ghost", symbol="AERO-USDC",
+            led.record(sid, profit=0.001, mode="ghost", symbol=REARM_SYMBOL,
                        mirror_registry=False)
         self.assertFalse(led._entry(sid)["live_approved"],
                          "19 of a 20-trade bar is not a re-earned book")
-        led.record(sid, profit=0.001, mode="ghost", symbol="AERO-USDC",
+        led.record(sid, profit=0.001, mode="ghost", symbol=REARM_SYMBOL,
                    mirror_registry=False)
         ent = led._entry(sid)
         self.assertTrue(ent["live_approved"])
@@ -117,7 +130,7 @@ class GhostCannotUndoALiveDemotionTest(unittest.TestCase):
     def test_re_arming_rebases_the_brake_but_not_the_reported_peak(self):
         led, sid = self._atf_static_as_measured()
         for _ in range(20):
-            led.record(sid, profit=0.001, mode="ghost", symbol="AERO-USDC",
+            led.record(sid, profit=0.001, mode="ghost", symbol=REARM_SYMBOL,
                        mirror_registry=False)
         live = led._entry(sid)["live"]
         self.assertTrue(led._entry(sid)["live_approved"])
@@ -129,7 +142,7 @@ class GhostCannotUndoALiveDemotionTest(unittest.TestCase):
         # And the first live outcome after re-arming does not instantly
         # re-demote it against a peak from the licence it lost. Under the old
         # code this exact call took it from approved to demoted.
-        led.record(sid, profit=-0.02, mode="live", symbol="AERO-USDC",
+        led.record(sid, profit=-0.02, mode="live", symbol=REARM_SYMBOL,
                    mirror_registry=False)
         self.assertTrue(led._entry(sid)["live_approved"],
                         "one normal losing trade is not a give-back of the peak")
@@ -138,16 +151,41 @@ class GhostCannotUndoALiveDemotionTest(unittest.TestCase):
         """Re-basing must not disarm the brake, only re-scope it."""
         led, sid = self._atf_static_as_measured()
         for _ in range(20):
-            led.record(sid, profit=0.001, mode="ghost", symbol="AERO-USDC",
+            led.record(sid, profit=0.001, mode="ghost", symbol=REARM_SYMBOL,
                        mirror_registry=False)
         self.assertTrue(led._entry(sid)["live_approved"])
-        # dd_ref is +0.14230. The 25% bar is +0.10673. Two losses of 0.02 leave
-        # +0.10230, under it.
-        led.record(sid, profit=-0.02, mode="live", symbol="AERO-USDC",
+        # TWO LOSSES OF 0.02 NO LONGER REACH THE BRAKE, and neither half of
+        # that is the brake going soft:
+        #
+        #   * the brake counts `_licence_trades`, so it needs
+        #     STRATEGY_DEMOTE_MIN_DRAWDOWN_TRADES=8 round trips under the NEW
+        #     licence before it will judge a ratio. The nine lifetime trades
+        #     belong to the licence that was revoked.
+        #   * two losses in a row put `_licence_net` negative, and the streak
+        #     rule then convicts first with "2 consecutive live losses" -- a
+        #     correct demotion, but not the one this test is about.
+        #
+        # A win then seven small losses gives the brake its sample while the
+        # licence stays net POSITIVE (+0.0125), which is precisely the case
+        # the brake exists for: handed back most of the peak, still up.
+        led.record(sid, profit=0.10, mode="live", symbol=REARM_SYMBOL,
                    mirror_registry=False)
-        led.record(sid, profit=-0.02, mode="live", symbol="AERO-USDC",
+        peak = 0.14230439571137737 + 0.10
+        self.assertAlmostEqual(led._dd_ref(led._entry(sid)["live"]), peak, places=9)
+
+        for i in range(6):
+            led.record(sid, profit=-0.0125, mode="live", symbol=REARM_SYMBOL,
+                       mirror_registry=False)
+            self.assertTrue(led._entry(sid)["live_approved"],
+                            "demoted at licence trade %d, before the 8-trade "
+                            "sample the brake requires" % (i + 2))
+
+        led.record(sid, profit=-0.0125, mode="live", symbol=REARM_SYMBOL,
                    mirror_registry=False)
         ent = led._entry(sid)
+        self.assertLess(ent["live"]["total_profit"], peak * 0.75)
+        self.assertGreater(ent["live"]["total_profit"], 0.14230439571137737,
+                           "still UP under this licence when the brake fires")
         self.assertFalse(ent["live_approved"])
         self.assertIn("drawdown", str(ent.get("demote_reason") or ""))
 
@@ -162,7 +200,7 @@ class GhostCannotUndoALiveDemotionTest(unittest.TestCase):
         ent["demote_reason"] = "live P/L -0.5500 over 12 trades is not profitable"
         ent["ghost_at_demotion"] = dict(ent["ghost"])
         for _ in range(40):
-            led.record(sid, profit=0.01, mode="ghost", symbol="AERO-USDC",
+            led.record(sid, profit=0.01, mode="ghost", symbol=REARM_SYMBOL,
                        mirror_registry=False)
         self.assertFalse(led._entry(sid)["live_approved"],
                          "a negative live record is not cured by simulation")
@@ -177,7 +215,7 @@ class GhostCannotUndoALiveDemotionTest(unittest.TestCase):
         ent["live_approved"] = False
         ent["demote_reason"] = "demoted by hand"
         ent.pop("ghost_at_demotion", None)
-        led.record(sid, profit=0.001, mode="ghost", symbol="AERO-USDC",
+        led.record(sid, profit=0.001, mode="ghost", symbol=REARM_SYMBOL,
                    mirror_registry=False)
         self.assertFalse(led._entry(sid)["live_approved"],
                          "a 90-trade book from before the demotion is not fresh")

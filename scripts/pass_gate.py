@@ -446,6 +446,14 @@ GATE_TESTS = (
     # Graduation and re-arm. Two of its five were red: the fixture predated
     # both the tradeable-evidence bar and the symbol-edge gate.
     "test_ghost_only_never_graduates.py",
+    # The DEMOTION and RE-ARM rules themselves -- what decides whether
+    # atf_static, the only strategy with a live execution branch, ever spends
+    # money again. 17 of these 22 tests were red and all 17 were outside the
+    # gate's view, so the loop had been reasoning about a demotion wall while
+    # the tests that define it did not run. Cove, pass 103.
+    "test_a_ghost_trade_cannot_undo_a_live_demotion.py",
+    "test_graduation_rebases_the_drawdown_peak.py",
+    "test_drawdown_brake_waits_for_a_sample.py",
 )
 
 

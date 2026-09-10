@@ -62,6 +62,22 @@ def _entry() -> dict:
             "consecutive_losses": 3,
             "conf_ema": 0.17195,
             "last_ts": 1788538852.240907,
+            # The bar reads _tradeable_of(ghost) -- the subset of round trips
+            # the LIVE lane could have placed -- and this row predates that
+            # field, so without it the fixture buys ZERO evidence and the
+            # strategy under test never graduates at all. The whole book is
+            # attributed here because that is exactly the population the
+            # 13:38:52 graduation was granted on: the rule read the pooled
+            # book that day, so pooled == tradeable reproduces the state in
+            # which the instant re-demotion actually fired. These tests are
+            # about dd_ref rebasing at the moment of approval; they need the
+            # approval to happen, not a re-litigation of which symbols count.
+            "tradeable": {
+                "trades": GHOST_TRADES,
+                "wins": GHOST_WINS,
+                "losses": 3,
+                "total_profit": GHOST_PROFIT,
+            },
         },
         "live": {
             "trades": LIVE_TRADES,
@@ -170,21 +186,53 @@ class GraduationRebasesTheDrawdownPeak(unittest.TestCase):
         led.record("atf_static", mode="live", profit=0.004, symbol="BSTONK-USDC")
         self.assertTrue(led._entry("atf_static")["live_approved"])
 
-        # dd_ref is now +0.146304 and the 25% bar is +0.109728. Note the brake,
-        # not the streak, is what must fire here: the consecutive-loss rule
-        # cannot demote a strategy that is still net positive, by design.
-        led.record("atf_static", mode="live", profit=-0.02, symbol="BSTONK-USDC")
+        # THE GIVE-BACK IS BUILT TO REACH THE BRAKE AND NOTHING ELSE, and the
+        # shape it needs changed under this test twice:
+        #
+        #   * two -0.02 in a row no longer reaches the brake. The streak rule
+        #     now measures `_licence_net(live)` -- profit since THIS licence,
+        #     the same re-basing this file exists to defend -- rather than the
+        #     lifetime total, and +0.004 -0.02 -0.02 is negative since the
+        #     licence, so the streak convicts first with "2 consecutive live
+        #     losses". The rule is right; the assertion was reading whichever
+        #     guard happened to arrive first.
+        #   * the brake counts `_licence_trades`, not lifetime trades. It needs
+        #     STRATEGY_DEMOTE_MIN_DRAWDOWN_TRADES=8 round trips UNDER THIS
+        #     LICENCE before it will judge a ratio, so a two-trade give-back
+        #     could not fire it at all. The nine lifetime trades in the fixture
+        #     belong to the revoked licence and are correctly not counted.
+        #
+        # So: one +0.10 win to set dd_ref, then seven small losses. That is 8
+        # licence trades, licence net stays POSITIVE at +0.0125 -- which is the
+        # brake's whole point, "gave back too much of the peak while still up"
+        # -- so neither the streak rule nor the net-P/L rule (12 trades here)
+        # can preempt it.
+        led.record("atf_static", mode="live", profit=0.10, symbol="BSTONK-USDC")
         ent = led._entry("atf_static")
-        bar = (LIVE_PROFIT + 0.004) * 0.75
-        self.assertAlmostEqual(ent["live"]["total_profit"], LIVE_PROFIT - 0.016, places=12)
-        self.assertGreater(ent["live"]["total_profit"], bar)
-        self.assertTrue(ent["live_approved"], "+0.126304 is still above +0.109728")
+        peak = LIVE_PROFIT + 0.104
+        bar = peak * 0.75
+        self.assertAlmostEqual(ent["live"]["dd_ref"], peak, places=12)
+        self.assertTrue(ent["live_approved"])
 
-        led.record("atf_static", mode="live", profit=-0.02, symbol="BSTONK-USDC")
+        for i in range(6):
+            led.record("atf_static", mode="live", profit=-0.0125, symbol="BSTONK-USDC")
+            ent = led._entry("atf_static")
+            self.assertTrue(
+                ent["live_approved"],
+                "demoted at licence trade %d, before the brake's 8-trade sample"
+                % (i + 2),
+            )
+        self.assertLess(
+            ent["live"]["total_profit"], bar, "already under the bar on sample alone"
+        )
+
+        led.record("atf_static", mode="live", profit=-0.0125, symbol="BSTONK-USDC")
         ent = led._entry("atf_static")
-        self.assertAlmostEqual(ent["live"]["total_profit"], LIVE_PROFIT - 0.036, places=12)
-        self.assertLess(ent["live"]["total_profit"], bar)
-        self.assertFalse(ent["live_approved"], "+0.106304 is below +0.109728")
+        self.assertAlmostEqual(ent["live"]["total_profit"], peak - 0.0875, places=12)
+        self.assertGreater(
+            ent["live"]["total_profit"] - LIVE_PROFIT, 0.0, "still UP under this licence"
+        )
+        self.assertFalse(ent["live_approved"], "+0.154804 is below +0.181728")
         self.assertIn("live drawdown", str(ent.get("demote_reason")))
 
     def test_a_never_live_strategy_is_unaffected(self) -> None:
@@ -209,11 +257,21 @@ class GraduationRebasesTheDrawdownPeak(unittest.TestCase):
         """Both ways in go through one helper, so they cannot drift again."""
         ent = _entry()
         ent["demote_reason"] = "live drawdown: +0.1423 from peak +0.2221"
-        ent["ghost_at_demotion"] = {"trades": 10, "wins": 5, "total_profit": 0.1}
+        # Both books carry their tradeable subset, because the re-arm rule
+        # reads _fresh_tradeable_delta(ghost, ghost_at_demotion) and a book
+        # without that field is worth ZERO fresh evidence however good it
+        # looks. Pooled == tradeable here for the same reason as _entry():
+        # the question under test is which HELPER grants the licence, not
+        # which symbols are spendable.
+        ent["ghost_at_demotion"] = {
+            "trades": 10, "wins": 5, "total_profit": 0.1,
+            "tradeable": {"trades": 10, "wins": 5, "losses": 5, "total_profit": 0.1},
+        }
         ent["ghost"] = {
             "trades": 40, "wins": 27, "losses": 13, "total_profit": 0.9,
             "peak_profit": 0.99, "max_drawdown": 0.085,
             "consecutive_losses": 0, "conf_ema": 0.17, "last_ts": 1788538852.0,
+            "tradeable": {"trades": 40, "wins": 27, "losses": 13, "total_profit": 0.9},
         }
         self.path.write_text(json.dumps({"atf_static": ent}), encoding="utf-8")
 

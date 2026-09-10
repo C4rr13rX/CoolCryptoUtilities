@@ -50,6 +50,11 @@ from trading.strategies.ledger import StrategyLedger
 #: The three real atf_static live outcomes, in the order they settled.
 ATF_STATIC_LIVE = (0.0012393999763547683, 0.009774763168259131, -0.005859083287470101)
 
+#: A symbol with NO ledger history, so the symbol-edge gate has nothing to
+#: refuse it on. Never put a traded symbol here: the gate reads the live book,
+#: and a unit test keyed to that is red the day the symbol starts losing.
+BRAKE_SYMBOL = "ZQTESTBRAKE-USDC"
+
 #: What .env actually runs in production.
 PRODUCTION_POLICY = {
     "STRATEGY_DEMOTE_MIN_LIVE_TRADES": "3",
@@ -68,10 +73,19 @@ class _LedgerCase(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def graduated(self) -> StrategyLedger:
-        """A ledger holding one strategy that has earned its way to live."""
+        """A ledger holding one strategy that has earned its way to live.
+
+        The ``symbol=`` is load-bearing and used not to be. Graduation reads
+        ``_tradeable_of(ghost)`` -- the round trips the LIVE lane could have
+        placed -- and a row with no symbol can never be judged tradeable, so
+        twenty flawless ghost wins bought ZERO evidence and this helper's own
+        assert was the first thing to fail in all eight tests below. Every
+        test in this file is about the DEMOTION rules, and none of them ran at
+        all while the strategy could not be graduated in the first place.
+        """
         ledger = StrategyLedger(os.path.join(tempfile.mkdtemp(), "ledger.json"))
         for _ in range(20):
-            ledger.record("s", profit=0.01, mode="ghost")
+            ledger.record("s", profit=0.01, mode="ghost", symbol=BRAKE_SYMBOL)
         assert ledger.is_live_approved("s")
         return ledger
 
