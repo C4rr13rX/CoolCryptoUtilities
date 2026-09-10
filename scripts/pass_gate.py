@@ -459,6 +459,14 @@ GATE_TESTS = (
     # volume, so an unauditable 237-trade book outranked a measurable one for
     # six passes. Cove, pass 103.
     "test_a_pooled_book_cannot_claim_the_top_wall.py",
+    # The ghost lane books 19.4% of its entries; the other 861 positions in 7
+    # days are destroyed without writing an outcome row, which made them
+    # invisible to every tool that reads trade_outcomes. This guards the
+    # instrument that counts them from the ENTRY side, and specifically the
+    # regression of reporting booked/booked instead of booked/entries -- which
+    # would print 100% forever while the evidence rate that gates graduation
+    # stayed at 3.4/day. Iris, pass 103.
+    "test_destroyed_evidence_counts_the_unbooked.py",
 )
 
 
