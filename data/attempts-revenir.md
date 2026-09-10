@@ -4477,3 +4477,21 @@ redirects the whole lane and is worth more than another head fix.
   ALSO: :8090 production is healthy (uptime 72045s) -- a 4s curl timeout reads as dead;
   give it 10s+. And check uptime_secs after starting a node: my :8092 launch lost the
   bind and the OLD node answered, which would have trained into a stranger's fabric.
+- 2026-09-10 Gale pass 108 ADDENDUM (the actual result, after clearing the memory
+  fault above). Retired my own two nodes: free RAM 3.1GB -> 11.4GB. The with-relations
+  arm then finished SEQUENTIALLY in 0.3 min at 17.6 samples/s -- vs the 1.7/s pass 107
+  recorded and read as throughput. IT WAS NEVER SLOW, IT WAS STARVED; pass 107's
+  "3.3x slower for 10 collections" is corrected. RESULT, DOWN window, both arms
+  back-to-back on fresh fabrics, 180 held-out: BYTE-FOR-BYTE IDENTICAL. flat 30.0%
+  exact / -3.1565% per trade / 41 buy omens; +relations 30.0% / -3.1565% / 41 omens;
+  predicted mix trough41 slide47 murk50 climb20 crest22 in BOTH. The relation streams
+  were built, ARE distinct (rel_move_vol 0.961, rel_trend_noise 0.617, rel_shape_flow
+  0.367) and all three were selected into the measured query set -- and not one
+  prediction moved. Both arms 25pp BELOW the 55.0% majority class and both lose more
+  per trade than buying every bar. NOT DISTINGUISHED, and I did not claim it: either
+  (a) the relations are a deterministic re-encoding of what the fabric already had, or
+  (b) they are trained and queried but do not influence the decoded answer -- a live
+  bug, in which case every association experiment measures nothing. Filed [6b4a87d5]:
+  perturb a relation frame and see if any prediction moves. DO NOT run the UP window
+  next -- it would reproduce an identical pair of arms. Gate green, OMEN_STRATEGY_ENABLED
+  still 0, production :8090 never trained against, all my nodes retired (free 10.4GB).
