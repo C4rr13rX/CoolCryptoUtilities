@@ -631,6 +631,23 @@ class BusScheduler:
                     "skipped": dict(
                         getattr(self.strategy_registry, "last_skips", {}) or {}
                     ),
+                    # WHY the arbitrator abstained, when it did. The solver
+                    # already builds an UNSATResult naming the clause that
+                    # refused every candidate (``cdcl_solver.py`` phases 1 and
+                    # 2) and parks it on ``last_unsat`` -- but that lives in
+                    # memory and nothing wrote it down. Measured over 20 min
+                    # of live production: 51 of 51 ``via=max_score`` ticks left
+                    # NO row of any status naming a reason, so the lane was
+                    # being allocated by the fallback with the explanation
+                    # sitting unread in the solver. `entry-refused-lattice`
+                    # does not cover it -- there were ZERO such rows in the
+                    # same window.
+                    "unsat": (
+                        str(getattr(unsat, "clause", "") or "") or None
+                        if (unsat := getattr(self._trident, "last_unsat", None))
+                        is not None
+                        else None
+                    ),
                 },
             )
         except Exception:  # noqa: BLE001 - diagnostics must never stop a tick

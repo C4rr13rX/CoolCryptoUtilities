@@ -309,3 +309,52 @@ def test_the_arbitration_row_carries_the_skips(monkeypatch) -> None:
     assert details["skipped"].get("needs_forty") == "min_samples 10<40", (
         "the arbitration row reports who competed but not who was never asked"
     )
+
+
+def test_the_row_says_why_the_arbitrator_abstained(monkeypatch) -> None:
+    """A max_score fallback without a reason is an unexplained allocation.
+
+    ``CDCLTradingSolver.select`` returns None only after building an
+    ``UNSATResult`` naming the clause that refused every candidate, and parks
+    it on ``last_unsat``. That is in memory and nothing wrote it down: measured
+    over 20 minutes of live production, 51 of 51 ``via=max_score`` ticks left
+    NO row of any status naming a reason, and ``entry-refused-lattice`` was
+    zero in the same window. So the lane was allocated by the fallback while
+    the explanation sat unread in the solver.
+    """
+    sched, rows = _scheduler(monkeypatch, [_candidate("enter", WINNER, 0.90)])
+
+    class _Unsat:
+        clause = "min_native_balance"
+
+    monkeypatch.setattr(sched._trident, "select", lambda cands, ctx: None)
+    monkeypatch.setattr(sched._trident, "last_unsat", _Unsat(), raising=False)
+
+    directive = _evaluate(sched)
+    assert directive is not None, "the fallback must still allocate the tick"
+
+    details = _arbitration(rows)["details"]
+    assert details["via"] == "max_score"
+    assert details["unsat"] == "min_native_balance", (
+        f"unsat={details.get('unsat')!r}: the arbitrator abstained and the row "
+        "does not say why, so the fallback's allocation is unexplained"
+    )
+
+
+def test_a_solver_that_decided_reports_no_unsat(monkeypatch) -> None:
+    """A tick the trident actually decided carries no abstention reason.
+
+    Written the other way round first, and it caught a real subtlety worth
+    keeping: with the REAL solver in place, a tick that ends `via=max_score`
+    always has a populated `last_unsat`, because `select` sets it on the way
+    to returning None. So `unsat` is empty only when the trident DECIDED --
+    which is exactly the reading the field needs to support.
+    """
+    sched, rows = _scheduler(monkeypatch, [_candidate("enter", WINNER, 0.90)])
+    picked = _directive("enter", WINNER, 0.90)
+    monkeypatch.setattr(sched._trident, "select", lambda cands, ctx: picked)
+    monkeypatch.setattr(sched._trident, "last_unsat", None, raising=False)
+    _evaluate(sched)
+    details = _arbitration(rows)["details"]
+    assert details["via"] == "trident"
+    assert details["unsat"] is None
