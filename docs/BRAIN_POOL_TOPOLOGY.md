@@ -203,10 +203,75 @@ real load of the new topology and not a permissive accept-anything path.
    all four of the operator's directions need, given that `PoolKind::Internal`
    will not compose anything for us.
 
-What remains for the relation work is the encoder: computing the three
-relation frames in `build_collections` and adding three `Collection` entries
-to `omen_brain.py:165`. That is a contained change, and it is where the next
-pass should start.
+## 3.6 The encoder shipped too, opt-in and proven end-to-end
+
+`build_collections` now computes the three relation frames and
+`RELATION_COLLECTIONS` adds pools 12/13/14, behind
+**`OMEN_RELATION_COLLECTIONS=1`, default OFF**.
+
+That default is load-bearing rather than timid. A v2 node declares 11 pools,
+so sending it pool 12 returns `unknown input pool id 12` and `_consolidate`
+reports the whole sample as a **miss**. Enabling the relations against the
+wrong node does not weaken training — it silently stops it. The test is named
+for that failure:
+`tests/test_relation_collections_are_off_until_the_node_has_the_pools.py`.
+
+Proven with the relations on, against the v3 node:
+
+```
+invariant holds; frames == COLLECTIONS == 10
+consolidated: True | streams: 10
+relation pools fired: {12: 26, 13: 28, 14: 27}
+```
+
+### What the three relations carry
+
+- `rmv` — `z6`, `z24`, `rngv`. The move in units of its own noise:
+  `ret / (vol24 * sqrt(n))`. `vol24` is a per-**step** stdev, so noise over
+  n steps scales as `vol24*sqrt(n)`; fraction over fraction leaves this
+  dimensionless.
+- `rsf` — `dir`, `pos`, `impact`. Is the shape confirmed by who is trading
+  it? `impact` is move per unit of relative volume: a wide range on thin
+  volume is a book artifact, not a move.
+- `rtn` — `t168`, `t24`, `exp`. Distance from the long baseline over that
+  symbol's own noise.
+
+Pool 14 is `rel_trend_vs_noise`, **not** `rel_sym_vs_mkt` as first drafted.
+`build_collections` sees one symbol's bars, so a genuine cross-sectional
+relation is not computable at that seam; shipping the cross-sectional name on
+a symbol-vs-own-baseline quantity would have been a fake label on a real
+stream. A true market-relative pool needs an aggregate passed in — a later
+pass.
+
+### A new bucketer, and an honest note on it
+
+`_bucket_signed` maps a signed dimensionless z linearly onto 20 levels over
+[-4, +4]. `_bucket_return` is log-spaced and calibrated for fractions with a
+0.0001 floor, so the band a z-score lives in (0.5–3) lands in about four
+adjacent levels. Measured: **7 levels vs 5** across that band. That is the
+justification — a real but modest gain. It is *not* true that
+`_bucket_return` fails to separate high from low volatility; on a 20x
+volatility pair it separates them too (u24 vs u18). The test docstrings say
+so rather than overclaiming.
+
+### Two invariants this had to respect
+
+1. `set(build_collections(...)) == {c.name for c in COLLECTIONS}` — asserted
+   by the pre-existing `test_every_collection_has_its_own_byte_prefix`. The
+   first draft computed the relations unconditionally and broke it; the gate
+   caught it. One flag now gates the frame keys and the COLLECTIONS entries
+   together, so what is built is exactly what is streamed.
+2. No caller iterates the frames dict generically — every access is by key
+   (checked across `trading/`, `scripts/`, `services/`), so the additive keys
+   reach nothing that did not ask for them.
+
+### Where the next pass starts
+
+Not at the topology — at measurement. Run the relations against held-out data
+in an **up window and a down window**, back-to-back on one fabric, both
+baselines reported. Check `collection_distinctness` on `rmv`/`rsf`/`rtn`
+first: a relation that buckets near-constant is a diluting stream, and the
+dilution law says train on it but do not query it.
 
 ## 4. What was NOT done this pass, and why
 

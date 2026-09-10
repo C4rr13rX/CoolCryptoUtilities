@@ -171,6 +171,24 @@ COLLECTIONS: Tuple[Collection, ...] = (
     Collection("horizon",    "hzn", _pool("OMEN_POOL_HORIZON", 9)),
     Collection("instrument", "ins", _pool("OMEN_POOL_INSTRUMENT", 10)),
 )
+
+#: The relation collections -- pools 12/13/14 of
+#: brains/market_predictor_v3_assoc.identity.toml. OFF BY DEFAULT, and that
+#: default is load-bearing rather than timid: a v2 node declares 11 pools, so
+#: sending it pool 12 returns ``unknown input pool id 12`` and _consolidate
+#: reports the whole sample as a MISS. Enabling these against the wrong node
+#: does not degrade training, it silently stops it. Turn on only when the
+#: node was started with the v3_assoc identity:
+#:   OMEN_RELATION_COLLECTIONS=1
+RELATION_COLLECTIONS: Tuple[Collection, ...] = (
+    Collection("rel_move_vol",    "rmv", _pool("OMEN_POOL_REL_MOVE_VOL", 12)),
+    Collection("rel_shape_flow",  "rsf", _pool("OMEN_POOL_REL_SHAPE_FLOW", 13)),
+    Collection("rel_trend_noise", "rtn", _pool("OMEN_POOL_REL_TREND_NOISE", 14)),
+)
+RELATIONS_ENABLED: bool = os.getenv(
+    "OMEN_RELATION_COLLECTIONS", "0") not in ("0", "", "false", "False", "no")
+if RELATIONS_ENABLED:
+    COLLECTIONS = COLLECTIONS + RELATION_COLLECTIONS
 COLLECTIONS_BY_NAME: Dict[str, Collection] = {c.name: c for c in COLLECTIONS}
 
 #: The chained stage-1 target. It is an input pool at stage 2 and the
@@ -346,6 +364,23 @@ def _bucket_ratio(value: Optional[float]) -> str:
     return f"r{max(0, min(24, level))}"
 
 
+def _bucket_signed(value: Optional[float], span: float = 4.0,
+                   levels: int = 20) -> str:
+    """Bucket a SIGNED, already-dimensionless quantity (a z-score).
+
+    ``_bucket_return`` is wrong for these: it is log-spaced and calibrated for
+    fractions where 0.0001 is the floor, so the band that matters for a
+    z-score -- roughly 0.5 to 3 -- lands in about four adjacent levels. This
+    maps ``[-span, +span]`` linearly onto ``levels`` buckets instead, so a
+    z-score gets even resolution where it is actually informative.
+    """
+    if value is None or not math.isfinite(value):
+        return "na"
+    unit = (value + span) / (2.0 * span)
+    clamped = max(0.0, min(1.0, unit))
+    return f"s{min(levels - 1, int(clamped * levels))}"
+
+
 def _safe_div(numerator: float, denominator: float) -> Optional[float]:
     if denominator is None or not math.isfinite(denominator) or abs(denominator) < 1e-18:
         return None
@@ -505,7 +540,20 @@ def build_collections(
     # -- instrument: which market -------------------------------------------
     instrument = f"ins {symbol.strip().lower()} {chain.strip().lower()}"
 
-    return {
+    # -- RELATIONS between the families above -------------------------------
+    # The flat pools can carry "the return is x" and "the range is y", but
+    # never "x is large FOR y". That conjunction only exists in the fabric if
+    # something writes it down, and PoolKind::Internal will not write it: it
+    # is matched 0 times in the engine (see docs/BRAIN_POOL_TOPOLOGY.md), so
+    # the relation has to be computed here and fed as its own frame.
+    #
+    # RELATIONS_ENABLED gates the keys AND the COLLECTIONS entries from one
+    # flag, so `set(build_collections(...)) == {c.name for c in COLLECTIONS}`
+    # holds either way. That invariant is load-bearing and has a test of its
+    # own (test_every_collection_has_its_own_byte_prefix): what this function
+    # returns is exactly what gets streamed, with nothing computed that no
+    # pool will receive.
+    base = {
         "geometry": geometry,
         "temporal": temporal,
         "flow": flow,
@@ -514,6 +562,56 @@ def build_collections(
         "horizon": horizon,
         "instrument": instrument,
     }
+    if not RELATIONS_ENABLED:
+        return base
+
+    # temporal x volatility: the move in units of its OWN noise. vol24 is a
+    # per-STEP stdev, so noise over n steps scales as vol24*sqrt(n); dividing
+    # a fraction by a fraction leaves these dimensionless, which is what
+    # _bucket_signed expects.
+    def _z(span: int) -> Optional[float]:
+        ret = rets.get(span)
+        if ret is None or not vol24:
+            return None
+        return _safe_div(ret, vol24 * math.sqrt(span))
+
+    rel_move_vol = (
+        f"rmv z6={_bucket_signed(_z(6))} z24={_bucket_signed(_z(24))} "
+        f"rngv={_bucket_ratio(_safe_div(bar_range, vol24) if vol24 else None)}"
+    )
+
+    # geometry x flow: is the shape CONFIRMED by who is trading it? `dir` is
+    # positive when the candle's direction agrees with buying pressure;
+    # `pos` is positive when buyers are heavier than price position implies
+    # (both signed, both dimensionless). `impact` is move per unit of
+    # relative volume -- a wide range on thin volume is a book artifact, not
+    # a move, and it is the shape that most often fakes an entry here.
+    pos24 = position_in_range(24)
+    rel_shape_flow = (
+        f"rsf dir={_bucket_signed(body * (buy_share - 0.5) * 2.0, span=1.0) if (body is not None and buy_share is not None) else 'na'} "
+        f"pos={_bucket_signed(buy_share_24 - pos24, span=1.0) if (buy_share_24 is not None and pos24 is not None) else 'na'} "
+        f"impact={_bucket_return(_safe_div(bar_range, volume_ratio) if volume_ratio else None)}"
+    )
+
+    # cross x volatility: is the distance from the long baseline BIG for this
+    # symbol's noise? A 2% gap means nothing without knowing whether 2% is a
+    # normal hour here. Deliberately NOT called symbol-vs-market: this
+    # function sees one symbol's bars, so a true cross-sectional relation is
+    # not computable at this seam and pretending otherwise would be a fake.
+    d168 = _safe_div(now - mean168, mean168)
+    d24 = _safe_div(now - mean24, mean24)
+    rel_trend_noise = (
+        f"rtn t168={_bucket_signed(_safe_div(d168, vol168 * math.sqrt(LOOKBACK_BARS)) if (d168 is not None and vol168) else None)} "
+        f"t24={_bucket_signed(_safe_div(d24, vol24 * math.sqrt(24)) if (d24 is not None and vol24) else None)} "
+        f"exp={_bucket_ratio(expansion)}"
+    )
+
+    base.update({
+        "rel_move_vol": rel_move_vol,
+        "rel_shape_flow": rel_shape_flow,
+        "rel_trend_noise": rel_trend_noise,
+    })
+    return base
 
 
 # --- labelling ------------------------------------------------------------
