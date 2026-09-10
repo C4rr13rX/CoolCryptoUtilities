@@ -2286,3 +2286,36 @@ the BASE variant, the one with a live branch. Also: `atf_static` is the opposite
 shape, gross only -0.0791 but net -0.3420, so for that strategy alone cost IS
 binding. And AERO-USDC is 26 of 88 trips -- 30% of the entire tradeable evidence
 budget -- at -0.4985 net.
+
+### Same pass, second half -- [aee0af15] -> [71975c13]: it is HOLD TIME
+
+**Hypothesis:** `rsi_reversal` is 61% of the tradeable book's gross loss, so it
+has a signal defect. **RESULT: FALSIFIED, and the real finding is general.**
+Recovering all 10 trips' entry times: three of them closed in the SAME SECOND
+(09-09 07:20:06 -- CRV `stop_loss:-0.0272`, ZORA `stop_loss:-0.0201`, DRB
+`negative_margin`) after holds of 17.7h, 68.8min and 41.4min. That single batch
+sweep is -0.2951, i.e. 68% of the strategy's entire loss.
+
+Generalised across the whole tradeable population as `scripts/hold_time_edge.py`
+(9013334, 6 mutation-proved tests):
+
+    HELD <= 15 min   17 trips   +0.0056   +0.0158% of notional   win 58.8%
+    HELD  > 15 min   64 trips   -0.7566   -0.4350% of notional   win 37.5%
+
+79% of placeable trips outlive `stale_exit_secs` (900s) and they carry the
+ENTIRE loss. Inside the horizon this loop says it trades, the book is POSITIVE.
+Median tick rate falls monotonically with hold time: 0.75/min under 5 minutes,
+0.45 at 15-60min, 0.14 past four hours. Worst case CRV-USDC, held 1064.8 minutes
+on 13 ticks -- one every 82 minutes.
+
+**Mechanism, already documented in this repo for the live lane**
+(`trading/bot.py:6855-6880`: 72 of 73 samples on the live BSTONK position
+evaluated no trigger at all): exits are evaluated ONLY from the sample-handling
+path, so `stale_exit_secs` is a WALL-CLOCK promise enforced on a TICK-DRIVEN
+schedule. A position on a symbol whose feed thins out cannot be closed on time.
+
+**NEXT, filed as [71975c13], 8pts, priority 1:** the fix is a CLOCK, not a
+threshold. Do NOT shorten `stale_exit_secs` -- it already says 900s and is
+simply never reached. Acceptance criterion to aim at: a position with ZERO
+subsequent ticks must still close. Selection effect that this measurement does
+NOT survive is stated in the script's docstring and must be read first.
