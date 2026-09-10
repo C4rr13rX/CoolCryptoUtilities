@@ -2863,3 +2863,48 @@ would make graduation harder, not easier. Do not re-file it that way.
 NEXT: the abandon fix needs a quote at abandon time, not the last known price,
 and its site is `trading/bot.py:12382`. Criterion 2 stays unmeasurable until
 production restarts -- it has run since 09-09 18:34 and predates 1cc2a6a.
+
+## 2026-09-10 — Jet (pass 103)
+
+**Hypothesis:** the 237-candidates-to-2-entries funnel loses its candidates in
+`trading/bot.py`'s entry gates, which is where every previous census looked.
+
+**What I did:** read `organism_snapshots.payload['scheduler'][*]['last_filter_reason']`
+— an instrument that already existed and that no pass had queried — over 1749
+snapshots / 1646 route evaluations in 6h. Then shipped attribution for the path
+it named, and probed the numbers that path reads.
+
+**Result (numbers):**
+- 1083 of 1646 route evaluations (66%) end `no_candidates`, writing **zero**
+  `trading_ops` rows. DRB-USDC: 34 `ghost_candidate_quote_ok` in 6h, 36
+  scheduler evaluations, no other row of any status. They die at
+  `trading/scheduler.py:955`, not at the edge ban — which had refused DRB zero
+  times, and which three previous passes blamed.
+- Shipped `6108675`: `entry-refused-no-candidates` now records the binding
+  conjunct with got-vs-need, gated on a live quote-OK candidate so the rate
+  cannot exceed `ghost_candidate_quote_ok`. Gate 602/0, audit
+  `NO KNOWN LOSING SHAPES`. Test red pre-fix, green after.
+- **The real wall, filed as [cdfbf97e] p1:** two of the four entry conjuncts are
+  unsatisfiable on this feed. `direction_prob` max **0.5000** over 600 snapshots
+  against a 0.6 floor; `net_margin` max **0.0000**, p50 **-1.3447**, against a
+  0.0 floor. `net_margin == price_mu - 0.0065` and `model_definition.py:142`
+  documents `price_mu` as a fractional return on the 0.01-0.1 scale. A -134%
+  predicted move is not a forecast.
+
+**Ruled out, so nobody repeats it:**
+- *Serving path feeds raw quotes.* No — `models/active_model.keras` contains
+  `PriceVolScaleNorm` (`ts_scale_norm` on `price_vol_input` in its config.json),
+  so the scale-free transform is deployed. `price_mu` being identical across VVV
+  23.83 / ETH 2469 / AERO 0.55 / DRB 0.00024 is that transform **working**.
+- *The scheduler reads the wrong `direction_prob` variant.* No — all three are
+  far under 0.6: raw p50 0.0920 (max 0.2455), calibrated p50 0.0746 (max 0.3031),
+  centred p50 0.0278 (max 0.5000). The centring fix at `trading/bot.py:5604-5628`
+  is deployed and its own recorded symptom got worse, 379/532 → 1083/1646.
+
+**Next:** the head, not the threshold. `price_mu`'s training target in
+`trading/data_loader.py` is a fractional return (48.2% positive, centred on 0)
+while the served head sits at -1.34, so ask whether the deployed head is
+saturated at a bias. Blocker: `import tensorflow` is `ModuleNotFoundError` in
+this worktree, so the flat-window probe needs production's environment.
+**Do not lower either floor** — the floors are right and the number they read is
+wrong.
