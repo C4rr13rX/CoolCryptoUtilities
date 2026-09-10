@@ -2945,3 +2945,56 @@ annulling them moves the headline and moves no strategy toward the bar.
 entry ops carry no `target_price` — they may not be annulled on a guessed target
 nor reported as clean. Do NOT build the ledger writer against the old criteria;
 they name numbers derived from the falsified predicate.
+
+## 2026-09-10 — Cove, pass 103
+
+**Hypothesis:** the demotion/re-arm rules and the wall the scoreboard names are
+both untested claims — the tests that define them do not run, and the wall is
+selected on a number the loop has already ruled is not evidence.
+
+**Did:** two commits, both proven, neither touching a rule.
+
+`3d7a87a` — the three files that DEFINE demotion, re-arm and the drawdown brake
+carry 22 tests and **17 were red**, not the 7 the `-k` sweep had surfaced, and
+all 17 were outside `GATE_TESTS`. All 22 now pass with
+`trading/strategies/ledger.py` UNTOUCHED: every failure was a stale fixture.
+Three causes, each now named in place — (1) no `symbol=` on the ghost records,
+so `_tradeable_of(ghost)` is empty and twenty flawless ghost wins buy zero
+evidence; in `test_drawdown_brake_waits_for_a_sample.py` this failed inside the
+`graduated()` **helper**, so all 8 of its tests never reached the rule at all.
+(2) hand-built ghost dicts with no `"tradeable"` sub-dict. (3) `AERO-USDC` as
+the test symbol, which the edge gate now correctly refuses — worse than a red
+test, because the two cases asserting a demotion STANDS were passing for the
+wrong reason. **Two rule facts anyone reading atf_static's 7 demotions needs:**
+the drawdown brake counts `_licence_trades` and needs 8 round trips UNDER THE
+CURRENT LICENCE, so a two-trade give-back cannot fire it; and two losses in a
+row put `_licence_net` negative, so the consecutive-loss rule convicts first and
+the reason string is "2 consecutive live losses", never "live drawdown".
+
+`e5670b1` — the wall. `classify_wall` selected its structurally-blocked
+candidate on `pooled_trades`, the one number this loop has already ruled is not
+evidence. Ranked on the TRADEABLE count `atf_static_scout` is 4/20, the branch
+does not fire, and the header falls through to the wall the ledger actually has.
+
+**Result (numbers):** gate 580 → 605 passing, 0 failed. The wall the status
+command names moved from `STRUCTURALLY BLOCKED — atf_static_scout` to
+`EVIDENCE (TRADEABLE) — rsi_reversal 6/20`. And the measurement that settled it:
+**atf_static_scout has written ZERO rows to trade_outcomes** — 0 of 214
+all-time — while 120 `ghost-exit` rows in `trading_ops` name it and the ledger
+claims 237 trades. `db.record_trade_outcome` (db.py:961/992) is called from
+exactly one site in the tree, `trading/bot.py:9968`;
+`services/atf_static_strategy.py:973` books its exits with `db.log_trade` and
+nothing else. So the biggest ghost book in the system cannot be seen by the
+implausibility filter, the take-profit clamp or the tradeable predicate — its
++6.4498 has no receipts. Corroborated independently by
+`services/tradeable_evidence.py:289`, which recorded "ledger 235 trades, history
+holds only 107 exits" on 2026-09-07 and names the same cause.
+
+**Next:** `[b6d3dd84]`. 93 of 214 `trade_outcomes` rows carry strategy_id
+`unclassified` — **44% of the receipt table has no attribution**, so every
+per-strategy number the graduation bar reads is computed over the attributed
+56%. Find which writer omits `strategy_id` from `details` and how many of the 93
+it accounts for. Do NOT simply point the scout at `record_trade_outcome` without
+first deciding what its existing 237 mean: `services/tradeable_evidence.py`
+already fails CLOSED on exactly this, because the window boundary is
+unrecoverable and a backfill would be inventing it.
