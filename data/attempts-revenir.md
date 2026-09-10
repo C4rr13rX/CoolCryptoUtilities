@@ -3943,3 +3943,34 @@ write to.
 
 NET: 8c1e906 is shipped, proven by test, and its effect on net_margin is NOT
 yet measured. That is the honest state.
+
+- 2026-09-10, Iris, pass 107, item [618d4c4b]. HYPOTHESIS: the prediction head
+  "collapsed" 12h ago and restoring direction_prob p50 above 0.5 re-opens the
+  ghost lane. RESULT: FALSIFIED, and the item's own acceptance criterion was
+  the wrong target. Built scripts/head_skill_census.py, which joins
+  organism_snapshots to market_stream by symbol and scores the head's ORDERING
+  against realised forward returns instead of reading its level. 6352 real
+  predictions over 26h, sentinel excluded, one query back to back:
+  last 6h ("collapsed", dp p50 0.1064) AUC 0.5623 / 0.5995 / 0.5635 at
+  5/15/30m = SKILLED; earlier (dp p50 0.4147) AUC 0.4523 / 0.4567 / 0.4655 =
+  INVERTED. The window everyone called healthy was reliably WRONG about
+  direction at every horizon, and the 141 ticks that cleared both scheduler
+  floors were drawn from it. The high level was contamination, not opinion:
+  price_mu p50 -1.2353 is a -124% predicted return, the foreign-row saturation
+  data_loader.sanitize_model_price_window repairs; cleaning the served window
+  dropped the level and RAISED the skill. Criterion 1 settled on the way past:
+  the move is in the RAW head (direction_prob_raw p50 0.7378 -> 0.1055, max
+  0.9616 -> 0.5226), so the calibrator is downstream of it.
+  THEN I TRIED TO CASH THE AUC AND COULD NOT. Entering on the top percentiles
+  of direction_prob in the last 6h, against 0.3187% of notional:
+  15m top 5/10/20/30% = -0.4819 / -0.2972 / -0.2214 / -0.2666% net;
+  30m top 5/10/20/30% = -0.6642 / -0.5114 / +0.0699 / +0.0089% net.
+  The MOST confident decile is the WORST at both horizons, so the AUC lives in
+  the bulk of the distribution and an entry gate takes the tail. Even the two
+  positive cells lose to the buy-every-bar baseline (mean fwd +0.0774% at 15m,
+  +0.0973% at 30m), and those means are skew-driven -- the MEDIAN forward 5m
+  return over 6520 bars in 20h is +0.000000. NO TRADEABLE EDGE IN THIS HEAD AT
+  ANY PERCENTILE. Shipped 06098a2 (census + 7 tests). NEXT: do NOT spend a pass
+  restoring the head level or percentile-thresholding it; both are measured
+  dead. The head needs retraining on the post-repair clean window, and
+  head_skill_census is the acceptance test for whether that worked.
