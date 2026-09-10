@@ -25,6 +25,9 @@ from scripts.head_skill_census import (
     auc,
     cost_floor_sweep,
     cost_floor_verdict,
+    move_size_filter,
+    move_size_verdict,
+    trailing_volatility,
     forward_return,
     score_window,
     verdict,
@@ -543,3 +546,106 @@ def test_a_minority_of_clearing_ticks_is_not_a_clearing_horizon():
     share = sweep["horizons"][0]["share_clearing"]
     assert 0.0 < share < 0.5
     assert "HORIZON CANNOT" in cost_floor_verdict(sweep)
+
+
+def test_the_move_size_filter_cannot_see_the_move_it_filters_on():
+    """The easiest fake edge in this file, and the guard that stops it.
+
+    A move-size condition is worth something only if it can be evaluated at
+    the moment of entry. This tape is dead flat before t and violent after
+    it, so a predictor computed from the FORWARD window would read high and
+    one computed from the trailing window must read zero. If this assertion
+    ever fails, the filter is selecting entries by hindsight and every number
+    downstream of it is manufactured.
+    """
+    track = [(float(i) * 60.0, 100.0) for i in range(12)]
+    price = 100.0
+    for i in range(12, 24):
+        price *= 1.10
+        track.append((float(i) * 60.0, price))
+    series = {"FAKE-USDC": track}
+
+    at_the_turn = trailing_volatility(series, "FAKE-USDC", 12 * 60.0, 1800.0)
+    assert at_the_turn == pytest.approx(0.0), "the trailing window is flat and must read flat"
+    # ... while the FORWARD window from that same instant is violent. A
+    # predictor that read zero here and non-zero from the same timestamp
+    # forward is the proof that no hindsight leaked in.
+    assert track[-1][1] / track[11][1] > 3.0, "this fixture needs a violent forward window"
+    later = trailing_volatility(series, "FAKE-USDC", 23 * 60.0, 1800.0)
+    assert later is not None and later > 0.05, "after the move the trailing vol must rise"
+
+
+def test_a_filter_that_doubles_the_clearing_share_is_not_an_edge():
+    """The measured 2026-09-10 result, pinned as a fixture.
+
+    The high-volatility subset lifts the share of ticks outrunning the fee
+    from 27.6% to 48.8% -- real, and pure arithmetic. Inside it the head's
+    top decile is still UP 2/8 and DOWN 1/4. The verdict must say the filter
+    worked AND that it bought no direction, because reporting only the first
+    half is how a filter gets shipped as a strategy.
+    """
+    result = {
+        "horizon_sec": 900,
+        "cost": 0.003592,
+        "lookback_sec": 1800.0,
+        "quantile": 2.0 / 3.0,
+        "n": 5881,
+        "vol_cut": 0.00164,
+        "arms": [
+            {"label": "ALL TICKS", "n": 5881, "share_clearing": 0.276,
+             "regimes": {"UP": {"n_positive": 2, "n_windows": 5},
+                         "DOWN": {"n_positive": 0, "n_windows": 8}}},
+            {"label": "HIGH-VOL", "n": 1961, "share_clearing": 0.488,
+             "regimes": {"UP": {"n_positive": 2, "n_windows": 8},
+                         "DOWN": {"n_positive": 1, "n_windows": 4}}},
+        ],
+    }
+    text = move_size_verdict(result)
+    assert "THE FILTER WORKS AS A FILTER" in text
+    assert "+21.2 points" in text
+    assert "IT BUYS NO DIRECTION" in text
+    assert "AND THE HEAD THEN PAYS IN BOTH REGIMES" not in text
+
+
+def test_a_filter_that_pays_in_both_regimes_is_called_a_hypothesis():
+    """The mirror. Even a clean both-regimes result must not read as shippable.
+
+    Every apparent edge this repo has found died on re-measurement, so the
+    verdict for a positive says HYPOTHESIS and demands fresh windows. A
+    census that graduated its own result to "edge" would be how the next
+    fake one ships.
+    """
+    result = {
+        "horizon_sec": 900, "cost": 0.003592, "lookback_sec": 1800.0,
+        "quantile": 2.0 / 3.0, "n": 100, "vol_cut": 0.001,
+        "arms": [
+            {"label": "ALL TICKS", "n": 100, "share_clearing": 0.30,
+             "regimes": {"UP": {"n_positive": 1, "n_windows": 5},
+                         "DOWN": {"n_positive": 0, "n_windows": 5}}},
+            {"label": "HIGH-VOL", "n": 40, "share_clearing": 0.60,
+             "regimes": {"UP": {"n_positive": 4, "n_windows": 5},
+                         "DOWN": {"n_positive": 4, "n_windows": 5}}},
+        ],
+    }
+    text = move_size_verdict(result)
+    assert "PAYS IN BOTH REGIMES" in text
+    assert "HYPOTHESIS, NOT AN EDGE" in text
+
+
+def test_the_move_size_filter_reports_both_arms_on_one_tape():
+    """End to end: the filtered arm must be a strict subset, scored the same way."""
+    now = 2_000_000.0
+    moves = ([0.004, -0.004] * 5 + [0.0002, -0.0002] * 5) * 6
+    series, preds = _flat_tape_preds("FAKE-USDC", moves, now=now, step=60.0)
+    result = move_size_filter(
+        preds, series, now=now, hours=24.0, horizon_sec=120, cost=0.003592,
+        lookback_sec=600.0, min_rows=5,
+    )
+    labels = [arm["label"] for arm in result["arms"]]
+    assert labels == ["ALL TICKS", "HIGH-VOL"]
+    base, filtered = result["arms"]
+    assert 0 < filtered["n"] < base["n"], "the filter must actually exclude ticks"
+    assert filtered["share_clearing"] >= base["share_clearing"], (
+        "selecting the high-volatility tercile cannot lower the share of moves "
+        "that outrun the fee"
+    )

@@ -855,6 +855,190 @@ def render_cost_floor(sweep: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def trailing_volatility(
+    series: Dict[str, List[Tuple[float, float]]],
+    symbol: str,
+    ts: float,
+    lookback_sec: float = 1800.0,
+    min_ticks: int = 8,
+) -> Optional[float]:
+    """Realised tick-to-tick volatility over the ``lookback_sec`` BEFORE ``ts``.
+
+    STRICTLY BACKWARD-LOOKING, and that is the whole reason this is a
+    separate function rather than a slice of the scoring join. A move-size
+    filter is only worth anything if it can be evaluated at the moment of
+    entry; computing it from the window being predicted would manufacture an
+    edge out of hindsight, which is the single easiest fake result to produce
+    here. ``bisect`` bounds it at ``ts`` exclusive, so the tick being scored
+    is never in its own predictor.
+    """
+    track = series.get(symbol)
+    if not track:
+        return None
+    hi = bisect.bisect_left(track, (ts,))
+    lo = bisect.bisect_left(track, (ts - float(lookback_sec),))
+    segment = track[lo:hi]
+    if len(segment) < min_ticks:
+        return None
+    rets = [
+        (segment[i][1] - segment[i - 1][1]) / segment[i - 1][1]
+        for i in range(1, len(segment))
+        if segment[i - 1][1] > 0
+    ]
+    rets = [r for r in rets if abs(r) < _MAX_PLAUSIBLE_ABS_RETURN]
+    if len(rets) < min_ticks - 2:
+        return None
+    return statistics.pstdev(rets)
+
+
+def move_size_filter(
+    preds: Sequence[Dict[str, Any]],
+    series: Dict[str, List[Tuple[float, float]]],
+    *,
+    now: float,
+    hours: float,
+    horizon_sec: int = 900,
+    cost: float = 0.003592,
+    field: str = "direction_prob_raw",
+    lookback_sec: float = 1800.0,
+    quantile: float = 2.0 / 3.0,
+    bucket_sec: float = 2 * 3600.0,
+    min_rows: int = 30,
+    decile: float = 0.10,
+) -> Dict[str, Any]:
+    """Does a move-SIZE condition, plus direction, pay where direction alone does not?
+
+    THE OPERATOR'S QUESTION, ASKED DIRECTLY. The standing diagnosis is that
+    entry needs a move-size condition and not only a direction call, because
+    on the majority of ticks a perfect direction call still loses to the fee.
+    This arm builds the cheapest honest version of that condition -- enter
+    only when the symbol's own trailing volatility puts it in the top
+    ``quantile`` of the tape right now -- and then asks the SAME regime
+    question of the head inside that subset.
+
+    Two separate things come out and they must not be conflated:
+
+    ``clearing``
+        Whether the filter does its stated job of getting the typical move
+        past the fee. It does; that is arithmetic, not an edge.
+    ``regimes``
+        Whether the head's top decile then pays in UP and DOWN windows. This
+        is the claim, and a filter that doubles the clearing share while
+        leaving the DOWN windows at zero has bought nothing.
+    """
+    rows: List[Tuple[float, float, float, float]] = []
+    for pred in preds:
+        age = now - pred["ts"]
+        if age < 0 or age >= hours * 3600.0:
+            continue
+        vol = trailing_volatility(series, pred["symbol"], pred["ts"], lookback_sec)
+        ret = forward_return(series, pred["symbol"], pred["ts"], horizon_sec)
+        if vol is None or ret is None:
+            continue
+        rows.append((age, vol, float(pred[field]), ret))
+
+    out: Dict[str, Any] = {
+        "horizon_sec": horizon_sec,
+        "cost": cost,
+        "lookback_sec": lookback_sec,
+        "quantile": quantile,
+        "n": len(rows),
+        "arms": [],
+    }
+    if not rows:
+        out["vol_cut"] = float("nan")
+        return out
+
+    ordered_vol = sorted(row[1] for row in rows)
+    cut = ordered_vol[min(len(ordered_vol) - 1, int(len(ordered_vol) * quantile))]
+    out["vol_cut"] = cut
+
+    for label, subset in (
+        ("ALL TICKS", rows),
+        ("HIGH-VOL", [row for row in rows if row[1] >= cut]),
+    ):
+        if not subset:
+            continue
+        buckets: Dict[int, List[Tuple[float, float]]] = defaultdict(list)
+        for age, _vol, score, ret in subset:
+            buckets[int(age // bucket_sec)].append((score, ret))
+        regimes = {
+            "UP": {"n_positive": 0, "n_windows": 0},
+            "DOWN": {"n_positive": 0, "n_windows": 0},
+        }
+        for scored in buckets.values():
+            if len(scored) < min_rows:
+                continue
+            regime = "UP" if statistics.mean([r for _, r in scored]) > 0 else "DOWN"
+            top = sorted(scored, key=lambda item: -item[0])
+            take = max(1, int(len(top) * decile))
+            net = statistics.mean([r for _, r in top[:take]]) - cost
+            regimes[regime]["n_windows"] += 1
+            regimes[regime]["n_positive"] += 1 if net > 0 else 0
+        out["arms"].append(
+            {
+                "label": label,
+                "n": len(subset),
+                "share_clearing": sum(1 for row in subset if abs(row[3]) > cost) / len(subset),
+                "regimes": regimes,
+            }
+        )
+    return out
+
+
+def move_size_verdict(result: Dict[str, Any]) -> str:
+    """Did the filter buy anything, or only make the arithmetic look better?"""
+    arms = {arm["label"]: arm for arm in result.get("arms", [])}
+    base, filtered = arms.get("ALL TICKS"), arms.get("HIGH-VOL")
+    if not base or not filtered:
+        return "UNSCORED -- not enough ticks carry both a trailing volatility and a realised move"
+    lift = (filtered["share_clearing"] - base["share_clearing"]) * 100
+    up, down = filtered["regimes"]["UP"], filtered["regimes"]["DOWN"]
+    pays_both = (
+        up["n_windows"] and down["n_windows"]
+        and up["n_positive"] * 2 > up["n_windows"]
+        and down["n_positive"] * 2 > down["n_windows"]
+    )
+    head = (
+        f"THE FILTER WORKS AS A FILTER: entering only in the top "
+        f"{(1 - result['quantile']) * 100:.0f}% of trailing volatility lifts the share of "
+        f"ticks outrunning the fee by {lift:+.1f} points, "
+        f"{base['share_clearing'] * 100:.1f}% -> {filtered['share_clearing'] * 100:.1f}%."
+    )
+    if pays_both:
+        return (
+            head + " AND THE HEAD THEN PAYS IN BOTH REGIMES inside it -- "
+            f"UP {up['n_positive']}/{up['n_windows']}, DOWN {down['n_positive']}/{down['n_windows']}. "
+            "TREAT AS A HYPOTHESIS, NOT AN EDGE: re-measure on fresh windows before sizing anything."
+        )
+    return (
+        head + " IT BUYS NO DIRECTION. Inside the filtered subset the head's top decile is "
+        f"UP {up['n_positive']}/{up['n_windows']} and DOWN {down['n_positive']}/{down['n_windows']} "
+        "net-positive, so a majority of DOWN windows still lose. A move-size condition "
+        "makes the move big enough to pay for the fee; it does not say which way it goes."
+    )
+
+
+def render_move_size(result: Dict[str, Any]) -> str:
+    lines = [
+        f"MOVE-SIZE FILTER, {result['horizon_sec'] // 60}m horizon, "
+        f"entry-time trailing volatility over {result['lookback_sec'] / 60:.0f}m",
+        f"  {result['n']} ticks carry both a trailing vol and a realised move; "
+        f"volatility cut {result['vol_cut']:.5f}",
+        "  arm            n     |move| > cost     UP windows    DOWN windows",
+    ]
+    for arm in result["arms"]:
+        up, down = arm["regimes"]["UP"], arm["regimes"]["DOWN"]
+        lines.append(
+            f"  {arm['label']:<12s} {arm['n']:5d}        {arm['share_clearing'] * 100:5.1f}%"
+            f"          {up['n_positive']}/{up['n_windows']}           "
+            f"{down['n_positive']}/{down['n_windows']}"
+        )
+    lines.append("")
+    lines.append(f"  VERDICT: {move_size_verdict(result)}")
+    return "\n".join(lines)
+
+
 def render_grid(grid: Dict[str, Any]) -> str:
     horizons = sorted({cell["horizon_sec"] for cell in grid["cells"]})
     percentiles = sorted({cell["pct"] for cell in grid["cells"]})
@@ -1064,6 +1248,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     c for c in COST_FLOOR_CLIPS_USD if c != args.clip
                 ),
                 symbol_horizon_sec=args.regime_horizon,
+            )
+        )
+    )
+    print()
+    # THE COST-FLOOR SWEEP ABOVE SAYS THE TYPICAL MOVE IS TOO SMALL AT MINUTE
+    # SCALE. This asks the obvious follow-up -- enter only where the move is
+    # big enough -- with a condition that is observable AT ENTRY rather than
+    # in hindsight, and reports the direction result separately from the
+    # arithmetic one so a doubled clearing share cannot be read as an edge.
+    print(
+        render_move_size(
+            move_size_filter(
+                preds, series, now=now, hours=args.hours,
+                horizon_sec=args.regime_horizon, cost=cost, field=args.field,
             )
         )
     )
