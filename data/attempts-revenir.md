@@ -4299,3 +4299,63 @@ NEXT: the two-window baseline itself, on brain-data-twowindow-p108 (:8093, fresh
 Note Jet verified this pass that kind='Internal' is a NO-OP on this node, so the
 topology change [cd461b30] was written around cannot be measured at all -- which makes
 the instrument the part of that item that survives.
+
+## 2026-09-10 pass 108 -- Jet (PLANNER)
+
+HYPOTHESIS: the backlog, not the code, was the bottleneck. The operator changed
+direction to "the brain is the work" at 09:33, and four passes later the sprint
+was still 2/3 trading-lane, only ONE of the operator's four named brain
+directions had an item, and that one item rested on a premise nobody had
+checked.
+
+WHAT I DID: read the engine rather than the brief. Verified independently in
+D:/Projects/W1z4rDV1510n that `grep -rn 'PoolKind::Internal' crates/` returns
+ZERO matches; the only behavioural branch on pool kind anywhere is
+brain.rs:7417 testing PoolKind::Action; Internal is declared at
+identity.rs:51 and read nowhere; and pool.rs:683 -- cited by both [cd461b30]
+and our STANDING INSTRUCTIONS as proof that Internal pools compose -- is inside
+`impl AtomEncoding for InstructionIntentEncoding`, prose about the
+instruction-intent prototype's byte encoding, not about the PoolKind enum.
+Cove had found this in pass 106; it never reached the sprint text.
+
+RESULT (numbers, not activity):
+  - [cd461b30] rewritten around client-computed relation frames. Gale was
+    mid-item on the false premise; warned on the board before they spent it.
+  - [81e472ea] rejected as a duplicate of [cd461b30] that I had filed myself.
+  - [dcd6d654] shrunk: :8091 IS UP (health OK, uptime 15603s), so the "bring it
+    up" half is done. What survives is the only real risk -- node_id does NOT
+    discriminate the nodes (BOTH :8090 and :8091 return node-cd4c5a9a7225), so
+    fabric size, not node_id, must prove it did not inherit production.
+  - Filed the three operator directions that had no item: [a0e7ca5d]
+    metacognition/agreement, [c9880f94] temporal pools, [a2449616] chart-shape
+    mutations. All with disjoint files so they can be dealt to different agents.
+  - Filed [8b1846d8]: the brain trains at a TWELVE HOUR horizon (12 bars x
+    3600s) while the mandate is minutes, and a perfect oracle loses at both
+    ends. Nobody had stated the contradiction in one place.
+  - Folded in the operator's 14:06 second-reader analysis and filed the two
+    findings no item covered: [4d3310e7] entry tests direction but never MOVE
+    SIZE (median |15-min| 0.2233% vs a 0.3187% + 0.004047 round trip -- only
+    37.5% of ticks clear cost, so on 62.5% a PERFECT call still loses), and
+    [bb32b5c7] the calibrator pushed the head DOWN in 854 of 855 cycles.
+  - [583ba889] blocked, not rejected: the allocation concentration is
+    downstream of the head, so measuring it now measures the head.
+  - [93a905e5] qualified: "the head was never informative" is true of its LEVEL
+    (46.7% vs a 53.4% always-up baseline) and FALSE of its ORDER (AUC 0.5936 at
+    15min). Opposite fixes; conflating them wastes a pass.
+
+STALE TEXT CORRECTED, and this one is in everyone's prompt: the standing
+instructions say the MAXIMUM net_margin is negative so nothing can enter. The
+operator re-measured at 14:06 -- net_margin has RECOVERED to max +1.082 and is
+satisfiable in every bucket. It was the wall 12h ago; it is NOT the wall now.
+The wall is ONE conjunct: direction_prob >= 0.5 passes 1 of 862 cycles (0.1%)
+while every other conjunct passes 36-39%.
+
+MISTAKE I MADE, recorded so nobody repeats it: `notify.py --help` does not
+print usage -- any argument is treated as the message body, so I texted the
+operator "--help". Apologised in the next notice. Read that script before
+calling it.
+
+WHAT I WOULD TRY NEXT: answer [8b1846d8] FIRST, before buying another topology
+pass. If no horizon under an hour lets a perfect oracle clear the cost floor,
+then every minutes-scale brain experiment is capped below zero before it starts
+and the horizon decision has to be made before more compute is spent on pools.
