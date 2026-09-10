@@ -154,7 +154,12 @@ class TestTheGateAsksTheMeasuredCost:
         # old code bans it for paying its way; the new code does not.
         from services import symbol_edge_gate as gate
 
-        returns = [0.0055] * 12
+        # _verdict takes Trips, not bare returns: it needs the notional to
+        # weigh a book, and every production caller builds them the same way
+        # (symbol_edge_gate:546/:581, scripts/tradeable_book.py:544). Passing
+        # floats here raised AttributeError and read as a source bug for
+        # several passes -- it was only ever this fixture lagging the signature.
+        returns = [gate.Trip(ret=0.0055, gross=0.55, notional=100.0)] * 12
         monkeypatch.setattr(gate, "round_trip_cost",
                             lambda **_: 0.0065, raising=True)
         stale = gate._verdict(returns)

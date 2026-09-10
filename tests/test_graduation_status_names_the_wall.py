@@ -138,11 +138,38 @@ def test_a_big_pooled_book_on_a_blocked_strategy_is_not_progress():
     assert report["ready_not_approved"] == [], "nothing clears the bar on tradeable evidence"
 
     wall = _wall(report)
-    assert wall.startswith("STRUCTURALLY BLOCKED"), wall
-    assert "atf_static_scout" in wall
-    assert "NEVER spend it" in wall
-    # The failure being pinned: never send this pass at the graduation stamp.
+    # A pooled book does NOT buy the top of the precedence order. The scout's
+    # 236 pooled trades sit behind 3 TRADEABLE ones and zero rows in
+    # trade_outcomes, so no de-contamination instrument in this repo can see
+    # them; classify_wall ranks the blocked branch on tradeable trades for
+    # exactly that reason ("a book that cannot be audited must not outrank one
+    # that can"). At 3 against min_trades the branch must not fire, and the
+    # wall falls through to the one the ledger actually has.
+    assert wall.startswith("EVIDENCE (TRADEABLE)"), wall
+    assert "rsi_reversal" in wall
+    # Both original failures being pinned, and they still bite: never send the
+    # pass at the graduation stamp, and never let the pooled book read as the
+    # top wall on the strength of its size alone.
     assert "UNSTAMPED" not in wall
+    assert not wall.startswith("STRUCTURALLY BLOCKED"), (
+        "236 unauditable pooled trades must not outrank a spendable record")
+
+
+# NOT A TEST YET, DELIBERATELY -- see [db03ebf6] in the backlog.
+#
+# The other side of this rule is unpinned: a blocked strategy that has EARNED
+# >= min_trades TRADEABLE trades and still cannot spend them. Jet probed it at
+# pass 107 and classify_wall reports "QUALITY -- strategies have the tradeable
+# trades but not the win rate/P-L", because the STRUCTURALLY BLOCKED branch is
+# guarded by `near.ghost_trades < min_trades` and `near` is ranked[0], which is
+# the blocked strategy itself. Calling that a QUALITY wall looks wrong -- the
+# record is real and auditable, and the reason it cannot be spent is structural,
+# not a win rate -- and it would route a pass at the strategy's P/L instead of
+# at its missing live branch. It is left unasserted rather than pinned because
+# fixing it means changing the precedence order in production code, which needs
+# its own pass and its own before/after numbers. Do not add an assertion here
+# that simply records the current QUALITY answer: that would enshrine the
+# behaviour the item exists to question.
 
 
 def test_the_bar_is_read_on_tradeable_trades_not_pooled_ones():

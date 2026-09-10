@@ -56,6 +56,38 @@ SPRINT_BUDGET_SEC = float(os.getenv("SPRINT_BUDGET_SEC", "600"))
 # not finish and reported "0 passed" -- which would have waved every pass
 # through. These are the files that pin the money path and run in seconds.
 GATE_TESTS = (
+    # THE PRECEDENCE ORDER THAT DECIDES WHICH WALL A PASS WORKS.
+    #
+    # `classify_wall` names the ONE thing standing between the ledger and a
+    # live-armed strategy, and every pass is steered by that header. Getting it
+    # wrong is the most expensive mistake this loop has available: the previous
+    # run spent 86 passes and 15 commits on the wrong wall for zero live trades.
+    #
+    # The property under guard is that a big POOLED book cannot claim the top of
+    # the order on size alone. atf_static_scout reads 237 pooled trades against
+    # 4 TRADEABLE ones and ZERO rows in trade_outcomes, so not one of this
+    # repo's de-contamination instruments can see its record -- a book that
+    # cannot be audited must not outrank one that can. That branch was ranked
+    # onto tradeable trades for exactly this reason, and this file was RED for
+    # several passes because the test still encoded the pooled behaviour it
+    # replaced. Gating it stops the next reader "repairing" the correct code.
+    "test_graduation_status_names_the_wall.py",
+    # THE GATE MUST ASK THE MEASURED COST, NOT A STALE LITERAL.
+    #
+    # `symbol_edge_gate` bans a symbol once its book proves we lose money on it,
+    # and the whole verdict turns on what a round trip is assumed to COST. The
+    # literal 0.0065 stood in the source long after receipts said 0.4738%, and
+    # at that gap a symbol returning +0.550% per trade -- which pays its own way
+    # -- is banned for losing money. That is the gate refusing exactly the
+    # evidence graduation is starved of, so a stale cost here reads as "no edge
+    # anywhere" while the tape is fine.
+    #
+    # This file also pins that the cost is bound ONCE per verdict: asking the
+    # accessor per clause lets a cache expiry land mid-decision and compare the
+    # mean against one cost and the sign test against another -- two answers to
+    # one question, from a function whose safety argument depends on the order
+    # its two stages run in.
+    "test_the_round_trip_cost_measured_its_own_default.py",
     # THE ONLY WALL CLOCK THE EXIT RULES HAVE, POOL-WIDE.
     #
     # Every exit rule in this bot is sample-driven, so a position whose feed
