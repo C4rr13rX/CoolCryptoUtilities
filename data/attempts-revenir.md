@@ -3039,3 +3039,49 @@ so **the two served heads contradict each other**. That is a harder fact than
 either number alone and it points at the trunk, not at a threshold. Shipped
 `7a9540b`, gate 613/0. Reading a conjunct's NAME instead of the payload KEY its
 consumer binds is what hid this for a commit.
+
+## 2026-09-10 — Iris, pass 104 — the pool's only wall clock was gated on a model buffer
+
+**Hypothesis carried in from pass 103 (MINE, and it was wrong):** that the
+wall-clock exit sweep [79ad4d0d] did not exist and had to be BUILT — in
+`trading/selector.py`, over `self.bots`, priced by an on-chain quote. I spent
+pass 103 unable to touch `trading/bot.py` and wrote that plan up as the
+shortest path.
+
+**What I actually found:** the sweep already exists.
+`_abandon_dark_feed_positions` and `_exit_dark_live_positions` are called from
+`_handle_sample` and fire on **any** symbol's tick by design — which makes them
+the only pool-wide wall clock the exit rules have. The defect was *where they
+sat in the method*: below the window gate (`len(self._buffer) < self.window_size`)
+and below the duplicate-`(symbol, ts)` return. Neither has anything to do with
+whether some *other* symbol's position has gone dark, and the sweep never
+invokes the model — it reads `self.positions` and the shared tick map.
+
+**Worst case, which is the one that matters:** a bot added by `reconcile_pairs`
+*for a held symbol* — added precisely so that position can be closed — starts
+with an EMPTY buffer and had to fill a full 60-step window before it would
+sweep anything. At CBBTC-USDC's measured 50 ticks/h that is over an **hour** of
+pool-wide clock lost, during which every dark position in the merged book waits
+it out.
+
+**Result:** shipped `edd0a88`. Gate 621 → **627 passed / 0 failed**,
+`profit_logic_audit` NO KNOWN LOSING SHAPES. Moved, not weakened — no
+threshold, horizon or guard changed. Proven by
+`tests/test_a_dark_symbols_position_is_still_closed_on_its_clock.py`: a
+HIGH-USDC position with ZERO ticks on its own symbol, swept from a *different*
+symbol's tick. Both tests **fail against pre-fix `bot.py`**, verified by
+stashing it rather than assuming.
+
+**The transferable lesson:** the comment on that block already *asserted* the
+property the code did not have — "the tick was recorded above the window gate
+— see there for why" — while the block itself was below it. `_note_symbol_tick`
+was hoisted for exactly this reason and the sweep was not hoisted with it. This
+repo keeps shipping comments that describe the intended code rather than the
+code, so the tests assert on behaviour, never on the log line or the comment.
+
+**What I would try next:** criterion 2 of [79ad4d0d] — make the sweep *book* an
+outcome instead of only freeing the slot. Do NOT reprice from the feed's last
+tick: the reaper's docstring is right that an hours-old mark is the AERO +161%
+artifact `StrategyLedger._is_implausible` exists to reject. The live lane
+already solves this honestly — `_queue_forced_live_exit(..., reason="dark_feed")`
+at `bot.py:~12085`, "Selling at the chain price". Reuse that for ghost.
