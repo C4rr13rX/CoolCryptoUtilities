@@ -412,6 +412,10 @@ class StrategyRegistry:
 
     def __init__(self, strategies: Optional[Sequence[Strategy]] = None) -> None:
         self._strategies: Dict[str, Strategy] = {}
+        #: strategy_id -> why it produced no candidate on the LAST
+        #: ``evaluate_all``. Read by ``BusScheduler._log_arbitration``; see
+        #: that method for why a skip and a loss must not look alike.
+        self.last_skips: Dict[str, str] = {}
         for strat in strategies or []:
             self.register(strat)
 
@@ -428,17 +432,63 @@ class StrategyRegistry:
         return list(self._strategies.keys())
 
     def evaluate_all(self, state: Any, ctx: StrategyContext) -> List[Dict[str, Any]]:
+        """Fan the tick out across every strategy, and record who never got asked.
+
+        THREE SILENT SKIPS USED TO LIVE HERE, and a strategy caught by any of
+        them is indistinguishable from one that competed and lost. That is the
+        gap under the operator's question about the decision budget: a
+        strategy offered zero cycles needs a scheduler fix, one offered many
+        and winning none needs a scoring fix, and the log could not tell them
+        apart. ``BusScheduler._log_arbitration`` publishes ``last_skips``
+        alongside the candidates that did compete, so both halves land in one
+        ``entry-arbitration`` row.
+
+        The skips are not exotic; two of them are structural and one hides
+        bugs:
+
+        ``min_samples`` -- and it is NOT uniform. Measured 2026-09-10 across
+        the 72 registered strategies: ``atf_static`` needs 4 samples, while
+        ``ema_cross``, ``bollinger_squeeze``, ``macd_momentum`` and
+        ``donchian_breakout`` need 40, and ``omen_reversion`` needs 60. On a
+        symbol whose tick window is short, atf_static is the only base
+        strategy that can be evaluated AT ALL -- not because it scored better,
+        but because it was the only one eligible to score. Ten times the
+        warm-up is ten times the wait for a first candidate.
+
+        ``enabled()`` -- a strategy switched off. All 72 read True on
+        2026-09-10, so this is currently empty; it will not stay that way.
+
+        ``except Exception`` -- THE ONE THAT HIDES BUGS. A strategy that
+        raises on every tick is skipped forever, silently, and looks exactly
+        like a strategy with no signal. Nothing counted these. The exception
+        type is now recorded, so a permanently-throwing strategy shows up as
+        itself rather than as a quiet zero in the evidence table.
+
+        Behaviour is unchanged: the same strategies are skipped for the same
+        reasons and the same candidates come back. Only the bookkeeping is new,
+        and it is kept in memory -- a dict of at most one entry per registered
+        strategy, overwritten each call -- so it costs no I/O on the tick path.
+        """
         candidates: List[Dict[str, Any]] = []
+        skips: Dict[str, str] = {}
         n_samples = len(getattr(state, "samples", []) or [])
         for strat in self._strategies.values():
             if n_samples < strat.min_samples:
+                skips[strat.strategy_id] = (
+                    f"min_samples {n_samples}<{strat.min_samples}"
+                )
                 continue
             try:
                 if not strat.enabled():
+                    skips[strat.strategy_id] = "disabled"
                     continue
                 cand = strat.evaluate(state, ctx)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001 - one strategy cannot stop the tick
+                skips[strat.strategy_id] = f"raised {type(exc).__name__}"
                 continue
             if cand:
                 candidates.append(cand)
+            else:
+                skips[strat.strategy_id] = "no_signal"
+        self.last_skips = skips
         return candidates

@@ -622,6 +622,15 @@ class BusScheduler:
                     "chosen_action": str(getattr(chosen, "action", "") or "")
                     or None,
                     "via": str(via),
+                    # The other half of the allocation question: who never got
+                    # as far as being a candidate, and why. `offered` alone
+                    # cannot distinguish a strategy the registry skipped from
+                    # one that was asked and had nothing to say -- and the
+                    # skip reasons are not symmetric between strategies
+                    # (atf_static needs 4 samples, ema_cross needs 40).
+                    "skipped": dict(
+                        getattr(self.strategy_registry, "last_skips", {}) or {}
+                    ),
                 },
             )
         except Exception:  # noqa: BLE001 - diagnostics must never stop a tick

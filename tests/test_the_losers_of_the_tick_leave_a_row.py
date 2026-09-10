@@ -237,3 +237,75 @@ def test_a_failing_log_write_does_not_stop_the_tick(monkeypatch) -> None:
     directive = _evaluate(sched)
     assert directive is not None, "a failed diagnostic write swallowed the directive"
     assert directive.strategy_id == WINNER
+
+
+def test_a_strategy_the_registry_skipped_is_not_confused_with_one_that_lost(monkeypatch) -> None:
+    """A skip and a loss must not look alike -- they are different bugs.
+
+    ``StrategyRegistry.evaluate_all`` skips a strategy three ways: below
+    ``min_samples``, ``enabled()`` false, or ``evaluate`` raised. None of them
+    left a record, so a strategy that was NEVER ASKED was indistinguishable
+    from one asked on every tick that always lost the arbitration. The first
+    needs a scheduler fix and the second a scoring fix.
+
+    The asymmetry is real and measured: across the 72 registered strategies on
+    2026-09-10, ``atf_static`` needs 4 samples and ``ema_cross``,
+    ``bollinger_squeeze``, ``macd_momentum`` and ``donchian_breakout`` need 40.
+    """
+    from trading.strategies.base import StrategyRegistry
+
+    class _Strat:
+        def __init__(self, sid: str, min_samples: int, *, on: bool = True,
+                     raises: bool = False, signal: bool = True) -> None:
+            self.strategy_id = sid
+            self.min_samples = min_samples
+            self._on = on
+            self._raises = raises
+            self._signal = signal
+
+        def enabled(self) -> bool:
+            return self._on
+
+        def evaluate(self, state: Any, ctx: Any):
+            if self._raises:
+                raise ValueError("boom")
+            return _candidate("enter", self.strategy_id, 0.5) if self._signal else None
+
+    registry = StrategyRegistry([
+        _Strat("cheap_warmup", 4),
+        _Strat("needs_forty", 40),
+        _Strat("switched_off", 0, on=False),
+        _Strat("always_throws", 0, raises=True),
+        _Strat("asked_but_silent", 0, signal=False),
+    ])
+
+    class _State:
+        samples = [(0.0, 1.0)] * 10
+
+    got = registry.evaluate_all(_State(), object())
+    assert [c["directive"].strategy_id for c in got] == ["cheap_warmup"]
+
+    skips = registry.last_skips
+    assert skips["needs_forty"] == "min_samples 10<40", (
+        f"{skips.get('needs_forty')!r}: the warm-up asymmetry is the reason a "
+        "strategy gets no cycles, and it must say so in the row"
+    )
+    assert skips["switched_off"] == "disabled"
+    assert skips["always_throws"] == "raised ValueError", (
+        "a strategy that throws on every tick is skipped forever and looks "
+        "exactly like one with no signal -- naming the exception is the only "
+        "way that bug is ever seen"
+    )
+    assert skips["asked_but_silent"] == "no_signal"
+    assert "cheap_warmup" not in skips
+
+
+def test_the_arbitration_row_carries_the_skips(monkeypatch) -> None:
+    """offered and skipped land in ONE row, so the shares are comparable."""
+    sched, rows = _scheduler(monkeypatch, [_candidate("enter", WINNER, 0.90)])
+    sched.strategy_registry.last_skips = {"needs_forty": "min_samples 10<40"}
+    _evaluate(sched)
+    details = _arbitration(rows)["details"]
+    assert details["skipped"].get("needs_forty") == "min_samples 10<40", (
+        "the arbitration row reports who competed but not who was never asked"
+    )
