@@ -1699,3 +1699,44 @@ the most extreme. Do not generalise this to "drop every negative-gross
 symbol" -- that is fitting 14 buckets of noise. The defensible version is
 a rule with a prior: require a minimum sample before judging a symbol, and
 judge it on gross-versus-cost, not on net or on hit rate.
+
+### 2026-09-10 -- Iris, second half of pass 97
+
+HYPOTHESIS: now that the tradeable book is the one being measured, is the
+tradeable PREDICATE itself right?
+
+WHAT I DID: `_live_tradeable` answers "could the live lane have placed this"
+with ONLY `trading.pipeline.stop_is_unenforceable`. It never asks
+`services/symbol_edge_gate`, which independently bans symbols. Measured both.
+
+RESULT:
+  banned_symbols() = BASECAT-USDC, COMP-USDC, CBXRP-USDC -- all three counted
+  as tradeable evidence.
+    counted TRADEABLE but BANNED  60 trades  -2.9737
+      BASECAT-USDC  37 trades  -1.7657
+      COMP-USDC     16 trades  -1.1669
+      CBXRP-USDC     7 trades  -0.0412
+    genuinely SPENDABLE          127 trades  +4.7406
+    as measured today            187 trades  +1.7669
+  This is the SAME defect _live_tradeable's own docstring was written to fix.
+  It fixed the stop half and missed the ban half, and it now runs in the
+  LOSING direction -- it depresses the very book the graduation bar reads.
+
+  SECOND FINDING, possibly bigger: banned_pairs() contains
+  ('atf_static','AERO-USDC') and ('atf_static','CBBTC-USDC'). atf_static is the
+  ONLY strategy with a live execution branch, and it is banned from AERO-USDC,
+  the one live-tradeable symbol whose book pays after the fee. The payer and
+  the only executor that could spend on it are DISJOINT. That is a candidate
+  answer to "why is nothing graduating" that no pass has asked yet.
+
+NOT FIXED, deliberately: `_live_tradeable` is read by
+_evaluate_graduation_locked, _maybe_rearm_locked and record(), so widening it
+changes graduation for every strategy in the ledger. Rushing it in the last
+minutes of a pass is how a fix introduces a problem. Filed as backlog 32e2a3bc
+with acceptance criteria and the numbers above.
+
+NEXT: take 32e2a3bc. Do the per-executor question FIRST -- if atf_static's ban
+from AERO is a stale verdict, unbanning it puts the only live executor on the
+only paying symbol, and that is the shortest path to a settled profitable round
+trip that this loop has had. If the ban is correct evidence, then say so with
+the t-statistic and go build an executor that is NOT atf_static for AERO.
