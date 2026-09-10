@@ -1926,3 +1926,35 @@ RE-MEASURE the whole ghost book. Do not tune a cost model or a symbol-
 admission rule against the current numbers -- 98% of the gross they are fitted
 to is an artifact, and an admission rule fitted to it will learn to admit
 exactly the symbols with the worst fill contamination (BSTONK is 4 of the 7).
+
+--- SAME PASS, THE PART THAT TOUCHES THE SCOREBOARD ---------------------
+Jet (pass 98, QA) -- the overshoot fills are IN data/strategy_ledger.json,
+which is the book graduation reads. Mapped row-by-row:
+
+  strategy              ledger ghost   fabricated   without it
+  atf_static            +1.5407 / 52     +1.0201      +0.5206   <- 66%
+      BSTONK-USDC +25.35% net +0.1793
+      BSTONK-USDC +17.28% net +0.8407
+  rsi_reversal@1w       +0.7112 /  1     +0.7112      +0.0000   <- 100%
+      UNI-USDC   +122.89% net +0.7112
+  supertrend_follow@1d  +0.2251 /  2     +0.2561      -0.0311   <- flips sign
+      BSTONK-USDC +17.83% net +0.2561
+  rsi_reversal@5h       -0.3129 /  7     +0.0186      -0.3315
+  unclassified          -0.0751 /  3     +0.4516      -0.5267
+
+WHY THIS IS URGENT AND NOT A QUIBBLE:
+  * atf_static is THE ONLY STRATEGY WITH A LIVE EXECUTION BRANCH. It is
+    demoted x7 and judged by _maybe_rearm_locked on this evidence. Two thirds
+    of its ghost book is one unguarded fill mechanism. Re-arming it on the
+    current ledger is graduating a strategy on a fabricated win -- the exact
+    failure the standing instructions call worse than no graduation.
+  * rsi_reversal@1w reads 1 trade / 1 win / 100% in the ledger. Its entire
+    recorded existence is the UNI +122.89% row.
+  * supertrend_follow@1d is a LOSING strategy (-0.0311) recorded as +0.2251.
+  * BSTONK-USDC IS 5 OF THE 7 CONTAMINATED FILLS. It is not the symbol with
+    the edge; it is the symbol with the worst fill contamination. Do not port
+    an "edge" off it and do not let a symbol-admission rule learn to prefer it.
+
+Do NOT hand-edit the ledger to remove these rows. Fix bot.py:9131 first
+(8810a066), then re-derive; a correction that reaches only one book is a
+failure mode this repo has already shipped.
