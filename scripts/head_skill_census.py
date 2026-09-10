@@ -633,6 +633,228 @@ def grid_verdict(grid: Dict[str, Any]) -> str:
     )
 
 
+#: Horizons the cost-floor sweep scans. Deliberately runs PAST the band the
+#: loop trades in: the whole question is whether the round trip is unpayable
+#: everywhere or only at minute scale, and a sweep that stops at 30m cannot
+#: tell those apart.
+COST_FLOOR_HORIZONS_SEC: Tuple[int, ...] = (300, 900, 1800, 3600, 7200, 14400)
+
+#: Clips scanned against the fixed leg. $10 is LIVE_MIN_CLIP_USD; $250 is far
+#: past anything this wallet can place ($23.18 deployable) and is included
+#: precisely to show the ASYMPTOTE -- what the cost floor becomes when the
+#: fixed leg is amortised to nothing.
+COST_FLOOR_CLIPS_USD: Tuple[float, ...] = (10.0, 25.0, 50.0, 100.0, 250.0)
+
+
+def cost_floor_sweep(
+    preds: Sequence[Dict[str, Any]],
+    series: Dict[str, List[Tuple[float, float]]],
+    *,
+    now: float,
+    hours: float,
+    notional_rate: float = 0.003187,
+    horizons: Sequence[int] = COST_FLOOR_HORIZONS_SEC,
+    clips: Sequence[float] = COST_FLOOR_CLIPS_USD,
+    min_symbol_rows: int = 60,
+    symbol_horizon_sec: int = 900,
+) -> Dict[str, Any]:
+    """Is there a horizon, a symbol or a clip where the move outruns the cost?
+
+    THIS ANSWERS A DIFFERENT QUESTION FROM EVERY OTHER ARM IN THIS FILE, and
+    the distinction is the point. The regime split and the rank sweep ask
+    whether the HEAD picks winners. This asks whether the TAPE moves far
+    enough to pay for a round trip at all -- a question with no head in it.
+    It has to be asked separately because a perfect direction call still loses
+    on a bar that moves less than the fee, so a cost floor that no horizon
+    clears would make the head irrelevant.
+
+    Three arms, all off the same realised returns:
+
+    ``clips``
+        The fixed $0.004047 leg amortised over a clip. This arm exists to
+        CLOSE the "trade bigger" suggestion with a number rather than to find
+        an edge: the rate is 0.3187% and the fixed leg is 0.0405% on a $10
+        clip, so the clip can only ever buy back that last fraction.
+    ``horizons``
+        Share of ticks whose realised |move| exceeds the floor. Moves grow
+        with horizon and the floor does not, so this arm is the one that can
+        actually clear.
+    ``symbols``
+        The same share per symbol. A feed untradeable on average can still
+        carry a symbol that moves far enough every time.
+
+    Returns raw shares. It deliberately does NOT return a verdict on whether
+    to trade: clearing the cost floor is necessary and nowhere near
+    sufficient, and the caller must still put a direction rule through
+    ``regime_split``. Reading "80% of ticks clear cost" as "tradeable" is the
+    same error as reading a pooled AUC as an edge.
+    """
+    rate = float(notional_rate)
+    horizon_rows: Dict[int, List[float]] = {}
+    for horizon in horizons:
+        realised: List[float] = []
+        for pred in preds:
+            age = now - pred["ts"]
+            if age < 0 or age >= hours * 3600.0:
+                continue
+            ret = forward_return(series, pred["symbol"], pred["ts"], horizon)
+            if ret is not None:
+                realised.append(ret)
+        horizon_rows[horizon] = realised
+
+    base_clip = float(clips[0])
+    base_cost = total_cost_fraction(notional_rate=rate, clip_usd=base_clip)
+
+    clip_arm = []
+    reference = horizon_rows.get(symbol_horizon_sec) or next(
+        (rows for rows in horizon_rows.values() if rows), []
+    )
+    for clip in clips:
+        cost = total_cost_fraction(notional_rate=rate, clip_usd=float(clip))
+        clip_arm.append(
+            {
+                "clip_usd": float(clip),
+                "cost": cost,
+                "n": len(reference),
+                "share_clearing": (
+                    sum(1 for ret in reference if abs(ret) > cost) / len(reference)
+                    if reference else float("nan")
+                ),
+            }
+        )
+
+    horizon_arm = []
+    for horizon in horizons:
+        rows = horizon_rows[horizon]
+        horizon_arm.append(
+            {
+                "horizon_sec": horizon,
+                "n": len(rows),
+                "median_abs": statistics.median([abs(r) for r in rows]) if rows else float("nan"),
+                "share_clearing": (
+                    sum(1 for ret in rows if abs(ret) > base_cost) / len(rows)
+                    if rows else float("nan")
+                ),
+            }
+        )
+
+    per_symbol: Dict[str, List[float]] = defaultdict(list)
+    for pred in preds:
+        age = now - pred["ts"]
+        if age < 0 or age >= hours * 3600.0:
+            continue
+        ret = forward_return(series, pred["symbol"], pred["ts"], symbol_horizon_sec)
+        if ret is not None:
+            per_symbol[pred["symbol"]].append(ret)
+    symbol_arm = [
+        {
+            "symbol": symbol,
+            "n": len(rows),
+            "median_abs": statistics.median([abs(r) for r in rows]),
+            "share_clearing": sum(1 for ret in rows if abs(ret) > base_cost) / len(rows),
+        }
+        for symbol, rows in per_symbol.items()
+        if len(rows) >= min_symbol_rows
+    ]
+    symbol_arm.sort(key=lambda row: -row["share_clearing"])
+
+    return {
+        "rate": rate,
+        "base_clip_usd": base_clip,
+        "base_cost": base_cost,
+        "symbol_horizon_sec": symbol_horizon_sec,
+        "clips": clip_arm,
+        "horizons": horizon_arm,
+        "symbols": symbol_arm,
+    }
+
+
+def cost_floor_verdict(sweep: Dict[str, Any]) -> str:
+    """Which of the three levers, if any, gets the move past the fee.
+
+    Worded as MAJORITY OF TICKS rather than "some tick clears", because a
+    rule can only enter on what it can identify in advance: a horizon where
+    27% of moves outrun the fee is one where the other 73% pay it for nothing.
+    """
+    clearing_horizons = [
+        row for row in sweep["horizons"] if row["share_clearing"] > 0.5
+    ]
+    clearing_symbols = [
+        row for row in sweep["symbols"] if row["share_clearing"] > 0.5
+    ]
+    clip_shares = [row["share_clearing"] for row in sweep["clips"]]
+    clip_gain = (max(clip_shares) - min(clip_shares)) if clip_shares else 0.0
+
+    parts = [
+        f"CLIP CANNOT: ${sweep['clips'][0]['clip_usd']:g} -> "
+        f"${sweep['clips'][-1]['clip_usd']:g} moves the clearing share by only "
+        f"{clip_gain * 100:.1f} points -- the {sweep['rate'] * 100:.4f}% rate is "
+        "the floor and no clip touches it"
+    ]
+    if clearing_horizons:
+        first = min(row["horizon_sec"] for row in clearing_horizons)
+        parts.append(
+            f"HORIZON CAN: a majority of moves outrun the fee from {first // 60}m "
+            "out, so the floor is a MINUTE-SCALE barrier, not an absolute one"
+        )
+    else:
+        parts.append(
+            "HORIZON CANNOT: no scanned horizon gets a majority of moves past "
+            "the fee -- this feed is unpayable at every horizon scanned"
+        )
+    if clearing_symbols:
+        names = ", ".join(row["symbol"] for row in clearing_symbols[:4])
+        parts.append(
+            f"SYMBOL CAN: {len(clearing_symbols)} of {len(sweep['symbols'])} symbols "
+            f"clear on a majority of {sweep['symbol_horizon_sec'] // 60}m ticks ({names})"
+        )
+    else:
+        parts.append(
+            f"SYMBOL CANNOT: 0 of {len(sweep['symbols'])} symbols clear on a "
+            "majority of ticks"
+        )
+    parts.append(
+        "CLEARING THE FLOOR IS NOT AN EDGE. Every cell above still has to pass "
+        "regime_split in a DOWN window, and on 2026-09-10 none did"
+    )
+    return "  ".join(parts)
+
+
+def render_cost_floor(sweep: Dict[str, Any]) -> str:
+    lines = [
+        "COST-FLOOR SWEEP -- does the tape move further than the round trip?",
+        f"  floor at the ${sweep['base_clip_usd']:g} clip: "
+        f"{sweep['base_cost'] * 100:.4f}% of notional",
+        "",
+        "  clip        cost        ticks |move| > cost",
+    ]
+    for row in sweep["clips"]:
+        lines.append(
+            f"  ${row['clip_usd']:>7.0f}   {row['cost'] * 100:.4f}%    "
+            f"{row['share_clearing'] * 100:5.1f}%   (n={row['n']})"
+        )
+    lines.append("")
+    lines.append("  horizon     n   median |move|   ticks |move| > cost")
+    for row in sweep["horizons"]:
+        lines.append(
+            f"  {row['horizon_sec'] // 60:5d}m  {row['n']:5d}      "
+            f"{row['median_abs'] * 100:7.4f}%           {row['share_clearing'] * 100:5.1f}%"
+        )
+    lines.append("")
+    lines.append(
+        f"  symbol, at {sweep['symbol_horizon_sec'] // 60}m "
+        f"(>= rows only)      n   median |move|   clearing"
+    )
+    for row in sweep["symbols"][:8]:
+        lines.append(
+            f"  {row['symbol']:<32s} {row['n']:5d}      "
+            f"{row['median_abs'] * 100:7.4f}%    {row['share_clearing'] * 100:5.1f}%"
+        )
+    lines.append("")
+    lines.append(f"  VERDICT: {cost_floor_verdict(sweep)}")
+    return "\n".join(lines)
+
+
 def render_grid(grid: Dict[str, Any]) -> str:
     horizons = sorted({cell["horizon_sec"] for cell in grid["cells"]})
     percentiles = sorted({cell["pct"] for cell in grid["cells"]})
@@ -825,6 +1047,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 horizon_sec=args.regime_horizon, cost=cost, field=args.field,
             ),
             horizon_sec=args.regime_horizon,
+        )
+    )
+    print()
+    # PRINTED EVERY RUN, BECAUSE IT BOUNDS EVERYTHING ABOVE. The AUCs, the
+    # regime split and the rank sweep all ask whether the head picks the right
+    # DIRECTION. None of them can be acted on at a horizon where the typical
+    # move is smaller than the fee -- there a perfect direction call still
+    # loses. A reader who sees an AUC of 0.58 and not this block will build an
+    # entry rule on a bar that cannot pay for itself.
+    print(
+        render_cost_floor(
+            cost_floor_sweep(
+                preds, series, now=now, hours=args.hours, notional_rate=args.cost,
+                clips=(args.clip,) + tuple(
+                    c for c in COST_FLOOR_CLIPS_USD if c != args.clip
+                ),
+                symbol_horizon_sec=args.regime_horizon,
+            )
         )
     )
     if args.grid:

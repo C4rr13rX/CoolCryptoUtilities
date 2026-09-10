@@ -23,6 +23,8 @@ import pytest
 from scripts.head_skill_census import (
     _is_no_prediction_sentinel,
     auc,
+    cost_floor_sweep,
+    cost_floor_verdict,
     forward_return,
     score_window,
     verdict,
@@ -449,3 +451,95 @@ def test_the_grid_counts_every_cell_it_scanned():
     assert grid["n_cells"] == len(GRID_HORIZONS_SEC) * len(SWEEP_PERCENTILES)
     assert grid["n_cells"] == len(grid["cells"])
     assert grid["expected_by_chance"] == pytest.approx(0.25 * grid["n_cells"])
+
+
+def _flat_tape_preds(symbol: str, moves: list[float], *, now: float, step: float = 60.0):
+    """A tape and one prediction per bar, so every bar is a scorable row."""
+    series = _tape(symbol, moves, step=step, start=now - (len(moves) + 2) * step)
+    preds = [
+        {
+            "ts": ts,
+            "symbol": symbol,
+            "direction_prob": 0.5,
+            "direction_prob_raw": 0.5,
+            "price_mu": 0.0,
+        }
+        for ts, _ in series[symbol][:-1]
+    ]
+    return series, preds
+
+
+def test_a_bigger_clip_cannot_buy_its_way_past_the_cost_floor():
+    """"Trade bigger" is the standing suggestion, and the arithmetic refuses it.
+
+    The clip amortises ONLY the fixed $0.004047 leg. The 0.3187% rate is
+    charged on notional and is therefore invariant to size, so raising the
+    clip 25x can never move the clearing share by more than the fixed leg was
+    worth in the first place. This test pins that ceiling: every bar here
+    moves 0.33%, which sits ABOVE the rate and BELOW the $10-clip floor, so a
+    clip large enough to amortise the fixed leg to nothing flips every row --
+    the largest swing the lever can possibly produce -- and the test asserts
+    the sweep reports it as a clip effect rather than as an edge.
+    """
+    now = 2_000_000.0
+    series, preds = _flat_tape_preds("FAKE-USDC", [0.0033] * 60, now=now)
+    sweep = cost_floor_sweep(
+        preds, series, now=now, hours=24.0, notional_rate=0.003187,
+        horizons=(60,), clips=(10.0, 250.0), min_symbol_rows=10,
+        symbol_horizon_sec=60,
+    )
+    small, large = sweep["clips"]
+    # The floor falls, because the fixed leg is amortised -- and only by that.
+    assert small["cost"] > large["cost"]
+    assert large["cost"] == pytest.approx(0.003187, abs=1e-4)
+    # A 0.33% move is under the $10 floor and over the $250 one.
+    assert small["share_clearing"] == pytest.approx(0.0)
+    assert large["share_clearing"] == pytest.approx(1.0)
+    # And the verdict must still say the clip is not the lever, because the
+    # rate it cannot touch is what the floor is made of.
+    assert "CLIP CANNOT" in cost_floor_verdict(sweep)
+
+
+def test_clearing_the_cost_floor_is_never_reported_as_an_edge():
+    """The one misreading this whole arm invites, and it costs real money.
+
+    A tape where every bar outruns the fee makes all three arms read 100%.
+    That is a NECESSARY condition for a profitable round trip and nowhere near
+    a sufficient one -- direction is still unmeasured here, and this repo has
+    already shipped a fake edge by treating a favourable-looking aggregate as
+    a green light. The verdict must carry the refusal even when every number
+    in it is maximal.
+    """
+    now = 2_000_000.0
+    series, preds = _flat_tape_preds("FAKE-USDC", [0.05, -0.05] * 30, now=now)
+    sweep = cost_floor_sweep(
+        preds, series, now=now, hours=24.0, notional_rate=0.003187,
+        horizons=(60,), clips=(10.0,), min_symbol_rows=10, symbol_horizon_sec=60,
+    )
+    assert sweep["horizons"][0]["share_clearing"] == pytest.approx(1.0)
+    assert sweep["symbols"][0]["share_clearing"] == pytest.approx(1.0)
+    verdict_text = cost_floor_verdict(sweep)
+    assert "HORIZON CAN" in verdict_text
+    assert "CLEARING THE FLOOR IS NOT AN EDGE" in verdict_text
+    assert "DOWN window" in verdict_text
+
+
+def test_a_minority_of_clearing_ticks_is_not_a_clearing_horizon():
+    """27% of 15m ticks clear the fee, and that horizon must not read CAN.
+
+    A rule enters on what it can identify in advance, so a horizon where the
+    move outruns the fee on a minority of ticks is one where the majority pay
+    the fee for nothing. Judging the arm on "some tick clears" would have
+    called 5m tradeable at 17.8%.
+    """
+    now = 2_000_000.0
+    # Three bars in ten move far enough; the other seven do not.
+    moves = ([0.02] * 3 + [0.0001] * 7) * 8
+    series, preds = _flat_tape_preds("FAKE-USDC", moves, now=now)
+    sweep = cost_floor_sweep(
+        preds, series, now=now, hours=24.0, notional_rate=0.003187,
+        horizons=(60,), clips=(10.0,), min_symbol_rows=10, symbol_horizon_sec=60,
+    )
+    share = sweep["horizons"][0]["share_clearing"]
+    assert 0.0 < share < 0.5
+    assert "HORIZON CANNOT" in cost_floor_verdict(sweep)
