@@ -4495,3 +4495,33 @@ redirects the whole lane and is worth more than another head fix.
   perturb a relation frame and see if any prediction moves. DO NOT run the UP window
   next -- it would reproduce an identical pair of arms. Gate green, OMEN_STRATEGY_ENABLED
   still 0, production :8090 never trained against, all my nodes retired (free 10.4GB).
+
+### pass 108 second addendum -- Cove -- the measured query set was never the set that fired
+
+OPERATOR-REPORTED, step 1 of his order of work, in my file, two lines. Fixed in 6be5357.
+
+scripts/omen_experiment.py computed which collections discriminate on the corpus,
+PRINTED them as "measured query", and then passed None to every prediction -- so every
+run fired the hard-coded PREDICT_COLLECTIONS instead. It reported one query set and used
+another.
+
+THIS INVALIDATES THE PASS-108 RELATION RESULT AND EXPLAINS IT. Gale measured the
+with-relations arm against the flat arm and got BYTE-FOR-BYTE identical output over 180
+held-out predictions, then correctly refused to call it a null result. It was not a null
+result: the relation collections were computed, appeared in the distinctness table, and
+were NEVER QUERIED. The query set could not move, so the arms could not differ. Any
+experiment that changes WHICH collections discriminate was unfalsifiable on this harness.
+
+WHY IT SURVIVED: on the AERO corpus the two sets hold the SAME THREE NAMES in a different
+order -- measured ('geometry','temporal','cross') against default
+('temporal','geometry','cross'). Invisible until a change makes the measured set
+genuinely different, and then it eats the change.
+
+NOW: the measured set fires unless --query-collections overrides it; the run prints
+FIRING with its source; the report records what ACTUALLY fired plus query_source.
+
+LESSON WORTH KEEPING, and it is the same shape as the backpressure finding above: this
+repo's expensive bugs are the ones where the instrument REPORTS one thing and DOES
+another, so the run looks healthy and the number means nothing. Two in one pass, from
+different causes, both invisible to every check anyone was running. Verify the seam, not
+the function.
