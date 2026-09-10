@@ -2115,3 +2115,46 @@ have closed in 8.4 hours) and one corrupt directive carrying target/price =
   in 8.5 hours. Instrument the path between ghost_candidate_quote_ok and ghost-entry so a
   refused candidate writes its reason, then re-run this census. Backlog d7d87724 carries the
   numbers. You cannot fix a refusal that does not say why.
+
+## 2026-09-10 -- Jet (AUDITOR, pass 99)
+
+HYPOTHESIS: the work of passes 97-98 reported numbers that agree with themselves; audit
+whether they reproduce and whether anything shipped broke a working path.
+
+DID: re-ran the last two passes' claims against the DB and the code rather than the reports.
+
+RESULT 1 -- 5504769 WAS A REGRESSION, AND MY OWN PASS-98 QA MISSED IT. I had verified
+`limit_exit_fill_price` by CALLING IT DIRECTLY and reported it passing. That proves the
+function, not the seam. The ghost booking branch computed
+`gross_profit = (price - entry_price) * exit_size` from the RAW tick while reporting the
+CLAMPED price as the row's exit_price, and handed both to `validate_outcome_math`, which
+cross-checks `(exit_price - entry) * qty` against gross_profit at 1e-8. They disagree BY
+CONSTRUCTION on every overshoot -> `gross_profit_mismatch` -> `hold-accounting-invalid` ->
+THE POSITION NEVER CLOSES. 12 of 14 take-profit exits overshoot, so this would have refused
+nearly every profitable ghost exit the moment production reloaded. Caught at ZERO rows
+damaged (accounting-invalid ops since the commit = 0; newest trade_outcome predated it by
+8.7h). Fixed in b83ff21, one line, plus 9 composition tests that all fail against the old
+arithmetic.
+
+RESULT 2 -- THE WALL IS DIRECTION, NOT COST, AND THE TOOL SAID OTHERWISE. tradeable_book.py
+printed "a POSITIVE gross edge means this is a cost problem" off a raw +0.2625% of notional
+over 109 live-tradeable trips. That is TWO rows (UNI-USDC +122.89%, BASELINE-USDC +57.94%).
+De-contaminated: 87 trips, 23% win, net -2.0406, gross -0.3292% -- below the 0.3187%
+variable floor, NEGATIVE. The file ALREADY had `clamped_gross` and IMPLAUSIBLE_RET and used
+them only in `symbol_edge`. Fixed in 496dcb5; the verdict now reads the de-contaminated book
+and prints a NOTE when the raw number would have disagreed.
+
+RESULT 3 -- NEGATIVE, AND WORTH RECORDING SO NOBODY RE-CHASES IT. I expected
+`services/symbol_edge_gate.py` to be compromised too: it reads `gross_profit` raw from
+trade_outcomes with no re-pricing. Measured it -- for every symbol with >= 5 closed trips,
+the number of symbols whose gross SIGN flips when overshoot limit exits are re-priced is
+ZERO. The gate's ban/admit verdicts stand. Do not "fix" it.
+
+THE PATTERN, twice in one pass: correct arithmetic existed and was not wired into the number
+that was read. That is now a thing to check for, not a coincidence.
+
+NEXT: the cost model and the clip curve are RETIRED as the work -- at every clip from $2.20
+to $50 the de-contaminated book loses, because it loses before fees. The question is where a
+positive gross edge comes from on symbols the live lane will actually accept. Note the loop
+is alive but has closed 0 round trips in 8.9h and 84 of 111 ops in the last hour are
+`entry-predropped-edge-ban`; d7d87724 still carries that.
