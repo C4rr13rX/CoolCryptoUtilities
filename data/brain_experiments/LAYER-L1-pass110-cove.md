@@ -114,6 +114,41 @@ A 2.25–2.69x in-sample lift collapsing to a +3.1pp precision bump with a
 negative net is the signature of a map fitted to the train window's regime
 rather than to a repeatable relation.
 
+## 4b. The SELL-HIGH half, measured here for the first time
+
+`omen_experiment.py:552` opens a position only on a buy-low omen because the
+live lane is long-only — so a crest is an abstention and **its accuracy is
+scored nowhere**. That is half the labelled vocabulary going unjudged. A crest
+that correctly calls a fall is worth money as an **exit on a held position**,
+so it is scored against forward returns, not by shorting.
+
+No cost is charged on a crest call: exiting a position you already hold does
+not open a round trip, and billing one would be the "round trip billed twice
+to one leg" shape the profit-logic audit exists to catch.
+
+| | UP | DOWN |
+|---|---:|---:|
+| sellable motifs (train crest lift ≥ 1.3) | 2 | 2 |
+| crest calls | 106 (63.1% of window) | 28 (16.7%) |
+| **crest fall precision** | **23.6%** | **89.3%** |
+| window base fall rate | 28.0% | 73.8% |
+| delta | **−4.4pp** | **+15.5pp** |
+| mean forward on called | +5.4421% | −3.1547% |
+| mean forward, window | +4.4877% | −2.2788% |
+
+**This is asymmetric and it therefore fails the standing both-windows rule.**
+In the DOWN window the crest signal is genuinely good: +15.5pp precision, and
+the bars it calls fall *harder* than the window average (−3.15% vs −2.28%),
+which is exactly what an exit signal should do. In the UP window it is worse
+than the base rate, and it calls 63.1% of bars, which is not a signal.
+
+So: **no edge is claimed.** A rule that only works when the market is already
+falling is the mirror image of the long-only rule that flatters itself in an
+up window, and this repo has already paid for that error twice. What is worth
+recording is that the sell-high half is *more* informative than the buy-low
+half on the same motifs and the same windows — the first evidence here that
+the exit side may be the better place to spend effort than the entry side.
+
 ## 5. A defect in the layer worth one look
 
 Three of the five streams are **near-constant inside the motif**: `geo=mid` on

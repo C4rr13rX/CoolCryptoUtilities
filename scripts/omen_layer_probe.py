@@ -35,7 +35,7 @@ from typing import Any, Dict, List, Mapping, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from trading.omen_brain import (  # noqa: E402
-    COLLECTIONS, LOOKBACK_BARS, OMEN_TROUGH, ROUND_TRIP_COST,
+    COLLECTIONS, LOOKBACK_BARS, OMEN_CREST, OMEN_TROUGH, ROUND_TRIP_COST,
     build_collections, collection_distinctness, label_omen,
 )
 from trading.omen_layers import (  # noqa: E402
@@ -105,7 +105,8 @@ def build_layer_frames(bars: Sequence[Mapping[str, Any]], symbol: str,
 
 
 def label_skew(rows: Sequence[Mapping[str, str]], key: str,
-               min_support: int = 20) -> Dict[str, Any]:
+               min_support: int = 20,
+               target: str = OMEN_TROUGH) -> Dict[str, Any]:
     """Does knowing the motif change what you expect the label to be?
 
     DISTINCTNESS IS ONLY HALF THE QUESTION, and this repo's dilution law is
@@ -124,7 +125,7 @@ def label_skew(rows: Sequence[Mapping[str, str]], key: str,
     total = len(labelled)
     if not total:
         return {"total": 0, "groups": []}
-    base_trough = sum(1 for r in labelled if r["_label"] == OMEN_TROUGH) / total
+    base_trough = sum(1 for r in labelled if r["_label"] == target) / total
 
     groups: Dict[str, List[str]] = {}
     for row in labelled:
@@ -135,7 +136,7 @@ def label_skew(rows: Sequence[Mapping[str, str]], key: str,
         n = len(labels)
         if n < min_support:
             continue
-        trough = sum(1 for x in labels if x == OMEN_TROUGH) / n
+        trough = sum(1 for x in labels if x == target) / n
         counts = Counter(labels)
         out.append({
             "frame": frame, "n": n, "share": n / total,
@@ -206,6 +207,37 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
             return 0.0
         return sum(1 for r in rows if r["_label"] == OMEN_TROUGH) / len(rows)
 
+    # --- THE SELL-HIGH HALF, which nothing here has ever measured ----------
+    # omen_experiment.py:552 opens a position only on a BUY-LOW omen because
+    # the live lane is long-only, so a crest is an abstention and its accuracy
+    # is scored NOWHERE. That is half the labelled vocabulary going unjudged.
+    # A crest that correctly calls a fall is worth money as an EXIT on a held
+    # position, so it is scored against FORWARD RETURNS -- not by shorting,
+    # which this lane cannot do.
+    crest_fit = label_skew(tr, "L1_cooccurrence", min_support=min_support,
+                           target=OMEN_CREST)
+    sellable = {g["frame"] for g in crest_fit.get("groups", [])
+                if g["lift"] >= min_lift}
+    crest_called = [r for r in te if r["L1_cooccurrence"] in sellable]
+
+    def fall_rate(rows: Sequence[Mapping[str, Any]]) -> float:
+        """Share of bars whose forward return is negative.
+
+        The honest test of an EXIT signal: an exit is right when the price it
+        exited ahead of went DOWN. No cost is charged here -- exiting a
+        position you already hold does not open a round trip, and billing one
+        would be the 'round trip billed twice to one leg' shape the profit
+        logic audit exists to catch.
+        """
+        if not rows:
+            return 0.0
+        return sum(1 for r in rows if float(r["_forward"]) < 0) / len(rows)
+
+    def mean_forward(rows: Sequence[Mapping[str, Any]]) -> float:
+        if not rows:
+            return 0.0
+        return sum(float(r["_forward"]) for r in rows) / len(rows)
+
     return {
         "train_window": [train_start, train_stop], "train_n": len(tr),
         "test_window": [test_start, test_stop], "test_n": len(te),
@@ -216,6 +248,14 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
         "called_trough_precision": trough_rate(called),
         "baseline_trough_rate": trough_rate(te),
         "cost": cost,
+        # sell-high half
+        "sellable_motifs": sorted(sellable),
+        "crest_called_n": len(crest_called),
+        "crest_called_share": len(crest_called) / len(te),
+        "crest_fall_precision": fall_rate(crest_called),
+        "baseline_fall_rate": fall_rate(te),
+        "crest_mean_forward": mean_forward(crest_called),
+        "baseline_mean_forward": mean_forward(te),
     }
 
 
@@ -376,6 +416,23 @@ def main() -> int:
                   f"{edge['called_trough_precision']:.1%}")
             print(f"      window base trough rate       : "
                   f"{edge['baseline_trough_rate']:.1%}")
+            print(f"\n  --- THE SELL-HIGH HALF (long-only scores this "
+                  f"NOWHERE: a crest is an abstention) ---")
+            print(f"  motifs called sellable (train crest lift >= "
+                  f"{args.min_lift}): {len(edge['sellable_motifs'])}")
+            print(f"  (c) CREST FALL PRECISION         : "
+                  f"{edge['crest_fall_precision']:.1%}  over "
+                  f"{edge['crest_called_n']} calls "
+                  f"({edge['crest_called_share']:.1%} of the window)")
+            print(f"      window base fall rate         : "
+                  f"{edge['baseline_fall_rate']:.1%}")
+            print(f"      mean forward on called        : "
+                  f"{edge['crest_mean_forward']:+.4%}  vs window "
+                  f"{edge['baseline_mean_forward']:+.4%}")
+            if edge["crest_called_n"] < 20:
+                print(f"      SAMPLE TOO SMALL TO RANK: "
+                      f"{edge['crest_called_n']} calls.")
+
             if edge["called_n"] < 20:
                 print(f"\n  SAMPLE TOO SMALL TO RANK: {edge['called_n']} "
                       f"called trades. Reported, not concluded from.")

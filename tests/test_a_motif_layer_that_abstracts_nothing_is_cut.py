@@ -138,6 +138,33 @@ def test_a_layer_that_carries_the_outcome_reads_a_lift_above_one():
     assert lifts[0] < 0.75, f"its complement read {lifts[0]:.2f}x"
 
 
+def test_the_sell_high_half_is_scorable_and_is_not_the_buy_low_half():
+    """The half a long-only lane scores NOWHERE.
+
+    ``omen_experiment.py`` opens a position only on a buy-low omen, so a crest
+    is an abstention and its accuracy is never measured. Scoring it needs
+    ``label_skew`` to accept a target other than trough -- and needs the two
+    targets to give genuinely different answers, or the parameter is
+    decorative and the sell-high number is secretly the buy-low one.
+    """
+    rows = []
+    rows += [{"L1": "co1 toppy", "_label": "crest"} for _ in range(80)]
+    rows += [{"L1": "co1 toppy", "_label": "murk"} for _ in range(20)]
+    rows += [{"L1": "co1 bottomy", "_label": "trough"} for _ in range(80)]
+    rows += [{"L1": "co1 bottomy", "_label": "murk"} for _ in range(20)]
+
+    crest = {g["frame"]: g["lift"]
+             for g in label_skew(rows, "L1", target="crest")["groups"]}
+    trough = {g["frame"]: g["lift"]
+              for g in label_skew(rows, "L1", target="trough")["groups"]}
+
+    assert crest["co1 toppy"] > 1.5 and crest["co1 bottomy"] < 0.5, crest
+    assert trough["co1 bottomy"] > 1.5 and trough["co1 toppy"] < 0.5, trough
+    assert crest["co1 toppy"] != trough["co1 toppy"], (
+        "the two targets returned the same lift -- the sell-high half is "
+        "reporting the buy-low half under a different name")
+
+
 def test_support_below_the_floor_is_not_reported_as_a_signal():
     """A 2-sample motif at 5x lift is noise wearing a number's clothes."""
     rows = [{"L1": "co1 common", "_label": "murk"} for _ in range(200)]

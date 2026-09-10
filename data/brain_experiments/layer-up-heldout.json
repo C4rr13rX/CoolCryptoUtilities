@@ -19,5 +19,15 @@
   "baseline_net": 0.03837669659914169,
   "called_trough_precision": 0.0,
   "baseline_trough_rate": 0.07142857142857142,
-  "cost": 0.0065
+  "cost": 0.0065,
+  "sellable_motifs": [
+    "co1 geo=mid tem=hi flo=mid vol=hi cro=hi",
+    "co1 geo=mid tem=hi flo=mid vol=hi cro=lo"
+  ],
+  "crest_called_n": 106,
+  "crest_called_share": 0.6309523809523809,
+  "crest_fall_precision": 0.2358490566037736,
+  "baseline_fall_rate": 0.27976190476190477,
+  "crest_mean_forward": 0.054420797400461254,
+  "baseline_mean_forward": 0.04487669659914169
 }
