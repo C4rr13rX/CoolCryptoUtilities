@@ -121,7 +121,31 @@ class ScoutOutcomeAttributionTest(unittest.TestCase):
 
 
 class ScoutGraduationDoesNotAuthoriseTheBotTest(unittest.TestCase):
-    """A graduated ghost-only executor must not open the live gate."""
+    """A graduated ghost-only executor must not open the live gate.
+
+    These two tests are about WHICH ID a ghost record credits. They are not
+    about whether a symbol is live-tradeable, and they must not be able to
+    fail for that reason -- so ``_live_tradeable`` is pinned True here.
+
+    It was not pinned, and that is why
+    ``test_bot_graduates_on_its_own_record`` was red: since graduation began
+    scoring ``ghost["tradeable"]`` rather than the pooled book, ``record()``
+    only credits the tradeable sub-book when ``_live_tradeable(symbol, sid)``
+    says the live lane could have placed that round trip -- and that predicate
+    consults ``services/symbol_edge_gate``, which reads the PRODUCTION
+    database. Measured 2026-09-10: the gate refuses ``atf_static`` on
+    CBBTC-USDC (6 closed round trips, mean return -0.193% against a 0.465%
+    cost, t=-2.26) and on AERO-USDC (17 trips, -0.470%, t=-3.61). So the 25
+    ghost wins this test records landed entirely in the pooled book, the
+    tradeable sub-book stayed at 0 of 20, and graduation correctly refused.
+
+    The production behaviour is right and must not be loosened -- pooled ghost
+    volume in a symbol the live lane refuses is not progress. The test was
+    wrong: it asserted a graduation outcome while its verdict was really being
+    set by today's market history in a symbol chosen years' worth of trades
+    ago. Naming a different "currently tradeable" symbol would only re-arm the
+    same trap the moment that symbol's record turns negative.
+    """
 
     def setUp(self):
         import tempfile
@@ -130,6 +154,12 @@ class ScoutGraduationDoesNotAuthoriseTheBotTest(unittest.TestCase):
         self._dir = tempfile.TemporaryDirectory()
         self.addCleanup(self._dir.cleanup)
         self.path = Path(self._dir.name) / "ledger.json"
+
+        patcher = mock.patch(
+            "trading.strategies.ledger._live_tradeable", return_value=True
+        )
+        self.tradeable = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _ledger(self):
         return StrategyLedger(path=self.path)

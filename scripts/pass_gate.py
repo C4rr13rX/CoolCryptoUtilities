@@ -88,6 +88,19 @@ GATE_TESTS = (
     # one question, from a function whose safety argument depends on the order
     # its two stages run in.
     "test_the_round_trip_cost_measured_its_own_default.py",
+    # A GHOST-ONLY EXECUTOR MUST NOT OPEN THE LIVE GATE, AND THE SPLIT MUST
+    # STILL LEAVE GRADUATION REACHABLE.
+    #
+    # 368 of atf_static's 376 closed trades were taken by a scout that
+    # hardcodes wallet="ghost" and has no live branch at all, while the id
+    # holding `live_approved` was the one that could not spend. Two executors
+    # reporting into one ledger id is what produced 94 live-gate passes and
+    # zero live trades. Both halves are gated: the scout id never approves
+    # (a structural bar, not an artifact of today's symbol edge gate -- the
+    # test pins `_live_tradeable` True so it cannot pass for the wrong
+    # reason), and the signal id still CAN approve on its own record, so the
+    # split earns graduation rather than making it unreachable.
+    "test_scout_evidence_is_not_the_bots.py",
     # THE ONLY WALL CLOCK THE EXIT RULES HAVE, POOL-WIDE.
     #
     # Every exit rule in this bot is sample-driven, so a position whose feed

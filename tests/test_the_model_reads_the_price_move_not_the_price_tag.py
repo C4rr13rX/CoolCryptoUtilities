@@ -31,7 +31,25 @@ channel from 0 to 125,401 swung price_mu from -0.1718 to +1.1588.
 import numpy as np
 import pytest
 
+# GUARD ON WHAT THIS FILE ACTUALLY IMPORTS, NOT ON A NAME A STUB SATISFIES.
+#
+# This file collected fine ALONE and ERRORED in the whole-suite sweep, which is
+# how it stayed invisible: it failed silently AND contributed no passing count.
+# The cause is cross-test pollution. tests/test_production_manager.py calls
+# `_install_tf_stub()` at MODULE SCOPE (line 92), which writes a synthetic
+# `tensorflow` + `tensorflow.keras` into sys.modules for the rest of the
+# session and never removes it. Once that has run, `importorskip("tensorflow")`
+# here SUCCEEDS against the stub instead of skipping -- and then
+# `model_definition` does `from keras.callbacks import Callback`, which is the
+# TOP-LEVEL keras package the stub does not register. ModuleNotFoundError at
+# collection time, in a file that had already declared it can be skipped.
+#
+# `keras` is the honest guard: it is the module model_definition imports, and
+# no stub in this suite fakes it, so this skips when the real package is absent
+# (the system interpreter, where tensorflow's Windows cp313 wheel is broken)
+# and runs when it is present.
 tf = pytest.importorskip("tensorflow")
+pytest.importorskip("keras")
 
 import model_definition as md
 
