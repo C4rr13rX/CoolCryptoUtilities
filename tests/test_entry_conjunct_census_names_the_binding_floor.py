@@ -67,7 +67,7 @@ def test_a_conjunct_that_never_clears_its_floor_is_named_unsatisfiable() -> None
 
 
 def test_an_unrecorded_conjunct_is_not_reported_as_a_wall() -> None:
-    """`confidence` is absent from the snapshot payload; that is not a refusal.
+    """An input absent from the payload is not a refusal.
 
     Counting an unmeasured input as a failing one would invent a third closed
     conjunct and send the next reader to fix a number nobody records.
@@ -105,3 +105,30 @@ def test_a_boolean_is_not_counted_as_a_measurement() -> None:
     report = census_mod.census([{"direction_prob": True}, {"direction_prob": 0.1}])
     assert report["direction_prob"]["observed"] == 1
     assert report["direction_prob"]["max"] == 0.1
+
+
+def test_a_conjunct_is_read_from_the_key_the_scheduler_actually_binds() -> None:
+    """`confidence` is bound from `exit_conf`, and the names do not match.
+
+    trading/scheduler.py:634 reads
+    ``confidence = float(pred_summary.get("exit_conf", 0.5))`` and then tests it
+    against SCHEDULER_MIN_CONFIDENCE. A census that looked up "confidence" in
+    the payload found nothing and reported the conjunct as UNMEASURED -- the
+    safe direction, but it hid a second unsatisfiable floor: exit_conf runs
+    0.4695 / 0.5000 / 0.5234 (min/p50/max) against 0.6, so it never clears
+    either. Two of the four conjuncts are closed, not one.
+    """
+    report = census_mod.census([{"exit_conf": 0.5234}, {"exit_conf": 0.4695}])
+
+    assert report["confidence"]["observed"] == 2, (
+        "the census read the conjunct's NAME instead of the payload key the "
+        "scheduler binds it from"
+    )
+    assert report["confidence"]["payload_key"] == "exit_conf"
+    assert report["confidence"]["max"] == 0.5234
+    assert "confidence" in census_mod.unsatisfiable(report)
+
+    # A payload that carries a literal "confidence" key must not be picked up
+    # in its place: that would be a different number under the same name.
+    ignored = census_mod.census([{"confidence": 0.99}])
+    assert ignored["confidence"]["observed"] == 0

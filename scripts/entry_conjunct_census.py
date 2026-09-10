@@ -49,11 +49,20 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 DEFAULT_DB = os.path.join("storage", "trading_cache.db")
 
-#: (payload key, env var naming its floor, default floor, comparison is >=)
-CONJUNCTS: Tuple[Tuple[str, str, float, bool], ...] = (
-    ("direction_prob", "SCHEDULER_MIN_DIRECTION_PROB", 0.6, True),
-    ("confidence", "SCHEDULER_MIN_CONFIDENCE", 0.6, True),
-    ("net_margin", "SCHEDULER_MIN_NET_MARGIN", 0.0, True),
+#: (conjunct name, PAYLOAD KEY, env var naming its floor, default floor, >=)
+#:
+#: The conjunct's name and the key it reads are not the same string, and
+#: assuming they were cost this census its third row: the scheduler binds
+#: ``confidence = float(pred_summary.get("exit_conf", 0.5))``
+#: (``trading/scheduler.py:634``) and then tests it against
+#: ``SCHEDULER_MIN_CONFIDENCE``. Looking up "confidence" in the payload finds
+#: nothing and reports the conjunct as unmeasured -- which is the safe
+#: direction, but it hid a THIRD unsatisfiable floor: ``exit_conf`` runs
+#: 0.4736 / 0.5009 / 0.5234 (min/p50/max) against 0.6.
+CONJUNCTS: Tuple[Tuple[str, str, str, float, bool], ...] = (
+    ("direction_prob", "direction_prob", "SCHEDULER_MIN_DIRECTION_PROB", 0.6, True),
+    ("confidence", "exit_conf", "SCHEDULER_MIN_CONFIDENCE", 0.6, True),
+    ("net_margin", "net_margin", "SCHEDULER_MIN_NET_MARGIN", 0.0, True),
 )
 
 
@@ -112,11 +121,12 @@ def census(predictions: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
     preds = list(predictions)
     result: Dict[str, Dict[str, Any]] = {}
-    for key, env_var, default, inclusive in CONJUNCTS:
+    for key, payload_key, env_var, default, inclusive in CONJUNCTS:
         floor = _floor(env_var, default)
         values = [
-            float(p[key]) for p in preds
-            if isinstance(p.get(key), (int, float)) and not isinstance(p.get(key), bool)
+            float(p[payload_key]) for p in preds
+            if isinstance(p.get(payload_key), (int, float))
+            and not isinstance(p.get(payload_key), bool)
         ]
         reachable = sum(
             1 for v in values if (v >= floor if inclusive else v > floor)
@@ -124,6 +134,7 @@ def census(predictions: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         entry: Dict[str, Any] = {
             "floor": floor,
             "floor_env": env_var,
+            "payload_key": payload_key,
             "observed": len(values),
             "reachable": reachable,
         }
