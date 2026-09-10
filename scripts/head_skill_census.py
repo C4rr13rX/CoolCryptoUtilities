@@ -274,6 +274,70 @@ def verdict(window: Dict[str, Any]) -> str:
     return "NO INFORMATION -- ordering is inside noise at some horizon"
 
 
+#: The round trip's FIXED leg, in dollars, from receipts. It does not shrink
+#: with the trade, so as a FRACTION of notional it is whatever ``fixed / clip``
+#: happens to be -- 0.0405% on a $10 clip and 0.4047% on a $1 one. A census
+#: that charges only the 0.3187% rate is under-billing every entry it scores,
+#: and under-billing is how a rule that loses money reads as an edge.
+ROUND_TRIP_FIXED_USD = 0.004047
+
+#: ``LIVE_MIN_CLIP_USD`` at trading/pipeline.py:5427. The clip the live lane
+#: would actually place, and therefore the clip the fixed leg amortises over.
+DEFAULT_CLIP_USD = 10.0
+
+#: The percentile family swept by ``--sweep``. A single decile is ONE POINT in
+#: this family: "the top 10% does not pay" is not the same claim as "no rank
+#: threshold pays", and the acceptance criterion on item 618d4c4b asks the
+#: second. Tightening the threshold is the standard rescue for a weak-but-real
+#: ordering -- if the head's AUC 0.56-0.60 carries any tradeable signal, it
+#: shows up as the net improving monotonically toward the tight end.
+SWEEP_PERCENTILES: Tuple[float, ...] = (0.01, 0.02, 0.05, 0.10, 0.20, 0.35, 0.50)
+
+
+def total_cost_fraction(
+    *, notional_rate: float = 0.003187, clip_usd: float = DEFAULT_CLIP_USD
+) -> float:
+    """The whole round-trip cost as a fraction of notional.
+
+    BOTH LEGS, because this repo has already shipped a fee in the wrong
+    currency and a rate subtracted from a dollar amount. The fixed leg is
+    dollars and the rate is a fraction; they only add after the fixed leg is
+    divided by the clip it is charged against.
+    """
+    if clip_usd <= 0:
+        raise ValueError("clip_usd must be positive: the fixed leg is amortised over it")
+    return float(notional_rate) + ROUND_TRIP_FIXED_USD / float(clip_usd)
+
+
+def bucket_scored_returns(
+    preds: Sequence[Dict[str, Any]],
+    series: Dict[str, List[Tuple[float, float]]],
+    *,
+    now: float,
+    hours: float,
+    bucket_sec: float = 2 * 3600.0,
+    horizon_sec: int = 900,
+    field: str = "direction_prob_raw",
+) -> Dict[int, List[Tuple[float, float]]]:
+    """``{bucket_index: [(head_score, realised_return), ...]}``.
+
+    Split out so the percentile sweep joins predictions to the tape ONCE
+    rather than once per threshold. The join is the expensive half and doing
+    it seven times would also invite the two arms to drift apart -- every
+    threshold in the sweep has to be scored on identical rows for the
+    comparison between them to mean anything.
+    """
+    buckets: Dict[int, List[Tuple[float, float]]] = defaultdict(list)
+    for pred in preds:
+        age = now - pred["ts"]
+        if age < 0 or age >= hours * 3600.0:
+            continue
+        ret = forward_return(series, pred["symbol"], pred["ts"], horizon_sec)
+        if ret is not None:
+            buckets[int(age // bucket_sec)].append((pred[field], ret))
+    return buckets
+
+
 def regime_split(
     preds: Sequence[Dict[str, Any]],
     series: Dict[str, List[Tuple[float, float]]],
@@ -310,15 +374,10 @@ def regime_split(
     windows in each regime, not the mean across them -- one window with a big
     number is exactly what the mean hides.
     """
-    buckets: Dict[int, List[Tuple[float, float]]] = defaultdict(list)
-    for pred in preds:
-        age = now - pred["ts"]
-        if age < 0 or age >= hours * 3600.0:
-            continue
-        ret = forward_return(series, pred["symbol"], pred["ts"], horizon_sec)
-        if ret is not None:
-            buckets[int(age // bucket_sec)].append((pred[field], ret))
-
+    buckets = bucket_scored_returns(
+        preds, series, now=now, hours=hours, bucket_sec=bucket_sec,
+        horizon_sec=horizon_sec, field=field,
+    )
     windows: List[Dict[str, Any]] = []
     for index in sorted(buckets):
         rows = buckets[index]
@@ -330,6 +389,12 @@ def regime_split(
         ordered = sorted(rows, key=lambda item: -item[0])
         take = max(1, int(len(ordered) * decile))
         top_mean = statistics.mean([ret for _, ret in ordered[:take]])
+        # THE MIRROR, and it is the cheapest honest test of the ordering claim.
+        # If the head's AUC carries real information, the bars it scores
+        # LOWEST must fall relative to the bars it scores highest. A spread
+        # near zero says the AUC is ordering noise; a NEGATIVE spread says the
+        # ordering is backwards at the tails whatever the pooled AUC reads.
+        bottom_mean = statistics.mean([ret for _, ret in ordered[-take:]])
         windows.append(
             {
                 "hours_ago": (index + 1) * bucket_sec / 3600.0,
@@ -338,6 +403,8 @@ def regime_split(
                 "all_bar_mean": all_bar,
                 "top_mean": top_mean,
                 "top_net": top_mean - cost,
+                "bottom_mean": bottom_mean,
+                "tail_spread": top_mean - bottom_mean,
                 "regime": "UP" if all_bar > 0 else "DOWN",
             }
         )
@@ -375,15 +442,131 @@ def regime_verdict(summary: Dict[str, Any]) -> str:
     )
 
 
+def percentile_sweep(
+    preds: Sequence[Dict[str, Any]],
+    series: Dict[str, List[Tuple[float, float]]],
+    *,
+    now: float,
+    hours: float,
+    horizon_sec: int = 900,
+    cost: float,
+    field: str = "direction_prob_raw",
+    percentiles: Sequence[float] = SWEEP_PERCENTILES,
+    bucket_sec: float = 2 * 3600.0,
+    min_rows: int = 80,
+) -> Dict[str, Any]:
+    """Does ANY rank threshold on the head extract a tradeable ordering?
+
+    THE QUESTION ITEM 618d4c4b ASKS, AND WHY ONE DECILE CANNOT ANSWER IT.
+
+    The head's LEVEL is miscalibrated against ``SCHEDULER_MIN_DIRECTION_PROB``
+    = 0.6 -- a p50 of 0.11 clears no absolute floor -- while its ORDERING
+    scored AUC 0.56-0.60 against the realised tape over the same rows. A rank
+    threshold is the obvious way to spend an ordering without touching a
+    level: enter on the top N% of the head's scores in the window, whatever
+    number those scores happen to be.
+
+    ``net_margin >= 0`` IS UNTOUCHED BY ALL OF THIS. That is the cost test,
+    not the direction test, and it keeps its floor: this sweep asks only
+    whether direction can be ranked, and every threshold below is still
+    charged the full round trip.
+
+    A weak-but-real ordering has a signature: the net improves as the
+    threshold tightens, because a tighter cut keeps a higher-quality slice.
+    An ordering that is noise does the opposite -- the net wanders and the
+    variance explodes as the sample shrinks. The verdict reads the whole
+    family rather than the best member of it, because the best of seven
+    thresholds is the maximum of seven noisy draws and picking it is how a
+    sweep manufactures an edge.
+    """
+    buckets = bucket_scored_returns(
+        preds, series, now=now, hours=hours, bucket_sec=bucket_sec,
+        horizon_sec=horizon_sec, field=field,
+    )
+    usable = {index: rows for index, rows in buckets.items() if len(rows) >= min_rows}
+
+    rungs: List[Dict[str, Any]] = []
+    for pct in percentiles:
+        per_regime: Dict[str, List[float]] = {"UP": [], "DOWN": []}
+        for rows in usable.values():
+            all_bar = statistics.mean([ret for _, ret in rows])
+            ordered = sorted(rows, key=lambda item: -item[0])
+            take = max(1, int(len(ordered) * pct))
+            net = statistics.mean([ret for _, ret in ordered[:take]]) - cost
+            per_regime["UP" if all_bar > 0 else "DOWN"].append(net)
+        rung: Dict[str, Any] = {"pct": pct, "regimes": {}}
+        for regime, nets in per_regime.items():
+            rung["regimes"][regime] = {
+                "n_windows": len(nets),
+                "n_positive": sum(1 for net in nets if net > 0),
+                "mean_net": statistics.mean(nets) if nets else float("nan"),
+            }
+        up, down = rung["regimes"]["UP"], rung["regimes"]["DOWN"]
+        rung["clears_both"] = bool(
+            up["n_windows"]
+            and down["n_windows"]
+            and up["n_positive"] * 2 > up["n_windows"]
+            and down["n_positive"] * 2 > down["n_windows"]
+        )
+        rungs.append(rung)
+    return {"rungs": rungs, "n_windows": len(usable), "cost": cost}
+
+
+def sweep_verdict(sweep: Dict[str, Any]) -> str:
+    """NO RANK THRESHOLD PAYS, or which ones do -- never "the best one".
+
+    Naming the winning rung of a sweep is the same error as reporting a
+    single window: seven thresholds scored on one dataset produce a maximum
+    whether or not any signal is present. So the verdict counts how many
+    rungs clear BOTH regimes and says plainly when the answer is none.
+    """
+    clearing = [rung for rung in sweep["rungs"] if rung["clears_both"]]
+    if not clearing:
+        return (
+            "NO RANK THRESHOLD PAYS -- none of the "
+            f"{len(sweep['rungs'])} percentile cuts is net-positive in a majority "
+            "of UP windows AND a majority of DOWN windows. The head's ordering "
+            "does not survive the round-trip cost at any tightness, so a "
+            "percentile entry gate would open the lane onto a losing rule."
+        )
+    names = ", ".join(f"top {rung['pct'] * 100:g}%" for rung in clearing)
+    return (
+        f"{len(clearing)} of {len(sweep['rungs'])} thresholds clear both regimes "
+        f"({names}). Treat this as a HYPOTHESIS, not an edge: the cuts were "
+        "chosen after seeing the data and need a held-out window before any "
+        "gate is built on one."
+    )
+
+
+def render_sweep(sweep: Dict[str, Any], *, horizon_sec: int) -> str:
+    lines = [
+        f"RANK-THRESHOLD SWEEP, {horizon_sec // 60}m horizon, "
+        f"net of {sweep['cost'] * 100:.4f}% total round-trip cost",
+        f"  {sweep['n_windows']} windows scored. Does entering on the head's top N% pay?",
+        "  threshold      UP windows net-positive        DOWN windows net-positive",
+    ]
+    for rung in sweep["rungs"]:
+        up, down = rung["regimes"]["UP"], rung["regimes"]["DOWN"]
+        lines.append(
+            f"  top {rung['pct'] * 100:5.1f}%      "
+            f"{up['n_positive']}/{up['n_windows']}  mean {up['mean_net'] * 100:+8.4f}%      "
+            f"{down['n_positive']}/{down['n_windows']}  mean {down['mean_net'] * 100:+8.4f}%"
+        )
+    lines.append("")
+    lines.append(f"  VERDICT: {sweep_verdict(sweep)}")
+    return "\n".join(lines)
+
+
 def render_regimes(summary: Dict[str, Any], *, horizon_sec: int, cost: float) -> str:
     lines = [
-        f"TOP-DECILE ENTRY, {horizon_sec // 60}m horizon, net of {cost * 100:.4f}% notional cost",
-        "  window   up-share   all-bar    top-decile      NET   regime",
+        f"TOP-DECILE ENTRY, {horizon_sec // 60}m horizon, net of {cost * 100:.4f}% round-trip cost",
+        "  window   up-share   all-bar    top-dec   bot-dec    SPREAD       NET   regime",
     ]
     for win in summary["windows"]:
         lines.append(
             f"  -{win['hours_ago']:4.0f}h    {win['up_share'] * 100:5.1f}%   "
             f"{win['all_bar_mean'] * 100:+.4f}%   {win['top_mean'] * 100:+.4f}%   "
+            f"{win['bottom_mean'] * 100:+.4f}%   {win['tail_spread'] * 100:+.4f}%   "
             f"{win['top_net'] * 100:+.4f}%   {win['regime']}"
         )
     lines.append("")
@@ -444,7 +627,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument(
         "--cost", type=float, default=0.003187,
-        help="round-trip cost as a fraction of notional, from receipts",
+        help="round-trip cost RATE as a fraction of notional, from receipts. "
+             "The fixed $0.004047 leg is added on top, amortised over --clip",
+    )
+    parser.add_argument(
+        "--clip", type=float, default=DEFAULT_CLIP_USD,
+        help="clip in dollars the fixed $0.004047 leg is charged against "
+             f"(default {DEFAULT_CLIP_USD:g}, LIVE_MIN_CLIP_USD). A smaller clip "
+             "makes every entry more expensive, not less",
     )
     parser.add_argument(
         "--exclude", action="append", default=[],
@@ -477,14 +667,37 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # pooled read on this feed is the trap -- it produced two apparent edges
     # on 2026-09-10 that this split killed. A reader who sees only the block
     # above will believe the first one.
+    # BOTH LEGS OF THE ROUND TRIP. Charging only the 0.3187% rate under-bills
+    # every entry scored below by $0.004047, which on a $10 clip is another
+    # 0.0405% and on a $1 clip is another 0.4047% -- larger than the effect
+    # being measured. Printed so a reader can see which cost produced the
+    # verdict rather than having to assume one.
+    cost = total_cost_fraction(notional_rate=args.cost, clip_usd=args.clip)
+    print(
+        f"ROUND-TRIP COST {cost * 100:.4f}% of notional = {args.cost * 100:.4f}% rate "
+        f"+ ${ROUND_TRIP_FIXED_USD:g} fixed amortised over a ${args.clip:g} clip\n"
+    )
     print(
         render_regimes(
             regime_split(
                 preds, series, now=now, hours=args.hours,
-                horizon_sec=args.regime_horizon, cost=args.cost, field=args.field,
+                horizon_sec=args.regime_horizon, cost=cost, field=args.field,
             ),
             horizon_sec=args.regime_horizon,
-            cost=args.cost,
+            cost=cost,
+        )
+    )
+    print()
+    # THE ACCEPTANCE CRITERION ON 618d4c4b, ANSWERED EVERY RUN. "The top decile
+    # does not pay" is one point; "no rank threshold pays" is the claim that
+    # decides whether a percentile entry gate should be built at all.
+    print(
+        render_sweep(
+            percentile_sweep(
+                preds, series, now=now, hours=args.hours,
+                horizon_sec=args.regime_horizon, cost=cost, field=args.field,
+            ),
+            horizon_sec=args.regime_horizon,
         )
     )
     return 0

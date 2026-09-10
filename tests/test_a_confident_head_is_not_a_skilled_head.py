@@ -229,3 +229,150 @@ def test_an_edge_is_only_claimed_when_both_regimes_hold():
         },
     }
     assert "EDGE HOLDS IN BOTH REGIMES" in regime_verdict(summary)
+
+
+# ---------------------------------------------------------------------------
+# THE FIXED COST LEG, AND THE RANK-THRESHOLD SWEEP.
+#
+# Two defects these cover, both found on 2026-09-10 in the census itself
+# rather than in the code it measures:
+#
+#   1. The census charged only the 0.3187% notional RATE and silently dropped
+#      the $0.004047 FIXED leg of the round trip. Under-billing an entry is
+#      how a rule that loses money reads as an edge, and this repo has already
+#      shipped a fee in the wrong currency once.
+#   2. It scored ONE percentile (the top decile) and the acceptance criterion
+#      on item 618d4c4b asks whether ANY rank threshold extracts the head's
+#      ordering. "The top 10% does not pay" and "no rank threshold pays" are
+#      different claims, and only the second decides whether to build a gate.
+# ---------------------------------------------------------------------------
+
+
+def test_the_fixed_leg_of_the_round_trip_is_charged_not_dropped():
+    """$0.004047 is dollars and 0.3187% is a fraction; they must not be mixed.
+
+    The fixed leg does not shrink with the trade, so it only becomes a
+    fraction after being divided by the clip it is charged against. A census
+    that omits it under-bills a $10 clip by 0.0405% and a $1 clip by 0.4047%
+    -- the latter being larger than every effect this script measures.
+    """
+    from scripts.head_skill_census import ROUND_TRIP_FIXED_USD, total_cost_fraction
+
+    rate = 0.003187
+    assert total_cost_fraction(notional_rate=rate, clip_usd=10.0) == pytest.approx(
+        rate + ROUND_TRIP_FIXED_USD / 10.0
+    )
+    # A SMALLER CLIP IS MORE EXPENSIVE, NOT LESS. Getting this backwards would
+    # make the micro-clip lane look like the cheap one.
+    assert total_cost_fraction(notional_rate=rate, clip_usd=1.0) > total_cost_fraction(
+        notional_rate=rate, clip_usd=10.0
+    )
+    assert total_cost_fraction(notional_rate=rate, clip_usd=1.0) == pytest.approx(
+        rate + ROUND_TRIP_FIXED_USD
+    )
+    with pytest.raises(ValueError):
+        total_cost_fraction(notional_rate=rate, clip_usd=0.0)
+
+
+def test_a_sweep_that_clears_only_up_windows_is_not_an_edge():
+    """THE UP-WINDOW TRAP, AT THE SWEEP LEVEL.
+
+    A long-only rule flatters itself in an up window. A sweep multiplies the
+    danger: seven thresholds scored on one dataset produce a maximum whether
+    or not any signal is present, so a verdict that named the best rung would
+    manufacture an edge from noise. This fixture is net-positive in EVERY up
+    window at every tightness and never in a down window -- the exact shape of
+    this repo's fake 78% and fake +0.9067% -- and must still read as no edge.
+    """
+    from scripts.head_skill_census import sweep_verdict
+
+    sweep = {
+        "cost": 0.0036,
+        "n_windows": 9,
+        "rungs": [
+            {
+                "pct": pct,
+                "regimes": {
+                    "UP": {"n_windows": 4, "n_positive": 4, "mean_net": 0.006},
+                    "DOWN": {"n_windows": 5, "n_positive": 0, "mean_net": -0.005},
+                },
+                "clears_both": False,
+            }
+            for pct in (0.01, 0.05, 0.10)
+        ],
+    }
+    assert "NO RANK THRESHOLD PAYS" in sweep_verdict(sweep)
+
+
+def test_a_threshold_clearing_both_regimes_is_a_hypothesis_not_an_edge():
+    """The mirror, and it must still refuse to call the result shippable.
+
+    Even when a rung clears both regimes, the cut was chosen after seeing the
+    data. The verdict says HYPOTHESIS and asks for a held-out window, because
+    the one unforgivable outcome here is inventing a positive.
+    """
+    from scripts.head_skill_census import sweep_verdict
+
+    sweep = {
+        "cost": 0.0036,
+        "n_windows": 9,
+        "rungs": [
+            {
+                "pct": 0.01,
+                "regimes": {
+                    "UP": {"n_windows": 4, "n_positive": 3, "mean_net": 0.006},
+                    "DOWN": {"n_windows": 5, "n_positive": 4, "mean_net": 0.004},
+                },
+                "clears_both": True,
+            }
+        ],
+    }
+    spoken = sweep_verdict(sweep)
+    assert "HYPOTHESIS" in spoken and "held-out" in spoken
+    assert "NO RANK THRESHOLD PAYS" not in spoken
+
+
+def test_the_sweep_scores_every_threshold_on_identical_rows():
+    """A sweep whose rungs saw different samples compares nothing.
+
+    Each rung must be a cut of the SAME joined rows -- if the tape join were
+    redone per threshold, two rungs could differ because of which rows they
+    happened to catch rather than because of the threshold. So every rung
+    reports the same window counts.
+    """
+    from scripts.head_skill_census import percentile_sweep
+
+    now = 100_000.0
+    # A tape that alternates so both regimes and both classes are present.
+    series = {"FAKE-USDC": []}
+    preds = []
+    price = 100.0
+    for index in range(400):
+        ts = now - 20_000.0 + index * 50.0
+        series["FAKE-USDC"].append((ts, price))
+        price *= 1.0 + (0.004 if index % 2 else -0.003)
+        preds.append(
+            {
+                "ts": ts,
+                "symbol": "FAKE-USDC",
+                "direction_prob": (index % 10) / 10.0,
+                "direction_prob_raw": (index % 10) / 10.0,
+                "price_mu": 0.0,
+            }
+        )
+    series["FAKE-USDC"].sort()
+
+    sweep = percentile_sweep(
+        preds, series, now=now, hours=6.0, horizon_sec=300, cost=0.0036, min_rows=20
+    )
+    assert sweep["rungs"], "fixture must produce at least one rung"
+    counts = {
+        (
+            rung["regimes"]["UP"]["n_windows"],
+            rung["regimes"]["DOWN"]["n_windows"],
+        )
+        for rung in sweep["rungs"]
+    }
+    assert len(counts) == 1, f"rungs scored different window sets: {counts}"
+    total = sum(next(iter(counts)))
+    assert total == sweep["n_windows"]
