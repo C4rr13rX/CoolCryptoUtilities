@@ -1740,3 +1740,17 @@ from AERO is a stale verdict, unbanning it puts the only live executor on the
 only paying symbol, and that is the shortest path to a settled profitable round
 trip that this loop has had. If the ban is correct evidence, then say so with
 the t-statistic and go build an executor that is NOT atf_static for AERO.
+SHIPPED (final): 381ef08 the split + scripts/tradeable_book.py + 6 tests;
+720d5e5 the cost arithmetic and the AERO+clip combination, with the
+overfitting caveat; b2c15ee the gross-vs-cost split folded into the tool
+so the QUALITY target is one command, +6 tests (11 in the file); a7f02e1
+wires that file into GATE_TESTS beside Iris's ledger-side equivalent, so
+the two independent sources of the same split are BOTH gated and a
+disagreement between them goes red. Gate 255 -> 492 passed / 0 failed
+across the pass (Iris and the operator contributed most of that growth),
+profit_logic_audit NO KNOWN LOSING SHAPES.
+SCOREBOARD, honestly: live_approved 0, unchanged. I did not move it and I
+did not touch the graduation stamp, _live_tradeable, _tradeable_of or the
+demotion/re-arm rules -- the operator's 03:46 steering ruled that out and
+I had already concluded the same from reading them. What moved is which
+wall the next pass works, and the wall now has a number: 0.2625% -> 0.3187%.
