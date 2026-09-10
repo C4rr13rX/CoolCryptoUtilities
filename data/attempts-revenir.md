@@ -2550,3 +2550,49 @@ If `max_hold` stops being top and `timed-exit` goes non-zero, the fix is
 carrying; the dark-feed sweep is a separate smaller item. Generalisable lesson:
 **when a rule's outcome count is exactly zero, stop tuning its threshold and ask
 what consumes its tick first.**
+
+### Pass 102, Jet (planner), second half: the "plausible" population is still standing on six fabricated rows
+
+**Hypothesis.** Everyone in this loop is now quoting numbers off a population
+filtered at `|gross| <= 50% of notional`. Nobody had asked what that threshold
+actually removes.
+
+**Measured** over `trade_outcomes`, 7d, `wallet='ghost' status='closed'`,
+notional = `quantity * entry_price`. 125 rows, total gross **+2.3846**:
+
+    <=50% -> 123 rows, +1.4629  (POSITIVE)     <=15% -> 117 rows, -0.2626  (NEGATIVE)
+    <=25% -> 122 rows, +1.2744                 <=10% -> 114 rows, -0.1779
+                                               <= 5% -> 107 rows, -0.5761
+
+**Eight rows carry +2.6472 of a +2.3846 book and the 50% rule catches two.** The
+six it misses are 17-25% of notional, five of them BSTONK-USDC, booked by SIX
+DIFFERENT strategies (atf_static x2, rsi_reversal@5h, donchian_breakout@5d,
+supertrend_follow@1d; BASECAT for stochastic), all 09-03 to 09-06, five with
+`reason='take_profit_limit'`. Two are the exact rows [c4f16946] names as the
++1.0201 of fabricated fills the re-arm rule reads. **The threshold sits above
+every row the ledger has already judged bad.**
+
+**Six unrelated strategies do not find a 20% edge in one symbol in one week --
+it is the SERIES.** BSTONK-USDC 7d: 1737 ticks, 12s median gap, **91
+adjacent-tick jumps above 5%**, p95 5.258%, p99 11.529%, max 27.077%.
+AERO-USDC: 3748 ticks, **one** jump above 5%, p95 0.287%. 18x on the same feed
+in the same week.
+
+**Ran the gate down rather than filing a guess.** `stop_survivability_gate.
+refusal_reason('BSTONK-USDC')` returns *"p99 single-tick jump 4.91% over 1449
+ticks exceeds 4.00% (2.00% stop x 2.0); a stop cannot bind on this feed"* -- it
+IS wired (trading/bot.py:8063, atf_static_strategy.py:1116) and it DOES refuse
+BSTONK, so those six rows are historic and already guarded forward by 5504769.
+**What survived the check is narrower and real: the gate returns None for
+BASECAT-USDC**, whose 7d p99 is 5.559% with 31 jumps above 5%, against its own
+4.00% ceiling. Filed and then re-scoped to exactly that within the hour
+([66b46f42]); AERO p99 0.828% is correctly accepted, so the gate is right about
+two of three.
+
+**Result:** no production code changed (planner pass). What moved is that the
+next agent to quote a "plausible" number knows it is threshold-dependent and
+knows the sign flips at 15%. **Next:** the target/fill-ratio predicate in
+[db76611a] -- an overshoot is named by filling past its own limit, not by being
+large -- is the only one that separates a fabricated 20% fill from a real 20%
+move, and a size threshold never will.
+
