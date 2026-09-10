@@ -104,7 +104,12 @@ def collect() -> dict:
         {
             "id": s["id"],
             "ghost_trades": s["ghost_trades"],
-            "pooled_trades": s.get("pooled_trades", 0),
+            # readiness_report names this `pooled_ghost_trades`, matching its
+            # own `ghost_trades`/`ghost_wins`/`ghost_profit` convention; this
+            # module's internal collector names it `pooled_trades`. Both feed
+            # this dict, so read both -- a bare `pooled_trades` lookup silently
+            # returned 0 and printed "out of 0 pooled" beside a 236-trade book.
+            "pooled_trades": s.get("pooled_trades", s.get("pooled_ghost_trades", 0)),
             "win_rate": s["win_rate"],
             "ghost_profit": s["ghost_profit"],
             "blockers": s["blockers"],

@@ -228,6 +228,21 @@ GATE_TESTS = (
     # is not strained by including them.
     "test_strategy_ledger.py",
     "test_readiness_report.py",
+    # ...and the file that pins the two to EACH OTHER. The gate above owns the
+    # rule; this owns the invariant that the REPORT measures the same thing the
+    # rule does. Measured 2026-09-10: scripts/readiness_report.collect computed
+    # `ready` from the pooled ghost book while _evaluate_graduation_locked
+    # judges _tradeable_of(ghost) and returns early on graduation_blocked /
+    # GHOST_ONLY_STRATEGY_IDS / demote_reason. atf_static read 52 trades
+    # +1.5407 pooled and 4 trades -0.0187 tradeable; atf_static_scout read 236
+    # +6.4818 pooled and 3 -0.0778 tradeable and is permanently ghost-only.
+    # Both were reported ready, both already carried graduated_ts, and the wall
+    # printed at the top of every pass therefore read "READY BUT UNSTAMPED --
+    # the ledger is not stamping graduated_ts" while the stamps existed and the
+    # gate was correctly refusing them. Passes were aimed at the stamping code,
+    # which was not broken. Both files could be green while disagreeing about
+    # every strategy in the ledger, so neither could catch it alone.
+    "test_readiness_is_not_computed_from_the_pooled_ghost_book.py",
     # The gate that was refusing 100% of entries, and the half of its tests
     # that matters. `_tick_jumps` read prices without timestamps, so a 40%
     # move across a 31-hour hole in the feed scored as a single-tick jump and
