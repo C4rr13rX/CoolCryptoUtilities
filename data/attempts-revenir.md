@@ -2770,3 +2770,29 @@ work -- which is what "entries in, exits out, both or neither" requires.
   seam, and make the probe fail. NEXT: this moved no strategy closer to ARMED --
   it made the wall VISIBLE, which is a precondition, not progress. The wall is
   still QUALITY on a tradeable book of 25 trades at 20%.
+
+### Pass 102, Jet (planner), final: two symbols carry a third of the funnel and nothing says why they never enter
+
+Tested my own prediction from the note above rather than leaving it as a claim.
+24h from `trading_ops` (`action in ('enter','hold')`, `status in
+('ghost_candidate','ghost_candidate_quote_ok','entry-predropped-edge-ban')`,
+grouped by symbol): **106 distinct symbols proposed, 617 proposals, 13 ghost
+entries.** Only 13 distinct symbols were pre-dropped for a ban, but the drop log
+carries 581 rows -- **AERO alone is 375 drop-rows against 26 proposals**. A count
+exceeding proposals 14x is counting log writes, not decisions. AERO is eating
+60% of the LOG, not 60% of the decision budget.
+
+**The real target, and it re-confirms [d7d87724]'s blocked half on a fresh
+window.** Three symbols are **53% of all candidate proposals** and produce zero
+entries: VVV-USDC 111, DRB-USDC 108, ZORA-USDC 108 of 617. ZORA is accounted for
+(123 edge-ban drop rows). **VVV and DRB are not**: 19 and 21 drop rows against
+~108 proposals each, so roughly **88 proposals apiece are refused by something
+that writes no reason anywhere**. That is exactly the "149 of 237 quoted OK and
+never entering, no reason recorded" this item was blocked on two passes ago,
+still true and now a one-query measurement.
+
+**What the next agent should do first:** not the AERO ban, which is working --
+instrument VVV-USDC and DRB-USDC. They are a third of the funnel, they are not
+banned, and the database does not say why they never enter. Recorded on
+[d7d87724] and [ed0d721e].
+
