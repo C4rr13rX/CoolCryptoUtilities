@@ -284,6 +284,90 @@ def op_log_multiplicity(
     return {"rows": int(total), "by_status": {str(s): int(n) for s, n in rows}}
 
 
+def breadth_trend(
+    conn: sqlite3.Connection, *, now: float, hours: float, buckets: int = 4
+) -> List[Dict[str, Any]]:
+    """Symbols and proposable strategies per bucket, oldest first.
+
+    THE SELF-CHECK THAT CHANGED THIS SCRIPT'S CONCLUSION. Read over six hours
+    alone, 32 of 42 strategies appear in neither producer and it looks like a
+    structural exclusion. Read over 24, only 21 are missing and the strategy
+    closest to the graduation bar is among those that DO appear. Nothing is
+    permanently excluded; the proposable population is SHRINKING, and a single
+    window cannot tell those apart.
+
+    Measured 2026-09-10, 6h buckets over 24h (symbols / slot-holders /
+    proposed / cycles / entries):
+
+        -24h..-18h   20 / 16 / 22 / 1151 / 4
+        -18h..-12h   18 /  6 /  9 / 1137 / 1
+        -12h..-6h    11 /  7 / 12 / 1801 / 0
+        -6h..-0h      8 /  9 / 13 / 1572 / 1
+
+    Symbols fall 20 -> 8 and proposable strategies 22 -> 13 in one day, so
+    breadth must be reported BESIDE any per-strategy count: a strategy count
+    that moves while the symbol count moves under it has measured the feed,
+    not the allocation.
+    """
+    span = max(1e-9, float(hours) / max(1, buckets))
+    trend: List[Dict[str, Any]] = []
+    for index in range(buckets, 0, -1):
+        low, high = now - index * span * 3600.0, now - (index - 1) * span * 3600.0
+        rows = conn.execute(
+            "select ts, payload from organism_snapshots where ts>=? and ts<? order by ts",
+            (low, high),
+        ).fetchall()
+        report = census(rows, hours=span)
+        holders = {
+            row["strategy"]
+            for row in report["per_strategy"]
+            if row["strategy"] != NO_DIRECTIVE
+        }
+        proposed = holders | set(
+            _candidates_between(conn, low=low, high=high)
+        )
+        trend.append(
+            {
+                "from_hours_ago": round(index * span, 2),
+                "to_hours_ago": round((index - 1) * span, 2),
+                "symbols": report["slot_count"],
+                "slot_holders": len(holders),
+                "proposed": len(proposed),
+                "cycles": report["cycles"],
+                "entries": report["entries"],
+            }
+        )
+    return trend
+
+
+def _candidates_between(conn: sqlite3.Connection, *, low: float, high: float) -> set:
+    """Strategy ids named by any op-log row in ``[low, high)``."""
+    names: set = set()
+    try:
+        rows = conn.execute(
+            "select details from trading_ops where ts>=? and ts<?", (low, high)
+        ).fetchall()
+    except sqlite3.Error:
+        return names
+    for (raw,) in rows:
+        try:
+            details = json.loads(raw) if isinstance(raw, (str, bytes)) else (raw or {})
+        except Exception:  # noqa: BLE001 - an unparseable payload is not evidence
+            continue
+        if not isinstance(details, dict):
+            continue
+        if details.get("strategy_id"):
+            names.add(str(details["strategy_id"]))
+        for key in _LIST_KEYS:
+            value = details.get(key)
+            if not isinstance(value, list):
+                continue
+            for entry in value:
+                if isinstance(entry, dict) and entry.get("strategy_id"):
+                    names.add(str(entry["strategy_id"]))
+    return names
+
+
 def _load(db_path: str, hours: float, now: float) -> List[Tuple[float, str]]:
     conn = sqlite3.connect(db_path)
     try:
@@ -300,6 +384,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--db", default=DEFAULT_DB)
     parser.add_argument("--hours", type=float, default=6.0)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument(
+        "--buckets",
+        type=int,
+        default=4,
+        help="split the window into this many buckets for the breadth trend",
+    )
     args = parser.parse_args(argv)
 
     if not os.path.exists(args.db):
@@ -318,6 +408,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         report["trading_ops"] = op_log_multiplicity(conn, now=now, hours=args.hours)
         report["candidate_channel"] = candidate_channel(
             conn, now=now, hours=args.hours
+        )
+        report["breadth_trend"] = breadth_trend(
+            conn, now=now, hours=args.hours, buckets=args.buckets
         )
     finally:
         conn.close()
@@ -382,6 +475,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     for name in report["never_proposed"]:
         print(f"    {name}")
+    print()
+    print(
+        "  BREADTH TREND, oldest first -- read this BEFORE quoting any "
+        "per-strategy count."
+    )
+    print(
+        "  A strategy count that moves while the symbol count moves under it "
+        "has measured the feed, not the allocation."
+    )
+    print(
+        f"    {'window':>14s} {'symbols':>8s} {'holders':>8s} "
+        f"{'proposed':>9s} {'cycles':>7s} {'entries':>8s}"
+    )
+    for row in report["breadth_trend"]:
+        label = f"-{row['from_hours_ago']:g}h..-{row['to_hours_ago']:g}h"
+        print(
+            f"    {label:>14s} {row['symbols']:8d} {row['slot_holders']:8d} "
+            f"{row['proposed']:9d} {row['cycles']:7d} {row['entries']:8d}"
+        )
     return 0
 
 

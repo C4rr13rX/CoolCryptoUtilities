@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.decision_budget_census import (
     NO_DIRECTIVE,
+    breadth_trend,
     candidate_channel,
     census,
     slot_owners,
@@ -180,6 +181,36 @@ def test_a_strategy_in_neither_channel_is_never_proposed_not_merely_unlucky():
     # rsi_reversal is the status command's closest-to-the-bar strategy, and
     # this is the shape in which it disappears.
     assert sorted(registry - proposed) == ["rsi_reversal", "vwap_reversion"]
+
+
+def test_the_trend_reports_symbols_beside_strategies_so_neither_is_quoted_alone():
+    """The self-check that caught this script's own overstated conclusion.
+
+    Read over one short window, a shrinking population looks like a permanent
+    exclusion. The trend must therefore carry the SYMBOL count next to the
+    strategy count in every bucket: a strategy count that falls while symbols
+    fall under it has measured the feed, not the allocation.
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.execute("create table organism_snapshots (ts real, payload text)")
+    conn.execute("create table trading_ops (ts real, status text, details text)")
+    # Older bucket: two symbols, two owners. Newer bucket: one of each.
+    wide = _snapshot("AAA-USDC", "hold", {"AAA-USDC": "ema_cross", "BBB-USDC": "rsi_reversal"})[1]
+    narrow = _snapshot("AAA-USDC", "hold", {"AAA-USDC": "ema_cross"})[1]
+    conn.execute("insert into organism_snapshots values (?,?)", (50.0, wide))
+    conn.execute("insert into organism_snapshots values (?,?)", (150.0, narrow))
+
+    # now=200s, a 200-second window in two buckets -> [0,100) then [100,200).
+    trend = breadth_trend(conn, now=200.0, hours=200.0 / 3600.0, buckets=2)
+
+    # symbols counts SLOTS that existed; slot_holders counts strategies that
+    # actually drew a cycle. They are different numbers on purpose -- BBB-USDC
+    # has an owner in the older bucket but no decision landed on it, so the
+    # breadth fell from 2 symbols to 1 while holders stayed at 1 throughout.
+    assert [row["symbols"] for row in trend] == [2, 1], trend
+    assert [row["slot_holders"] for row in trend] == [1, 1], trend
+    # Oldest first, so a shrinking population reads left to right.
+    assert trend[0]["from_hours_ago"] > trend[1]["from_hours_ago"], trend
 
 
 def test_slot_owners_reads_the_directive_not_the_symbol_order():
