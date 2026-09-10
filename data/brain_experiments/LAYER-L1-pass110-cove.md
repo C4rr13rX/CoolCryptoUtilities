@@ -258,3 +258,24 @@ python -X utf8 scripts/omen_layer_probe.py \
   --corpus data/brain_experiments/p108_aero_up.json --horizon 12 --heldout
 # exits 1: L2 DOES NOT ABSTRACT (0.4520 against 0.3000)
 ```
+
+## 8. MOTIF_SEQUENCE_STEPS swept, and set to 3
+
+The addendum left L2 failing its own guard. Swept the step count on both
+windows, 719 samples each, **after** the encoder fix — which matters, because
+the same sweep against the blind encoder read 0.177 at 4 steps and would have
+justified keeping it:
+
+| steps | L2 distinctness UP | DOWN | verdict |
+|---:|---:|---:|---|
+| 2 | 0.1266 | 0.1530 | comfortably under the guard |
+| **3** | **0.2976** | **0.2962** | **passes, margin 0.8%** |
+| 4 | 0.4520 | 0.4159 | FAILS the 0.30 identifier guard |
+
+Set to **3**: it passes and carries more order than 2. **The margin is thin
+and that is not a rounding detail** — a corpus with a richer L1 vocabulary
+will push 3 over the line too, and the failure mode is the expensive one. The
+probe now exits 0 on both windows.
+
+Anyone taking this further should re-run the probe on their corpus and drop to
+2 rather than argue with the number.
