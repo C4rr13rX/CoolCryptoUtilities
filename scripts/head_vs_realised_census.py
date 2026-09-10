@@ -247,9 +247,26 @@ def rank_profile(rows: List[Dict[str, Any]], buckets: int = 5) -> Dict[str, Any]
     recover a usable head; if the ranking carries none, there is nothing for a
     calibrator to rescue and the defect is in the model's content.
 
-    Measured 2026-09-10, the pre-collapse head's quintile up-rates ran
-    50.9 / 52.1 / 32.1 / 37.8 / 43.1 -- non-monotonic, with the most confident
-    UP quintile LESS likely to go up than the least confident one.
+    READ ``auc``, NOT ``monotonic``, FOR THE VERDICT. This is a correction to
+    an earlier version of this file, which reported only the quintile profile
+    and drew "the order carries nothing" from its non-monotonicity. THAT
+    INFERENCE IS WRONG: a noisy-but-informative ranking is routinely
+    non-monotonic across five buckets, so ``monotonic`` is a shape description
+    and ``auc`` is the aggregate that decides it. 0.5 is no ranking skill.
+
+    Measured 2026-09-10 over 15-min forward returns:
+
+        pre_collapse   AUC 0.4076   quintiles 50.3 52.7 31.9 37.9 43.0
+        post_collapse  AUC 0.5264   quintiles 42.1 50.5 38.5 41.2 53.6
+
+    Both are non-monotonic and they are NOT the same finding. The pre-collapse
+    head -- the dp_max 0.9795 state everyone has been trying to restore -- is
+    genuinely INVERTED: more confidence, less likely to be right, top decile
+    mean return -0.1020% against the bottom decile's -0.0363%. The
+    post-collapse head sits weakly ABOVE chance. So restoring the old level is
+    not a fix, and recalibrating the new one is not obviously hopeless -- but
+    neither is tradeable, because the skill does not survive the round trip
+    cost at any percentile.
     """
     if not rows:
         return {"n": 0}
@@ -263,11 +280,47 @@ def rank_profile(rows: List[Dict[str, Any]], buckets: int = 5) -> Dict[str, Any]
     def mean_ret(group: List[Dict[str, Any]]) -> float:
         return sum(r["realised"] for r in group) / len(group) if group else float("nan")
 
+    # Mann-Whitney AUC: the probability that a randomly chosen row that went UP
+    # was given a higher direction_prob than a randomly chosen row that went
+    # DOWN. Baseline-invariant, so unlike a hit rate it is not flattered by a
+    # head that calls DOWN on everything in a down tape. Ties share their rank.
+    pos = [r["direction_prob"] for r in ordered if r["realised"] > 0]
+    neg = [r["direction_prob"] for r in ordered if r["realised"] < 0]
+    if pos and neg:
+        values = sorted(pos + neg)
+        rank_of: Dict[float, float] = {}
+        i = 0
+        while i < len(values):
+            j = i
+            while j + 1 < len(values) and values[j + 1] == values[i]:
+                j += 1
+            rank_of[values[i]] = (i + j) / 2.0 + 1.0
+            i = j + 1
+        rank_sum = sum(rank_of[v] for v in pos)
+        auc = (rank_sum - len(pos) * (len(pos) + 1) / 2.0) / (len(pos) * len(neg))
+        # Hanley-McNeil standard error, the usual approximation.
+        q1 = auc / (2.0 - auc)
+        q2 = 2.0 * auc * auc / (1.0 + auc)
+        auc_se = (
+            (
+                auc * (1 - auc)
+                + (len(pos) - 1) * (q1 - auc * auc)
+                + (len(neg) - 1) * (q2 - auc * auc)
+            )
+            / (len(pos) * len(neg))
+        ) ** 0.5
+    else:
+        auc = auc_se = float("nan")
+
     bottom, top = ordered[:k], ordered[-k:]
     quintiles = [ordered[i * n // buckets : (i + 1) * n // buckets] for i in range(buckets)]
     quintiles = [q for q in quintiles if q]
     return {
         "n": n,
+        "auc": auc,
+        "auc_se": auc_se,
+        "auc_beats_chance": bool(auc == auc and (auc - 1.96 * auc_se) > 0.5),
+        "auc_inverted": bool(auc == auc and (auc + 1.96 * auc_se) < 0.5),
         "dp_min": ordered[0]["direction_prob"],
         "dp_max": ordered[-1]["direction_prob"],
         "bottom_up": up_rate(bottom),
@@ -484,7 +537,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not rp.get("n"):
             continue
         cells = "  ".join(f"{v * 100:5.1f}" for v in rp["quintile_up"])
+        if rp["auc_inverted"]:
+            call = "INVERTED -- more confidence, MORE wrong"
+        elif rp["auc_beats_chance"]:
+            call = "above chance (weak ranking skill)"
+        else:
+            call = "indistinguishable from chance"
         print(f"     {name:<14} {cells}      {'YES' if rp['monotonic'] else 'NO'}")
+        print(
+            f"       AUC {rp['auc']:.4f} +/- {rp['auc_se']:.4f} -- {call}. "
+            "AUC decides this, not the monotone flag."
+        )
         print(
             f"       top decile mean return {rp['top_mean_ret'] * 100:+.4f}% vs bottom "
             f"{rp['bottom_mean_ret'] * 100:+.4f}%  (spread {rp['ret_spread'] * 100:+.4f}%)"

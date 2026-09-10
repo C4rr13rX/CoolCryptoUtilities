@@ -171,6 +171,80 @@ def test_a_non_monotonic_ranking_is_reported_as_non_monotonic():
     assert good_profile["up_spread"] > 0
 
 
+def test_a_non_monotonic_ranking_is_not_assumed_to_be_uninformative():
+    """The correction: non-monotonic across five buckets is not "no signal".
+
+    An earlier version of the census reported only the quintile profile and
+    concluded "the order carries nothing, so a calibrator cannot rescue it"
+    from its non-monotonicity. A noisy but genuinely informative ranking is
+    routinely non-monotonic across five buckets, so AUC has to be the arbiter.
+    This pins that a head can be non-monotonic AND above chance at once.
+    """
+    rows = []
+    # Overall up-rate rises with dp, but bucket 3 dips below bucket 2.
+    for i, up_rate in enumerate((0.30, 0.55, 0.40, 0.60, 0.75)):
+        for j in range(400):
+            rows.append(
+                {
+                    "ts": 0.0,
+                    "symbol": "X",
+                    "direction_prob": 0.1 + i * 0.2,
+                    "realised": 0.005 if j < up_rate * 400 else -0.005,
+                }
+            )
+    profile = census.rank_profile(rows)
+    assert not profile["monotonic"], "precondition: the quintile profile dips"
+    assert profile["auc"] > 0.5
+    assert profile["auc_beats_chance"], (
+        "a non-monotonic but informative ranking was written off as chance"
+    )
+    assert not profile["auc_inverted"]
+
+
+def test_an_inverted_head_is_named_inverted_not_merely_unskilled():
+    """Inverted and unskilled are different diagnoses with different actions.
+
+    The pre-collapse head reads AUC 0.4076 +/- 0.0130 -- significantly BELOW
+    chance. Restoring that state, which is what a 'direction_prob p50 rises
+    back above 0.5' criterion rewards, restores a head that is more wrong the
+    more confident it is.
+    """
+    rows = []
+    for i, up_rate in enumerate((0.75, 0.60, 0.55, 0.40, 0.25)):
+        for j in range(400):
+            rows.append(
+                {
+                    "ts": 0.0,
+                    "symbol": "X",
+                    "direction_prob": 0.1 + i * 0.2,
+                    "realised": 0.005 if j < up_rate * 400 else -0.005,
+                }
+            )
+    profile = census.rank_profile(rows)
+    assert profile["auc"] < 0.5
+    assert profile["auc_inverted"]
+    assert not profile["auc_beats_chance"]
+
+
+def test_a_coin_flip_ranking_clears_neither_bound():
+    """The null case must be called chance, not skill and not inversion."""
+    rows = []
+    for i in range(5):
+        for j in range(400):
+            rows.append(
+                {
+                    "ts": 0.0,
+                    "symbol": "X",
+                    "direction_prob": 0.1 + i * 0.2,
+                    "realised": 0.005 if j % 2 == 0 else -0.005,
+                }
+            )
+    profile = census.rank_profile(rows)
+    assert profile["auc"] == pytest.approx(0.5, abs=0.02)
+    assert not profile["auc_beats_chance"]
+    assert not profile["auc_inverted"]
+
+
 def test_a_nearest_tick_outside_tolerance_is_refused():
     """A stale price silently reached for is a fabricated forward return."""
     series = ([100.0, 200.0], [1.0, 2.0])

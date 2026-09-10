@@ -4103,3 +4103,28 @@ directions. Filed [93a905e5] with the content criterion: any head change must
 print INFORMATIVE from head_vs_realised_census, not merely a higher p50. The
 open question neither of us answered is whether a 15-30 min horizon can clear
 0.3187% + 0.004047 on this feed AT ALL when only 29.8% of ticks move that far.
+
+- 2026-09-10, Iris, pass 107 (second entry, same item). HYPOTHESIS: the head's
+  top decile inverts because it is concentrated on one bad symbol, so
+  excluding that symbol makes the confident tail tradeable. RESULT: the
+  concentration is REAL, the edge is NOT. Diagnosed the tail three ways over
+  the last 6h at 15m. (1) NOT price_mu saturation -- the top decile is CLEANER
+  than the rest (|price_mu| p50 0.1381 vs 0.2052; 14.0% vs 23.4% above 0.5),
+  so the foreign-row story does not explain it. (2) IT IS ONE SYMBOL:
+  DRB-USDC is 240 of 1524 predictions (15.7%) but 63 of 143 of the top decile
+  (44.1%), a 2.8x over-concentration, and it pays -0.5545%/trade there. The
+  whole top decile is only 5 distinct symbols. (3) Excluding DRB-USDC flips
+  the pooled sign: 15m top decile +0.1042% net of 0.3187% cost (vs -0.3006%
+  with it), 30m +0.2931% net (vs -0.5198%), both beating the all-bar baseline.
+  I ALMOST STOPPED THERE AND IT WOULD HAVE BEEN THE THIRD FAKE EDGE. Split the
+  same DRB-excluded data into 12 independent 2h windows and classified each by
+  its own all-bar mean: UP windows (7) mean top-decile net -0.0725%, 2 of 7
+  positive; DOWN windows (5) mean -0.5982%, 0 of 5 positive; 2 of 12 overall.
+  The pooled +0.1042% was the most recent 2h window (+0.4460%, 62.7% up-share)
+  carrying the average. NO EDGE IN EITHER REGIME, WITH OR WITHOUT DRB.
+  Separately: models/active_model.keras was retrained at 12:36 post-repair and
+  its own hour scores AUC 0.7275/0.8504/0.7517 -- but that hour is 74.0% up
+  with mean fwd +0.2982%, the same trap, and its top decile is STILL the worst
+  cell (-0.2944% net vs -0.0205% all-bar). NEXT: the pooled-window read is
+  what keeps manufacturing these; make the 2h-window regime split the DEFAULT
+  output of head_skill_census rather than something the reader must think to do.
