@@ -538,6 +538,128 @@ def sweep_verdict(sweep: Dict[str, Any]) -> str:
     )
 
 
+#: Horizons scanned by ``--grid``. Chosen to bracket the point where a
+#: PERFECT oracle stops losing: ``scripts/head_vs_realised_census.py
+#: --horizon-table`` puts the ceiling at -0.1219% at 5min, -0.0353% at 10min
+#: and +0.0197% at 15min, rising to +1.2531% at 120min. Below 15min no skill
+#: can pay, so a head failing there proves nothing about the head. This grid
+#: asks the only remaining question: does OUR head pay where headroom exists?
+GRID_HORIZONS_SEC: Tuple[int, ...] = (900, 1800, 3600, 7200)
+
+
+def horizon_threshold_grid(
+    preds: Sequence[Dict[str, Any]],
+    series: Dict[str, List[Tuple[float, float]]],
+    *,
+    now: float,
+    hours: float,
+    cost: float,
+    field: str = "direction_prob_raw",
+    horizons: Sequence[int] = GRID_HORIZONS_SEC,
+    percentiles: Sequence[float] = SWEEP_PERCENTILES,
+    bucket_sec: float = 2 * 3600.0,
+    min_rows: int = 80,
+) -> Dict[str, Any]:
+    """Every (horizon, rank threshold) cell, and how many clear both regimes.
+
+    WHY THIS IS SCANNED RATHER THAN CHOSEN. A 15m sweep alone cannot settle
+    the head, because a perfect oracle also loses at 15m-and-below on this
+    feed -- the cost floor eats the move. Failing where nothing can succeed is
+    not evidence about the head. Longer horizons are where a real ordering
+    would show, so the honest test scans them.
+
+    AND WHY THE COUNT IS THE ANSWER, NOT THE BEST CELL. Scanning N cells and
+    reporting the winner is the purest form of the mistake this file exists to
+    prevent: the maximum of N noisy draws rises with N whether or not any
+    signal is present. Each cell is a coin-flip-ish pair of majority tests, so
+    a grid of this size yields several clearing cells FROM NOISE ALONE. The
+    verdict therefore compares the observed count against that chance
+    expectation instead of pointing at a cell.
+    """
+    cells: List[Dict[str, Any]] = []
+    for horizon in horizons:
+        sweep = percentile_sweep(
+            preds, series, now=now, hours=hours, horizon_sec=horizon, cost=cost,
+            field=field, percentiles=percentiles, bucket_sec=bucket_sec,
+            min_rows=min_rows,
+        )
+        for rung in sweep["rungs"]:
+            cells.append(
+                {
+                    "horizon_sec": horizon,
+                    "pct": rung["pct"],
+                    "clears_both": rung["clears_both"],
+                    "up": rung["regimes"]["UP"],
+                    "down": rung["regimes"]["DOWN"],
+                }
+            )
+    clearing = [cell for cell in cells if cell["clears_both"]]
+    # Each cell must win a majority of UP windows AND a majority of DOWN
+    # windows. Treating a window as a fair coin makes each majority test
+    # roughly 1/2, so a cell clears by chance about 1/4 of the time. That is
+    # the bar an observed count has to BEAT, not merely reach.
+    expected_by_chance = 0.25 * len(cells)
+    return {
+        "cells": cells,
+        "n_cells": len(cells),
+        "n_clearing": len(clearing),
+        "expected_by_chance": expected_by_chance,
+        "cost": cost,
+    }
+
+
+def grid_verdict(grid: Dict[str, Any]) -> str:
+    """Beats chance, or does not. Never "the best cell was +x%"."""
+    observed, expected = grid["n_clearing"], grid["expected_by_chance"]
+    if observed == 0:
+        return (
+            f"NO CELL PAYS -- 0 of {grid['n_cells']} (horizon, threshold) "
+            f"combinations clear both regimes, against {expected:.1f} expected "
+            "from chance alone. The head has no tradeable direction signal at "
+            "any horizon or tightness scanned."
+        )
+    if observed <= expected:
+        return (
+            f"INDISTINGUISHABLE FROM CHANCE -- {observed} of {grid['n_cells']} "
+            f"cells clear both regimes, against {expected:.1f} expected from "
+            "chance alone. Naming the best of them would be reporting the "
+            "maximum of a noisy scan as an edge."
+        )
+    return (
+        f"ABOVE CHANCE -- {observed} of {grid['n_cells']} cells clear both "
+        f"regimes against {expected:.1f} expected. This is a HYPOTHESIS and not "
+        "an edge: the cells were chosen after seeing the data and need a "
+        "held-out window before any gate is built on one."
+    )
+
+
+def render_grid(grid: Dict[str, Any]) -> str:
+    horizons = sorted({cell["horizon_sec"] for cell in grid["cells"]})
+    percentiles = sorted({cell["pct"] for cell in grid["cells"]})
+    lines = [
+        f"HORIZON x RANK-THRESHOLD GRID, net of {grid['cost'] * 100:.4f}% round-trip cost",
+        "  cells show UP/DOWN windows net-positive; * marks a cell clearing BOTH",
+        "  threshold  " + "".join(f"{h // 60:>14d}m" for h in horizons),
+    ]
+    lookup = {(cell["horizon_sec"], cell["pct"]): cell for cell in grid["cells"]}
+    for pct in percentiles:
+        row = f"  top {pct * 100:5.1f}%  "
+        for horizon in horizons:
+            cell = lookup.get((horizon, pct))
+            if cell is None:
+                row += f"{'--':>15s}"
+                continue
+            mark = "*" if cell["clears_both"] else " "
+            row += (
+                f"{cell['up']['n_positive']}/{cell['up']['n_windows']}"
+                f",{cell['down']['n_positive']}/{cell['down']['n_windows']}{mark}"
+            ).rjust(15)
+        lines.append(row)
+    lines.append("")
+    lines.append(f"  VERDICT: {grid_verdict(grid)}")
+    return "\n".join(lines)
+
+
 def render_sweep(sweep: Dict[str, Any], *, horizon_sec: int) -> str:
     lines = [
         f"RANK-THRESHOLD SWEEP, {horizon_sec // 60}m horizon, "
@@ -641,6 +763,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="symbol to drop, repeatable; excluding one still has to survive "
              "the regime split, which is where DRB-USDC's apparent edge died",
     )
+    parser.add_argument(
+        "--grid", action="store_true",
+        help="scan every (horizon, rank threshold) cell. Slower, and the "
+             "answer it gives is a COUNT against chance, never a best cell",
+    )
     args = parser.parse_args(argv)
 
     now = time.time()
@@ -700,6 +827,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             horizon_sec=args.regime_horizon,
         )
     )
+    if args.grid:
+        print()
+        print(
+            render_grid(
+                horizon_threshold_grid(
+                    preds, series, now=now, hours=args.hours, cost=cost,
+                    field=args.field,
+                )
+            )
+        )
     return 0
 
 

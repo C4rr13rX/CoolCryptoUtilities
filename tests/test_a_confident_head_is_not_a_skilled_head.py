@@ -376,3 +376,76 @@ def test_the_sweep_scores_every_threshold_on_identical_rows():
     assert len(counts) == 1, f"rungs scored different window sets: {counts}"
     total = sum(next(iter(counts)))
     assert total == sweep["n_windows"]
+
+
+def test_a_grid_scan_is_judged_against_chance_not_by_its_best_cell():
+    """SCANNING N CELLS AND REPORTING THE WINNER IS THE FAKE-EDGE MACHINE.
+
+    A (horizon x threshold) grid has to win a majority of UP windows AND a
+    majority of DOWN windows in each cell. Treat a window as a fair coin and
+    each cell clears about 1/4 of the time, so a 28-cell grid yields roughly
+    SEVEN clearing cells from noise alone. A verdict that named the best cell
+    would therefore report an edge on pure noise every time it was run.
+    """
+    from scripts.head_skill_census import grid_verdict
+
+    # Exactly the chance expectation: must NOT read as an edge.
+    at_chance = {
+        "n_cells": 28,
+        "n_clearing": 7,
+        "expected_by_chance": 7.0,
+        "cells": [],
+        "cost": 0.0036,
+    }
+    assert "INDISTINGUISHABLE FROM CHANCE" in grid_verdict(at_chance)
+
+    # Below chance -- and still not an edge.
+    below = dict(at_chance, n_clearing=3)
+    assert "INDISTINGUISHABLE FROM CHANCE" in grid_verdict(below)
+
+    # Nothing at all clears: say so plainly, and say what chance expected.
+    none = dict(at_chance, n_clearing=0)
+    spoken = grid_verdict(none)
+    assert "NO CELL PAYS" in spoken and "7.0 expected" in spoken
+
+    # Well above chance is still only a hypothesis needing a held-out window.
+    above = dict(at_chance, n_clearing=21)
+    spoken = grid_verdict(above)
+    assert "ABOVE CHANCE" in spoken and "HYPOTHESIS" in spoken
+
+
+def test_the_grid_counts_every_cell_it_scanned():
+    """A grid that silently dropped cells would deflate the chance bar.
+
+    The chance expectation is a fraction of the cell COUNT, so under-counting
+    scanned cells makes an ordinary result look better than chance. Every
+    horizon-threshold pair scanned must appear in n_cells.
+    """
+    from scripts.head_skill_census import GRID_HORIZONS_SEC, SWEEP_PERCENTILES
+    from scripts.head_skill_census import horizon_threshold_grid
+
+    now = 100_000.0
+    series = {"FAKE-USDC": []}
+    preds = []
+    price = 100.0
+    for index in range(1200):
+        ts = now - 90_000.0 + index * 60.0
+        series["FAKE-USDC"].append((ts, price))
+        price *= 1.0 + (0.004 if index % 2 else -0.003)
+        preds.append(
+            {
+                "ts": ts,
+                "symbol": "FAKE-USDC",
+                "direction_prob": (index % 10) / 10.0,
+                "direction_prob_raw": (index % 10) / 10.0,
+                "price_mu": 0.0,
+            }
+        )
+    series["FAKE-USDC"].sort()
+
+    grid = horizon_threshold_grid(
+        preds, series, now=now, hours=24.0, cost=0.0036, min_rows=20
+    )
+    assert grid["n_cells"] == len(GRID_HORIZONS_SEC) * len(SWEEP_PERCENTILES)
+    assert grid["n_cells"] == len(grid["cells"])
+    assert grid["expected_by_chance"] == pytest.approx(0.25 * grid["n_cells"])
