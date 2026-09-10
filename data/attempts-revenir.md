@@ -4032,3 +4032,74 @@ yet measured. That is the honest state.
   NEXT: run the with-relations arm on a SECOND FRESH dir (not p106 -- it is now taught
   7-collection frames and retraining on top makes it a dirty fabric), same --seed 7,
   then repeat both arms on an UP window. Command in data/brain_experiments/HELDOUT-pass107-cove.md.
+
+### 2026-09-10 -- Gale, pass 107, operator step (2): MODEL or MARKET, plus a correction to my own second commit
+
+HYPOTHESIS: the operator's 09:42 step (2) is answerable and nobody had taken
+it -- "a head that reads no edge anywhere for 12h is either broken or correctly
+describing a flat tape; the difference is measurable". Nothing measured to date
+distinguished them, because direction_prob p50, net_margin MAX and the hold
+count are all statements about the head's OUTPUT and none is a statement about
+the market it was describing.
+
+DID: shipped scripts/head_vs_realised_census.py (+ 7 tests, 3ffe5a3 / d1c1177),
+scoring direction_prob against realised forward returns from market_stream.
+4980 of 6048 predictions in 24h matched a forward price. Base AND forward both
+from market_stream, never mixed with the snapshot's own sample.price, because
+the feed has carried two denominations under one ticker.
+
+RESULT -- VERDICT MODEL, AND IT IS THE PART I STAND BEHIND. The tape is NOT
+flat and got LESS flat across the collapse boundary: median |15-min forward
+return| 0.0811% -> 0.1395%, 0.2326% at 30m, 0.4467% at 60m. There were moves to
+catch, so "wait for the tape" is the wrong action and the head is the defect.
+Against the MAJORITY-CLASS baseline (never 0.5 -- the head calls DOWN on
+everything over a tape that ran 60.6% down at 60m, so a coin baseline flatters
+it to 0.6117) the post-collapse hit rate is +0.0105, z=+1.10 on n=2714: inside
+sampling noise.
+
+I NEARLY SHIPPED A FAKE EDGE AND THE GUARD IS NOW IN THE CODE. The first
+draft's verdict rule was `if edge > 0.0: INFORMATIVE` and it printed INFORMATIVE
+on that +0.0113. SE at n=2721 is 0.0096, so it was 1.18 SE. INFORMATIVE now
+requires the 95% LOWER BOUND to clear the baseline, and the test fails against
+the old rule rather than being assumed to.
+
+CORRECTION TO MY OWN d1c1177, filed before anyone had to catch it. Its headline
+says "the head's ORDER is broken too, so a calibrator cannot rescue it". That is
+RIGHT for the pre-collapse head and TOO STRONG for the post-collapse one. I read
+a non-monotonic quintile profile as "no ranking content" without computing the
+aggregate. Computing AUC on the same rows:
+
+  pre_collapse   AUC 0.4076   (up 966 / down 934)   -- INVERTED, real
+  post_collapse  AUC 0.5264   (up 1246 / down 1457) -- ~2.4 SE above 0.5
+
+So the post-collapse order carries WEAK but probably real ranking skill, and my
+"nothing for a calibrator to rescue" applies only to the pre-collapse head.
+Iris's independent 06098a2 lands in the same place from AUC and reads 0.56-0.60
+on her narrower window; we agree on the sign and differ on magnitude by window.
+The finding that survives from d1c1177 is the specific one: THE PRE-COLLAPSE
+HEAD, dp_max 0.9795, THE STATE WE HAVE BEEN CALLING HEALTHY AND TRYING TO
+RESTORE, IS INVERTED -- top decile mean return -0.1020% against the bottom
+decile's -0.0363%. Being more sure made it more wrong. Restoring it is not a fix.
+
+AND THE SKILL DOES NOT SURVIVE COST, which Iris and I reached independently.
+Only 824 of 2766 post-collapse ticks (29.8%) moved further than the 0.3187%
+proportional round trip, so on 70.2% a PERFECT direction call still loses money.
+That is the entry test being RIGHT, and it caps what any head fix delivers at
+this horizon.
+
+SEPARATELY, the operator's "did atf_static_scout's 237 trades ever happen?":
+NOBODY CAN TELL AND THE LEDGER IS NOT THE PLACE THAT COULD. strategy_ledger.json
+stores COUNTERS, not trade records -- the scout's ghost book is literally
+{trades: 237, wins: 186, losses: 10}. 186+10=196, so 41 trades are neither a win
+nor a loss; ledger-wide that is 54 of 412 (13.1%) with 52 of 54 in atf_static*.
+NOT a graduation-inflating bug and I will not call it one: ledger.py:826 scores
+wins/max(trades,1), so the gap DEFLATES the scout to 78.5% where
+wins/(wins+losses) reads 94.9%, and the TRADEABLE subset graduation actually
+reads has a gap of 0 across all 25 trades. Filed [3fb9834d].
+
+NEXT: do not restore the pre-collapse head level and do not percentile-threshold
+the post-collapse one -- both are measured dead, by two agents, from two
+directions. Filed [93a905e5] with the content criterion: any head change must
+print INFORMATIVE from head_vs_realised_census, not merely a higher p50. The
+open question neither of us answered is whether a 15-30 min horizon can clear
+0.3187% + 0.004047 on this feed AT ALL when only 29.8% of ticks move that far.
