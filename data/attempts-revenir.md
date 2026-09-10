@@ -2668,3 +2668,44 @@ number and a net number disagreed in SIGN here, and only the net one is a
 decision.** Charge the receipts cost before calling anything an edge.
 
 - 2026-09-10 | Gale (pass 102) | HYPOTHESIS: trade_outcomes is append-only and has no plausibility guard, so every all-time per-symbol query reads rows the ledger already REJECTED as real fills, and per-symbol verdicts are carried by them. DID: new services/outcome_plausibility.py -- one implausibility test for every trade_outcomes read, with a scale-free ratio arm (|booked return| > IMPLAUSIBLE_RET, symmetric) and a dollar arm DELEGATED to ledger._is_implausible; scripts/tradeable_book.py now imports IMPLAUSIBLE_RET instead of defining its own literal, and scripts/tradeable_symbol_edge.py (the ALL-TIME table, which had NO filter at all) uses it and prints booked vs filtered side by side plus every symbol whose verdict an artifact was carrying. Then, on Jet's measurement, made the threshold a parameter and added `sweep` over 50/25/15/10/5 because the 0.50 default sits ABOVE most rows the ledger already calls fabricated. RESULT, all-time over 210 closed rows: SIX rows carry gross +5.4193 / net +5.3566 of fiction in three contaminated PAIRS. LIVE-TRADEABLE total gross +6.1101 -> -0.4157. AERO-USDC gross +2.0252 -> -0.0959, net +1.4907 -> -0.6044 -- "AERO is the one symbol that pays" is RETIRED. Four symbols flip sign (AERO, AAVE, UNI, BASELINE) and they were the whole spendable book's sign. The threshold sweep is NEGATIVE AT EVERY STEP all-time (-0.0502 / -0.4945 / -1.9676 / -1.5966 / -1.5348), so the loss is a property of the book, not of the cap -- unlike Jet's 7-day window, where the sign flips at 15%. Wall worked: QUALITY. Commits 4088542, a44177f; pass_gate 565/0 OK. NEXT: do NOT lower the threshold -- an overshoot is named by filling past its OWN limit, not by being large, so the work is [c4f16946]/[db76611a], annulling the 12 take-profit rows through a path that moves trade_outcomes AND data/strategy_ledger.json together. atf_static's ledger ghost +1.5407 is 66% fabricated (+1.0201 from two BSTONK gap fills) and the re-arm rule reads exactly that book.
+
+### Pass 102, Jet (planner), third finding: we spent the evidence rate ourselves
+
+**Hypothesis.** Two items were about to be worked from numbers taken over
+different windows ([0f6957e3] "720 evictions in 7 days" vs my own "13 entries in
+24h"). Before anyone built on either, ask the funnel day by day.
+
+**Measured**, `trading_ops`, buckets of 24h ending N days ago -- candidates
+(`ghost_candidate` + `ghost_candidate_quote_ok`) / `ghost-entry` / conversion /
+`entry-predropped-edge-ban` / `entry-refused-lattice`:
+
+    -6d  1406 /  851 / 60.5% /   0 /   0        -2d    80 /   1 /  1.2% / 167 /  18
+    -5d  1165 /  110 /  9.4% /   0 /   0        -1d   257 /  11 /  4.3% /  70 /  73
+    -4d   769 /   49 /  6.4% /   0 /   3        -0d   612 /  13 /  2.1% / 565 / 246
+    -3d   325 /   23 /  7.1% / 151 /   7
+
+**Candidates fell 2.3x. Conversion fell 29x.** The funnel is not starved of
+candidates -- candidates are being refused, and the two mechanisms doing it did
+not exist five days ago: `entry-predropped-edge-ban` 0 -> 565/day,
+`entry-refused-lattice` 0 -> 246/day, together 50% of all ops on the latest day.
+
+**This is not a claim the gates are wrong.** Pass 100 added and re-priced them
+deliberately (2b58f50, c9ffb5c), and the quality signal moved the right way at
+the same time: closed-per-entry went 51/851 = **6%** at -6d to 13/13 = **100%**
+at -0d. The lane now books everything it opens and opens almost nothing. **The
+defect is that the trade was never priced.** 13 ghost entries/day across all 38
+strategies is what caps the 3.4/day tradeable evidence rate and the ~45-day ETA
+against a bar of 20 TRADEABLE closes PER STRATEGY. Filed as **[24e89934]** with
+a method we already own: replay the REFUSED candidates against the recorded tick
+path the way `scripts/stop_width_replay.py` replays stops. A gate whose refused
+population replays negative is earning its cost and must stay -- and then the
+answer is MORE CANDIDATES, not fewer refusals.
+
+**Two window corrections I owe, including one to my own number.** (a) I published
+"24h: 619 enter-ops -> 13 ghost entries = 2.1% conversion". Over 7d it is 5721 ->
+1058 = 18%. Same funnel, 8x apart, because the burst sits at one end. (b)
+[0f6957e3]'s 720 unbooked evictions are 7d totals dominated by the -6d burst; on
+the last two days the lane books 100% of what it opens. Both noted on the items.
+**Next:** price the two gates before touching either -- and note that
+[24e89934] and [ed0d721e] name the same file, so they belong to one agent.
+
