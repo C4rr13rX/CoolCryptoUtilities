@@ -4400,3 +4400,58 @@ RESULT: instrument shipped and proven (e43add1, 9 tests). Two-window baseline NO
 measured; filed as [47d70b7c] with the verified protocol so the next pass starts at the
 measurement rather than at the harness. Jet separately verified kind='Internal' is a
 NO-OP on this node, so no topology experiment was available this pass either.
+
+## 2026-09-10 — Iris — pass 108
+
+HYPOTHESIS: the collapsed prediction head's LEVEL is broken but its ORDERING
+has real skill (AUC 0.56-0.60 against forward returns), so a RANK/PERCENTILE
+entry threshold spends the ordering without restoring the level, and reopens
+the ghost lane without lowering `net_margin >= 0`. This was the last open
+rescue for item [618d4c4b], and the planner had told the whole board it should
+work.
+
+WHAT I DID. Two changes to `scripts/head_skill_census.py`, one measurement
+each, committed separately so either can be judged alone.
+
+  (1) 20a5222 — swept SEVEN rank thresholds (top 1%, 2%, 5%, 10%, 20%, 35%,
+      50%) at a 15m horizon over 26h, scoring each cut against the realised
+      tape and charging the full round trip. Also fixed a units bug IN MY OWN
+      INSTRUMENT: it charged the 0.3187% notional RATE and silently dropped
+      the $0.004047 FIXED leg. The fixed leg is dollars and only becomes a
+      fraction after division by the clip — another 0.0405% on a $10 clip and
+      0.4047% on a $1 clip. Cost 0.3187% -> 0.3592%.
+  (2) 15ef735 — extended it to a GRID, 4 horizons (15/30/60/120m) x 7
+      thresholds. Necessary because a perfect oracle also loses at 15m and
+      below on this feed, so failing there proves nothing about the head; the
+      grid asks whether ours pays where headroom actually exists.
+
+RESULT — A NEGATIVE, AND A DECISIVE ONE. Zero of 28 (horizon, threshold)
+cells is net-positive in a majority of UP windows AND a majority of DOWN
+windows, against 7.0 cells expected FROM CHANCE ALONE. Below chance, not
+merely weak. The 15m sweep alone was 0 of 7, and 0 of 7 again when restricted
+to the post-collapse 12h that the same census scores as SKILLED at all three
+horizons.
+
+WHY THE AUC IS REAL AND STILL WORTHLESS, which is the finding to carry: 0.56
+means the head orders slightly better than a coin. The round trip costs
+0.3592% and the MEDIAN absolute 15-minute move is 0.1156%. A slight ordering
+improvement over a distribution whose typical member cannot pay the fee does
+not become tradeable at any tightness — tightening the cut shrinks the sample
+faster than it lifts the mean, which is why the grid gets WORSE toward the
+tight end. Read across any row: UP windows improve with horizon (2/4 at 15m to
+4/5 at 120m) while DOWN sits at 0/7 nearly everywhere. A top-N% cut of this
+head is approximately "be long".
+
+I MARKED A CRITERION FALSIFIED RATHER THAN SATISFYING IT. [618d4c4b] asked for
+ticks clearing both scheduler floors to rise above 0 via recalibration of the
+head's level. Doing that now provably opens the lane onto a rule losing in 0
+of 7 down windows at every tightness and horizon. Recorded on the item as
+FALSIFIED, DO NOT ATTEMPT.
+
+NEXT: not the head, not the calibrator, not the scheduler floors, not
+allocation. MOVE SIZE VERSUS THE COST FLOOR — Jet's [4d3310e7] (only 37.5% of
+ticks move further than cost) and Gale's [15cc71d4] (a perfect oracle nets
+negative at 5 and 10 minutes) reach the same wall from two other directions.
+Jet's [8b1846d8], which horizon can clear the cost floor at all, is the item I
+would rank first in the trading lane. If the honest answer is "none", that
+redirects the whole lane and is worth more than another head fix.
