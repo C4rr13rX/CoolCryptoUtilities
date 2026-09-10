@@ -250,9 +250,29 @@ def test_a_deferred_position_is_still_released_by_its_clock() -> None:
     the deferral sat above `timed-exit` with no upper bound and swallowed it on
     every sample. A bearish model would have pinned the position open forever.
 
-    Past `stale_exit_secs` the deferral stops applying and the chain resolves
-    exactly as it does today -- on this fixture the model rule is what answers,
-    because it outranks the clock now as it did before this change.
+    Past `stale_exit_secs` the deferral stops applying and the chain resolves.
+
+    WHICH RULE ANSWERS CHANGED 2026-09-10, AND THE TEST WAS THE STALE HALF.
+    This used to assert `confidence_drop`, and noted that the model rule
+    "outranks the clock". That ordering was itself the defect: rule 3 fires at
+    MIN_HOLD (300s) and rule 4 at stale_exit_secs (900s), so on every position
+    past the clock that the model was bearish about, `timed-exit` was
+    unreachable. Measured over 7 days on all 206 logged ghost exits, it had
+    fired ZERO times, while `max_hold` -- the 3600s eviction -- was the single
+    biggest named reason. `timed-exit` now sits above the opinion rules and
+    this fixture resolves to it.
+
+    The assertion below is therefore STRONGER than the one it replaces, not
+    weaker, and note what else moved with it. This fixture is flat, so its
+    economic profit is non-positive and the ghost exit gate refused the old
+    `confidence_drop` as `hold-negative` and returned WITHOUT booking -- which
+    is why `action` used to read "hold" here. The gate admits `timed-exit` by
+    name (`stale_verdict`), so the same fixture now books a real outcome. A
+    released slot that records no round trip is the evidence leak graduation
+    starves on.
+
+    The claim this test exists for is untouched: the deferral does not outlive
+    the clock that bounds it.
     """
     bot = _bot()
     bot.positions[COMP] = _position(held_sec=STALE_SEC + 120.0)
@@ -264,11 +284,19 @@ def test_a_deferred_position_is_still_released_by_its_clock() -> None:
         "bearish model would pin the position open for as long as it stayed "
         "bearish -- the immortal-position failure this repo has paid for twice"
     )
-    # An exit IS proposed past the clock, exactly as it is today. This fixture
-    # is live-approved so the live margin gate then refuses it as
-    # `hold-negative` (a flat position cannot cover its gas) -- that refusal is
-    # pre-existing and is the reason `action` reads "hold" here.
-    assert decision.get("reason") == "confidence_drop", decision
+    # An exit IS proposed past the clock, and it now carries the cost-aware
+    # verdict rather than the model's opinion, so the ghost exit gate admits it
+    # and the position books its outcome instead of holding negative.
+    assert decision.get("exit_reason") == "timed-exit", (
+        "past stale_exit_secs the position's own failure to cover its round "
+        "trip must decide, not whether the model happens to be bearish: while "
+        "rule 3 outranked rule 4, `timed-exit` produced ZERO of 206 ghost "
+        f"exits in 7 days -- got {decision.get('exit_reason')!r}"
+    )
+    assert decision.get("action") == "exit", (
+        "a flat position past its clock was released without booking a round "
+        "trip, because the gate rejects the reason rule 3 gave it"
+    )
 
 
 def test_an_unknown_cost_basis_is_not_deferred() -> None:

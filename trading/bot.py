@@ -7460,12 +7460,59 @@ class TradingBot:
                         else "negative_margin"
                     ),
                 }
-            elif (not model_neutral) and held_secs >= min_hold and direction_prob < bearish_floor:
-                should_exit = True
-                reason = "confidence_drop"
-            elif (not model_neutral) and held_secs >= min_hold and margin <= -fees:
-                should_exit = True
-                reason = "negative_margin"
+            # THE STALE CLOCK IS CHECKED BEFORE THE MODEL'S OPINION, AND THE
+            # ORDER IS THE WHOLE FIX.
+            #
+            # The two model-opinion rules used to sit HERE, above `timed-exit`.
+            # They fire at `min_hold` (300s); `timed-exit` fires at
+            # `stale_exit_secs` (900s). An `elif` that fires CONSUMES the tick,
+            # so on every position past 900s that the model happened to be
+            # bearish about, the chain resolved to `confidence_drop` and
+            # `timed-exit` was unreachable -- it could only ever have been
+            # produced by a position the model felt NEUTRAL about, for the
+            # entire ten minutes after the stale clock had already run out.
+            #
+            # That mattered because the two reasons are not interchangeable
+            # downstream. The ghost exit gate (`stale_verdict`, ~2300 lines
+            # below) admits `timed-exit` deliberately -- its comment says
+            # "timed-exit now IS that eventual resolution" -- and refuses
+            # `confidence_drop` at a non-positive economic profit as
+            # `hold-negative`, returning WITHOUT booking an outcome. So the
+            # stale loser was denied its exit under a name the gate was written
+            # to reject, and then denied it again on the next tick, and the
+            # next, until the 3600s max-hold eviction released the slot.
+            #
+            # Measured over the 7 days to 2026-09-10, by reason, on the 206
+            # logged ghost exits:
+            #
+            #   max_hold           52     <- the 3600s eviction, 4x the promise
+            #   target_hit         16
+            #   stop_loss           5
+            #   stale_underwater    4
+            #   timed-exit          0     <- rule 4 has NEVER produced an outcome
+            #   confidence_drop     0
+            #   negative_margin     0
+            #
+            # Zero. The rule this pipeline relies on to release capital at 900s
+            # had not fired once, which is why 1112 ticks arrived on positions
+            # already past the stale mark and closed nothing, and why the book
+            # holds trips of 4 and 17.7 hours.
+            #
+            # Moving `timed-exit` above the opinion rules is strictly narrower
+            # than it looks: it can only change the outcome for a position that
+            # satisfies its own condition -- held past `stale_exit_secs` AND
+            # failing to cover its round trip -- which is precisely the
+            # population the rule exists for. A position inside the clock, or
+            # one that HAS cleared its cost, falls through to exactly the
+            # branches it reached before.
+            #
+            # LIVE is unchanged. `timed-exit`, `confidence_drop` and
+            # `negative_margin` are all outside PROTECTIVE_REASONS, so the
+            # live-exit margin gate treats all three identically and still
+            # refuses a non-protective close that cannot cover its gas. Only
+            # the ghost gate distinguishes them, and distinguishing them is the
+            # behaviour it documents.
+            #
             # "Stale loser" is a fact about the POSITION, not a forecast.
             #
             # This tested `pnl`, bound far above as
@@ -7555,6 +7602,12 @@ class TradingBot:
             ):
                 should_exit = True
                 reason = "timed-exit"
+            elif (not model_neutral) and held_secs >= min_hold and direction_prob < bearish_floor:
+                should_exit = True
+                reason = "confidence_drop"
+            elif (not model_neutral) and held_secs >= min_hold and margin <= -fees:
+                should_exit = True
+                reason = "negative_margin"
 
         if should_enter and not reason.startswith("ghost-explore"):
             gross_return = max(0.0, margin)
