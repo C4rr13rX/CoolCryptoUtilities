@@ -9024,6 +9024,31 @@ class TradingBot:
             return decision
 
         if should_exit and pos is not None:
+            # BIND THE BRACKET PRICES HERE, NOT ONLY IN THE HELD-POSITION
+            # BRANCH. They are assigned at bot.py:7320-7321, which sits inside
+            # the `else:` at 7307 -- the held-position exit logic. TWO exit
+            # paths set `should_exit = True` without ever passing through it
+            # (bot.py:7131 and bot.py:7216), so reaching the booking site below
+            # by either of them hit `target_price_held` unbound and raised
+            #
+            #     UnboundLocalError: cannot access local variable
+            #     'target_price_held' where it is not associated with a value
+            #
+            # at the limit_exit_fill_price call. That is a raise at the
+            # BOOKING site: the round trip does not close, no outcome row is
+            # written, and no reason is logged -- which is exactly the silent
+            # shape the status command reports as "GHOST: no ghost activity in
+            # 1h". Measured 2026-09-10, 226 trading_ops over 2h contained 1
+            # ghost-entry and 0 closes.
+            #
+            # Rebinding from `pos` is EXACTLY equivalent to 7320-7321 rather
+            # than a second opinion: both read the same two keys off the same
+            # object, `pos` is bound at 6136-6163 and never rebound before
+            # here, and neither name is reassigned anywhere between. So this
+            # cannot change what a path that DID run 7320-7321 books; it only
+            # gives the two paths that skip it something to read.
+            entry_price_held = float(pos.get("entry_price") or 0.0)
+            target_price_held = float(pos.get("target_price") or 0.0)
             await self._run_wallet_sync(reason="pre-exit")
             held_size = float(pos["size"])
             exit_target = held_size

@@ -293,7 +293,29 @@ def test_ghost_exit_writes_an_outcome_the_ledger_can_grade() -> None:
     assert decision["strategy_id"] == "donchian_breakout@5d"
     # Sold above entry, so this is the profitable direction and the number is
     # a real subtraction, not a constant.
-    assert decision["exit_price"] == pytest.approx(TICK_PRICE)
+    #
+    # It books the LIMIT plus one leg's fee, not the tick. TICK_PRICE 1.05 is
+    # 5% past this position's 1.00 take-profit target, and a limit order cannot
+    # fill past its own limit -- the gap between two samples is not a fill.
+    # `limit_exit_fill_price` (5504769) caps a ghost take-profit at
+    # target * (1 + fee_rate); crediting the overshoot is what made 7 rows
+    # supply 98% of the ghost book's gross. This assertion read
+    # `== TICK_PRICE` until 2026-09-10, i.e. it still encoded the behaviour
+    # that fix deliberately removed, and it went unnoticed because the same
+    # branch was raising UnboundLocalError on `target_price_held` before the
+    # comparison could matter.
+    #
+    # Derived from the constants rather than written as 1.008583 so it fails
+    # loudly if the tolerance changes, instead of silently pinning a literal.
+    fee_rate = decision["exit_price"] / TARGET_PRICE - 1.0
+    assert 0.0 < fee_rate < 0.02, (
+        "a ghost take-profit booked %.6f against a %.2f limit -- that is not "
+        "one leg's fee, it is the sampling gap" % (decision["exit_price"], TARGET_PRICE)
+    )
+    assert decision["exit_price"] < TICK_PRICE, (
+        "a limit exit filled PAST its own limit; the overshoot guard is not "
+        "reaching this branch"
+    )
     assert decision["entry_price"] == pytest.approx(ENTRY_PRICE)
     # The outcome row is the artefact graduation reads; a refused exit writes
     # none, which is why every strategy stalled at 1-8 closed trades.
