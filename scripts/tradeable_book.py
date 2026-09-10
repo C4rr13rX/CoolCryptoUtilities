@@ -58,6 +58,16 @@ if str(ROOT) not in sys.path:
 
 DEFAULT_DB = ROOT / "storage" / "trading_cache.db"
 
+# ONE implausibility test for every ``trade_outcomes`` read in the repo. See
+# ``services/outcome_plausibility.py`` for why it has two arms and why the
+# ratio arm is symmetric; ``IMPLAUSIBLE_RET`` is re-exported under its original
+# name so this file's callers and tests are unaffected by the move.
+from services.outcome_plausibility import (    # noqa: E402
+    IMPLAUSIBLE_RET,
+    is_implausible as _row_is_implausible,
+    strategy_scales as _strategy_scales,
+)
+
 
 def _tradeable_predicate():
     """The ledger's own tradeability test, or None when it cannot be loaded.
@@ -258,6 +268,11 @@ def collect(
     #     spend because nothing can be attributed to it.
     sane = _blank()
     sane_dropped = {"implausible": 0, "unattributed": 0, "clamped": 0}
+    # Each strategy's own scale over THIS window, which is what the dollar arm
+    # of the implausibility test judges a row against -- the read-side mirror of
+    # ``ledger._recent_scale``. Computed once; it is a property of the
+    # population, not of a row.
+    scales = _strategy_scales(rows)
     per_strategy: Dict[str, Dict[str, Any]] = {}
     per_symbol: Dict[str, Dict[str, Any]] = {}
 
@@ -276,7 +291,7 @@ def collect(
             c = clamped_gross(r)
             if c["overshot"]:
                 sane_dropped["clamped"] += 1
-            if abs(c["booked_ret"]) > IMPLAUSIBLE_RET:
+            if _row_is_implausible(r, scales=scales):
                 sane_dropped["implausible"] += 1
             elif sid == "unclassified":
                 sane_dropped["unattributed"] += 1
@@ -632,6 +647,18 @@ GHOST_TP_LIMIT = 0.05
 # mistake this repo has made four times (see the AERO one-row memory).
 MIN_RANK_TRIPS = 10
 
+# THE IMPLAUSIBILITY TEST NOW LIVES IN ``services.outcome_plausibility``.
+#
+# It was defined here, as a literal, and used only by this file -- while
+# ``scripts/tradeable_symbol_edge.py`` read the same table ALL-TIME with no
+# filter at all and reported AERO-USDC at gross +2.0252, which is +161% on one
+# repricing row. Two tools measuring one book with two different ideas of which
+# rows exist is the same defect as the tradeability predicate that drifted on
+# 2026-09-10 (see ``_tradeable_predicate``), so the rule moved next to the
+# ledger's own and both tools import it.
+#
+# The name is kept so this file's own callers and tests do not move.
+#
 # A booked return this far from zero is not a fill any strategy here could have
 # produced, and is reported separately rather than silently averaged in.
 #
@@ -666,7 +693,9 @@ MIN_RANK_TRIPS = 10
 # winners would be cherry-picking; dropping on |ret| removes both halves of
 # each event, for a net +5.3566 of fiction removed from a book whose
 # limit-re-priced total is +0.3035.
-IMPLAUSIBLE_RET = 0.50
+#
+# DEFINED IN ``services.outcome_plausibility`` -- imported at the top of this
+# file. Do not re-introduce a literal here.
 
 
 def clamped_gross(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -746,6 +775,7 @@ def symbol_edge(
     per_symbol: Dict[str, Dict[str, Any]] = {}
     grid: Dict[tuple, Dict[str, Any]] = {}
     refused = 0
+    scales = _strategy_scales(rows)
     for r in rows:
         sym = r["symbol"]
         if not is_tradeable(sym):
@@ -759,7 +789,7 @@ def symbol_edge(
         # Net re-priced by the same delta as gross, so the two stay consistent.
         net_c = net - (gross - c["gross"])
 
-        implausible = abs(c["booked_ret"]) > IMPLAUSIBLE_RET
+        implausible = _row_is_implausible(r, scales=scales)
 
         for bucket, extra in ((per_symbol.setdefault(sym, {
                 "symbol": sym, "book": _blank(), "gross_clamped": 0.0,

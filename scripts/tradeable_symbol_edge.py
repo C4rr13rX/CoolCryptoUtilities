@@ -21,6 +21,17 @@ Two things it is careful about, because both have shipped as bugs here:
     from ``services.round_trip_cost`` as well as read from the row, and BOTH
     are printed. Where they disagree, the recomputed one is the honest number.
   * ``annulled`` rows are excluded. They are bookkeeping reversals, not fills.
+  * ROWS THE LEDGER WOULD HAVE REFUSED are excluded from the verdict. This is
+    an ALL-TIME table, so it reads every pre-guard artifact ``trade_outcomes``
+    still holds: the ledger added ``_is_implausible`` to reject a repricing
+    shape on the way in, but the money table is append-only and the rows are
+    still there. Measured 2026-09-10, AERO-USDC's all-time gross is +2.0252
+    booked and -0.0959 once the two rows of its contaminated pair are dropped
+    -- the +161% fake win AND the -55% stop taken from its fictional basis.
+    Per-symbol BOOKED figures are still printed; the verdict is read off the
+    filtered ones, via ``services.outcome_plausibility`` -- the SAME helper
+    ``scripts/tradeable_book.py`` uses, so the two tables cannot disagree about
+    which rows exist.
 
 Run:  python -X utf8 scripts/tradeable_symbol_edge.py
       python -X utf8 scripts/tradeable_symbol_edge.py --json
@@ -62,20 +73,79 @@ def _measured_cost_fraction() -> float:
             return 0.0065
 
 
-def collect(min_trades: int = 1) -> dict:
+def load_closed(db_path=None) -> list:
+    """Every closed ``trade_outcomes`` row, with the fields the filter needs.
+
+    ``details`` is read for ``strategy_id`` because the dollar arm of the
+    implausibility test judges a row against its OWN strategy's scale, exactly
+    as ``ledger._recent_scale`` does. Without it every row would fall back to
+    the absolute bound, which is a different (harsher) rule than the one the
+    write path runs.
+    """
+    con = sqlite3.connect(str(db_path or DB))
+    con.row_factory = sqlite3.Row
+    try:
+        # SELECT ONLY WHAT THE TABLE HAS. ``exit_price`` and ``details`` are
+        # needed by the plausibility filter and were not in the original query;
+        # naming them unconditionally makes this function raise against any
+        # narrower trade_outcomes, which is what the tmp-db fixtures build and
+        # what an older checkout's schema is. A missing column leaves the field
+        # at its neutral value, and a missing ``exit_price`` makes the ratio arm
+        # return None -- unjudgeable, not silently plausible.
+        have = {r[1] for r in con.execute("PRAGMA table_info(trade_outcomes)")}
+        wanted = ["symbol", "gross_profit", "net_profit", "fee_cost",
+                  "entry_price", "exit_price", "quantity", "details"]
+        cols = [c for c in wanted if c in have]
+        raw = list(
+            con.execute(
+                "SELECT %s FROM trade_outcomes WHERE status = 'closed'"
+                % ", ".join(cols)
+            )
+        )
+    finally:
+        con.close()
+
+    def _col(row, name, default=None):
+        return row[name] if name in cols else default
+
+    out = []
+    for r in raw:
+        try:
+            det = json.loads(_col(r, "details") or "{}")
+        except Exception:  # noqa: BLE001
+            det = {}
+        if not isinstance(det, dict):
+            det = {}
+        out.append({
+            "symbol": str(_col(r, "symbol") or "").strip(),
+            "strategy_id": str(det.get("strategy_id") or "") or "unclassified",
+            "gross_profit": float(_col(r, "gross_profit") or 0.0),
+            "net_profit": float(_col(r, "net_profit") or 0.0),
+            "fee_cost": float(_col(r, "fee_cost") or 0.0),
+            "entry_price": float(_col(r, "entry_price") or 0.0),
+            "exit_price": float(_col(r, "exit_price") or 0.0),
+            "quantity": abs(float(_col(r, "quantity") or 0.0)),
+        })
+    return out
+
+
+def collect(min_trades: int = 1, rows: list | None = None) -> dict:
     from trading.strategies.ledger import _live_tradeable
+    from services.outcome_plausibility import (
+        IMPLAUSIBLE_RET, booked_return, partition,
+    )
 
     cost_frac = _measured_cost_fraction()
 
-    con = sqlite3.connect(str(DB))
-    con.row_factory = sqlite3.Row
-    rows = list(
-        con.execute(
-            "SELECT symbol, gross_profit, net_profit, fee_cost, entry_price, "
-            "quantity FROM trade_outcomes WHERE status = 'closed'"
-        )
-    )
-    con.close()
+    if rows is None:
+        rows = load_closed()
+
+    # THE VERDICT IS READ OFF THE ROWS THE LEDGER WOULD HAVE ACCEPTED.
+    # Booked figures are still accumulated per symbol, because hiding how much
+    # of a record is artifact is its own failure -- but `gross`/`net_*` that
+    # feed the ranking and the totals come from the kept rows only.
+    kept, dropped = partition(rows)
+    keep_ids = {id(r) for r in kept}
 
     per: dict = {}
     for r in rows:
@@ -89,6 +159,11 @@ def collect(min_trades: int = 1) -> dict:
                 "tradeable": bool(_live_tradeable(sym)),
                 "trades": 0,
                 "wins_net": 0,
+                "gross_booked": 0.0,
+                "net_booked_all": 0.0,
+                "trades_booked": 0,
+                "implausible": 0,
+                "worst_implausible_ret": 0.0,
                 "gross": 0.0,
                 "net_booked": 0.0,
                 "fee_booked": 0.0,
@@ -99,6 +174,16 @@ def collect(min_trades: int = 1) -> dict:
         net = float(r["net_profit"] or 0.0)
         fee = float(r["fee_cost"] or 0.0)
         notional = abs(float(r["entry_price"] or 0.0) * float(r["quantity"] or 0.0))
+
+        d["trades_booked"] += 1
+        d["gross_booked"] += gross
+        d["net_booked_all"] += net
+        if id(r) not in keep_ids:
+            d["implausible"] += 1
+            ret = booked_return(r)
+            if ret is not None and abs(ret) > abs(d["worst_implausible_ret"]):
+                d["worst_implausible_ret"] = ret
+            continue
 
         d["trades"] += 1
         d["gross"] += gross
@@ -116,7 +201,16 @@ def collect(min_trades: int = 1) -> dict:
         d["win_rate_net"] = d["wins_net"] / n if n else 0.0
         d["net_per_trade"] = d["net_booked"] / n if n else 0.0
         d["recomputed_per_trade"] = d["net_recomputed"] / n if n else 0.0
-        if n >= min_trades:
+        # How much of this symbol's BOOKED record the filter removed. Over 100%
+        # means the artifact rows carry the SIGN, not just the size -- which is
+        # the AERO case and the reason this column is printed rather than
+        # inferred.
+        d["artifact_share_of_gross"] = (
+            100.0 * (d["gross_booked"] - d["gross"]) / d["gross_booked"]
+            if d["gross_booked"] else 0.0
+        )
+        d["sign_flipped"] = (d["gross_booked"] > 0) != (d["gross"] > 0)
+        if d["trades_booked"] >= min_trades:
             out.append(d)
 
     out.sort(key=lambda d: (-d["recomputed_per_trade"], -d["trades"]))
@@ -132,13 +226,20 @@ def collect(min_trades: int = 1) -> dict:
             "wins": sum(d["wins_net"] for d in group),
             "win_rate": (sum(d["wins_net"] for d in group) / n) if n else 0.0,
             "gross": sum(d["gross"] for d in group),
+            "gross_booked": sum(d["gross_booked"] for d in group),
             "net_booked": sum(d["net_booked"] for d in group),
             "net_recomputed": sum(d["net_recomputed"] for d in group),
+            "implausible": sum(d["implausible"] for d in group),
         }
 
     return {
         "cost_fraction": cost_frac,
         "min_trades": min_trades,
+        "implausible_ret": IMPLAUSIBLE_RET,
+        "rows_read": len(rows),
+        "rows_dropped": len(dropped),
+        "gross_dropped": sum(float(r["gross_profit"] or 0.0) for r in dropped),
+        "net_dropped": sum(float(r["net_profit"] or 0.0) for r in dropped),
         "symbols": out,
         "totals": {"tradeable": _tot(trad), "refused": _tot(refu)},
     }
@@ -156,23 +257,46 @@ def render(rep: dict) -> str:
     A("  cost against gross, because the booked fee has previously been a")
     A("  constant writing itself back into the book.")
     A("")
+    A("  PRE-GUARD ARTIFACTS DROPPED: %d of %d closed rows, carrying gross "
+      "%+.4f and net %+.4f" % (rep["rows_dropped"], rep["rows_read"],
+                               rep["gross_dropped"], rep["net_dropped"]))
+    A("  These are rows ``ledger._is_implausible`` would have refused on the way")
+    A("  in; ``trade_outcomes`` is append-only and still holds them. |ret| >")
+    A("  %.0f%% or outsized against the strategy's own scale. 'bkd' below is the"
+      % (rep["implausible_ret"] * 100))
+    A("  BOOKED gross including them; 'gross' excludes them and is the verdict.")
+    A("")
     for label, key in (("LIVE-TRADEABLE", True), ("REFUSED BY THE LIVE LANE", False)):
         A("  %s" % label)
-        A("  %-24s%6s%7s%11s%11s%11s" % ("symbol", "n", "win%", "gross", "net", "recomp"))
-        A("  " + "-" * 70)
+        A("  %-22s%5s%6s%4s%10s%10s%10s%10s" % (
+            "symbol", "n", "win%", "bad", "bkd", "gross", "net", "recomp"))
+        A("  " + "-" * 77)
         group = [d for d in rep["symbols"] if d["tradeable"] is key]
         if not group:
             A("    (none)")
         for d in group:
-            A("  %-24s%6d%6.0f%%%+11.4f%+11.4f%+11.4f" % (
-                d["symbol"][:24], d["trades"], d["win_rate_net"] * 100,
+            A("  %-22s%5d%5.0f%%%4d%+10.4f%+10.4f%+10.4f%+10.4f%s" % (
+                d["symbol"][:22], d["trades"], d["win_rate_net"] * 100,
+                d["implausible"], d["gross_booked"],
                 d["gross"], d["net_booked"], d["net_recomputed"],
+                "  <- SIGN FLIPS without the artifact rows"
+                if d["sign_flipped"] else "",
             ))
         t = rep["totals"]["tradeable" if key else "refused"]
-        A("  %-24s%6d%6.0f%%%+11.4f%+11.4f%+11.4f   <- TOTAL" % (
-            "", t["trades"], t["win_rate"] * 100,
-            t["gross"], t["net_booked"], t["net_recomputed"],
+        A("  %-22s%5d%5.0f%%%4d%+10.4f%+10.4f%+10.4f%+10.4f   <- TOTAL" % (
+            "", t["trades"], t["win_rate"] * 100, t["implausible"],
+            t["gross_booked"], t["gross"], t["net_booked"], t["net_recomputed"],
         ))
+        A("")
+    flipped = [d for d in rep["symbols"] if d["sign_flipped"]]
+    if flipped:
+        A("  SYMBOLS WHOSE VERDICT IS CARRIED BY AN ARTIFACT ROW")
+        A("    A symbol here is one the book would call a winner and the ledger")
+        A("    already decided did not happen. This is the AERO shape.")
+        for d in flipped:
+            A("      %-20s %d artifact row(s) of %d: booked gross %+.4f -> %+.4f"
+              % (d["symbol"], d["implausible"], d["trades_booked"],
+                 d["gross_booked"], d["gross"]))
         A("")
 
     tt = rep["totals"]["tradeable"]
