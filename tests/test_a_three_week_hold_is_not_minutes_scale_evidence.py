@@ -51,6 +51,20 @@ class ThreeWeekHoldIsNotEvidence(unittest.TestCase):
         self._env = mock.patch.dict(os.environ, {"MAX_HOLD_SECONDS": "3600"})
         self._env.start()
         self.addCleanup(self._env.stop)
+        # Isolate the HORIZON rule from the symbol-edge ban. Since 2026-09-10
+        # `_live_tradeable` also consults services/symbol_edge_gate, which reads
+        # the live trade_outcomes book -- so whether AERO-USDC counts as
+        # tradeable evidence for atf_static depends on today's database, and
+        # that pair is currently BANNED at t=-3.61. Without this stub the
+        # fixtures below measure the ban instead of the hold clock, and the
+        # test's verdict changes with the market rather than with the code.
+        # The ban has its own test:
+        # tests/test_a_banned_symbol_is_not_spendable_evidence.py.
+        self._gate = mock.patch(
+            "services.symbol_edge_gate.refusal_reason", return_value=None
+        )
+        self._gate.start()
+        self.addCleanup(self._gate.stop)
 
     def _ledger(self) -> StrategyLedger:
         return StrategyLedger(path=str(self.path))

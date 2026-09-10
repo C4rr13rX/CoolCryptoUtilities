@@ -246,7 +246,7 @@ def _blank_tradeable() -> Dict[str, Any]:
     return {"trades": 0, "wins": 0, "losses": 0, "total_profit": 0.0}
 
 
-def _live_tradeable(symbol: str) -> bool:
+def _live_tradeable(symbol: str, strategy_id: Optional[str] = None) -> bool:
     """Could the live lane have placed a round trip in ``symbol``?
 
     Graduation and re-arm both ask "has this strategy earned the right to
@@ -285,6 +285,60 @@ def _live_tradeable(symbol: str) -> bool:
     and trading/bot.py:9686), and the tradeable symbols are the ones the
     strategies actually trade -- 5 of atf_static's 9 fresh rows were AERO-USDC
     -- so this does not switch the gate off.
+
+    THE STOP IS ONLY ONE OF THE TWO REASONS THE LIVE LANE REFUSES A SYMBOL.
+    Until 2026-09-10 this function asked ``stop_is_unenforceable`` and nothing
+    else, while every live entry site -- trading/bot.py:7845,
+    trading/scheduler.py, trading/selector.py:147,
+    services/atf_static_strategy.py -- ALSO consults
+    ``services.symbol_edge_gate.refusal_reason``, which bans a symbol whose own
+    book does not pay for its round trips. So the ledger was counting as
+    "spendable" a book of trades the live lane refuses on sight, which is the
+    exact defect the docstring above was written to close, one gate along.
+
+    Measured 2026-09-10 over the 213 closed rows of ``trade_outcomes`` at the
+    measured round-trip cost of 0.4653% (services/round_trip_cost, NOT the
+    0.650% constant older stored reasons cite)::
+
+        tradeable, stop only        190 trades  36.8% win  +1.2127  <- what the
+                                                                      rule read
+        minus the SYMBOL ban        130 trades  35.4% win  +4.4282
+        minus the PAIR ban too      106 trades  38.7% win  +4.8778
+
+        BASECAT-USDC                 37 trips            -1.9138
+        COMP-USDC                    16 trips            -1.2368
+        CBXRP-USDC                    7 trips            -0.0649
+        (atf_static, AERO-USDC)      18 trips            -0.3653
+        (atf_static, CBBTC-USDC)      6 trips            -0.0844
+
+    60 symbol-banned round trips worth -3.2155 and 24 pair-banned ones worth
+    -0.4497 were being counted as evidence that a licence to spend real money
+    had been earned. Removing them does not move the bar -- 20 round trips at
+    55% is untouched -- it corrects WHICH round trips are allowed to count.
+
+    ``strategy_id`` names the executor. The gate refuses at
+    ``(strategy, symbol)`` granularity as well as pooled, because a directive
+    is always a pair, and the two answers disagree on the symbol the live lane
+    is aimed at most: AERO-USDC is allowed pooled and refused for atf_static.
+    Passing it asks the same question the entry site asks. Omitting it can only
+    be MORE permissive (``refusal_reason`` documents that), so the older
+    single-argument callers in services/tradeable_evidence.py and
+    scripts/tradeable_symbol_edge.py keep working and keep the pooled ban.
+
+    NO LOOK-AHEAD. This is consulted at ``record()`` time, so a trade is judged
+    against the ban that was standing when it closed, computed from trades that
+    closed BEFORE it. The stored ``tradeable`` sub-book is incremental and is
+    never recomputed, so a ban that lands tomorrow cannot retroactively delete
+    yesterday's evidence, and a ban that lifts cannot resurrect it. That is
+    what keeps this from being selection on the outcome: it is the live lane's
+    own decision, replayed at the same moment the live lane would have made it.
+
+    FAILS OPEN ON THE BAN, CLOSED ON THE STOP, and the asymmetry is deliberate.
+    ``refusal_reason`` fails open by design -- a gate that cannot read its
+    evidence has nothing to refuse on -- so when it errors the live lane WOULD
+    have placed the trade, and the honest answer to "could it have placed
+    this" is yes. ``stop_is_unenforceable`` failing means tradeability cannot
+    be established at all, which is not the same thing.
     """
     sym = str(symbol or "").strip()
     if not sym:
@@ -303,9 +357,22 @@ def _live_tradeable(symbol: str) -> bool:
         )
         return False
     try:
-        return not bool(stop_is_unenforceable(sym))
+        if bool(stop_is_unenforceable(sym)):
+            return False
     except Exception:  # noqa: BLE001
         return False
+    try:
+        from services.symbol_edge_gate import refusal_reason as _edge_refusal
+    except Exception:  # noqa: BLE001
+        # Same fail-open as the gate itself: an unreadable gate refuses
+        # nothing at the entry site either, so it cannot un-place a trade
+        # here. Not logged loudly -- unlike the stop import above, this one
+        # does not stall evidence, it only stops tightening it.
+        return True
+    try:
+        return _edge_refusal(sym, strategy_id) is None
+    except Exception:  # noqa: BLE001
+        return True
 
 
 def _tradeable_of(stats: Any) -> Dict[str, Any]:
@@ -662,7 +729,11 @@ class StrategyLedger:
             # when, the live lane could have placed this round trip. Bumped
             # from the same values as the totals above so the two books can
             # never disagree about a single trade.
-            if _live_tradeable(symbol):
+            # `sid` is passed so the gate can answer at (strategy, symbol)
+            # granularity -- the same question the entry site asks. Omitting
+            # it would keep the pooled ban and silently drop the pair ban,
+            # which is where atf_static/AERO-USDC lives.
+            if _live_tradeable(symbol, sid):
                 sub = stats.get("tradeable")
                 if not isinstance(sub, dict):
                     sub = _blank_tradeable()
