@@ -6,8 +6,11 @@ population was starved because one strategy ate the budget. That count came
 from ``trading_ops``, which is an append-only op LOG: a strategy that
 publishes bus actions writes rows there while receiving no decision cycles at
 all, and a refused cycle writes no row. Measured against the cycle table, the
-strategy with 179 log rows had ZERO cycles and the real mechanism was
-symbol-slot contention.
+strategy with 179 log rows had ZERO cycles.
+
+The converse does NOT hold, and asserting it here was retracted: a strategy
+absent from the log was very likely still ASKED and simply returned no signal
+(65 of 72 do, every tick). Absence proves silence, not starvation.
 
 ``scripts/decision_budget_census.py`` exists so that number is not re-derived
 from the wrong table. These tests pin the two properties that make it right:
@@ -161,12 +164,15 @@ def test_a_strategy_named_only_inside_a_dropped_list_still_counts_as_proposed():
     ], channel
 
 
-def test_a_strategy_in_neither_channel_is_never_proposed_not_merely_unlucky():
-    """The finding: absent from BOTH producers is a different bug from losing.
+def test_a_strategy_in_neither_channel_is_silent_not_proven_starved():
+    """Absence from both producers means SILENT, and no more than that.
 
-    A strategy that holds no slot AND is named by no op-log row did not lose a
-    contention and did not refuse a cycle. Nothing put it forward, so no
-    fairer weighting between the strategies that DO appear can ever reach it.
+    This test used to assert the opposite -- that a strategy in neither
+    channel had never been offered a cycle. Gale's entry-arbitration rows
+    falsified it: 65 of 72 strategies are asked every tick and return
+    no_signal, writing no row anywhere. The census can prove a strategy
+    produced no visible signal; it cannot prove it was denied a turn, and the
+    set below is named accordingly.
     """
     registry = {"ema_cross", "rsi_reversal", "atf_static", "vwap_reversion"}
     report = census([_snapshot("AAA-USDC", "hold", {"AAA-USDC": "ema_cross"})], hours=1.0)
@@ -178,8 +184,8 @@ def test_a_strategy_in_neither_channel_is_never_proposed_not_merely_unlucky():
     proposed = slot_holders | set(candidate_channel(conn, now=100.0, hours=1.0)["strategies"])
 
     assert proposed == {"ema_cross", "atf_static"}, proposed
-    # rsi_reversal is the status command's closest-to-the-bar strategy, and
-    # this is the shape in which it disappears.
+    # Silent in this window -- which is a question to take to the arbitration
+    # rows, not a verdict about scheduling.
     assert sorted(registry - proposed) == ["rsi_reversal", "vwap_reversion"]
 
 

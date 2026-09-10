@@ -35,36 +35,50 @@ WHAT IT MEASURES, 6h to 2026-09-10T09:45 (this script, ``--hours 6``):
     donchian_breakout             5     0.8        1   4 hold, 1 exit
     bollinger_squeeze             1     0.2        1   1 enter
 
-THREE FINDINGS, AND EACH CONTRADICTS A SENTENCE OF THE BRIEF.
+WHAT THIS SCRIPT CAN AND CANNOT SEE -- READ THIS BEFORE QUOTING IT.
 
-1. ``atf_static`` RECEIVES ZERO DECISION CYCLES. It does not appear. It holds
-   no symbol slot and never did in the window. It is not over-allocated; on
-   this channel it is not allocated at all.
+IT CANNOT SEE A STRATEGY THAT WAS ASKED AND SAID NOTHING. A strategy that is
+offered a tick and returns no candidate writes NO row in ``trading_ops`` and
+holds no scheduler slot, so it is invisible here BY CONSTRUCTION. Reading its
+absence as "it never got a turn" is a mistake this script's own author made
+twice in one pass, and Gale's ``entry-arbitration`` instrument (1d80f08,
+a81d3db) falsified it with the row that was missing: across all 72 registered
+strategies on one tick, ``no_signal`` 65, ``min_samples`` 7, ``disabled`` 0,
+``raised`` 0. THE 65 ARE ASKED EVERY TICK AND HAVE NOTHING TO SAY. They are
+not starved of cycles, and a "floor of cycles per strategy" would change
+nothing for them. For who was OFFERED a turn, read the arbitration rows, not
+this census.
 
-2. THE STARVATION IS SYMBOL-SLOT CONTENTION WITH NEAR-ZERO TURNOVER, which is
-   the first of the three mechanisms the brief asked us to distinguish. There
-   were NINE symbol slots in six hours and one directive per symbol, so at
-   most nine strategies can be live at once; nine distinct strategies held a
-   slot all window. Five of the nine symbols never changed strategy at all,
-   and the other four changed exactly once. TWENTY-NINE OF 38 STRATEGIES GOT
-   EXACTLY ZERO CYCLES -- not few, zero. No per-strategy fix can matter to
-   them, and giving every strategy "a floor of cycles" is impossible while a
-   symbol carries one directive: the floor has to come from slot ROTATION or
-   from more symbols, not from a scheduler weight.
+WHAT IT DOES ESTABLISH, and each of these survived that correction.
 
-3. IT IS NOT "33 STRATEGIES REFUSING OFFERED CYCLES", the third mechanism --
-   but refusal is still where the budget dies, and it is not per-strategy.
-   1573 of 1574 cycles decided ``hold``: ONE enter in six hours across every
-   strategy that had a slot. A shared downstream gate refuses ~100% of cycles
-   regardless of who proposed them (``hold_attribution_census.py`` names it:
-   ``net_margin`` max is negative across every symbol for ten hours, so the
-   entry conjunct is unsatisfiable by measurement). Redistributing cycles
-   between strategies redistributes holds.
+1. ``atf_static`` RECEIVES ZERO DECISION CYCLES, at 6h and at 24h. It holds no
+   symbol slot and never did. It is not over-allocated; on this channel it is
+   not allocated at all -- independently confirmed by the arbitration rows'
+   OFFERED column, which gives it nothing. The brief's "179 vs 7" is the wrong
+   table from two directions.
 
-So the ranking the operator wants is blocked by two separate walls, and the
-allocation one is NOT the one the brief named: 29 strategies cannot be ranked
-because they never hold a slot, and the 9 that do cannot be ranked because
-their shared entry gate is shut.
+2. ONE ROW OF ``trading_ops`` IS NOT ONE CYCLE. A hold writes none and one
+   tick writes four. Any per-strategy budget derived from that table is wrong
+   by construction, which is the specific error this script exists to stop.
+
+3. THE ENTRY LANE IS SHUT FOR EVERYONE, so no distribution fixes it today.
+   1576 of 1578 cycles decided ``hold`` -- ONE enter in six hours across every
+   strategy holding a slot. A shared downstream gate refuses ~100% of cycles
+   regardless of who proposed (``hold_attribution_census.py``: ``net_margin``
+   max is negative across every symbol for twelve hours, so the entry conjunct
+   is unsatisfiable by measurement). Give all 42 a perfect fair share and you
+   get 42 strategies holding.
+
+4. THE SYMBOL CAP BINDS BELOW WHAT THE FEED SUPPLIES, and this is about
+   SYMBOLS rather than strategies, so the ``no_signal`` finding leaves it
+   standing. ``market_stream`` carried 15 distinct symbols in 2h and 36 in 6h
+   while the scheduler held SEVEN slots, flat at 7-8 for six hours. A symbol
+   carries one directive, so slots cap concurrent strategies. The cause is
+   ``select_pairs(limit=6)`` in ``trading/selector.py`` against the re-prepend
+   at ``services/atf_static_strategy.py:1797``, where write order decides who
+   survives the cap. Raising it buys breadth of SYMBOLS -- the 65 no_signal
+   strategies would return no_signal on new symbols too, so signal comes
+   first and the cap second.
 
 Read-only. Touches no trading code and writes nothing.
 
@@ -220,13 +234,17 @@ _LIST_KEYS = ("dropped", "bus_actions", "candidates")
 def candidate_channel(
     conn: sqlite3.Connection, *, now: float, hours: float
 ) -> Dict[str, Any]:
-    """Which strategies were PROPOSED at all, on the op-log channel.
+    """Which strategies APPEAR at all on the op-log channel.
 
     The scheduler slot table is only one of two producers. The c0d3rv2
     publisher emits ``evaluate_atf_static_entry`` bus actions on its own
-    channel, and refusal rows name strategies that never reach a slot. A
-    strategy absent from BOTH was never proposed -- which is a different
-    defect from losing a slot, and the one that turned out to be real.
+    channel, and refusal rows name strategies that never reach a slot.
+
+    A strategy absent from BOTH was not necessarily denied a turn: one that is
+    asked and returns no candidate writes nothing anywhere. Absence here means
+    "produced no visible signal", not "was never offered a cycle" -- see the
+    module docstring, where reading it the other way is the error that had to
+    be retracted.
     """
     appearances: Counter = Counter()
     try:
@@ -422,9 +440,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     }
     proposed = slot_holders | set(report["candidate_channel"]["strategies"])
     report["proposed_anywhere"] = sorted(proposed)
-    # The finding. A strategy in neither channel did not lose a slot and did
-    # not refuse a cycle -- nothing ever put it forward, so no per-strategy
-    # fix and no fairer weighting can reach it.
+    # A strategy in neither channel produced no VISIBLE signal in the window.
+    # It was very likely still asked -- 65 of 72 are, every tick, returning
+    # no_signal -- so this is a silence census, not an opportunity census.
     report["never_proposed"] = sorted(set(registry) - proposed)
 
     if args.json:
@@ -470,8 +488,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         f"{report['proposed_anywhere']}"
     )
     print(
-        f"  NEVER PROPOSED IN {args.hours:g}h -- not a lost slot, not a refused "
-        f"cycle, NOTHING PUT THEM FORWARD ({len(report['never_proposed'])}):"
+        f"SILENT IN {args.hours:g}h -- no slot, no op-log row. Very likely ASKED "
+        f"and returning no_signal, NOT denied a cycle ({len(report['never_proposed'])}):"
     )
     for name in report["never_proposed"]:
         print(f"    {name}")
