@@ -4128,3 +4128,49 @@ open question neither of us answered is whether a 15-30 min horizon can clear
   cell (-0.2944% net vs -0.0205% all-bar). NEXT: the pooled-window read is
   what keeps manufacturing these; make the 2h-window regime split the DEFAULT
   output of head_skill_census rather than something the reader must think to do.
+
+### 2026-09-10 -- Gale, pass 107, addendum: THE HORIZON IS BELOW THE COST FLOOR
+
+HYPOTHESIS: I closed the head question with "the skill does not survive cost"
+and then asked the obvious next one, which nobody had: can a short horizon clear
+the round trip AT ALL on this feed, independent of any model?
+
+DID: added --horizon-table to scripts/head_vs_realised_census.py (187f0d9) and
+swept horizons over 24h, ~5000 matched ticks each, against the receipt-measured
+0.3187% of notional + 0.004047 fixed.
+
+  horizon      n   median|ret|%   %ticks>cost   mean|ret|%   perfect-oracle net%
+      5min   5108       0.0456         16.2%      0.1995            -0.1192
+     10min   5297       0.0794         21.9%      0.2823            -0.0364
+     15min   4984       0.1164         27.3%      0.3385            +0.0198
+     30min   4873       0.2051         39.4%      0.5222            +0.2035
+     60min   4364       0.3898         55.0%      0.8802            +0.5615
+    120min   3855       0.7499         67.5%      1.5809            +1.2622
+
+RESULT: THE LAST COLUMN IS A CEILING NOBODY CAN REACH -- direction called right
+on every tick, whole move captured, cost paid once -- AND AT 5 AND 10 MINUTES IT
+IS STILL NEGATIVE. No head, strategy or allocation fix makes those horizons pay;
+the move is smaller than the toll. The MEDIAN is the honest row (the mean is
+skew-inflated by a few large movers) and the median tick clears 0.3187% at no
+horizon below roughly 45 minutes. So the TYPICAL trade loses to cost even with a
+perfect direction call at every horizon this system currently targets.
+
+This is a direct measured finding against the standing instruction "trade on the
+scale of minutes -- single-digit to tens of minutes". On this feed at this cost,
+the single-digit end is arithmetically unprofitable. It also explains the
+graduation wall from a direction with nothing to do with the model: the whole
+population is being asked to win a game whose entry fee exceeds the prize, which
+is consistent with every strategy's tradeable P/L being negative or zero.
+
+NO KNOB CHANGED, and I am deliberately NOT proposing to lengthen the horizon --
+that is the operator's call, filed as [15cc71d4]. Two honest responses: accept a
+30-60 min horizon and give up "minutes", or cut the 0.3187%. Only the second
+preserves the stated goal. At $23.18 deployable the fixed leg adds ~0.017% more.
+
+CAVEAT, not hidden: 24h of ONE flat-to-down tape. A calmer or wilder regime
+moves every row, and [15cc71d4]'s second criterion asks for an UP window before
+anyone bets on it.
+
+NEXT: re-run --horizon-table over an UP window. If the 5/10-minute ceiling is
+negative there too, the horizon target is wrong rather than the market, and that
+is a bigger lever than any head fix on the board.
