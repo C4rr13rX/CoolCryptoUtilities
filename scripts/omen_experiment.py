@@ -52,6 +52,20 @@ from trading.omen_brain import (  # noqa: E402
     build_collections, collection_distinctness, discriminating_collections,
     label_omen, label_regime, omen_threshold,
 )
+from trading.omen_resolved_history import ResolvedHistory  # noqa: E402
+
+
+def _causal_majority(visible) -> str:
+    """The most common SETTLED outcome this bar is allowed to have seen.
+
+    Deliberately not the node's own call: sizing the self-pool vocabulary and
+    measuring the node's skill are different jobs, and only the first belongs
+    in a sample builder that runs before any node exists.
+    """
+    actuals = [row.actual for row in visible if row.actual]
+    if not actuals:
+        return OMEN_MURK
+    return Counter(actuals).most_common(1)[0][0]
 
 
 def _pct(values: Sequence[float]) -> str:
@@ -208,17 +222,52 @@ def backpressure_probe(endpoint: str | None) -> Dict[str, Any]:
 
 
 def build_samples(bars, symbol, chain, horizon, start, stop):
-    """Frames + true label for every bar in [start, stop) that has both."""
+    """Frames + true label for every bar in [start, stop) that has both.
+
+    THE SEAM THIS CLOSES, measured pass 110 on a real 19-pool node. The query
+    path probe reported ``QUERY PATH DEAD`` for a query set differing only by
+    pools 15/16/19 -- control 0/60, treatment 0/60 -- while the B arm fired
+    SIX streams per prediction. The pools were sent and they were read. They
+    moved nothing because this loop called ``build_collections`` WITHOUT
+    ``history=``, so every self frame in every training set was the ``na``
+    sentinel and the three pools trained as CONSTANTS. A constant stream
+    cannot move a query however good the pool is.
+
+    So a ``ResolvedHistory`` is now walked alongside the bars and handed in.
+    Causality is inherited from it rather than re-implemented: the frame for
+    bar ``i`` reads ``as_of(i)``, which cannot return a row whose horizon has
+    not landed, and ``self_frames`` drops any unresolved row on top of that --
+    the guard against the prediction_error loop that took recall 100% -> 30%.
+
+    Passing ``history=`` is a NO-OP when ``OMEN_META_COLLECTIONS`` is off:
+    ``build_collections`` reads it only behind that flag, so a non-meta run
+    produces byte-identical frames to before this change.
+    """
+    history = ResolvedHistory(horizon)
     samples = []
     for index in range(max(start, LOOKBACK_BARS), stop):
         label = label_omen(bars, index, horizon_bars=horizon)
+        # Settle FIRST: a prediction whose horizon lands exactly here is a
+        # fact by the time this bar is decided. The guard is against reading
+        # the OPEN call, not a settled one.
+        if label is not None:
+            try:
+                history.settle(index, label)
+            except ValueError:
+                pass
+        visible = history.as_of(index)
         if label is None:
             continue
         try:
             frames = build_collections(bars, index, horizon_bars=horizon,
-                                       symbol=symbol, chain=chain)
+                                       symbol=symbol, chain=chain,
+                                       history=visible)
         except (ValueError, IndexError):
             continue
+        # The recorded prediction is the causal majority of what this bar is
+        # allowed to see -- non-oracle, and the same rule the scoreboard
+        # baselines against. It is what makes pools 15/16/19 vary at all.
+        history.record(index, _causal_majority(visible))
         samples.append({
             "index": index,
             "frames": frames,
