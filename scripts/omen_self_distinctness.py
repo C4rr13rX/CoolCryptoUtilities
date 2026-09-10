@@ -72,11 +72,18 @@ def main() -> int:
     ap.add_argument("--horizon", type=int, default=12)
     ap.add_argument("--window", type=int, default=32,
                     help="how many settled rows a self-frame reads")
+    ap.add_argument("--end", type=int, default=None,
+                    help="last bar index of the window. ONE WINDOW IS NOT "
+                         "EVIDENCE: a separation measured only at the corpus "
+                         "end is a fact about that regime, and every brain "
+                         "number ever made on this repo scored the SAME "
+                         "window and that window is DOWN.")
     args = ap.parse_args()
 
     path = Path(args.corpus)
     bars = load_bars(path)
-    stop = len(bars) - args.horizon - 1
+    stop = (len(bars) - args.horizon - 1) if args.end is None else min(
+        int(args.end), len(bars) - args.horizon - 1)
     start = max(LOOKBACK_BARS, stop - args.bars)
 
     truth = {}
