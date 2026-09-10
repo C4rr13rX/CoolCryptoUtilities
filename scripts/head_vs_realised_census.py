@@ -170,6 +170,87 @@ def load_predictions(conn: sqlite3.Connection, since: float) -> List[Dict[str, A
     return out
 
 
+def buy_rule_profile(
+    rows: List[Dict[str, Any]],
+    pct_cost: float,
+    clip: float,
+    fixed_cost: float,
+    top_frac: float = 0.10,
+) -> Dict[str, Any]:
+    """Score the head as a BUY-LOW rule and as a SELL-HIGH rule, not on accuracy.
+
+    Operator direction, 2026-09-10: exact/directional accuracy is dominated by
+    outcomes nobody trades. The question is whether the head is accurate
+    SPECIFICALLY about when we can buy low and sell high, so the numbers here
+    are precision on the actionable call and net per trade against the
+    do-it-every-bar baseline.
+
+    PRECISION, not hit rate. A directional hit on a move smaller than the round
+    trip is a LOSS, so a "correct" call that does not clear the cost floor is
+    scored as a miss. floor = pct_cost/100 + fixed_cost/clip, both legs of the
+    measured receipt cost (0.3187% of notional + 0.004047 fixed), and the fixed
+    leg is amortised over the clip because that is the only part clip moves.
+
+    BASELINE IS THE MONEY RULE, NEVER 0.5 AND NEVER THE MAJORITY CLASS. For the
+    buy side it is "buy every bar" in the SAME rows; for the sell side it is
+    the unconditional rate of a fall worth exiting. A rule that clears the
+    floor less often than buying blind has negative value however accurate it
+    looks.
+
+    THE SELL SIDE IS MEASURED HERE BECAUSE IT IS MEASURED NOWHERE ELSE. The
+    experiment harness is long-only, so a correct DOWN call is an abstention
+    and scores zero -- but a correct DOWN call on a position we HOLD is worth
+    money as an exit. Scored against forward returns, not by shorting: an exit
+    is right when the price fell by more than the ONE leg it costs to leave.
+
+    Also scored: the same rule at the head's TOP DECILE of direction_prob. The
+    level and the ordering are separate properties (see rank_profile) and only
+    a rank threshold exploits the ordering, so if the ordering is the only
+    thing with skill this is where it has to show up as money.
+    """
+    n = len(rows)
+    if not n:
+        return {"n": 0}
+    floor = pct_cost / 100.0 + (fixed_cost / clip if clip > 0 else 0.0)
+    one_leg = floor / 2.0
+
+    def _side(group: List[Dict[str, Any]], want_up: bool) -> Dict[str, Any]:
+        if not group:
+            return {"n": 0, "precision": float("nan"), "net_per_trade": float("nan")}
+        if want_up:
+            paid = sum(1 for r in group if r["realised"] > floor)
+        else:
+            paid = sum(1 for r in group if r["realised"] < -one_leg)
+        gross = sum(r["realised"] for r in group) / len(group)
+        return {
+            "n": len(group),
+            "precision": paid / len(group),
+            "gross_per_trade": gross,
+            # A long entry pays the whole round trip; an exit pays one leg.
+            "net_per_trade": (gross - floor) if want_up else (-gross - one_leg),
+        }
+
+    ups = [r for r in rows if r["direction_prob"] > 0.5]
+    downs = [r for r in rows if r["direction_prob"] < 0.5]
+    ordered = sorted(rows, key=lambda r: r["direction_prob"], reverse=True)
+    k = max(1, int(round(len(ordered) * top_frac)))
+    top = ordered[:k]
+
+    return {
+        "n": n,
+        "floor": floor,
+        "one_leg": one_leg,
+        "clip": clip,
+        "buy": _side(ups, True),
+        "buy_baseline": _side(rows, True),          # buy every bar
+        "buy_top_decile": _side(top, True),         # the ORDERING as a money rule
+        "top_decile_n": k,
+        "top_decile_dp_min": top[-1]["direction_prob"] if top else float("nan"),
+        "sell": _side(downs, False),
+        "sell_baseline": _side(rows, False),        # exit every bar
+    }
+
+
 def _quantile(sorted_values: Sequence[float], q: float) -> float:
     if not sorted_values:
         return float("nan")
@@ -491,6 +572,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     ap.add_argument("--min-scored", type=int, default=30)
     ap.add_argument(
+        "--clip",
+        type=float,
+        default=5.0,
+        help="notional per trade in USD; the 0.004047 fixed cost leg amortises over it",
+    )
+    ap.add_argument(
+        "--pct-cost",
+        type=float,
+        default=0.3187,
+        help="measured proportional round-trip cost, PERCENT of notional",
+    )
+    ap.add_argument(
+        "--fixed-cost",
+        type=float,
+        default=0.004047,
+        help="measured fixed round-trip cost in USD",
+    )
+    ap.add_argument(
         "--horizon-table",
         action="store_true",
         help="sweep horizons and print what a PERFECT direction call would net at each",
@@ -544,6 +643,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         "post_collapse": score_era(post, args.flat_bp),
     }
     ranks = {"pre_collapse": rank_profile(pre), "post_collapse": rank_profile(post)}
+    money = {
+        "pre_collapse": buy_rule_profile(pre, args.pct_cost, args.clip, args.fixed_cost),
+        "post_collapse": buy_rule_profile(post, args.pct_cost, args.clip, args.fixed_cost),
+    }
     kind, reason = verdict(eras["post_collapse"], args.min_scored)
 
     result = {
@@ -561,6 +664,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         },
         "eras": eras,
         "rank_profile": ranks,
+        "money_rule": money,
         "verdict": kind,
         "reason": reason,
     }
@@ -646,7 +750,44 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"proportional cost alone ({payers / post['n'] * 100:.1f}%) -- a perfect "
             "direction call on the rest still loses money."
         )
-        print()
+        print("  BUY LOW / SELL HIGH -- the head as a MONEY rule, not as an accuracy score.")
+    print("  Precision counts a call as right only if the move CLEARED THE COST FLOOR;")
+    print("  a directional hit smaller than the round trip is a loss. Baselines are the")
+    print("  do-it-every-bar money rules in the SAME rows, never 0.5 and never the")
+    print(f"  majority class. clip ${args.clip:.2f} -> floor {money['post_collapse'].get('floor', float('nan')) * 100:.4f}% round trip,")
+    print(f"  {money['post_collapse'].get('one_leg', float('nan')) * 100:.4f}% one leg (exit).")
+    print("     era             rule                  n   precision   net/trade   vs baseline")
+    for name in ("pre_collapse", "post_collapse"):
+        mr = money[name]
+        if not mr.get("n"):
+            continue
+        for label, key, base_key in (
+            ("head says UP (buy)", "buy", "buy_baseline"),
+            ("top decile dp (buy)", "buy_top_decile", "buy_baseline"),
+            ("buy EVERY bar", "buy_baseline", None),
+            ("head says DOWN (exit)", "sell", "sell_baseline"),
+            ("exit EVERY bar", "sell_baseline", None),
+        ):
+            cell = mr[key]
+            if not cell.get("n"):
+                continue
+            base = mr[base_key] if base_key else None
+            delta = (
+                f"{(cell['precision'] - base['precision']) * 100:+7.2f}pp"
+                if base and base.get("n")
+                else "     -- "
+            )
+            print(
+                f"     {name:<14} {label:<20} {cell['n']:>5}    {cell['precision'] * 100:6.2f}%   "
+                f"{cell['net_per_trade'] * 100:+8.4f}%   {delta}"
+            )
+    print()
+    print("  READ THIS AND NOT THE HIT RATE. A rule whose precision is at or below its")
+    print("  every-bar baseline places no better trades however accurate it scores, and")
+    print("  a NEGATIVE net/trade loses money on every one it places. The top-decile row")
+    print("  is the only one that exploits the ORDERING; the head-says-UP row is the")
+    print("  LEVEL. They are separate properties and they can disagree.")
+    print()
     print(f"  VERDICT: {kind}")
     print(f"  {reason}")
     print()

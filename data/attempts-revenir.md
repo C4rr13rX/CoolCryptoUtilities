@@ -4770,3 +4770,44 @@ the feeder against a 19-pool v4_meta identity on :8091, in an UP and a DOWN
 window on one fabric. No node was up this pass and a 19-pool training run does
 not fit 30 minutes -- sized before launching rather than after. [c2f12cb0]
 reopened with exactly those criteria; I do NOT claim held-out edge.
+
+2026-09-10  Iris  pass 110
+
+HYPOTHESIS: the trading head's ORDERING (AUC 0.56-0.59) could be converted
+into money by a rank/percentile entry threshold even though its LEVEL carries
+nothing, because a rank threshold is indifferent to the level. Scored on the
+operator's 15:07 scoreboard -- precision on the actionable call against the
+cost floor and net per trade against the do-it-every-bar rule -- not on exact
+or directional accuracy.
+
+WHAT I DID: added a BUY LOW / SELL HIGH section to
+scripts/head_vs_realised_census.py (buy_rule_profile) that scores a call as
+right only if the move cleared the measured floor (0.3187% + 0.004047/clip),
+costs an EXIT at one leg rather than a round trip, and baselines against
+buy-every-bar and exit-every-bar in the SAME rows. Swept 5/15/30/60min over
+26h, then split the last 12h into two 6h halves.
+
+RESULT, and it is NEGATIVE:
+  LEVEL   -- no horizon beats the MAJORITY baseline. Best edge +0.0053 at
+             z=+0.56; 30min and 60min pre-collapse are significantly BELOW it
+             (z=-2.16, -2.78). Recalibration cannot help; different features.
+  ORDERING-- real but its SIGN FLIPS between adjacent windows. 60min AUC
+             0.4383+/-0.0169 in one 6h half, 0.5217+/-0.0182 in the next;
+             15/30min pre-collapse INVERTED (0.4191, 0.4263).
+  MONEY   -- the top decile raises the share clearing the floor upward by
+             +8.05/+11.02/+9.30pp at 15/30/60min and its net per trade is
+             WORSE than blind buying (15min gross -0.0358% vs +0.0191%). It is
+             VOLATILITY SELECTION, not direction.
+  The single positive cell (60min post-collapse, +0.3242%/trade, +21.04pp,
+  n=236) dissolves on within-window replication: 0.00% precision and
+  -1.8354%/trade in the down 6h half, and beaten by blind buying in the up
+  half. The only positive number in the report is buy-every-bar in an up
+  window (+0.2432%) -- beta, not edge.
+  SELL HALF, measured for the first time (omen_experiment.py:552 is long-only
+  so a crest scores zero there): head-says-DOWN as an EXIT beats exit-every-bar
+  by +0.02 to +0.58pp post-collapse, -1.17 to -5.85pp pre. No skill.
+
+NEXT: do not build a rank threshold on this head, and do not report an AUC from
+one window as evidence about a rule. The head is a dead end as a direction
+source; the pool topology is the remaining lever. Report:
+data/brain_experiments/p110_head_level_vs_ordering_money_scoreboard.md
