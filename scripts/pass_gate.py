@@ -88,6 +88,25 @@ GATE_TESTS = (
     # that happened, and this number is an argument ABOUT a guard that is
     # behaving correctly -- inflating it would argue for weakening it.
     "test_the_hold_time_report_counts_positions_not_log_rows.py",
+    # THE SAME ROWS-ARE-NOT-EVENTS MISTAKE, ON THE ENTRY SIDE, AND IT SET A
+    # SPRINT'S PRIORITY BEFORE IT WAS CAUGHT.
+    #
+    # [ed0d721e] was filed as "75% of the ghost lane's decision budget
+    # re-decides one banned symbol", counted from `entry-predropped-edge-ban`
+    # rows. Measured 2026-09-10, those 96 rows in one hour clustered to 25
+    # ticks -- 23 clusters of EXACTLY FOUR rows at one instant, because four
+    # `evaluate()` calls land on a tick and each logs its own drop. The symbol
+    # took 34 of 259 decision cycles (13.1%) against 34 of 295 ticks (11.5%):
+    # its fair share. The item was rejected on that arithmetic.
+    #
+    # The second half is the head series. `bot.py` seeds its prediction
+    # summary with `direction_prob=0.5` and `net_margin=0.0` when the model
+    # produced no reading, so counting those as readings lifts a collapsed
+    # head's MAXIMUM back to exactly its ceiling -- and the maximum is what
+    # decides whether `net_margin >= 0` was satisfiable at all. A census that
+    # includes the sentinel reports the entry conjunct as reachable during the
+    # ten hours its true maximum was negative on every symbol.
+    "test_a_ban_row_count_is_not_a_decision_cycle_count.py",
     # STEP 8 OF THE PATH TO A PAID TRADE, AND IT WAS INVISIBLE HERE.
     #
     # This gate read 621 passed / 0 failed on 2026-09-10 while six tests in
