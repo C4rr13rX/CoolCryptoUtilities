@@ -1,0 +1,27 @@
+{
+  "corpus": "data\\historical_ohlcv\\base\\0004_AERO-USDC.json",
+  "train": 600,
+  "test": 120,
+  "query_a": [
+    "temporal",
+    "geometry",
+    "cross"
+  ],
+  "query_b": [
+    "temporal",
+    "geometry",
+    "cross",
+    "temporal_sequence",
+    "temporal_scale"
+  ],
+  "control_moved": 0,
+  "treatment_moved": 77,
+  "streams_fired_a": {
+    "3": 120
+  },
+  "streams_fired_b": {
+    "5": 120
+  },
+  "verdict": "QUERY PATH LIVE",
+  "note": "changing the query set moved 77 of 120 held-out predictions, so the extra streams are READ"
+}

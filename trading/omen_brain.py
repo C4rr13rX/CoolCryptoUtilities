@@ -189,6 +189,36 @@ RELATIONS_ENABLED: bool = os.getenv(
     "OMEN_RELATION_COLLECTIONS", "0") not in ("0", "", "false", "False", "no")
 if RELATIONS_ENABLED:
     COLLECTIONS = COLLECTIONS + RELATION_COLLECTIONS
+
+#: The metacognition and temporal-structure collections -- pools 15-19 of
+#: brains/market_predictor_v4_meta.identity.toml, and the first pools here
+#: declared ``kind="Internal"`` rather than ``SensoryInput``. The frames come
+#: from ``trading/omen_metacognition.py``; the reasoning for each is there.
+#:
+#: WHAT THESE ADD THAT NOTHING ELSE DOES. Every collection above is a view of
+#: ONE INSTANT: ret6, ret24 and vol24 are scalars computed outside and handed
+#: in already flattened, so the fabric sees a number that summarises a
+#: sequence and never the sequence. 17 and 18 carry ORDER and SCALE. 15, 16
+#: and 19 carry the brain's own settled track record, which is the abstention
+#: signal that measured 99.4% vs 73.3% where confidence measured -0.002.
+#:
+#: OFF BY DEFAULT, and the default is load-bearing for the same reason the
+#: relations' is: a v2 or v3 node returns ``unknown input pool id 15`` and
+#: ``_consolidate`` reports the whole sample as a MISS, so enabling these
+#: against the wrong node does not degrade training, it SILENTLY STOPS it.
+#: Turn on only against a node started with the v4_meta identity:
+#:   OMEN_META_COLLECTIONS=1
+META_COLLECTIONS: Tuple[Collection, ...] = (
+    Collection("self_outcome",      "slf", _pool("OMEN_POOL_SELF_OUTCOME", 15)),
+    Collection("self_agreement",    "agr", _pool("OMEN_POOL_SELF_AGREEMENT", 16)),
+    Collection("temporal_sequence", "seq", _pool("OMEN_POOL_TEMPORAL_SEQUENCE", 17)),
+    Collection("temporal_scale",    "scl", _pool("OMEN_POOL_TEMPORAL_SCALE", 18)),
+    Collection("self_error_run",    "err", _pool("OMEN_POOL_SELF_ERROR_RUN", 19)),
+)
+META_ENABLED: bool = os.getenv(
+    "OMEN_META_COLLECTIONS", "0") not in ("0", "", "false", "False", "no")
+if META_ENABLED:
+    COLLECTIONS = COLLECTIONS + META_COLLECTIONS
 COLLECTIONS_BY_NAME: Dict[str, Collection] = {c.name: c for c in COLLECTIONS}
 
 #: The chained stage-1 target. It is an input pool at stage 2 and the
@@ -443,6 +473,7 @@ def build_collections(
     horizon_bars: int,
     symbol: str,
     chain: str = "base",
+    history: Optional[Sequence[Any]] = None,
 ) -> Dict[str, str]:
     """Build one frame per specialised collection for the bar at ``index``.
 
@@ -450,6 +481,16 @@ def build_collections(
     when there is not enough history, rather than emitting a short frame --
     a short frame is a *different byte string*, so padding would quietly
     create a second atom for the same situation.
+
+    ``history`` is the brain's own SETTLED predictions, oldest-first, as
+    ``omen_metacognition.Resolved`` rows. It feeds pools 15/16/19 and is read
+    only when ``OMEN_META_COLLECTIONS`` is on. Omitting it is safe and is the
+    default: the self frames then carry their ``na`` sentinels, so the pools
+    are bound and uninformative rather than absent -- which keeps the
+    ``set(build_collections(...)) == {c.name for c in COLLECTIONS}`` invariant
+    true in every configuration. It must never be given UNRESOLVED rows;
+    ``self_frames`` filters them out, and that filter is the guard against the
+    prediction_error feedback loop that took recall from 100% to 30% here.
     """
     if index < LOOKBACK_BARS:
         raise ValueError(
@@ -581,8 +622,23 @@ def build_collections(
         "horizon": horizon,
         "instrument": instrument,
     }
+    def _finish(frames: Dict[str, str]) -> Dict[str, str]:
+        """Append the metacognition frames, if this build streams them.
+
+        Applied at BOTH return paths on purpose: the meta pools are gated by
+        their own flag and must appear whether or not the relation pools do.
+        Imported here rather than at module scope so a caller with the flag
+        off never pays for the module.
+        """
+        if not META_ENABLED:
+            return frames
+        from trading.omen_metacognition import metacognition_frames
+        frames.update(metacognition_frames(closes, history or (),
+                                           noise=vol24))
+        return frames
+
     if not RELATIONS_ENABLED:
-        return base
+        return _finish(base)
 
     # temporal x volatility: the move in units of its OWN noise. vol24 is a
     # per-STEP stdev, so noise over n steps scales as vol24*sqrt(n); dividing
@@ -630,7 +686,7 @@ def build_collections(
         "rel_shape_flow": rel_shape_flow,
         "rel_trend_noise": rel_trend_noise,
     })
-    return base
+    return _finish(base)
 
 
 # --- labelling ------------------------------------------------------------
