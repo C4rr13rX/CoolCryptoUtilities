@@ -432,6 +432,14 @@ GATE_TESTS = (
     "test_rotation.py",
     "test_unresolved_token_falls_back_to_ghost.py",
     "test_the_two_books_agree_on_live_pl.py",
+    # Requested by Iris, pass 101 (1cc2a6a). The timed-exit rule produced ZERO
+    # of 206 ghost exits over 7d and the only existing coverage ticked at
+    # direction_prob 0.5 -- the one model state in which nothing outranks the
+    # rule -- while production runs a median of 0.2560. Both files fail against
+    # the pre-fix trading/bot.py, so they detect a regression rather than
+    # passing both ways.
+    "test_a_bearish_model_cannot_outrank_the_stale_clock.py",
+    "test_an_opinion_cannot_spend_a_round_trip_the_move_never_earned.py",
 )
 
 
