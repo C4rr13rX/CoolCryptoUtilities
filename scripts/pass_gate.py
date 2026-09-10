@@ -252,6 +252,23 @@ GATE_TESTS = (
     # charged against notional. Verified by mutation -- each of the three
     # reintroduced separately turns this file red.
     "test_a_refused_symbol_cannot_carry_the_tradeable_book.py",
+    # The same split measured from the OTHER source, plus the arithmetic that
+    # says whether the spendable book is losing on direction or on cost. The
+    # entry above reads the ledger; this reads trade_outcomes, so the two can
+    # disagree and a disagreement is the signal. Measured 2026-09-10 over 7
+    # days: POOLED 124 trips +0.7915 against LIVE-TRADEABLE 109 trips -0.7877,
+    # with 12% of the volume supplying 100% of the positive sign (BSTONK alone
+    # +1.7017). Splitting that further, gross +0.6289 against fees 1.4166 --
+    # a real +0.2625%-of-notional edge handed to a 0.5913% cost, so it is a
+    # cost problem and not a direction problem, and the two have opposite
+    # fixes. The tests pin the units (clip is notional PER ROUND TRIP, and a
+    # rate-versus-dollar slip here would misprice every point on the clip
+    # curve) and BOTH sides of the floor rule: an edge below the variable
+    # 0.3187% loses even at a $1,000,000 clip, and an edge above it loses at
+    # $2 and wins at $20. Four of its first six go red if the tradeability
+    # predicate is forced to "everything is tradeable", which is the pooled
+    # reading wearing the right label.
+    "test_the_pooled_ghost_book_is_not_the_graduation_book.py",
     # The gate that was refusing 100% of entries, and the half of its tests
     # that matters. `_tick_jumps` read prices without timestamps, so a 40%
     # move across a 31-hour hole in the feed scored as a single-tick jump and
