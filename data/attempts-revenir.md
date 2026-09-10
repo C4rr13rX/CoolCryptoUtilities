@@ -4731,3 +4731,42 @@ discarding data is invisible to every reader downstream. Three separate cases
 this pass -- the gate reading 657/0 OK over 22 failures, a settled-swap scan
 returning [] instead of raising, and this. Prefer loud refusal to quiet
 truncation.
+
+## 2026-09-10 | Gale | pass 110 | hypothesis: pools 15/16/19 read a constant because nothing records a SETTLED prediction, and building that record would make them carry information about the brain's own correctness
+
+WHAT I DID. Built trading/omen_resolved_history.py, the resolved-prediction
+feeder self_frames was always designed to read and nothing ever constructed.
+Causality is structural, not conventional: a prediction made at bar j over
+horizon h resolves at j+h, and as_of(i) returns a row only when
+resolve_index <= i AND it carries an outcome. Tested against the naive
+implementation -- filtering on the `resolved` flag alone makes bar 149 see 3
+rows instead of 1, because settling bar 200 leaks backwards.
+
+RESULT, AERO-USDC bars [18913, 21913), 3000 samples, horizon 12, driven by
+the majority-class rule (causal, non-oracle):
+  self_outcome    1 -> 23 distinct frames  (0.002 was ONE frame, the sentinel)
+  self_agreement  1 -> 50 distinct frames
+  self_error_run  1 -> 19 distinct frames
+All three sit BELOW the 0.260 query floor: train them, query none.
+
+THE NUMBER THAT MATTERS, measured offline before spending any training run.
+Given the self-frame at bar i, how often is the prediction made at bar i
+correct? Base 25.8%.
+  err run=m16plus dir=climb  ->  8.6% correct, n=185
+  self_agreement spread +36.6%, self_error_run +26.1%, self_outcome +15.4%
+"Wrong 16+ bars running, every call the same label" predicts being wrong
+again at a THIRD of the base rate. That is the abstention signal, and
+nothing in the topology could represent it before.
+
+ALSO MEASURED, and it is Cove's L1 item not mine: cooccurrence_motif reads
+0.004 -- 13 motifs over 3000 bars -- because _band_of is degenerate, not
+because the layer failed. Per-stream band census over 600 bars: geometry mid
+600/600 (its frames are q-quantile tokens and _band_of only reads u/d/r, so
+every one ties and returns mid), volatility hi 600/600 (three u tokens every
+bar). Five motif slots, two of them live.
+
+NEXT: the held-out number. It needs the node's own predictions walked through
+the feeder against a 19-pool v4_meta identity on :8091, in an UP and a DOWN
+window on one fabric. No node was up this pass and a 19-pool training run does
+not fit 30 minutes -- sized before launching rather than after. [c2f12cb0]
+reopened with exactly those criteria; I do NOT claim held-out edge.
