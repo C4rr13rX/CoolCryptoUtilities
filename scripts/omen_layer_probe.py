@@ -30,7 +30,7 @@ import json
 import sys
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -40,7 +40,7 @@ from trading.omen_brain import (  # noqa: E402
 )
 from trading.omen_layers import (  # noqa: E402
     L1_STREAMS, MOTIF_SEQUENCE_STEPS, cooccurrence_motif, layer_distinctness,
-    sequence_motif,
+    relative_bands, sequence_motif,
 )
 
 #: The L0 streams a motif is built FROM. ``instrument`` and ``horizon`` are
@@ -60,7 +60,8 @@ def load_bars(path: Path) -> List[Dict[str, Any]]:
 
 
 def build_layer_frames(bars: Sequence[Mapping[str, Any]], symbol: str,
-                       chain: str, horizon: int, start: int, stop: int
+                       chain: str, horizon: int, start: int, stop: int,
+                       bands: Optional[Mapping[str, Any]] = None
                        ) -> List[Dict[str, str]]:
     """L0 frames plus their L1 motif and L2 motif-path, per bar.
 
@@ -69,6 +70,12 @@ def build_layer_frames(bars: Sequence[Mapping[str, Any]], symbol: str,
     whose L0 frames cannot be built breaks the chain, so its motif is recorded
     as missing rather than silently skipped -- an L2 path that quietly closed
     over a gap would claim an adjacency the corpus does not have.
+
+    ``bands`` are per-stream cut points from ``omen_layers.relative_bands``.
+    Passing None reproduces the ORIGINAL sign-banded encoder exactly, which is
+    what makes a both-bandings comparison on one corpus possible: the encoder
+    fix and the market cannot both move between the two arms if the two arms
+    differ only in this argument.
     """
     out: List[Dict[str, str]] = []
     motif_history: List[str] = []
@@ -79,7 +86,7 @@ def build_layer_frames(bars: Sequence[Mapping[str, Any]], symbol: str,
         except (ValueError, IndexError):
             motif_history.append("")      # a hole, not an adjacency
             continue
-        motif = cooccurrence_motif(frames)
+        motif = cooccurrence_motif(frames, bands=bands)
         motif_history.append(motif)
         recent = [m for m in motif_history[-MOTIF_SEQUENCE_STEPS:] if m]
         row = dict(frames)
@@ -152,7 +159,8 @@ def label_skew(rows: Sequence[Mapping[str, str]], key: str,
 
 def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
                  horizon: int, train: int, test: int,
-                 min_lift: float, min_support: int) -> Dict[str, Any]:
+                 min_lift: float, min_support: int,
+                 relative: bool = False) -> Dict[str, Any]:
     """Does the L1 motif carry BUY-LOW information out of sample, with no node?
 
     THE REASON THIS EXISTS BEFORE ANY NODE RUN. A fabric cannot extract from a
@@ -173,8 +181,11 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
     test_start = train_stop + horizon          # purge: no train future overlaps a test bar
     test_stop = len(bars) - horizon - 1
 
-    def rows_for(start: int, stop: int) -> List[Dict[str, Any]]:
-        out = build_layer_frames(bars, symbol, chain, horizon, start, stop)
+    def rows_for(start: int, stop: int,
+                 bands: Optional[Mapping[str, Any]] = None
+                 ) -> List[Dict[str, Any]]:
+        out = build_layer_frames(bars, symbol, chain, horizon, start, stop,
+                                 bands=bands)
         keep = []
         for row in out:
             idx = row.get("_index")
@@ -183,8 +194,20 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
             keep.append(row)
         return keep
 
-    tr = rows_for(train_start, train_stop)
-    te = rows_for(test_start, test_stop)
+    # THE CUT POINTS ARE FITTED ON THE TRAIN WINDOW AND NOWHERE ELSE. Fitting
+    # terciles on the full corpus would put the test window's own distribution
+    # inside the frame the test window is scored on -- the same class of leak
+    # as fitting the motif->trough map in-sample and reading its lift as an
+    # edge, and it would be invisible in the output. The seed pass below is
+    # built with bands=None purely to HAVE scores to take terciles of; nothing
+    # is scored on it.
+    bands: Optional[Mapping[str, Any]] = None
+    if relative:
+        seed = rows_for(train_start, train_stop)
+        bands = relative_bands(seed) or None
+
+    tr = rows_for(train_start, train_stop, bands)
+    te = rows_for(test_start, test_stop, bands)
     if not tr or not te:
         return {"error": "empty train or test window"}
 
@@ -239,12 +262,30 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
         return sum(float(r["_forward"]) for r in rows) / len(rows)
 
     return {
+        # Named on the RESULT, not just in the invocation. Every stale number
+        # this item exists to mark was stale because the report did not record
+        # which encoder produced it.
+        "banding": "relative" if relative else "sign",
+        "band_streams": sorted(bands) if bands else [],
+        "l1_vocabulary_train": len({r["L1_cooccurrence"] for r in tr}),
         "train_window": [train_start, train_stop], "train_n": len(tr),
         "test_window": [test_start, test_stop], "test_n": len(te),
         "train_base_trough": base,
         "buyable_motifs": sorted(buyable),
         "called_n": len(called), "called_share": len(called) / len(te),
         "called_net": net(called), "baseline_net": net(te),
+        # A rule that called NOTHING has no per-trade net, and
+        # called_net - baseline_net on zero trades manufactures a loss out of
+        # an abstention. Measured 2026-09-10: the UP window under relative
+        # banding calls 0 bars and the subtraction reads -3.8377%, which is
+        # just the baseline with a minus sign. Flagged on the artifact so a
+        # number lifted out of the JSON cannot be quoted as a measured edge.
+        "unmeasurable": not called,
+        "unmeasurable_reason": (
+            "" if called else
+            "no motif reached the support floor with the required lift, so "
+            "the rule abstained; there is no per-trade net to compare"
+        ),
         "called_trough_precision": trough_rate(called),
         "baseline_trough_rate": trough_rate(te),
         "cost": cost,
@@ -280,6 +321,13 @@ def main() -> int:
     parser.add_argument("--test", type=int, default=180)
     parser.add_argument("--min-lift", type=float, default=1.3)
     parser.add_argument("--min-support", type=int, default=20)
+    parser.add_argument("--relative-bands", action="store_true",
+                        help="band each L1 stream against ITS OWN terciles "
+                             "rather than absolute token signs. Off by "
+                             "default so the original sign-banded encoder is "
+                             "still reachable and both can be measured on one "
+                             "corpus. Under --heldout the cut points are "
+                             "fitted on the TRAIN window only.")
     args = parser.parse_args()
 
     path = Path(args.corpus)
@@ -292,9 +340,22 @@ def main() -> int:
         print("no frames could be built -- corpus too short or all bars bad")
         return 2
 
+    # The distinctness section is a CORPUS-WIDE descriptive measurement with no
+    # train/test split, so fitting terciles over the whole of it leaks nothing:
+    # there is no held-out number here to leak into. The held-out arm below
+    # fits its own bands on its own train window and does not reuse these.
+    corpus_bands = None
+    if args.relative_bands:
+        corpus_bands = relative_bands(rows) or None
+        rows = build_layer_frames(bars, symbol, args.chain, args.horizon,
+                                  args.start, stop, bands=corpus_bands)
+
     n = len(rows)
     print(f"corpus {path.name}: {len(bars)} bars, {n} frame sets "
           f"[{max(args.start, LOOKBACK_BARS)}, {stop}), horizon {args.horizon}")
+    print(f"encoder banding   : "
+          f"{'RELATIVE (per-stream terciles)' if args.relative_bands else 'SIGN (absolute token signs)'}"
+          f"{'  live slots %d/%d' % (len(corpus_bands), len(_BASELINE_STREAMS)) if corpus_bands else ''}")
 
     l0 = collection_distinctness([{k: v for k, v in r.items()
                                    if not k.startswith("L")} for r in rows])
@@ -389,13 +450,21 @@ def main() -> int:
     if args.heldout:
         edge = heldout_edge(bars, symbol, args.chain, args.horizon,
                             args.train, args.test, args.min_lift,
-                            args.min_support)
+                            args.min_support, relative=args.relative_bands)
         print("\n" + "=" * 70)
         print("HELD-OUT EDGE OF THE L1 MOTIF ALONE -- no node, no fabric")
         print("=" * 70)
         if edge.get("error"):
             print(f"  {edge['error']}")
         else:
+            print(f"  encoder banding: {edge['banding'].upper()}  "
+                  f"({len(edge['band_streams'])}/{len(_BASELINE_STREAMS)} "
+                  f"streams banded, train vocabulary "
+                  f"{edge['l1_vocabulary_train']} motifs)")
+            if edge["unmeasurable"]:
+                print(f"  *** UNMEASURABLE, NOT NEGATIVE: "
+                      f"{edge['unmeasurable_reason']}. Any 'edge' printed "
+                      f"below is the baseline with a minus sign.")
             print(f"  train bars {edge['train_window']} -> {edge['train_n']} "
                   f"samples   (fit here ONLY)")
             print(f"  test  bars {edge['test_window']} -> {edge['test_n']} "

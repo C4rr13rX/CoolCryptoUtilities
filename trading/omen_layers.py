@@ -62,21 +62,27 @@ L1_STREAMS: Tuple[str, ...] = ("geometry", "temporal", "flow", "volatility", "cr
 #: omen_metacognition -- an identifier. The L1 alphabet is larger than 3, so
 #: the path must be SHORTER, not longer.
 #:
-#: SWEPT 2026-09-10 on p108_aero_up/down, 719 samples each, AFTER the _band_of
-#: q-token fix -- which matters, because the same sweep against the blind
-#: encoder read 0.177 at 4 steps and would have justified keeping it:
+#: 3 IS NOT A MEASURED VALUE ANY MORE. DO NOT CITE IT AS ONE. It was swept
+#: 2026-09-10 on p108_aero_up/down under the SIGN-banded encoder, and read
+#: 0.1266/0.1530 at 2 steps, 0.2976/0.2962 at 3 and 0.4520/0.4159 at 4 -- so 3
+#: was chosen on a 0.8% margin against the 0.30 identifier guard. That sweep is
+#: STALE: `relative_bands` (7d2a74e) took the L1 vocabulary from 21/25 motifs
+#: to 100/125 on the same two corpora, and a path over a five-times larger
+#: alphabet is five times closer to being an identifier. A margin of 0.8% does
+#: not survive that, and the operator measured L2 failing the guard at EVERY
+#: step count under relative banding -- 0.64/0.83 DOWN and 0.51/0.79 UP, still
+#: failing at 0.32 over a deliberately coarse 21-symbol alphabet.
 #:
-#:   steps   L2 distinctness UP / DOWN   verdict
-#:     2         0.1266 / 0.1530         comfortably under the guard
-#:     3         0.2976 / 0.2962         passes, margin 0.8%
-#:     4         0.4520 / 0.4159         FAILS the 0.30 identifier guard
+#: The value is left at 3 deliberately rather than re-swept: under relative
+#: banding NO step count passes, so there is no number to move it to. L2 is a
+#: DESIGN problem, not a parameter one -- a motif changes on 72.3% of bars, so
+#: a fixed-length path is near-unique by construction. Keying on motif
+#: TRANSITIONS, or run-length encoding a motif until it changes, is the open
+#: question ([fa75fa1a]). Until that lands, 3 is the sign-banded default and
+#: nothing should train on L2 under relative banding at any step count.
 #:
-#: Set to 3: it passes and it carries more order than 2. THE MARGIN IS THIN
-#: AND THAT IS NOT A ROUNDING DETAIL -- a corpus with a richer L1 vocabulary
-#: will push 3 over the line too, and the failure mode is the expensive one
-#: (maximises train recall, destroys generalisation). Re-run
-#: scripts/omen_layer_probe.py on any new corpus before trusting 3, and drop
-#: to 2 rather than arguing with the number.
+#: The inherited 8-step constraint above still stands and is independent of
+#: all this: longer is always worse here.
 MOTIF_SEQUENCE_STEPS = 3
 
 #: Bands an L0 stream is bucketed into for the co-occurrence pattern. Three,
