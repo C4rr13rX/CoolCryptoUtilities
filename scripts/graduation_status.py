@@ -318,11 +318,37 @@ def classify_wall(approved, ready_not_approved, ranked, min_trades,
     # A strategy holding the biggest book while being structurally unable to
     # spend it is the most misleading state available: the evidence reads as
     # progress and can never become a trade.
+    #
+    # RANKED ON TRADEABLE TRADES, NOT POOLED. This test read pooled_trades and
+    # that is the one number this loop has already ruled is not evidence --
+    # "pooled ghost volume in symbols the live lane refuses is not progress",
+    # which the EVIDENCE branch eight lines below says in as many words.
+    #
+    # Measured 2026-09-10, atf_static_scout, the strategy this branch has named
+    # as the system's top wall for at least six consecutive passes:
+    #
+    #     ledger ghost book        237 trades, 186 wins, +6.4498
+    #     ledger TRADEABLE subset    4 trades,   1 win,  -0.1097
+    #     rows in trade_outcomes     0          <- all-time, of 210 closed
+    #     trading_ops naming it    374          <- 7d, so it IS running
+    #
+    # So the book that outranked every other wall is 4 tradeable round trips
+    # that lose money, and it has no receipts at all: every de-contamination
+    # instrument in this repo (the implausibility filter, the take-profit
+    # clamp, the tradeable predicate in scripts/tradeable_book.py) reads
+    # trade_outcomes, and not one of them can see a single scout trip. A book
+    # that cannot be audited must not outrank one that can.
+    #
+    # On the tradeable count the scout scores 4/20 and this branch no longer
+    # fires, so the header falls through to EVIDENCE (TRADEABLE) -- which is
+    # the wall the ledger actually has. Porting an edge is still the right
+    # answer for a blocked strategy that has PROVEN one; this only stops an
+    # unmeasured pooled book from claiming the top of the precedence order.
     best_blocked = None
     by_id = {s["id"]: s for s in ranked}
     for b in blocked or ():
         s = by_id.get(b["id"])
-        if s and int(s.get("pooled_trades", 0)) >= min_trades:
+        if s and int(s.get("ghost_trades", 0)) >= min_trades:
             best_blocked = b
             break
     if best_blocked and int(near.get("ghost_trades", 0)) < min_trades:

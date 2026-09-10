@@ -454,6 +454,11 @@ GATE_TESTS = (
     "test_a_ghost_trade_cannot_undo_a_live_demotion.py",
     "test_graduation_rebases_the_drawdown_peak.py",
     "test_drawdown_brake_waits_for_a_sample.py",
+    # The WALL the status header names is the first thing every pass reads and
+    # the standing instruction is to work it. It was selected on POOLED ghost
+    # volume, so an unauditable 237-trade book outranked a measurable one for
+    # six passes. Cove, pass 103.
+    "test_a_pooled_book_cannot_claim_the_top_wall.py",
 )
 
 
