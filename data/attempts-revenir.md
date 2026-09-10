@@ -4903,3 +4903,35 @@ DOWN against buy-every-bar, so querying them costs 0.81pp and 1.32pp. NEXT: trai
 15/16/19 and never query them (their distinctness is 0.035-0.037, far under the 0.103
 empty-band floor); pool 16 needs a NODE's own per-query-set votes before it can carry
 anything. Do NOT re-run this arm expecting a different answer.
+
+2026-09-10 Iris -- prewarm seeds, not the loader, are the only foreign rows the serving path logs
+
+HYPOTHESIS: trading/bot.py::_prewarm_buffer_from_history splices historical closes into the
+same buffer the live stream fills, so a seed at a different price scale or from a different
+week puts a foreign row inside the model's 60-bar window, and that is what saturates price_mu.
+
+DID: built services/prewarm_seed_guard.py (refuse a seed whose median close is more than a
+factor of two from the live median, or whose newest bar is over 3 days old; both numbers
+computed before either is judged so a refusal on age still logs the scale), wired it into
+bot.py, and built scripts/prewarm_seed_census.py which exits nonzero if anything is seeded
+beyond tolerance. 8 tests; with the thresholds set to 99999 (the pre-guard behaviour) 4 fail.
+Shipped f5d34a7, gate 721/0, profit_logic_audit NO KNOWN LOSING SHAPES.
+
+RESULT: 33 live base symbols -- 8 seed cleanly (all |log ratio| <= 0.0802, 1.02 days old),
+11 REFUSED (5.4 to 94.6 days old; four also at the wrong scale: PUMP-USDC +10.5995,
+ALIGN-USDC +1.0075, TIBBIR-USDC +0.7993 from 0024_TIBBIR-VIRTUAL.json, VIRTUAL-USDC +0.7883),
+14 have no file. The loose base-symbol glob DOES cross quote assets on a live symbol today.
+
+NEGATIVE, AND IT MATTERS MORE THAN THE FIX: the -1.2076 price_mu p50 baseline does not
+reproduce on the SAME pre-fix code. Last 4000 snapshots give p50 -0.1845, last 1613 -- the
+exact n the baseline quotes -- give +0.7019. Three windows, one codebase. Nobody should credit
+any fix with moving that number. sanitize_model_price_window (b966158) already absorbed it
+downstream; this change removes the cause upstream, so its effect is on the REPAIR COUNT.
+That count closes the loop: logs/system.log holds exactly 6 "repaired N foreign row(s)" lines
+since that logging shipped and ALL SIX are ETH-USDC -- the symbol whose prewarm file the
+census refuses at 94.64 days old, log ratio -0.4329.
+
+NEXT: [9fd050f1]. services/internal_cron.py:765 decides a chain is ready by COUNTING non-empty
+*.json files and never looks at their age, so 233 files on base pass the gate while 11 of the
+19 in use are stale. The 11 now start cold instead of poisoned; the right outcome is a fresh
+file, not a refusal.
