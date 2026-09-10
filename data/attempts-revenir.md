@@ -3255,3 +3255,28 @@ TRAP FOR THE NEXT READER: model_available is None on 5503/5548 rows
 baseline like 0.4326 / 0.7231 — NOT a boolean "fallback fired" flag. Counting
 either by truthiness gives a meaningless 100%/0%. I did this first and it was
 wrong.
+
+## 2026-09-10 pass 105 -- Iris -- [71975c13] the stale-exit wall clock
+HYPOTHESIS: the pass-102 rule-ordering fix made the stale clock reachable, and
+the remaining hold-time loss is the population the exit rules cannot reach.
+DID: censused ghost-exit reasons by window; taught scripts/hold_time_edge.py to
+report the dark-feed ABANDONED positions it was structurally blind to (it reads
+trade_outcomes, which abandoned positions never reach); pinned the count with
+tests/test_the_hold_time_report_counts_positions_not_log_rows.py and added it to
+GATE_TESTS. Commit ec1a14b, gate 653/0, audit NO KNOWN LOSING SHAPES.
+RESULT, two numbers. (1) timed-exit 0 of 206 -> 23 of 194 in 7d, 2 of the last
+10: the ordering fix WORKED. (2) NEW -- 20 positions in 7d were dropped by the
+dark-feed sweep against 67 booked round trips, so 23% of every position that
+ended booked NOTHING; median held 180.6 min, longest 16754.2 min (11.6 days),
+and 20 of 20 past 4x stale_exit_secs by construction (clock 900s, sweep 3600s).
+The hold-time table everyone quotes is a SURVIVORSHIP SAMPLE missing exactly the
+longest-held positions. CORRECTED MYSELF: trading_ops holds 90 abandon ROWS for
+those 20 positions (4.5x) because the sweep walks the merged pool book and a
+re-added position is re-dropped -- CRV-USDC is 17 rows for one trade_id. Count
+distinct released_trade_id, never rows.
+NEXT: NOT shortening dark_after (destroys evidence faster) and NOT booking the
+abandoned positions at their last observed price (a 1h-old mark is the
+stale-entry repricing that made AERO's +161% row; the sweep books nothing ON
+PURPOSE and is right). Give the GHOST sweep the chain-price read that
+_exit_dark_live_positions already uses for the live side, so it closes a real
+round trip instead of destroying one. In trading/bot.py.
