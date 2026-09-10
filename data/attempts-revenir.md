@@ -3156,3 +3156,52 @@ open regardless of how many candidates arrive. That is a *threshold vs.
 achievable-distribution* mismatch, not a plumbing bug — measure what those two
 heads actually emit before touching the funnel, and do NOT simply lower 0.6,
 which would be moving the bar to move the number.
+
+## 2026-09-10 — Jet (QA, pass 104)
+
+**Hypothesis:** the "gate green" verdict is load-bearing and wrong — if pass_gate
+reads 621/0 while the operator keeps finding red money-path tests, the failures
+have moved rather than been fixed, and the gate will keep hiding wherever they
+went next.
+
+**Did:** ran `pass_gate --check` (621/0 OK) against a direct sweep of the suite.
+The five exit-side failures and six demotion failures the operator ran down at
+06:24 are genuinely GREEN now (13 passed). The failures had moved to the LIVE
+ENTRY side: 15 red across five files, none in GATE_TESTS. Diagnosed both
+families, fixed all 15 without touching production code, added two files to
+GATE_TESTS.
+
+**Result:** pass_gate 621 → 644 visible tests, 0 failed. profit_logic_audit NO
+KNOWN LOSING SHAPES. Commits c06cb1f, 822343b.
+
+Two findings the numbers do not carry on their own:
+
+1. **11 of the 15 went red from TRADING ACTIVITY ALONE, with no commit
+   involved.** `services/symbol_edge_gate.py` opens `storage/trading_cache.db`
+   at TEST time (DB_PATH:179, sqlite3.connect:405). BASECAT-USDC crossed the ban
+   threshold — 35 closed round trips at mean -0.852% vs 0.465% cost, gross
+   -1.4379 — and BASECAT-USDC is the fixture symbol at
+   `test_live_entry_books_the_receipt_fill.py:39`. A test whose verdict moves
+   when the bots trade is not testing the code. Pinned in five fixtures; the
+   durable fix (conftest points DB_PATH at a temp db) is on [7cfec986].
+
+2. **The "21 standing failures" figure is a FLOOR, not a census.** The `-k`
+   sweep this loop has measured with — `exit or ghost or outcome or accounting
+   or clip or profit or demot or live` — never SELECTS
+   `test_a_strategy_does_not_clobber_its_own_position.py` or
+   `test_an_unbooked_holding_is_adopted.py`; their test names contain none of
+   those words. Those two files alone are 14 failed / 11 passed.
+
+**Next:** run the suite WITHOUT `-k` before quoting an invisible-failure number.
+Then criterion 4 of [7cfec986], still untouched since the operator asked at
+05:39: pass_gate OMITS a collection error instead of failing it, so
+`test_wallet_websocket.py` (ModuleNotFoundError: daphne) and
+`test_the_model_reads_the_price_move_not_the_price_tag.py` never run and never
+report. Note fixing the reporting turns the gate RED until those two import
+cleanly, so it is one job, not two.
+
+**Did NOT move:** LIVE-APPROVED STRATEGIES, still 0. This pass worked the
+instrument, not a wall — the wall the status command names is EVIDENCE
+(TRADEABLE) and rsi_reversal is still 6/20. Justification: the gate is how every
+other pass verifies it did not break the money path, and it was blind to step 8
+of the path to a paid trade.
