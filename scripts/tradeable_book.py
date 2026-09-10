@@ -228,6 +228,22 @@ def collect(
     pooled = _blank()
     tradeable = _blank()
     untradeable = _blank()
+    # THE SAME BOOK, DE-CONTAMINATED, because the raw one answers the
+    # direction-or-cost question WRONG. `clamped_gross` and IMPLAUSIBLE_RET
+    # already existed in this file and were used only by `symbol_edge` below;
+    # the headline verdict went on reading the raw gross and printing "a
+    # POSITIVE gross edge means this is a cost problem" off +0.2625% that is
+    # TWO rows (UNI-USDC +122.89%, BASELINE-USDC +57.94%). De-contaminated it
+    # is -0.1227% over 107 trips: NEGATIVE, which is the opposite verdict.
+    #
+    # Two filters, both of which the item's acceptance criteria name:
+    #   - re-price a limit exit that booked past its own limit (the sampling
+    #     gap, not a fill -- see `clamped_gross`); and
+    #   - drop rows still |return| > 50% after that, which are repricing
+    #     artifacts, and rows with no strategy_id, which no strategy can
+    #     spend because nothing can be attributed to it.
+    sane = _blank()
+    sane_dropped = {"implausible": 0, "unattributed": 0, "clamped": 0}
     per_strategy: Dict[str, Dict[str, Any]] = {}
     per_symbol: Dict[str, Dict[str, Any]] = {}
 
@@ -241,6 +257,21 @@ def collect(
         ok = bool(is_tradeable(sym))
         _add(pooled, net, gross, fees, notional)
         _add(tradeable if ok else untradeable, net, gross, fees, notional)
+
+        if ok:
+            c = clamped_gross(r)
+            if c["overshot"]:
+                sane_dropped["clamped"] += 1
+            if abs(c["booked_ret"]) > IMPLAUSIBLE_RET:
+                sane_dropped["implausible"] += 1
+            elif sid == "unclassified":
+                sane_dropped["unattributed"] += 1
+            else:
+                # Net moves by the same delta as gross so the two stay
+                # consistent; the fee leg is unaffected by where inside its
+                # own limit the exit printed.
+                _add(sane, net - (gross - c["gross"]), c["gross"],
+                     fees, notional)
 
         st = per_strategy.setdefault(
             sid, {"id": sid, "pooled": _blank(), "tradeable": _blank(),
@@ -260,7 +291,7 @@ def collect(
     for sy in per_symbol.values():
         sy["book"]["win_rate"] = _win_rate(sy["book"])
         sy["book"]["rates"] = _rates(sy["book"])
-    for acc in (pooled, tradeable, untradeable):
+    for acc in (pooled, tradeable, untradeable, sane):
         acc["win_rate"] = _win_rate(acc)
         acc["rates"] = _rates(acc)
 
@@ -270,6 +301,8 @@ def collect(
         "pooled": pooled,
         "tradeable": tradeable,
         "untradeable": untradeable,
+        "sane": sane,
+        "sane_dropped": sane_dropped,
         "strategies": sorted(
             per_strategy.values(), key=lambda s: -s["tradeable"]["trades"]),
         "symbols": sorted(per_symbol.values(), key=lambda s: -s["book"]["trades"]),
@@ -317,19 +350,52 @@ def render(r: Dict[str, Any]) -> str:
                   "tracks the measured cost, so the clip curve below is sound"
                   if abs(ra["model_cost_pct"] - ra["cost_pct"]) < 0.15
                   else "does NOT track the measured cost; treat the curve as a guess"))
+    # THE VERDICT IS READ OFF THE DE-CONTAMINATED BOOK, NOT THE RAW ONE.
+    #
+    # The raw gross above is reported because it is what the rows say, but it
+    # must never be the thing the verdict is computed from: a limit exit that
+    # booked the tick which CROSSED its target credits the position with the
+    # gap between two samples, and a handful of those rows have twice carried
+    # this report to the opposite conclusion. Measured 2026-09-10: raw
+    # +0.2625% over 109 trips is TWO rows (UNI-USDC +122.89%, BASELINE-USDC
+    # +57.94%); de-contaminated it is -0.1227% over 107, which is DIRECTION,
+    # not COST. See `clamped_gross` and IMPLAUSIBLE_RET.
+    sane = r.get("sane") or _blank()
+    sa = sane.get("rates") or _rates(sane)
+    dropped = r.get("sane_dropped") or {}
     out.append("")
-    if ra["gross_pct"] > 0:
+    out.append("  DE-CONTAMINATED (the verdict is computed from THIS row)")
+    out.append("    %d trips  %.0f%% win  net %+.4f   gross %+.4f%% of notional"
+               % (sane["trades"], _win_rate(sane) * 100.0, sane["net"],
+                  sa["gross_pct"]))
+    out.append("    excluded: %d limit exits re-priced at their limit, "
+               "%d rows still |return|>%.0f%% (repricing artifacts), "
+               "%d rows with no strategy_id"
+               % (int(dropped.get("clamped", 0)),
+                  int(dropped.get("implausible", 0)), 100.0 * IMPLAUSIBLE_RET,
+                  int(dropped.get("unattributed", 0))))
+    out.append("")
+    if sane["trades"] <= 0:
+        out.append("    No attributable, plausible trips: the verdict is")
+        out.append("    UNJUDGEABLE rather than positive. Get closed rows first.")
+    elif sa["gross_pct"] > 0:
         out.append("    The book picks correctly and pays it away: a POSITIVE gross")
         out.append("    edge means this is a cost problem, not a direction problem.")
     else:
         out.append("    Gross is NEGATIVE: the book loses before a penny of fees.")
         out.append("    No clip and no cost cut can rescue that -- it needs an edge.")
+    if (ra["gross_pct"] > 0) != (sa["gross_pct"] > 0):
+        out.append("")
+        out.append("    NOTE: the RAW book says %+.4f%% and would have given the"
+                   % ra["gross_pct"])
+        out.append("    OPPOSITE verdict. The difference is the excluded rows above.")
     out.append("")
     out.append("    variable cost floor %.4f%% of notional -- gross must beat THIS"
                % ra["variable_floor_pct"])
-    out.append("    or no clip size ever helps.  gross %+.4f%%  ->  %s"
-               % (ra["gross_pct"],
-                  "CLEARS the floor" if ra["clears_floor"] else "BELOW the floor"))
+    out.append("    or no clip size ever helps.  de-contaminated gross %+.4f%%  ->  %s"
+               % (sa["gross_pct"],
+                  "CLEARS the floor" if sa["gross_pct"] > 100.0 * COST_VARIABLE
+                  else "BELOW the floor"))
     out.append("")
     out.append("    %-12s %-12s %-14s" % ("clip", "modelled cost", "net per trip"))
     for clip in (ra["clip"] or 1.0, 5.0, 10.0, 20.0, 50.0):

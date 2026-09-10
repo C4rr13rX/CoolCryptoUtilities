@@ -324,6 +324,15 @@ GATE_TESTS = (
     # says it fixed the book. A function verified in isolation proves the
     # function and not the wiring; this file tests the composition.
     "test_a_clamped_limit_exit_books_the_clamped_gross.py",
+    # The same class again, in the tool that NAMES THE WALL. tradeable_book
+    # had `clamped_gross` and IMPLAUSIBLE_RET and used them only in
+    # `symbol_edge`, while the headline direction-or-cost verdict read the RAW
+    # gross -- printing "a POSITIVE gross edge means this is a cost problem"
+    # off +0.2625% that is TWO overshoot rows. De-contaminated the same book
+    # is -0.3292%: DIRECTION, not cost, and two passes of cost-model work were
+    # aimed at the wrong one. Arithmetic that exists but is not wired into the
+    # number people read is the same defect as arithmetic that is wrong.
+    "test_the_direction_or_cost_verdict_ignores_contaminated_rows.py",
     # The gate that was refusing 100% of entries, and the half of its tests
     # that matters. `_tick_jumps` read prices without timestamps, so a 40%
     # move across a 31-hour hole in the feed scored as a single-tick jump and
