@@ -132,7 +132,7 @@ def load_closed(db_path=None) -> list:
 def collect(min_trades: int = 1, rows: list | None = None) -> dict:
     from trading.strategies.ledger import _live_tradeable
     from services.outcome_plausibility import (
-        IMPLAUSIBLE_RET, booked_return, partition,
+        IMPLAUSIBLE_RET, booked_return, partition, sweep,
     )
 
     cost_frac = _measured_cost_fraction()
@@ -236,6 +236,10 @@ def collect(min_trades: int = 1, rows: list | None = None) -> dict:
         "cost_fraction": cost_frac,
         "min_trades": min_trades,
         "implausible_ret": IMPLAUSIBLE_RET,
+        # THE THRESHOLD SWEEP, because the default is calibrated above most of
+        # the rows the ledger already calls fabricated. A reader who sees only
+        # one number inherits a verdict; this prints where the sign flips.
+        "sweep": sweep(rows),
         "rows_read": len(rows),
         "rows_dropped": len(dropped),
         "gross_dropped": sum(float(r["gross_profit"] or 0.0) for r in dropped),
@@ -266,6 +270,30 @@ def render(rep: dict) -> str:
       % (rep["implausible_ret"] * 100))
     A("  BOOKED gross including them; 'gross' excludes them and is the verdict.")
     A("")
+    sw = rep.get("sweep") or {}
+    if sw.get("steps"):
+        A("  THE THRESHOLD IS NOT A PROPERTY OF THE BOOK -- HERE IS THE WHOLE CURVE")
+        A("  The %.0f%% default is calibrated ABOVE most of the rows the ledger"
+          % (sw["default"] * 100))
+        A("  already calls fabricated (BSTONK-USDC at +25.35%/+17.28% are the two")
+        A("  rows [c4f16946] names as atf_static's +1.0201 of fake fills). An")
+        A("  overshoot is named by filling past ITS OWN limit, not by being large,")
+        A("  so the real fix is annulment ([db76611a]); this curve exists so no")
+        A("  verdict below is read off a cap that never touched those rows.")
+        A("    %-10s%7s%7s%11s%11s" % ("|ret| <=", "kept", "drop", "gross", "net"))
+        for s in sw["steps"]:
+            A("    %-10s%7d%7d%+11.4f%+11.4f%s" % (
+                "%.0f%%" % (s["max_ret"] * 100), s["kept"], s["dropped"],
+                s["gross"], s["net"],
+                "   <- DEFAULT" if abs(s["max_ret"] - sw["default"]) < 1e-9 else ""))
+        if sw.get("verdict_is_threshold_dependent"):
+            A("    THE SIGN FLIPS AT %.0f%%: this book's verdict is a CHOICE OF"
+              % (sw["flips_at"] * 100))
+            A("    THRESHOLD, not a measurement. Do not quote either half alone.")
+        else:
+            A("    The sign does not change across the sweep, so the verdict is")
+            A("    a property of the book rather than of the cap.")
+        A("")
     for label, key in (("LIVE-TRADEABLE", True), ("REFUSED BY THE LIVE LANE", False)):
         A("  %s" % label)
         A("  %-22s%5s%6s%4s%10s%10s%10s%10s" % (

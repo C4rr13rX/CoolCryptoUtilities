@@ -143,16 +143,25 @@ def strategy_scales(rows: Iterable[Any]) -> Dict[str, float]:
 
 
 def implausible_reason(
-    row: Any, *, scales: Optional[Mapping[str, float]] = None
+    row: Any,
+    *,
+    scales: Optional[Mapping[str, float]] = None,
+    max_ret: Optional[float] = None,
 ) -> Optional[str]:
     """Why this row cannot be counted, or None if it can.
 
     Named reasons rather than a bare bool so a report can print WHICH arm
     refused a row. A number that moved without a reason beside it is how a
     filter becomes folklore.
+
+    ``max_ret`` overrides ``IMPLAUSIBLE_RET`` for the ratio arm. It exists
+    because the default is calibrated ABOVE most of the rows the ledger already
+    calls fabricated, and pretending otherwise would be the worse failure. See
+    ``SWEEP`` and ``sweep``.
     """
+    cap = IMPLAUSIBLE_RET if max_ret is None else float(max_ret)
     ret = booked_return(row)
-    if ret is not None and abs(ret) > IMPLAUSIBLE_RET:
+    if ret is not None and abs(ret) > cap:
         return _RATIO
 
     profit = _f(row, "gross", "gross_profit")
@@ -196,13 +205,18 @@ def implausible_reason(
 
 
 def is_implausible(
-    row: Any, *, scales: Optional[Mapping[str, float]] = None
+    row: Any,
+    *,
+    scales: Optional[Mapping[str, float]] = None,
+    max_ret: Optional[float] = None,
 ) -> bool:
     """Would the ledger have refused to record this outcome?"""
-    return implausible_reason(row, scales=scales) is not None
+    return implausible_reason(row, scales=scales, max_ret=max_ret) is not None
 
 
-def partition(rows: Iterable[Any]) -> Tuple[List[Any], List[Any]]:
+def partition(
+    rows: Iterable[Any], *, max_ret: Optional[float] = None
+) -> Tuple[List[Any], List[Any]]:
     """Split ``rows`` into (countable, refused), judging each in ITS OWN read.
 
     Materialises the input because the dollar arm needs the whole population to
@@ -215,8 +229,75 @@ def partition(rows: Iterable[Any]) -> Tuple[List[Any], List[Any]]:
     keep: List[Any] = []
     drop: List[Any] = []
     for row in materialised:
-        (drop if is_implausible(row, scales=scales) else keep).append(row)
+        bad = is_implausible(row, scales=scales, max_ret=max_ret)
+        (drop if bad else keep).append(row)
     return keep, drop
+
+
+#: Ratio thresholds the reports walk, loosest first. Not a menu of options to
+#: pick from -- every caller reports ALL of them, because the one number a
+#: reader inherits is the one that decides the verdict without being argued.
+SWEEP = (0.50, 0.25, 0.15, 0.10, 0.05)
+
+
+def sweep(rows: Iterable[Any],
+          thresholds: Iterable[float] = SWEEP) -> Dict[str, Any]:
+    """The surviving book's gross at each ratio threshold, and where it flips.
+
+    WHY THIS IS REPORTED RATHER THAN A THRESHOLD BEING CHOSEN
+    --------------------------------------------------------
+    ``IMPLAUSIBLE_RET`` is 0.50, and measured 2026-09-10 over the 7-day ghost
+    book (125 closed rows with positive notional, gross +2.3846) it is
+    CALIBRATED ABOVE ALMOST EVERY ROW IT IS MEANT TO CATCH:
+
+        |ret| <= 50%   123 rows   gross +1.4629   POSITIVE
+        |ret| <= 25%   122 rows   gross +1.2744   POSITIVE
+        |ret| <= 15%   117 rows   gross -0.2626   NEGATIVE  <- the sign flips
+        |ret| <= 10%   ...        gross -0.1779   NEGATIVE
+        |ret| <=  5%   ...        gross -0.5761   NEGATIVE
+
+    EIGHT rows carry +2.6472 of a +2.3846 book and the 50% cap catches TWO of
+    them. The six it misses are the shape the ledger ALREADY calls fabricated --
+    BSTONK-USDC +25.35% and +17.28% (both atf_static, and literally the two rows
+    [c4f16946] names as the +1.0201 of fabricated fills the re-arm rule reads),
+    BSTONK +23.68%, +17.87%, +17.83%, BASECAT +17.31%. Five of the eight are one
+    symbol.
+
+    So 0.50 is kept as the DEFAULT -- it is the tested constant, and lowering it
+    on this evidence alone would be fitting a threshold to a window -- and the
+    whole curve is printed beside every verdict, so a reader sees the sign flip
+    at 15% instead of inheriting one number.
+
+    THE RIGHT FIX IS NOT A SMALLER NUMBER. An overshoot is named by filling past
+    ITS OWN limit, not by being large: ``tradeable_book.clamped_gross``
+    already does that by delegating to ``trading.bot.limit_exit_fill_price``,
+    and annulling the rows is [db76611a] / [c4f16946]. This function exists so
+    no report claims a clean book on a threshold that never touched those rows.
+    """
+    materialised = list(rows)
+    scales = strategy_scales(materialised)
+    steps: List[Dict[str, Any]] = []
+    for cap in thresholds:
+        keep = [r for r in materialised
+                if not is_implausible(r, scales=scales, max_ret=cap)]
+        steps.append({
+            "max_ret": float(cap),
+            "kept": len(keep),
+            "dropped": len(materialised) - len(keep),
+            "gross": sum(_f(r, "gross", "gross_profit") for r in keep),
+            "net": sum(_f(r, "net", "net_profit") for r in keep),
+        })
+    # The loosest threshold at which the surviving book is still positive, and
+    # the first at which it is not. When those differ, the verdict is a choice
+    # of threshold rather than a property of the book, and the report must say so.
+    positive = [s for s in steps if s["gross"] > 0.0]
+    negative = [s for s in steps if s["gross"] <= 0.0]
+    return {
+        "steps": steps,
+        "default": IMPLAUSIBLE_RET,
+        "flips_at": negative[0]["max_ret"] if negative else None,
+        "verdict_is_threshold_dependent": bool(positive and negative),
+    }
 
 
 def summarise(rows: Iterable[Any]) -> Dict[str, Any]:

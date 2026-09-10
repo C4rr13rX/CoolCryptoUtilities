@@ -191,3 +191,70 @@ def test_the_filter_makes_the_record_worse_not_better():
         "the dropped rows are net POSITIVE in aggregate: the filter removes "
         "fiction that flattered the book"
     )
+
+
+def test_the_threshold_is_reported_as_a_curve_not_inherited_as_a_number():
+    """A 50% cap does not touch the rows the ledger already calls fabricated.
+
+    Raised by Jet, pass 102, measured on the 7-day book: 8 rows carry +2.6472 of
+    a +2.3846 book and the 50% cap catches TWO. The six it misses are BSTONK-USDC
+    at +25.35%, +23.68%, +17.87%, +17.83%, +17.28% and BASECAT at +17.31% -- and
+    the first and last are literally the +1.0201 of fabricated fills [c4f16946]
+    names as the evidence the re-arm rule reads for atf_static, the only strategy
+    with a live execution branch.
+
+    The fix is NOT a smaller constant -- an overshoot is named by filling past
+    its own limit, not by being large, and annulling those rows is [db76611a].
+    What this pins is that no report may present a verdict off a single cap
+    without showing where the sign moves.
+    """
+    from services.outcome_plausibility import SWEEP, sweep
+
+    # A book that is POSITIVE at 50% and NEGATIVE at 15%, which is the measured
+    # shape: the carrying row sits BETWEEN the two caps. +17.28% is the real
+    # atf_static BSTONK-USDC gap fill -- the larger half of the +1.0201
+    # [c4f16946] names -- and it is invisible to 50% AND to 25%.
+    rows = _ordinary(20, gross=-0.05) + [
+        {"symbol": "BSTONK-USDC", "strategy_id": "atf_static",
+         "entry_price": 1.0, "exit_price": 1.1728, "quantity": 10.0,
+         "gross_profit": 1.728, "net_profit": 1.715, "fee_cost": 0.013,
+         "reason": "take_profit"},
+    ]
+    sw = sweep(rows)
+    assert [s["max_ret"] for s in sw["steps"]] == list(SWEEP), (
+        "every threshold is reported; a caller must not be able to pick one"
+    )
+    at50 = next(s for s in sw["steps"] if s["max_ret"] == 0.50)
+    at15 = next(s for s in sw["steps"] if s["max_ret"] == 0.15)
+    assert at50["dropped"] == 0, "a +25.35% fill is INVISIBLE to the 50% cap"
+    assert at50["gross"] > 0.0, "...so the book reads positive at the default"
+    assert at15["dropped"] == 1, "the 15% cap is the one that sees it"
+    assert at15["gross"] < 0.0, "...and the book is really negative"
+
+    # THE POINT: the report must SAY the verdict is threshold-dependent rather
+    # than print whichever half the default happens to give.
+    assert sw["verdict_is_threshold_dependent"] is True
+    assert sw["flips_at"] == 0.15
+    assert sw["default"] == 0.50
+
+
+def test_the_all_time_book_is_negative_at_every_threshold():
+    """The real book's verdict does NOT depend on the cap -- and that is the news.
+
+    Jet's sweep was over 7 days, where the sign flips at 15%. Over the ALL-TIME
+    table it is negative at 50/25/15/10/5 alike, so "the live-tradeable book
+    loses money" is a property of the book rather than of the threshold. Pinned
+    against the real DB because a future change that makes any step positive is
+    either a real improvement or a laundered filter, and both need a reader.
+    """
+    from scripts.tradeable_symbol_edge import collect
+
+    sw = collect()["sweep"]
+    assert sw["steps"], "the sweep must be computed, not omitted"
+    for s in sw["steps"]:
+        assert s["gross"] <= 0.0, (
+            "all-time gross at |ret| <= %.0f%% is %+.4f; if this is genuinely "
+            "positive now, say which rows changed and why"
+            % (s["max_ret"] * 100, s["gross"])
+        )
+    assert sw["verdict_is_threshold_dependent"] is False
