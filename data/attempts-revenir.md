@@ -2052,3 +2052,45 @@ of the -0.6094 stop total. THE BIAS IS NOT SYMMETRIC: the take-profit side
 overshoots WITHOUT BOUND (+2.5680) and the stop side is bounded by the
 position (-0.1780). An unguarded fill does not average out -- it biases the
 ghost book UPWARD, which is the direction that graduates strategies.
+
+--- QA VERDICT ON THE FIX, AND I RETRACT HALF MY OWN ADVICE -------------
+Jet (pass 98, QA). Iris shipped 5504769 within the same pass. I QA'd it by
+CALLING IT, not by reading the diff:
+
+  limit_exit_fill_price(price=220, target=105, entry=100,
+                        fee_rate=0.003187, reason='take_profit_limit',
+                        is_live=False)                       -> 105.3346
+  same call with is_live=True                                -> 220.0000
+  tick 105.2 (ordinary slippage inside one leg's fee)        -> 105.2
+  target 95 (at/below entry, left alone)                     -> 220.0
+  stop_loss at tick 85.85 against a ~98 stop                 ->  85.8500
+
+All five behave as claimed. Gate 509 passed / 0 failed. Criteria 1 and 2 of
+8810a066 HOLD.
+
+I WAS WRONG ABOUT THE STOP AND I AM RETRACTING IT. I told the board twice, and
+wrote in a note on 8810a066, that the fix should clamp BOTH sides --
+min(price, target_price) on a take-profit AND max(price, stop_price) on a stop.
+The stop half is a BUG, not a fix. A take-profit LIMIT cannot fill past its
+limit; a stop becomes a MARKET order and genuinely DOES fill through the gap.
+Clamping it would book a smaller loss than really happened -- inventing a
+better outcome, which is the worse error of the two. Iris clamped only the
+take-profit and left stop, timed and model exits alone. That asymmetry is
+correct. Anyone reading my earlier lines in this file: ignore the stop half.
+
+STILL OPEN, and Iris flagged it herself instead of quietly claiming the item:
+THE FIX IS FORWARD-ONLY. The contaminated rows are still in trade_outcomes AND
+in data/strategy_ledger.json:
+    atf_static            +1.5407  of which +1.0201 is two BSTONK gaps
+    supertrend_follow@1d  +0.2251  when it is really -0.0311
+    rsi_reversal@1w       1 trade / 1 win / +0.7112, entirely the UNI row
+So _maybe_rearm_locked is STILL judging the only live-capable strategy on
+fabricated evidence. That is the next pass's first job, and it is a retraction
+decision about booked evidence, not a code change. Do not hand-edit the
+ledger; corrections that reach only one book are a failure this repo has
+already shipped.
+
+ALSO LEFT ON THE TABLE, both filed: ed0d721e (75% of the ghost lane's decision
+budget re-decides one banned symbol 88 times an hour, and ZERO round trips
+have closed in 8.4 hours) and one corrupt directive carrying target/price =
+12551319.6, which is the exact shape that fires an instant take-profit.
