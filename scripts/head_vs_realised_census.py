@@ -475,10 +475,74 @@ ROUND_TRIP_PCT = 0.3187
 ROUND_TRIP_FIXED = 0.004047
 
 
+def total_cost_pct(pct_cost: float, fixed_cost: float, clip: float) -> float:
+    """Round-trip cost as a PERCENT of notional, both legs included.
+
+    The proportional leg is already a percent of notional. The fixed leg is
+    DOLLARS and only becomes a percent once it is divided by the clip, which is
+    why the clip belongs in this arithmetic and why a table that quotes
+    "0.3187% + 0.004047 fixed" in its header and then subtracts only 0.3187 is
+    under-billing every row. At the $5 clip this system actually trades, the
+    fixed leg is another 0.0809% -- a quarter as large again as the whole
+    proportional cost.
+    """
+    if clip <= 0:
+        raise ValueError(f"clip must be positive, got {clip}")
+    return pct_cost + (fixed_cost / clip) * 100.0
+
+
+def window_regime(
+    preds: List[Dict[str, Any]],
+    stream: Dict[str, Tuple[List[float], List[float]]],
+    lo: float,
+    hi: float,
+    max_abs_return: float,
+) -> Dict[str, Any]:
+    """UP / DOWN / FLAT for the window, over the symbols the sample actually uses.
+
+    Classifying over EVERY symbol in ``market_stream`` reads FLAT on every window
+    in this database, because most symbols there hold a seed price and never tick
+    (memory: ``frozen-feed-dexscreener``). The regime that matters is the one the
+    sampled ticks were drawn from, so this measures per-symbol first-to-last
+    drift over the prediction symbols only, drops drifts beyond the same
+    contamination guard the table uses, and reports the MEDIAN -- the mean over
+    this feed reaches 8e7 percent on a single bad row.
+    """
+    wanted = {row["symbol"] for row in preds}
+    drifts: List[float] = []
+    for symbol in wanted:
+        series = stream.get(symbol)
+        if series is None:
+            continue
+        times, prices = series
+        inside = [
+            (t, p) for t, p in zip(times, prices) if lo <= t <= hi and p > 0
+        ]
+        if len(inside) < 10:
+            continue
+        drift = (inside[-1][1] - inside[0][1]) / inside[0][1]
+        if abs(drift) > max_abs_return:
+            continue
+        drifts.append(drift * 100.0)
+    if len(drifts) < 5:
+        return {"regime": "UNKNOWN", "median_drift_pct": None, "symbols": len(drifts)}
+    drifts.sort()
+    median = _quantile(drifts, 0.5)
+    if median > 0.3:
+        regime = "UP"
+    elif median < -0.3:
+        regime = "DOWN"
+    else:
+        regime = "FLAT"
+    return {"regime": regime, "median_drift_pct": median, "symbols": len(drifts)}
+
+
 def _print_horizon_table(
     preds: List[Dict[str, Any]],
     stream: Dict[str, Tuple[List[float], List[float]]],
     args: Any,
+    lo: float,
+    hi: float,
 ) -> int:
     """Can ANY horizon clear the round trip, even with a perfect direction call?
 
@@ -490,14 +554,33 @@ def _print_horizon_table(
     Measured 2026-09-10 over 24h it printed a negative ceiling at 5 and 10
     minutes, and the MEDIAN tick cleared the cost at no horizon under ~45 min.
     That is a direct finding against the "single-digit minutes" target.
+
+    THE COST IS BOTH LEGS. Until pass 111 this billed only the proportional
+    0.3187% and quoted the fixed leg in its header without ever charging it,
+    which made every ceiling 0.0809 points too generous at the $5 clip and
+    printed 15min as +0.0198 when the honest number is negative. It now charges
+    ``total_cost_pct`` and honours --clip / --pct-cost / --fixed-cost, which the
+    table previously accepted and ignored.
     """
     horizons = (5.0, 10.0, 15.0, 30.0, 60.0, 120.0)
+    cost = total_cost_pct(args.pct_cost, args.fixed_cost, args.clip)
+    regime = window_regime(preds, stream, lo, hi, args.max_abs_return)
     print("=" * 78)
     print("HORIZON vs COST FLOOR -- what a PERFECT direction call nets at each horizon")
     print("=" * 78)
     print(
-        f"  cost basis {ROUND_TRIP_PCT}% of notional + {ROUND_TRIP_FIXED} fixed, "
-        "measured from receipts"
+        f"  cost basis {args.pct_cost}% of notional + {args.fixed_cost} fixed over a "
+        f"${args.clip:.2f} clip = {cost:.4f}% ALL IN, measured from receipts"
+    )
+    drift = regime["median_drift_pct"]
+    print(
+        f"  window: {(hi - lo) / 3600.0:.1f}h ending {(time.time() - hi) / 3600.0:.1f}h ago"
+        f"   REGIME {regime['regime']}"
+        + (
+            f" (median per-symbol drift {drift:+.3f}% over {regime['symbols']} symbols)"
+            if drift is not None
+            else f" ({regime['symbols']} symbols -- too few to classify)"
+        )
     )
     print("  the last column is an unreachable CEILING: perfect direction, full capture")
     print()
@@ -523,15 +606,17 @@ def _print_horizon_table(
         moves.sort()
         n = len(moves)
         mean = sum(moves) / n
-        over = sum(1 for v in moves if v > ROUND_TRIP_PCT) / n * 100.0
+        over = sum(1 for v in moves if v > cost) / n * 100.0
         print(
             f"  {horizon_min:>5.0f}min {n:>6}   {_quantile(moves, 0.5):>10.4f}   "
-            f"{over:>10.1f}%   {mean:>9.4f}   {mean - ROUND_TRIP_PCT:>+16.4f}"
+            f"{over:>10.1f}%   {mean:>9.4f}   {mean - cost:>+16.4f}"
         )
     print()
     print("  A NEGATIVE ceiling means the horizon cannot pay at any skill level.")
     print("  Compare the MEDIAN column against the cost too -- the mean is skew-inflated")
     print("  by a few large movers, so a positive ceiling can still lose on the typical tick.")
+    print("  ONE TAPE IS NOT A LAW: re-run with --end-hours-ago to land on a different")
+    print("  regime and check the sign of the 5 and 10 minute rows there too.")
     print()
     return 0
 
@@ -540,6 +625,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--db", default=DEFAULT_DB)
     ap.add_argument("--hours", type=float, default=24.0, help="total lookback")
+    ap.add_argument(
+        "--end-hours-ago",
+        type=float,
+        default=0.0,
+        help=(
+            "end the window this many hours before now instead of at now; the only "
+            "way to land the census on a SECOND, DIFFERENT regime rather than "
+            "re-reading the same rolling tape"
+        ),
+    )
     ap.add_argument(
         "--split-hours",
         type=float,
@@ -598,18 +693,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = ap.parse_args(argv)
 
     now = time.time()
-    since = now - args.hours * 3600.0
+    if args.end_hours_ago < 0:
+        raise SystemExit("--end-hours-ago must not be negative")
+    until = now - args.end_hours_ago * 3600.0
+    since = until - args.hours * 3600.0
     horizon = args.horizon_min * 60.0
 
     conn = _connect(args.db)
     try:
+        # The stream must reach PAST the window end far enough to price the
+        # longest forward horizon, or every tick near the end loses its forward
+        # price and the window silently measures only its own first half.
         stream = load_stream(conn, since - args.tolerance_sec)
-        preds = load_predictions(conn, since)
+        preds = [
+            row
+            for row in load_predictions(conn, since)
+            if row["ts"] <= until
+        ]
     finally:
         conn.close()
 
     if args.horizon_table:
-        return _print_horizon_table(preds, stream, args)
+        return _print_horizon_table(preds, stream, args, since, until)
 
     matched: List[Dict[str, Any]] = []
     no_symbol = no_base = no_forward = implausible = 0
@@ -634,7 +739,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         row["realised"] = realised
         matched.append(row)
 
-    boundary = now - args.split_hours * 3600.0
+    # Relative to the WINDOW END, not to now: with --end-hours-ago the split
+    # would otherwise fall outside the window entirely and put every row in one
+    # era while still printing two.
+    boundary = until - args.split_hours * 3600.0
     pre = [r for r in matched if r["ts"] < boundary]
     post = [r for r in matched if r["ts"] >= boundary]
 
