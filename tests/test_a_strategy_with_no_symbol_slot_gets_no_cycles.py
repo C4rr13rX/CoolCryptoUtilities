@@ -19,11 +19,17 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.decision_budget_census import NO_DIRECTIVE, census, slot_owners
+from scripts.decision_budget_census import (
+    NO_DIRECTIVE,
+    candidate_channel,
+    census,
+    slot_owners,
+)
 
 
 def _snapshot(symbol, action, owners, *, bus_publisher=None):
@@ -120,6 +126,60 @@ def test_hold_share_reaches_one_when_no_cycle_produces_an_entry():
 
     assert report["hold_share"] == 1.0, report
     assert report["entries"] == 0, report
+
+
+def _ops_db(rows):
+    """An in-memory ``trading_ops`` carrying ``(status, details)`` rows."""
+    conn = sqlite3.connect(":memory:")
+    conn.execute("create table trading_ops (ts real, status text, details text)")
+    conn.executemany(
+        "insert into trading_ops values (?,?,?)",
+        [(0.0, status, json.dumps(details)) for status, details in rows],
+    )
+    return conn
+
+
+def test_a_strategy_named_only_inside_a_dropped_list_still_counts_as_proposed():
+    """One refusal row charges several strategies, and each was proposed."""
+    conn = _ops_db(
+        [
+            (
+                "entry-predropped-edge-ban",
+                {"dropped": [{"strategy_id": "obv_accumulation@1w"},
+                             {"strategy_id": "donchian_breakout@1d"}]},
+            ),
+            ("published", {"bus_actions": [{"strategy_id": "atf_static"}]}),
+        ]
+    )
+    channel = candidate_channel(conn, now=100.0, hours=1.0)
+
+    assert channel["strategies"] == [
+        "atf_static",
+        "donchian_breakout@1d",
+        "obv_accumulation@1w",
+    ], channel
+
+
+def test_a_strategy_in_neither_channel_is_never_proposed_not_merely_unlucky():
+    """The finding: absent from BOTH producers is a different bug from losing.
+
+    A strategy that holds no slot AND is named by no op-log row did not lose a
+    contention and did not refuse a cycle. Nothing put it forward, so no
+    fairer weighting between the strategies that DO appear can ever reach it.
+    """
+    registry = {"ema_cross", "rsi_reversal", "atf_static", "vwap_reversion"}
+    report = census([_snapshot("AAA-USDC", "hold", {"AAA-USDC": "ema_cross"})], hours=1.0)
+    conn = _ops_db([("published", {"bus_actions": [{"strategy_id": "atf_static"}]})])
+
+    slot_holders = {
+        row["strategy"] for row in report["per_strategy"] if row["strategy"] != NO_DIRECTIVE
+    }
+    proposed = slot_holders | set(candidate_channel(conn, now=100.0, hours=1.0)["strategies"])
+
+    assert proposed == {"ema_cross", "atf_static"}, proposed
+    # rsi_reversal is the status command's closest-to-the-bar strategy, and
+    # this is the shape in which it disappears.
+    assert sorted(registry - proposed) == ["rsi_reversal", "vwap_reversion"]
 
 
 def test_slot_owners_reads_the_directive_not_the_symbol_order():

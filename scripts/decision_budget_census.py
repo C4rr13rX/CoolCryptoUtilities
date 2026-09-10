@@ -188,22 +188,77 @@ def census(rows: Iterable[Tuple[float, str]], *, hours: float) -> Dict[str, Any]
     }
 
 
-def registry_population(path: str = os.path.join("data", "strategy_registry.json")) -> int:
-    """How many strategies exist, so 'got zero cycles' has a denominator."""
+def registry_names(
+    path: str = os.path.join("data", "strategy_registry.json")
+) -> List[str]:
+    """Every strategy that EXISTS, so 'got zero cycles' has a denominator."""
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, ValueError):
-        return 0
+        return []
+    entries: Any = data
     if isinstance(data, dict):
         entries = data.get("strategies", data)
-        if isinstance(entries, dict):
-            return len(entries)
-        if isinstance(entries, list):
-            return len(entries)
-    if isinstance(data, list):
-        return len(data)
-    return 0
+    if isinstance(entries, dict):
+        return sorted(str(name) for name in entries)
+    if isinstance(entries, list):
+        return sorted(
+            str(item.get("strategy_id") or item.get("name") or item)
+            if isinstance(item, dict)
+            else str(item)
+            for item in entries
+        )
+    return []
+
+
+#: Keys under a ``trading_ops`` payload whose value is a LIST of per-strategy
+#: records. One row can charge several strategies, so each is harvested.
+_LIST_KEYS = ("dropped", "bus_actions", "candidates")
+
+
+def candidate_channel(
+    conn: sqlite3.Connection, *, now: float, hours: float
+) -> Dict[str, Any]:
+    """Which strategies were PROPOSED at all, on the op-log channel.
+
+    The scheduler slot table is only one of two producers. The c0d3rv2
+    publisher emits ``evaluate_atf_static_entry`` bus actions on its own
+    channel, and refusal rows name strategies that never reach a slot. A
+    strategy absent from BOTH was never proposed -- which is a different
+    defect from losing a slot, and the one that turned out to be real.
+    """
+    appearances: Counter = Counter()
+    try:
+        rows = conn.execute(
+            "select status, details from trading_ops where ts>=?",
+            (now - hours * 3600.0,),
+        ).fetchall()
+    except sqlite3.Error:
+        return {"strategies": [], "appearances": {}}
+
+    for _status, raw in rows:
+        try:
+            details = json.loads(raw) if isinstance(raw, (str, bytes)) else (raw or {})
+        except Exception:  # noqa: BLE001 - an unparseable payload is not evidence
+            continue
+        if not isinstance(details, dict):
+            continue
+        name = details.get("strategy_id")
+        if name:
+            appearances[str(name)] += 1
+        for key in _LIST_KEYS:
+            value = details.get(key)
+            if not isinstance(value, list):
+                continue
+            for entry in value:
+                if isinstance(entry, dict) and entry.get("strategy_id"):
+                    appearances[str(entry["strategy_id"])] += 1
+
+    return {
+        "strategies": sorted(appearances),
+        "appearances": dict(appearances.most_common()),
+    }
 
 
 def op_log_multiplicity(
@@ -253,16 +308,31 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     now = time.time()
     report = census(_load(args.db, args.hours, now), hours=args.hours)
-    population = registry_population()
-    report["registry_strategies"] = population
+    registry = registry_names()
+    report["registry_strategies"] = len(registry)
     report["strategies_with_zero_cycles"] = max(
-        0, population - report["strategies_holding_a_slot"]
+        0, len(registry) - report["strategies_holding_a_slot"]
     )
     conn = sqlite3.connect(args.db)
     try:
         report["trading_ops"] = op_log_multiplicity(conn, now=now, hours=args.hours)
+        report["candidate_channel"] = candidate_channel(
+            conn, now=now, hours=args.hours
+        )
     finally:
         conn.close()
+
+    slot_holders = {
+        row["strategy"]
+        for row in report["per_strategy"]
+        if row["strategy"] != NO_DIRECTIVE
+    }
+    proposed = slot_holders | set(report["candidate_channel"]["strategies"])
+    report["proposed_anywhere"] = sorted(proposed)
+    # The finding. A strategy in neither channel did not lose a slot and did
+    # not refuse a cycle -- nothing ever put it forward, so no per-strategy
+    # fix and no fairer weighting can reach it.
+    report["never_proposed"] = sorted(set(registry) - proposed)
 
     if args.json:
         print(json.dumps(report, indent=2))
@@ -293,13 +363,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     print()
     print(
         f"  STRATEGIES HOLDING A SLOT {report['strategies_holding_a_slot']} "
-        f"of {population} in the registry -- "
+        f"of {report['registry_strategies']} in the registry -- "
         f"{report['strategies_with_zero_cycles']} got ZERO cycles"
     )
     print(
         f"  trading_ops over the same window: {report['trading_ops']['rows']} rows "
         f"-- op-log entries, NOT cycles: {report['trading_ops']['by_status']}"
     )
+    print()
+    print(
+        f"  PROPOSED ANYWHERE (either producer) "
+        f"{len(report['proposed_anywhere'])} of {report['registry_strategies']}: "
+        f"{report['proposed_anywhere']}"
+    )
+    print(
+        f"  NEVER PROPOSED IN {args.hours:g}h -- not a lost slot, not a refused "
+        f"cycle, NOTHING PUT THEM FORWARD ({len(report['never_proposed'])}):"
+    )
+    for name in report["never_proposed"]:
+        print(f"    {name}")
     return 0
 
 
