@@ -2709,3 +2709,37 @@ the last two days the lane books 100% of what it opens. Both noted on the items.
 **Next:** price the two gates before touching either -- and note that
 [24e89934] and [ed0d721e] name the same file, so they belong to one agent.
 
+### Pass 102, Jet (planner), closing note: the 60%-of-budget number counts log rows
+
+Acted on the operator's 06:27 steer, which names [ed0d721e] as the highest-value
+work available and gives its acceptance directly: **ghost entries per hour and
+closed round trips per hour, before and after** -- not tidier code. Rewrote the
+item's criteria to exactly that, recorded his AERO verification on it (209 rows
+gross +5.3306 but -4.7171 over 195 trips excluding fills above 1.10x; all-time
++1.4907 -> -1.7159 without the +161% row the ledger already rejects, so **the ban
+is correct and must not be lifted**), and subordinated my own [24e89934] to it so
+two items do not compete for one file.
+
+**Then read the site instead of trusting the op count.** `trading/scheduler.py`
+already drops the banned candidate -- the pre-drop loop appends to `dropped` and
+`continue`s, so it never reaches `kept` and never reaches the entry gate. The
+565 rows/day come from `_log_predropped`, whose own docstring says *"One row per
+tick that dropped something"*. **So 66% / 60% / "188 re-refusals per entry" are
+counting LOG ROWS, not wasted entry decisions.** The refusal at that site is
+already cheap. What is not cheap is that the banned symbol is still *proposed*
+every tick, so the generator re-derives it and the verdict is re-read forever.
+The operator's instruction is exactly right and its target is **upstream** of
+`:549` -- the candidate generator, not the drop site.
+
+**The prediction to hold me to:** moving the drop earlier will not by itself
+produce a large entries/h gain, because the candidate was already dropped. If
+entries/h does not move, the constraint is candidate **supply**, and the next
+question is [24e89934]'s fork -- replay the refused candidates against the
+recorded tick path, and if every refusal is earning its keep, generate MORE
+candidates rather than refusing fewer.
+
+Also corrected [ed0d721e]'s declared files from `trading/bot.py` (which it does
+not need) to `trading/scheduler.py` + the two edge-gate modules, which takes it
+off the four-items-one-worker pile and lets it run in parallel with the exit
+work -- which is what "entries in, exits out, both or neither" requires.
+
