@@ -459,6 +459,13 @@ GATE_TESTS = (
     # volume, so an unauditable 237-trade book outranked a measurable one for
     # six passes. Cove, pass 103.
     "test_a_pooled_book_cannot_claim_the_top_wall.py",
+    # A closed round trip carrying no strategy_id is not a worse number, it is
+    # a round trip DELETED from the evidence graduation counts -- collect()
+    # drops it as unattributed and the bar counts it for nobody. A writer
+    # dropped the field from 96 rows and it ran for over a week unseen, found
+    # 15 days later by someone counting rows for an unrelated item. Five-day
+    # window; skips rather than passes on a missing DB. Cove, pass 103.
+    "test_a_closed_outcome_names_the_strategy_that_made_it.py",
     # The ghost lane books 19.4% of its entries; the other 861 positions in 7
     # days are destroyed without writing an outcome row, which made them
     # invisible to every tool that reads trade_outcomes. This guards the
