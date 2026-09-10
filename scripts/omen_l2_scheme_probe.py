@@ -301,6 +301,14 @@ def main() -> int:
     parser.add_argument("--window", type=int, default=12,
                         help="bars a change-keyed scheme may look back over")
     parser.add_argument("--samples", type=int, default=600)
+    parser.add_argument("--margin", type=float, action="append",
+                        help="hysteresis margins to sweep, as a fraction of "
+                             "each band's own width. Repeat for a sweep. "
+                             "0 is plain relative banding and is always "
+                             "included so every table has its control.")
+    parser.add_argument("--steps", type=int, action="append",
+                        help="step counts to sweep for the two change-keyed "
+                             "schemes. Defaults to MOTIF_SEQUENCE_STEPS.")
     parser.add_argument("--json-out", default=None)
     args = parser.parse_args()
 
@@ -332,6 +340,46 @@ def main() -> int:
         worst = max(r["distinctness"].get(key, 1.0) for r in results)
         print("%-16s worst-of-both %.4f  %s"
               % (key, worst, "CLEARS" if clears(key) else "FAILS"))
+
+    # THE SWEEP. Reported from the same process as the table above, so the
+    # control row (margin 0) and every treatment row are one measurement --
+    # the reason the pass-111 numbers are trustworthy at all.
+    if args.margin or args.steps:
+        margins = sorted({0.0, *(args.margin or ())})
+        steps_list = sorted(set(args.steps or (MOTIF_SEQUENCE_STEPS,)))
+        print("HYSTERESIS x STEPS SWEEP (margin 0 is the control)\n")
+        for corpus in args.corpus:
+            bars = load_bars(Path(corpus))
+            if args.samples:
+                bars = bars[: args.samples + LOOKBACK_BARS]
+            frame_sets = []
+            for index in range(LOOKBACK_BARS, len(bars)):
+                try:
+                    frame_sets.append(build_collections(
+                        bars, index, horizon_bars=args.horizon,
+                        symbol=args.symbol, chain=args.chain))
+                except (ValueError, IndexError):
+                    continue
+            bands = relative_bands(frame_sets, streams=L1_STREAMS)
+            total = len(frame_sets)
+            print("%s  n=%d" % (Path(corpus).name, total))
+            for margin in margins:
+                motifs = sticky_motifs(frame_sets, bands, margin)
+                rate = sum(1 for a, b in zip(motifs, motifs[1:])
+                           if a != b) / max(1, total - 1)
+                cells = []
+                for steps in steps_list:
+                    for fn, tag in ((transition_motif, "t"),
+                                    (run_length_motif, "r")):
+                        frames = [fn(motifs[max(0, i - args.window + 1):i + 1],
+                                     steps=steps) for i in range(total)]
+                        cells.append("%s%d=%.4f" % (tag, steps,
+                                                    len(set(frames)) / total))
+                print("   margin=%.2f  L1 change=%.1f%%  L1 distinct=%.4f "
+                      "(vocab %d)  %s"
+                      % (margin, 100 * rate, len(set(motifs)) / total,
+                         len(set(motifs)), " ".join(cells)))
+            print("")
 
     if args.json_out:
         Path(args.json_out).write_text(
