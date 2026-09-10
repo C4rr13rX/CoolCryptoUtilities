@@ -62,6 +62,10 @@ except Exception:  # noqa: BLE001 - a missing gate must not stop trading
 from trading.savings import StableSavingsPlanner, SavingsEvent
 from services.equilibrium_tracker import EquilibriumTracker as ProfitEquilibriumTracker
 from services.swarm_strategies import SwarmStrategySelector
+from services.prewarm_seed_guard import (
+    median_price as _prewarm_median,
+    seed_verdict as _prewarm_seed_verdict,
+)
 from services.token_address_book import is_token_address
 from services.token_catalog import core_tokens_for_chain
 from trading.constants import (
@@ -10698,6 +10702,50 @@ class TradingBot:
         # Seed buffer with the last `window_size` candles, converting
         # to the sample-dict shape the stream emits.
         tail = rows[-self.window_size:]
+
+        # REFUSE A SEED THAT CANNOT BE THE SAME SERIES AS THE LIVE FEED.
+        #
+        # These rows are spliced into the SAME buffer the live stream fills,
+        # so the model's 60-bar window can span both.  When the seed sits at a
+        # different price scale the seam between them is a log return of 8-10,
+        # and one such row sets the scale of the whole window's distribution
+        # (b966158, scripts/model_window_probe.py: price_mu -0.17 -> -1.8).
+        #
+        # Measured 2026-09-10 across 33 live base symbols: 11 of the 19 that
+        # resolve to a file at all would be seeded from bars 5 to 95 days old,
+        # and four of them are at the wrong scale outright -- PUMP-USDC by a
+        # log ratio of +10.5995 and TIBBIR-USDC by +0.7993 from a file named
+        # 0024_TIBBIR-VIRTUAL.json, which the loose base-symbol glob above
+        # matches for TIBBIR-USDC.  See scripts/prewarm_seed_census.py.
+        closes: List[float] = []
+        newest_bar_ts = 0.0
+        for r in tail:
+            try:
+                px = float(r.get("close", 0) or r.get("price", 0))
+                if px > 0:
+                    closes.append(px)
+                newest_bar_ts = max(newest_bar_ts, float(r.get("timestamp", 0) or 0))
+            except Exception:
+                continue
+        live_median = None
+        try:
+            live_median = _prewarm_median(
+                [p for (p, _ts) in self.db.recent_market_prices(symbol, chain, limit=25)]
+            )
+        except Exception:
+            # No live reference is not a reason to refuse -- the prewarm
+            # exists for exactly the cold start where none has arrived yet.
+            live_median = None
+        verdict = _prewarm_seed_verdict(
+            seed_median=_prewarm_median(closes),
+            live_median=live_median,
+            newest_bar_ts=newest_bar_ts or None,
+            now=time.time(),
+        )
+        if not verdict.ok:
+            print(verdict.log_line(symbol, chosen.name))
+            return
+
         seeded = 0
         for r in tail:
             try:
