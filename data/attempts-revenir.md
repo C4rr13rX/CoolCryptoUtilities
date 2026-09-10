@@ -1555,10 +1555,20 @@ lane refuses on sight. Per strategy on the spendable population:
 atf_static 18 trips 22% -0.3936 (its 4 untradeable trips are +0.9418),
 rsi_reversal 10 trips 20% -0.6464, obv_accumulation@1w 9 trips 0% -0.1061,
 bus_schedule 4 trips 0% -0.0902.
-IT IS ALSO NOT THE EVIDENCE WALL, which is the part that surprised me:
-atf_static has 18 tradeable trips in 7 days and reaches the 20-trip bar in
-about a day unaided. Generating more ghost trades moves nothing -- it
-fails 55%/positive by a mile the moment the counter fills. I checked
+IT IS ALSO NOT THE EVIDENCE WALL. Generating more ghost trades moves
+nothing -- the book fails 55%/positive by a mile whenever the counter
+fills.
+CORRECTION TO MY OWN NUMBER, made later the same pass and carried here
+because it changes what to do next: I first wrote that atf_static "has 18
+tradeable trips and reaches the 20-trip bar in about a day unaided", and
+that is wrong. 18 is what trade_outcomes shows it CLOSED over 7 days, a
+rate of ~2.6/day; the counter it is judged on stands at 4, so 4 -> 20 is
+about six days, and scripts/graduation_status.py measures 3.2 tradeable
+trades/day across ALL 38 strategies -- ~44 days to the nearest graduation.
+Evidence is weeks away, not a day, which makes the conclusion stronger
+rather than weaker: spending 44 days filling a counter in order to fail
+the bar with a book that loses 0.33% per trip is the worst available use
+of the time. Close the cost gap first. I checked
 whether the ledger's tradeable counter was BROKEN rather than young
 (record()'s symbol= defaults to "" and "" is never tradeable): both
 production callers do pass a symbol (services/atf_static_strategy.py:135,
@@ -1577,6 +1587,23 @@ profit_logic_audit NO KNOWN LOSING SHAPES. NOT in GATE_TESTS: I did not
 hold scripts/pass_gate.py and asked on the board for the line to be added.
 HONEST NEGATIVE: I did not move live_approved, and no strategy got closer
 to a licence this pass. What moved is which wall the next pass works.
+THE COST ARITHMETIC, measured after the split above and units-checked at
+every boundary. Over the same 109 tradeable trips: GROSS +0.6289, FEES
+1.4166, NET -0.7877. Per trip that is gross +0.00577 on a $2.198 clip =
++0.2625% of notional, cost $0.01300 = 0.5913%, net -0.3288%. SO THE
+SPENDABLE BOOK IS NOT DIRECTIONALLY WRONG -- it picks correctly and hands
+2.25x the winnings to the fee. The receipts cost model (0.004047 fixed +
+0.3187% of notional) predicts 0.5028% at that clip against 0.5913%
+measured, so the model is the right shape. Raising the clip retires ONLY
+the fixed part: $5 -> 0.3996%, $10 -> 0.3592%, $20 -> 0.3389%, $50 ->
+0.3268%. EVERY ONE STILL LOSES, because the variable component alone
+(0.3187%) exceeds the entire gross edge (0.2625%). An infinite clip does
+not save it, so nobody should ship clip sizing believing it is sufficient
+-- though at 0.25pp for free it is the largest cost cut available and
+belongs in the combination. The falsifiable target is now one number:
+gross per tradeable round trip must exceed 0.3187% of notional; it is
+0.2625%, a 21.4% improvement needed (29% at a $20 clip, where the clip cut
+does most of the remaining work).
 NEXT: the spendable book's problem is expectancy per trip, not hit rate --
 AERO-USDC is 36 of the 109 tradeable trips (a third of the whole evidence
 budget) and wins 53% of them while losing -0.5029, which is Sage's and
@@ -1586,3 +1613,89 @@ symbol with the worst per-trip expectancy, and (b) widen take/stop against
 the measured round-trip cost on the spendable symbols only -- CBADA
 (+0.1345/5) and TYBG (+0.1109/2) are the only tradeable symbols in the
 black and both are tiny samples, so get more of them before believing them.
+
+## 2026-09-10 -- Iris (pass 97)
+
+HYPOTHESIS: the wall the status command names is itself wrong. It said "READY
+BUT UNSTAMPED -- atf_static, atf_static_scout clear the bar and carry no
+approval; the ledger is not stamping graduated_ts", and pass 96's commit title
+repeated it verbatim. Before touching the stamping code I read the two ledger
+entries.
+
+WHAT I DID: read both entries directly. BOTH ALREADY CARRY graduated_ts
+(atf_static 1788539648, atf_static_scout 1788366844). Neither is unstamped.
+scripts/readiness_report.collect computed `ready` from entry["ghost"] -- the
+POOLED book -- while StrategyLedger._evaluate_graduation_locked judges
+_tradeable_of(ghost) and returns early on three structural bars the report
+never read: graduation_blocked, GHOST_ONLY_STRATEGY_IDS, demote_reason.
+classify_wall consumes `ready`, so the false wall was printed at the top of
+every pass.
+
+  atf_static        POOLED  52/29w/+1.5407  TRADEABLE  4/2w/-0.0187  demoted x7
+  atf_static_scout  POOLED 236/186w/+6.4818 TRADEABLE  3/1w/-0.0778  ghost-only
+
+Rewrote collect() to mirror the gate branch for branch: _tradeable_of for a
+first licence, _fresh_tradeable_delta(ghost, ghost_at_demotion) for a demoted
+one, the re-arm rule's live-record bar as its own blocker, and
+graduation_blocked/ghost-only as PERMANENT blockers rather than a countdown.
+Pooled numbers kept alongside as pooled_*. ETA now excludes strategies that can
+never graduate. THE BAR IS UNTOUCHED -- same MIN_TRADES/MIN_WINRATE/MIN_PROFIT,
+only the population counted against it.
+
+RESULT, as numbers:
+  wall                READY BUT UNSTAMPED -> STRUCTURALLY BLOCKED / EVIDENCE
+  ledger evidence     410 trades          -> 23 tradeable trades
+  ledger win rate     63%                 -> 17%
+  ledger ghost P/L    +6.8134             -> -0.8940
+  nearest graduation  ~0.7 days           -> ~44 days
+  live-approved       0                   -> 0  (unchanged, now honestly so)
+Gate 475 passed / 0 failed (was 467). profit_logic_audit NO KNOWN LOSING
+SHAPES. 8 new tests, all proved RED against HEAD's readiness_report.py.
+The web endpoint (web/telemetry/readiness_views.py loads the script by path)
+is fixed by the same change -- verified ready&unapproved is now empty there.
+Commit e33041b.
+
+HONEST NEGATIVE: this promoted nothing and it was never going to. It deleted a
+false wall, which is worth a pass only because the true wall was unreachable
+while the false one was printed. Jet reached the identical diagnosis
+independently within a minute and fixed the display half in graduation_status.
+
+NEXT, and DO NOT re-ask "why is nothing stamped" -- it is answered: nothing
+should be. The true wall is EVIDENCE ON THE TRADEABLE BOOK, and it has two
+halves, both measurable:
+  (a) SUPPLY. 410 pooled ghost round trips produced 23 tradeable ones, 5.6%.
+      Jet took this one at 03:42. Find where the other 94% goes -- which
+      symbols, and whether they are refused for stop_is_unenforceable or are
+      simply not in the tradeable set at all.
+  (b) QUALITY, which is unclaimed and is the harder wall. Even at full supply
+      the tradeable book is 17% win / -0.8940 over 23 trades, against a bar of
+      55% and P/L > 0. The pooled book's +6.8134 is earned ENTIRELY on symbols
+      the live lane refuses -- this is the fourth independent measurement of
+      that same shape (see wallet BSTONK rows, _live_tradeable's docstring,
+      tradeable-book-has-no-edge). No amount of extra evidence graduates a
+      17% book. Ask which tradeable symbol pays for its round trip most often
+      and build for that one, rather than feeding the funnel harder.
+A COMBINATION THAT CLEARS, and the caveat that comes with it. AERO-USDC
+is 36 of the 109 tradeable trips -- a third of the whole spendable
+evidence budget -- and it loses BEFORE fees (gross -0.0802). Excluding it,
+the remaining 73 trips carry gross +0.4368% of notional, which EXCEEDS the
+0.3187% variable cost floor. So the book turns positive on cost alone:
+    tradeable, all         109 trips  gross +0.2625%  -> loses at every clip
+    tradeable minus AERO    73 trips  gross +0.4368%  -> $2.22 -0.0639% loses
+                                                         $10   +0.0776% PROFITABLE
+                                                         $20   +0.0979% PROFITABLE
+                                                         $50   +0.1100% PROFITABLE
+That is the first arithmetic path to a profitable spendable book this loop
+has produced: drop the one symbol eating a third of the budget at negative
+gross, AND raise the clip past ~$7 so the fixed component stops dominating.
+Neither alone is enough; together they clear by ~0.10%/trip at a $20 clip.
+CAVEAT, stated plainly because it is the obvious way to fool ourselves:
+this is post-hoc symbol exclusion on ONE week. I checked whether AERO is
+uniquely bad and IT IS NOT -- 14 of 28 tradeable symbols have negative
+gross. What distinguishes AERO is sample size: the other 13 are mostly
+1-3 trips (noise), while AERO is 36 trips, by far the largest sample we
+have, so its negative gross is the most credible of the lot rather than
+the most extreme. Do not generalise this to "drop every negative-gross
+symbol" -- that is fitting 14 buckets of noise. The defensible version is
+a rule with a prior: require a minimum sample before judging a symbol, and
+judge it on gross-versus-cost, not on net or on hit rate.
