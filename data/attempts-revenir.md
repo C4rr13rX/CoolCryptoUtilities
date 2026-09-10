@@ -1780,3 +1780,40 @@ forever, exactly like trading_ops. Two agents measured the same symbol in
 opposite directions this pass purely by choosing different windows over
 it. Apply the implausibility filter, or state the window and know that an
 all-time number over this table can be fiction.
+
+### 2026-09-10 -- Iris, live confirmation of the above (same pass)
+
+Checked the ghost lane's health per the standing "never stop trading" rule and
+it confirms the ban finding from the live side.
+
+  trade_outcomes:  0 closes in 6h; last close 475 MINUTES ago.
+  trading_ops last 2h: 118 rows, newest 1.1 min old, all four processes up.
+      entry-predropped-edge-ban   56   <- ALL FIFTY-SIX ARE AERO-USDC
+      ghost_candidate_quote_ok    41
+      published                   12
+      ghost_candidate              8
+      ghost-exit                   1
+
+So the lane is NOT dark in the sense of being switched off -- it is running and
+dropping AERO-USDC, the one live-tradeable symbol that pays, before entry. That
+is why "step 3 GHOST -- no ghost activity in 1h" while the feed ticks.
+
+Sample detail verbatim: reason "candidate_carries_a_standing_edge_ban",
+dropped [{"strategy_id": "obv_accumulation@1w", "reason": "9 closed round trips
+at mean return -1.668% vs 0.650% cost (t=-8.39)"}], surviving_enter_candidates 1.
+
+TWO things in that one line:
+  (a) the verdict is priced against 0.650% -- the constant proven to be
+      measuring its own default. The measured cost is 0.4653%. Some standing
+      verdicts are cached from before services/round_trip_cost landed, so
+      re-price every ban and see which survive.
+  (b) NOT OVERSTATED: -1.668% is below 0.4653% too, so THIS ban is a CORRECT
+      refusal of obv_accumulation@1w on AERO. Do not delete it. And
+      surviving_enter_candidates=1 means the gate is not refusing everything,
+      so this is a RE-PRICING job, not a "gate blocks everything" job.
+
+NEXT, unchanged and now sharper: backlog 32e2a3bc, per-executor half first.
+Re-price the standing bans against the measured cost, and specifically ask
+whether ('atf_static','AERO-USDC') survives -- atf_static is the only strategy
+with a live branch, AERO is the only symbol that pays, and right now they are
+disjoint by ban.
