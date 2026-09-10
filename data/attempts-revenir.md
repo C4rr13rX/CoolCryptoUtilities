@@ -4223,3 +4223,20 @@ is a bigger lever than any head fix on the board.
   ~0.4653% -- a 40% overcharge refusing symbols against the 3.0% motion floor,
   directly upstream of the EVIDENCE (TRADEABLE) wall. Fix the cost input only;
   do NOT lower the floor.
+- 2026-09-10 Cove pass 107 ADDENDUM -- the with-relations arm was STARTED and did NOT
+  FINISH, and no number from it is claimed. Fresh node :8092, fresh dir
+  brain-data-assoc-p107-rel, same corpus/--seed 7/--train 3000, identical 2717-sample
+  balanced split (verified line-for-line against the baseline arm), one variable changed.
+  WHAT IT DID ESTABLISH, and it is a real cost finding: 10 collections train at 1.7/s
+  against the 7-collection baseline's 5.6/s -- adding the three relation streams costs
+  ~3.3x TRAINING THROUGHPUT (2717 samples goes from 8.7 min to ~27 min). Any future
+  relation experiment must budget for that; it is why this arm outran the pass.
+  ALSO CORRECTED, second correction to 6706bc3: which relations clear the 0.2
+  distinctness floor is CORPUS-DEPENDENT and pass 106's ranking does not transfer. On
+  AERO-USDC h12: rel_move_vol 0.750 CLEARS, rel_trend_noise 0.389 CLEARS,
+  rel_shape_flow 0.077 FAILS. Pass 106 (13219 mixed samples) had shape_flow clearing
+  and trend_noise failing -- the opposite pair. Nobody should quote either as settled.
+  STATE LEFT BEHIND: brain-data-assoc-p107-rel is PARTIALLY TRAINED (~1000 of 2717 when
+  the pass ended; the process was left running and may or may not have completed). Treat
+  it as DIRTY. The next pass should start a THIRD fresh dir rather than trust it, unless
+  its report JSON exists and shows trained_pairs=2717.
