@@ -1983,3 +1983,39 @@ A limit order fills AT its limit; these fill 0.2% to 123% past it.
 CORRECTION TO MY OWN EARLIER LINE IN THIS FILE: I wrote "7 rows, 98%". At the
 real 1.05 limit it is 12 rows and 109%. The mechanism and the fix are
 unchanged; the size is larger.
+
+- 2026-09-10 pass 98, Iris. HYPOTHESIS: the live-tradeable ghost book is negative because a
+  few symbols with real sample size are traded despite failing gross-vs-cost, and a symbol-
+  admission rule with a DERIVED minimum sample would lift it above 0.0. DID: added a third
+  stage to services/symbol_edge_gate._verdict -- a fixed-seed bootstrap on SUM(gross) vs
+  SUM(modelled cost) -- because AERO-USDC is 36 of the 109 tradeable trips and passes BOTH
+  existing tests (t=-1.44 vs MAX_T -1.7; sign p=0.632) while its summed gross is 0.4676
+  short of what those trips cost: it wins small and often and loses big and rarely, which
+  defeats a statistic that divides by dispersion and one that counts how OFTEN cost is
+  cleared. Also switched the verdict from net to GROSS (net is already gross-minus-fee, so
+  net>=cost billed the round trip twice) and DERIVED MIN_SAMPLES as the smallest n with
+  0.5^n < SIGN_MAX_P (=5), so the 14 one-to-three-trip buckets can never be judged.
+  RESULT, python -X utf8 scripts/tradeable_book.py --days 7 --rule: baseline 109 trips net
+  -0.7877; in-sample rule refuses AERO+COMP -> 62 trips net -0.1677; OUT-OF-SAMPLE (fitted
+  on the 62 trips older than the window, applied untouched) refuses BASECAT+CBXRP+COMP ->
+  85 trips net -0.6409. NEITHER CLEARS 0.0. The hypothesis is HALF WRONG and the failure is
+  informative: the residual loss is spread over symbols the derived sample floor forbids
+  judging, so no honest symbol rule reaches 0.0 on this book.
+  TWO NEGATIVE RESULTS WORTH NOT REPEATING. (1) The MIRROR rule -- ADMIT a symbol whose
+  gross clears cost over n>=5, refuse the rest -- fitted on the older 62 and applied to the
+  untouched 109 admitted exactly ONE symbol, AERO-USDC, on a +14.47% fit-window mean carried
+  by the +161% repricing row the ledger already rejects, and delivered -0.5029 over 36
+  holdout trips. A rule that promotes on positive evidence picks the WORST symbol in the
+  book. Do not try a whitelist again. (2) The admitted book reads +0.4711% of notional,
+  ABOVE the 0.3187% variable floor -- and 103% of that is ONE UNI-USDC row at +122.89% on a
+  $0.59 notional (independently found by Jet, 274ea86). Without it: -0.0119%. Third time
+  this shape has appeared here, so scripts/tradeable_book.py now prints a leave-one-out
+  beside every edge and SUPPRESSES the clip curve when the edge does not survive its own
+  largest row.
+  NEXT: 8810a066, and it is the root cause of both of the above. trading/triggers.py:188
+  fires take_profit_limit on price >= target_price and trading/bot.py:9129 books
+  exit_price_effective = price -- the tick that CROSSED the target, not the target -- so the
+  ghost harness credits itself the entire overshoot. The LIVE path already guards this at
+  bot.py:9611. Not started: the ghost booking site does not have the trigger reason or
+  target_price in scope, and that plumbing is the actual work. Do not touch it with less
+  than a full pass.
