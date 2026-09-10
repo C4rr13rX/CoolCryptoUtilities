@@ -2827,3 +2827,39 @@ self-describing, so replay it against the recorded tick path with
 `scripts/stop_width_replay.py`'s method -- negative means the layer earns its
 cost and the answer is more candidates, positive means it is the constraint.
 
+
+## 2026-09-10 -- Iris, pass 103 -- [71975c13] / [79ad4d0d] / [0f6957e3]
+
+HYPOTHESIS: the hold-time instrument built in pass 100 (`scripts/hold_time_edge.py`)
+was measuring the wrong population, because it reads `trade_outcomes` and a ghost
+position that never books writes no outcome row.
+
+DID: counted the ghost funnel from the ENTRY side out of `trading_ops` instead.
+Shipped `scripts/destroyed_evidence.py` + 8 tests (38643c4, 59bd55c), gate OK.
+Then recovered the eviction hold time from `released_entry_ts`, which the release
+op has always carried, and measured price staleness at eviction against
+`market_stream`.
+
+RESULT, 7 days. 1054 ghost entries -> 205 booked ghost-exits (19.4%), 784 evicted,
+90 abandoned dark-feed. THE TWO DESTROYED POPULATIONS ARE OPPOSITE SHAPES:
+
+  EVICTIONS  median held 22 SECONDS, 91.6% inside the 900s horizon, only 4.0%
+             past 4x. Price FRESH: median staleness 3.0s, p90 21.1s, 96.6%
+             under 60s. So booking them is not fabrication -- but a 22-second
+             forced close is not a round trip the strategy MADE, and booking all
+             784 injects ~51 tradeable rows/day of pure cost with no direction,
+             pushing win rate and P/L down against a 55%-and-positive bar.
+  ABANDONS   0 of 90 inside the horizon, median 10.8x stale_exit_secs, max
+             1117x (11.6 days). Genuinely owed an exit no rule could reach.
+             Price stale by a median of 3903s.
+
+FRESH PRICE + NO REAL TRIP against REAL TRIP + STALE PRICE. Criterion 3 of
+[71975c13] is now measurable and fails 90 of 90.
+
+NEGATIVE RESULT WORTH KEEPING: "recover the destroyed evidence" is NOT one fix
+worth ~62 tradeable trips/day. 51 of those 62 are evictions and booking them
+would make graduation harder, not easier. Do not re-file it that way.
+
+NEXT: the abandon fix needs a quote at abandon time, not the last known price,
+and its site is `trading/bot.py:12382`. Criterion 2 stays unmeasurable until
+production restarts -- it has run since 09-09 18:34 and predates 1cc2a6a.
