@@ -9741,7 +9741,33 @@ class TradingBot:
                 exit_size = base_sold
             else:
                 notional = max(exit_size * entry_price, 1e-9)
-                gross_profit = (price - entry_price) * exit_size
+                # BOOK THE PRICE WE SAID WE FILLED AT, NOT THE TICK.
+                #
+                # This read `price` while `exit_price_effective` (bound above,
+                # and clamped by `limit_exit_fill_price` for an overshooting
+                # limit exit) was what got recorded as the row's exit_price and
+                # handed to `validate_outcome_math`. Two bugs in one line.
+                #
+                # (1) The clamp never reached the P/L, so the limit-discipline
+                #     fix was a no-op for the only number graduation reads.
+                # (2) Worse: `validate_outcome_math` cross-checks
+                #     (exit_price - entry_price) * qty against gross_profit at
+                #     1e-8, so the two disagreed BY CONSTRUCTION on every
+                #     overshoot -- returning `gross_profit_mismatch`, which
+                #     sends the exit down the `hold-accounting-invalid` return
+                #     above. The position never closes. Measured by running it
+                #     (entry 100, target 105, tick 220): clamp 105.6825, gross
+                #     booked 120.0, validate_outcome_math -> gross_profit_mismatch.
+                #     Historically 12 of 14 take-profit exits overshoot, so
+                #     this would have refused almost every profitable ghost
+                #     exit the moment production reloaded.
+                #
+                # Caught with 0 rows damaged: the incidence query over
+                # trading_ops since the commit returned 0.
+                #
+                # `exit_price_effective` is `price` whenever the clamp does not
+                # apply, so this is identical for every non-overshoot exit.
+                gross_profit = (exit_price_effective - entry_price) * exit_size
                 # A ghost round trip is charged what a live one pays.
                 #
                 # This was `notional * fees` alone -- a 0.65% RATE and no gas

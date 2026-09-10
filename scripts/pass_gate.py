@@ -310,6 +310,20 @@ GATE_TESTS = (
     # one leg's fee, and a stop/timed/model exit is NOT clamped to a target
     # that was never reached, which would book a profit that did not happen.
     "test_a_ghost_take_profit_cannot_fill_past_its_own_limit.py",
+    # The WIRING of that clamp, which the test above cannot see. It calls
+    # `limit_exit_fill_price` directly, so it passed while the seam broke:
+    # the ghost booking branch took `gross_profit = (price - entry) * size`
+    # from the RAW tick while reporting the CLAMPED price as the row's
+    # exit_price. The clamp never reached the P/L -- and because
+    # `validate_outcome_math` cross-checks (exit_price - entry) * qty against
+    # gross_profit to 1e-8, the two disagreed BY CONSTRUCTION on every
+    # overshoot, returning gross_profit_mismatch and dropping the exit into
+    # `hold-accounting-invalid`. THE POSITION NEVER CLOSES. 12 of 14 TP exits
+    # overshoot, so this would have refused nearly every profitable ghost exit
+    # the moment production reloaded -- arriving from the commit whose message
+    # says it fixed the book. A function verified in isolation proves the
+    # function and not the wiring; this file tests the composition.
+    "test_a_clamped_limit_exit_books_the_clamped_gross.py",
     # The gate that was refusing 100% of entries, and the half of its tests
     # that matters. `_tick_jumps` read prices without timestamps, so a 40%
     # move across a 31-hour hole in the feed scored as a single-tick jump and
