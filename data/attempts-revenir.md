@@ -2809,3 +2809,21 @@ refusals a day stayed invisible across three passes of census work, mine
 included. Name the condition and the largest refuser in the funnel becomes
 countable in one query, with no gate change. On [d7d87724].
 
+**Correcting that immediately: the logging was fine, my query was not.**
+`trading/bot.py:8126-8131` writes both `reason: 'failed_a_necessary_condition'`
+**and** `detail: lattice_refusal`; my aggregate read `reason` first and never
+looked at `detail`, which is fully populated. Withdraw the logging ask. Read
+properly, the 246 rows by LAYER are **chaos 243, probability 3** -- 99% of the
+largest logged refuser in the funnel is one lattice layer, and it names its own
+condition: *"chaos: VVV-USDC: information decays after 5.8 min but the signal
+looks..."*, ALIGN 6.3 min, ZORA 3.2 min, and AERO at **both 5.8 min and 232.9 /
+233.0 / 235.4 min on the same symbol the same day** -- a 40x spread worth
+checking before the refusals are treated as settled. `bot.py:8106-8110` says the
+layer fails OPEN by design and exists to catch a forecast aimed past the horizon
+(the +500% clamp artifact that made bus_schedule the worst performer in the
+book), so it is not a candidate for removal, only for measurement. **This makes
+[24e89934]'s replay fork cheap**: the refused population is identified and
+self-describing, so replay it against the recorded tick path with
+`scripts/stop_width_replay.py`'s method -- negative means the layer earns its
+cost and the answer is more candidates, positive means it is the constraint.
+
