@@ -347,17 +347,145 @@ def render(r: Dict[str, Any]) -> str:
 
 
 
+def admission_refusals(rows: List[Dict[str, Any]]) -> Dict[str, str]:
+    """Which symbols ``services.symbol_edge_gate`` refuses on THESE rows.
+
+    The same ``_verdict`` the live entry path runs, fed a chosen window rather
+    than the gate's own last-500 read, so the rule can be fitted on one window
+    and applied to another. Re-implementing the test here to report on it
+    would let the report and the gate drift apart, which is exactly how a
+    dashboard ends up describing a rule the system does not run.
+    """
+    from services import symbol_edge_gate as gate
+
+    per_symbol: Dict[str, List[Any]] = {}
+    for r in rows:
+        notional = float(r.get("notional", 0.0) or 0.0)
+        if not (notional >= gate.MIN_NOTIONAL):
+            continue
+        gross = float(r.get("gross", 0.0) or 0.0)
+        per_symbol.setdefault(str(r["symbol"]).upper(), []).append(
+            gate.Trip(ret=gross / notional, gross=gross, notional=notional))
+
+    refused: Dict[str, str] = {}
+    for symbol, trips in per_symbol.items():
+        if gate._never_ban(symbol):
+            continue
+        found = gate._verdict(trips)
+        if found is not None:
+            refused[symbol] = found[1]
+    return refused
+
+
+def with_admission_rule(
+    *,
+    days: float = 7.0,
+    db_path: Optional[Path] = None,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    """The tradeable book before and after the symbol-admission rule.
+
+    Reports the rule fitted on the window itself (in-sample) AND fitted on the
+    round trips OLDER than the window and applied to it (out-of-sample). The
+    second number is the only one that says anything about the next trade, and
+    it is reported whether or not it is better -- a rule validated only on the
+    data it was fitted to is a story about the past.
+    """
+    now = time.time() if now is None else float(now)
+    db = Path(db_path or DEFAULT_DB)
+    is_tradeable = _tradeable_predicate()
+    if is_tradeable is None:
+        return {"error": "cannot import trading.pipeline.stop_is_unenforceable"}
+
+    window_start = now - days * 86400.0
+    inside = [r for r in load_rows(db, window_start)
+              if str(r.get("mode", "")).lower() != "live" and is_tradeable(r["symbol"])]
+    older = [r for r in load_rows(db, 0.0)
+             if r["ts"] <= window_start
+             and str(r.get("mode", "")).lower() != "live"
+             and is_tradeable(r["symbol"])]
+
+    def _book(rows: List[Dict[str, Any]], refused: Dict[str, str]) -> Dict[str, Any]:
+        acc = _blank()
+        for r in rows:
+            if r["symbol"].upper() in refused:
+                continue
+            _add(acc, r["net"], r["gross"], r["fees"], r["notional"])
+        acc["win_rate"] = _win_rate(acc)
+        acc["rates"] = _rates(acc)
+        return acc
+
+    base = _book(inside, {})
+    in_sample = admission_refusals(inside)
+    out_sample = admission_refusals(older)
+    return {
+        "days": days,
+        "fitted_on_window": len(inside),
+        "fitted_on_older": len(older),
+        "baseline": base,
+        "in_sample": {"refused": in_sample, "book": _book(inside, in_sample)},
+        "out_of_sample": {"refused": out_sample, "book": _book(inside, out_sample)},
+    }
+
+
+def render_rule(r: Dict[str, Any]) -> str:
+    if r.get("error"):
+        return "  ERROR: %s" % r["error"]
+    out: List[str] = []
+    out.append("  " + "=" * 70)
+    out.append("  THE SYMBOL-ADMISSION RULE APPLIED TO THE LIVE-TRADEABLE BOOK")
+    out.append("  services.symbol_edge_gate._verdict, min sample %d (derived)"
+               % __import__("services.symbol_edge_gate", fromlist=["x"]).MIN_SAMPLES)
+    out.append("  " + "=" * 70)
+
+    def line(label: str, acc: Dict[str, Any]) -> str:
+        ra = acc["rates"]
+        return ("  %-30s %4d trips %4.0f%% win  net %+9.4f  gross %+.4f%% "
+                "vs floor %.4f%%" % (label, acc["trades"], acc["win_rate"] * 100.0,
+                                     acc["net"], ra["gross_pct"],
+                                     ra["variable_floor_pct"]))
+
+    out.append(line("no rule (baseline)", r["baseline"]))
+    for key, title in (("in_sample", "IN-SAMPLE (fitted on window)"),
+                       ("out_of_sample", "OUT-OF-SAMPLE (fitted on older)")):
+        sec = r[key]
+        out.append("")
+        out.append("  %s -- refuses %s" % (title, ", ".join(sorted(sec["refused"])) or "nothing"))
+        out.append(line("  admitted book", sec["book"]))
+        acc = sec["book"]
+        ra = acc["rates"]
+        if ra["gross_pct"] > ra["variable_floor_pct"] and ra["clip"] > 0:
+            # gross% > FIXED/clip + VARIABLE  =>  clip > FIXED / (gross - VARIABLE)
+            need = COST_FIXED / ((ra["gross_pct"] - ra["variable_floor_pct"]) / 100.0)
+            out.append("  %-30s clears the variable floor; profitable above a "
+                       "$%.2f clip (now $%.2f)" % ("", need, ra["clip"]))
+        else:
+            out.append("  %-30s does NOT clear the variable floor -- no clip "
+                       "size helps" % "")
+    out.append("")
+    out.append("  The out-of-sample row is the one that says anything about the")
+    out.append("  next trade. It is printed whether or not it is the better one.")
+    return "\n".join(out)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--days", type=float, default=7.0)
     ap.add_argument("--db", default=str(DEFAULT_DB))
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--rule", action="store_true",
+                    help="also apply the symbol-admission rule, in and out of sample")
     a = ap.parse_args()
     rep = collect(days=a.days, db_path=Path(a.db))
+    if a.rule:
+        rep["admission_rule"] = with_admission_rule(days=a.days, db_path=Path(a.db))
     if a.json:
         print(json.dumps(rep, indent=2, default=str))
     else:
         print(render(rep))
+        if a.rule:
+            print("")
+            print(render_rule(rep["admission_rule"]))
     return 0
 
 

@@ -110,6 +110,54 @@ untouched holdout:
 
 Nearly double the improvement, and the only symbol it adds is the one the
 t-test was demonstrably missing.
+
+A THIRD TEST, ON THE TOTAL, BECAUSE BOTH OF THE ABOVE MISS A NEGATIVE SKEW.
+The t-test asks about the mean and divides by dispersion; the sign test asks
+how OFTEN a trip clears cost. A symbol whose trips mostly clear cost by a
+little and occasionally lose a lot passes both and still drains the book.
+Measured 2026-09-10 over the 109 live-tradeable ghost round trips in the last
+7 days:
+
+    AERO-USDC   36 trips   mean gross excess -0.230%   t=-1.44   NOT banned
+                           sign test p=0.632           NOT banned
+                           total gross -0.0802 vs 0.3919 of modelled cost
+
+AERO is a THIRD of the entire spendable evidence budget and -0.4676 of
+gross-minus-cost, sitting inside both thresholds. So the question is asked a
+third way, on the quantity that actually reaches the P/L: does the SUM of
+gross over these n trips clear the SUM of what they cost? Significance comes
+from a fixed-seed bootstrap over the trips themselves -- distribution-free,
+and unlike the t-statistic it does not assume the losses are symmetric, which
+is the exact assumption a negative skew violates. On the 7-day book it gives
+AERO P(pays)=0.0010 and COMP P(pays)=0.0003, and it clears BASECAT (0.4258)
+and CBADA (0.9193).
+
+JUDGED ON GROSS, NOT ON NET, and that is a units fix rather than a loosening.
+``net_profit`` is already gross MINUS the fee, so testing ``net >= cost``
+demands that a symbol earn the round trip TWICE -- the "round trip billed
+twice to one leg" shape ``services.profit_logic_audit`` exists to catch. Too
+high a bar bans symbols that genuinely pay, which blocks graduation while
+looking like caution. The stages above therefore compare GROSS return against
+the modelled round-trip cost at the symbol's own clip.
+
+MIN_SAMPLES IS DERIVED, NOT PICKED. At confidence ``SIGN_MAX_P`` the smallest
+n at which ANY observed record can reach that confidence is the smallest n
+with ``0.5**n < SIGN_MAX_P``: even a symbol that clears cost on zero of n
+trips is only 0.5**n unlikely under a fair coin. At 0.05 that is 5 -- below
+five closed round trips there is no record, not even a perfect one, that this
+module is entitled to act on. ``MIN_SAMPLES`` is computed from
+``SIGN_MAX_P``, so moving the confidence moves the sample floor with it.
+
+THIS MODULE STILL ONLY EVER BANS, AND THAT ASYMMETRY IS NOW MEASURED RATHER
+THAN ARGUED. The mirror-image rule -- ADMIT a symbol whose gross clears cost
+over n >= MIN_SAMPLES, refuse the rest -- was fitted on the 62 tradeable
+round trips older than 7 days and applied to the untouched 109 in the last 7
+days. It admitted exactly one symbol, AERO-USDC, on a fit-window mean gross
+excess of +14.47% carried by the +161% repricing row the ledger itself
+rejects, and delivered -0.5029 over 36 holdout trips. A rule that promotes on
+positive evidence picked the single worst symbol in the book out of sample.
+The ban-only rule, fitted on the same untouched split, refuses BASECAT, CBXRP
+and COMP and moves the holdout from -0.7877 to -0.6409.
 """
 
 from __future__ import annotations
@@ -117,11 +165,12 @@ from __future__ import annotations
 import json
 import math
 import os
+import random
 import sqlite3
 import statistics
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from services.logging_utils import log_message
 from services.round_trip_cost import round_trip_cost
@@ -129,18 +178,58 @@ from services.round_trip_cost import round_trip_cost
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "storage" / "trading_cache.db"
 
+#: How unlikely the count of cost-clearing round trips must be under a fair
+#: coin before the sign test bans. Same 0.05 the t-threshold approximates, so
+#: the two tests are asking at the same confidence, not at two different ones.
+SIGN_MAX_P = float(os.getenv("SYMBOL_EDGE_SIGN_MAX_P", "0.05"))
+
+
+def derived_min_samples(alpha: float = SIGN_MAX_P) -> int:
+    """Smallest n at which ANY record can reach confidence ``alpha``.
+
+    A symbol that clears cost on zero of n round trips is ``0.5**n`` unlikely
+    under "this symbol pays for its own trading". Below the n where that drops
+    under ``alpha`` there is no observation -- not even a perfect one -- that
+    this module is entitled to act on, so judging at all would be fitting
+    noise. At 0.05 this is 5 (0.5**5 = 0.03125; 0.5**4 = 0.0625).
+
+    Derived rather than picked, so moving the confidence moves the sample
+    floor with it instead of leaving a literal behind that no longer matches
+    the test it was chosen for.
+    """
+    if not (0.0 < alpha < 1.0):
+        return 5
+    n = 2
+    while 0.5 ** n >= alpha and n < 64:
+        n += 1
+    return n
+
+
 #: Minimum closed round trips before a symbol can be judged at all. Below
-#: this, a run of losses is indistinguishable from variance.
-MIN_SAMPLES = int(os.getenv("SYMBOL_EDGE_MIN_SAMPLES", "5"))
+#: this, a run of losses is indistinguishable from variance. Derived from
+#: SIGN_MAX_P; the env var is an override for tests, not a tuning knob.
+MIN_SAMPLES = int(os.getenv("SYMBOL_EDGE_MIN_SAMPLES", "") or derived_min_samples())
 
 #: How negative the t-statistic must be. -1.7 is ~p<0.05 one-tailed at these
 #: sample sizes.
 MAX_T = float(os.getenv("SYMBOL_EDGE_MAX_T", "-1.7"))
 
-#: How unlikely the count of cost-clearing round trips must be under a fair
-#: coin before the sign test bans. Same 0.05 the t-threshold approximates, so
-#: the two tests are asking at the same confidence, not at two different ones.
-SIGN_MAX_P = float(os.getenv("SYMBOL_EDGE_SIGN_MAX_P", "0.05"))
+#: How unlikely it must be that a symbol's TOTAL gross clears its TOTAL
+#: modelled cost before the bootstrap bans. Same confidence as the other two.
+TOTAL_MAX_P = float(os.getenv("SYMBOL_EDGE_TOTAL_MAX_P", "") or SIGN_MAX_P)
+
+#: Resamples in the bootstrap. Fixed count and fixed seed: a verdict that
+#: flickers between rebuilds because the resampling moved would be worse than
+#: a slow one, and the entry path caches for CACHE_SEC anyway.
+TOTAL_BOOTSTRAP_N = int(os.getenv("SYMBOL_EDGE_BOOTSTRAP_N", "2000"))
+TOTAL_BOOTSTRAP_SEED = int(os.getenv("SYMBOL_EDGE_BOOTSTRAP_SEED", "12345"))
+
+#: The receipts-derived round trip, split into the part a clip cannot outrun
+#: and the part no clip size moves. Same two numbers as
+#: ``scripts/tradeable_book.py``; the fixed charge is what makes a $2 clip
+#: cost 0.52% and a $20 clip 0.34%, so a symbol must be judged at ITS clip.
+COST_FIXED = float(os.getenv("SYMBOL_EDGE_COST_FIXED", "0.004047"))
+COST_VARIABLE = float(os.getenv("SYMBOL_EDGE_COST_VARIABLE", "0.003187"))
 
 #: How long a verdict is reused before the book is re-read. The book changes
 #: by a trade at a time, so recomputing per tick would cost a query for an
@@ -236,7 +325,63 @@ def _strategy_of(details: Any) -> str:
     return str(parsed.get("strategy_id") or "").strip()
 
 
-def _load_book(limit: int = 500) -> Tuple[Dict[str, List[float]], Dict[Tuple[str, str], List[float]]]:
+class Trip(NamedTuple):
+    """One closed round trip, in the two units the verdict needs.
+
+    ``ret`` is the size-invariant fraction the next trade will experience;
+    ``gross``/``notional`` are the dollar quantities the total test sums, and
+    they cannot be reconstructed from ``ret`` because the modelled cost has a
+    FIXED dollar component that a fraction cannot carry.
+    """
+    ret: float
+    gross: float
+    notional: float
+
+
+def modelled_cost(notional: float) -> float:
+    """Dollars this round trip costs at this notional -- fixed part plus rate.
+
+    Kept separate from ``round_trip_cost()``, which answers the same question
+    as a single fraction of notional. At the clips this book actually trades
+    ($2 mean) the fixed charge is 0.20% of notional on its own, so collapsing
+    the two into one rate prices a $0.50 trip and a $20 trip identically and
+    is how a book that "clears the variable floor" still loses money.
+    """
+    try:
+        return COST_FIXED + COST_VARIABLE * max(0.0, float(notional))
+    except (TypeError, ValueError):
+        return COST_FIXED
+
+
+def _total_test_p(trips: List[Trip]) -> float:
+    """P(total gross clears total modelled cost) by bootstrap over the trips.
+
+    The t-test divides by dispersion and the sign test counts how OFTEN cost
+    is cleared. Neither sees a symbol whose trips mostly clear cost by a
+    little and occasionally lose a lot -- AERO-USDC passes both at t=-1.44 and
+    sign p=0.632 while carrying -0.4676 of gross-minus-cost over 36 trips.
+
+    This resamples the per-trip (gross - cost) dollars with replacement and
+    asks how often the total comes out non-negative. Distribution-free, so it
+    makes none of the symmetry assumptions a negative skew violates.
+
+    Returns 1.0 -- "no evidence", bans nothing -- when there is nothing to
+    resample.
+    """
+    n = len(trips)
+    if n < 2:
+        return 1.0
+    excess = [t.gross - modelled_cost(t.notional) for t in trips]
+    rng = random.Random(TOTAL_BOOTSTRAP_SEED)
+    draws = max(1, int(TOTAL_BOOTSTRAP_N))
+    hits = 0
+    for _ in range(draws):
+        if math.fsum(rng.choice(excess) for _ in range(n)) >= 0.0:
+            hits += 1
+    return hits / draws
+
+
+def _load_book(limit: int = 500) -> Tuple[Dict[str, List[Trip]], Dict[Tuple[str, str], List[Trip]]]:
     """Closed round trips as RETURNS, newest first -- pooled and per executor.
 
     Each value is ``net_profit / notional`` where notional is
@@ -254,50 +399,55 @@ def _load_book(limit: int = 500) -> Tuple[Dict[str, List[float]], Dict[Tuple[str
     ``strategy_id``, contribute only to the pooled book -- so the per-executor
     verdict is empty rather than wrong when the column is missing.
     """
-    book: Dict[str, List[float]] = {}
-    pairs: Dict[Tuple[str, str], List[float]] = {}
+    book: Dict[str, List[Trip]] = {}
+    pairs: Dict[Tuple[str, str], List[Trip]] = {}
     try:
         conn = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     except Exception:  # noqa: BLE001 - no book is not a reason to block trading
         return book, pairs
     try:
-        try:
-            rows = list(conn.execute(
-                "SELECT symbol, net_profit, entry_price, quantity, details FROM trade_outcomes "
-                "WHERE status = 'closed' AND net_profit IS NOT NULL "
-                "ORDER BY ts DESC LIMIT ?",
-                (int(limit),),
-            ))
-        except sqlite3.OperationalError:
-            # No `details` column: an older schema, or a test book. Pooled
-            # verdicts still work; the per-executor one simply has nothing to
-            # attribute, which is the fail-open direction.
-            rows = [
-                row + (None,)
-                for row in conn.execute(
-                    "SELECT symbol, net_profit, entry_price, quantity FROM trade_outcomes "
-                    "WHERE status = 'closed' AND net_profit IS NOT NULL "
-                    "ORDER BY ts DESC LIMIT ?",
+        rows: List[Any] = []
+        # Newest schema first, then progressively older ones. A book without
+        # `gross_profit` falls back to `net_profit`, which is a STRICTER bar
+        # (net is already gross minus the fee, so the symbol is asked to earn
+        # the round trip twice) -- the safe direction for a missing column.
+        for sql in (
+            "SELECT symbol, net_profit, gross_profit, entry_price, quantity, details",
+            "SELECT symbol, net_profit, net_profit, entry_price, quantity, details",
+            "SELECT symbol, net_profit, net_profit, entry_price, quantity, NULL",
+        ):
+            try:
+                rows = list(conn.execute(
+                    sql + " FROM trade_outcomes WHERE status = 'closed' "
+                          "AND net_profit IS NOT NULL ORDER BY ts DESC LIMIT ?",
                     (int(limit),),
-                )
-            ]
-        for symbol, net, entry_price, quantity, details in rows:
+                ))
+                break
+            except sqlite3.OperationalError:
+                continue
+        for symbol, net, gross, entry_price, quantity, details in rows:
             if not symbol:
                 continue
             try:
                 notional = float(entry_price) * float(quantity)
                 if not (notional >= MIN_NOTIONAL):   # also rejects NaN
                     continue
-                ret = float(net) / notional
+                # GROSS, not net: `net_profit` has the fee already taken out,
+                # so comparing it against the round trip charges the round
+                # trip twice. A NULL gross falls back to net, which only ever
+                # makes the bar harder.
+                gross_amount = float(net if gross is None else gross)
+                ret = gross_amount / notional
             except (TypeError, ValueError, ZeroDivisionError):
                 continue
             if ret != ret or ret in (float("inf"), float("-inf")):
                 continue
             key = str(symbol).upper()
-            book.setdefault(key, []).append(ret)
+            trip = Trip(ret=ret, gross=gross_amount, notional=notional)
+            book.setdefault(key, []).append(trip)
             strategy = _strategy_of(details)
             if strategy:
-                pairs.setdefault((strategy, key), []).append(ret)
+                pairs.setdefault((strategy, key), []).append(trip)
     except Exception:  # noqa: BLE001
         return {}, {}
     finally:
@@ -305,7 +455,7 @@ def _load_book(limit: int = 500) -> Tuple[Dict[str, List[float]], Dict[Tuple[str
     return book, pairs
 
 
-def _verdict(values: List[float]) -> Optional[Tuple[float, str]]:
+def _verdict(trips: List[Trip]) -> Optional[Tuple[float, str]]:
     """Ban this book of returns, or None to allow it.
 
     The whole decision, in one place, so the pooled verdict and the
@@ -315,8 +465,9 @@ def _verdict(values: List[float]) -> Optional[Tuple[float, str]]:
     reached for a book the mean has already found to be losing -- is a
     property of the ORDER these run in.
     """
-    if len(values) < MIN_SAMPLES:
+    if len(trips) < MIN_SAMPLES:
         return None
+    values = [t.ret for t in trips]
     # Read the cost ONCE for the whole verdict. Calling the accessor per
     # clause would let a cache expiry land mid-decision and compare the mean
     # against one cost and the sign test against another -- two answers to
@@ -355,6 +506,28 @@ def _verdict(values: List[float]) -> Optional[Tuple[float, str]]:
             f"{mean * 100:+.3f}% vs {cost * 100:.3f}% cost "
             f"-- only {wins} cleared it (sign test p={sign_p:.4f}, "
             f"t={t:+.2f} did not fire)",
+        )
+    # The mean is below cost, the dispersion swallowed the t, AND most trips
+    # DO clear cost -- so the losses are concentrated in a few large ones and
+    # the two tests above are both looking the wrong way. Ask the question on
+    # the quantity that actually reaches the P/L: over these n trips, does the
+    # summed gross clear the summed cost? AERO-USDC is t=-1.44, sign p=0.632,
+    # and -0.4676 of gross-minus-cost over 36 round trips.
+    #
+    # Reached in the SAME position as the sign test, after `mean >= cost` has
+    # already allowed: it can no more overturn a positive mean than the sign
+    # test can, so the safety argument in the module docstring is unchanged.
+    total_p = _total_test_p(trips)
+    if total_p < TOTAL_MAX_P:
+        gross_total = math.fsum(x.gross for x in trips)
+        cost_total = math.fsum(modelled_cost(x.notional) for x in trips)
+        return (
+            t,
+            f"{len(trips)} closed round trips at mean return "
+            f"{mean * 100:+.3f}% vs {cost * 100:.3f}% cost -- total gross "
+            f"{gross_total:+.4f} against {cost_total:.4f} of modelled cost "
+            f"(bootstrap P(pays)={total_p:.4f}; t={t:+.2f} and sign "
+            f"p={sign_p:.4f} did not fire)",
         )
     return None
 

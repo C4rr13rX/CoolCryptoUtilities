@@ -269,6 +269,22 @@ GATE_TESTS = (
     # predicate is forced to "everything is tradeable", which is the pooled
     # reading wearing the right label.
     "test_the_pooled_ghost_book_is_not_the_graduation_book.py",
+    # The symbol-admission rule the two entries above point at, and the shape
+    # both of its earlier stages miss. AERO-USDC is 36 of the 109 live-
+    # tradeable round trips in 7 days -- a THIRD of the spendable evidence
+    # budget -- at t=-1.44 and sign p=0.632, both comfortably inside their
+    # thresholds, while its summed gross is 0.4676 short of what those trips
+    # cost. "Wins small and often, loses big and rarely" defeats a statistic
+    # that divides by dispersion and one that counts how OFTEN cost is
+    # cleared. The fixture is the real 36-row book because no synthetic one
+    # separates the three tests. Also pins the two properties that keep the
+    # rule from being a knob: MIN_SAMPLES is DERIVED from the confidence
+    # (smallest n with 0.5**n < SIGN_MAX_P, so 1-3 trip buckets can never be
+    # judged), and the new stage sits behind `mean >= cost` so it can no more
+    # overturn a positive mean than the sign test can -- a rare-large-WINS
+    # payoff must survive it. Verified by mutation: SYMBOL_EDGE_TOTAL_MAX_P
+    # driven to zero turns the AERO case red with the right message.
+    "test_a_symbol_that_loses_in_rare_lumps_is_refused.py",
     # The gate that was refusing 100% of entries, and the half of its tests
     # that matters. `_tick_jumps` read prices without timestamps, so a 40%
     # move across a 31-hour hole in the feed scored as a single-tick jump and
