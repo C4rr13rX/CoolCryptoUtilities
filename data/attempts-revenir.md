@@ -3780,3 +3780,46 @@ volatility -- first candidate to redesign or drop. NEXT: bucket RESOLUTION,
 not more pools -- _bucket_signed spans [-4,+4] over 20 levels and a narrower
 span would spread real mass across more buckets. One change, and distinctness
 is the number to move BEFORE any accuracy claim.
+
+## 2026-09-10 -- Gale, pass 106 (THIRD ENTRY: the chain closes on the head)
+
+bc36e9b added `details['unsat']` -- the CDCL solver's own clause certificate --
+to the `entry-arbitration` row. Production picked it up within a minute.
+
+    rows with the unsat FIELD present : 7 (the rest predate the commit)
+    unsat clause : confidence_floor 6, None 1
+    via          : max_score 6, trident 1
+    offered      : rsi_reversal 6, tf_forecast 1
+
+EVERY ABSTENTION NAMES ONE CLAUSE: `confidence_floor`. `trading/scheduler.py`
+binds `confidence = pred_summary['exit_conf']` and tests it against
+`SCHEDULER_MIN_CONFIDENCE` (0.6); `exit_conf` has been pinned in the 0.47-0.52
+band for 14h+. The solver is NEITHER BROKEN NOR MISCONFIGURED -- it is
+correctly declining candidates whose confidence input is dead. Of the three
+readings I filed on [f3c48731] (precondition / swallowed exception /
+deliberate decline) it is deliberate decline, so that item is BLOCKED on
+[618d4c4b] rather than holding any work of its own.
+
+THE WHOLE CHAIN, and every link points at the prediction head:
+  65 of 72 strategies return `no_signal` on a tick
+  -> the 1 that does signal (rsi_reversal) wins by raw `max(score)`
+  -> because the arbitrator declined on `confidence_floor`
+  -> because `exit_conf` is stuck at the 0.5 neutral fallback.
+
+SO THE ALLOCATION IS NOT THE BUG, and the operator's step (3) -- give every
+strategy a floor of cycles -- would have moved NOTHING. Neither would a fairer
+selector or a rebalanced publisher. Same conclusion Iris reached from the
+census, reached independently from the code.
+
+WHAT I GOT WRONG THIS PASS, on the record: I predicted the never-proposed
+strategies would sort by `min_samples` descending and measured the opposite
+(median appeared 40.0 vs never 27.0). The min_samples asymmetry is real --
+atf_static 4, ema_cross 40, omen_reversion 60 across 72 registered strategies
+-- but it gates nothing. The live rows then confirmed it independently:
+min_samples accounts for 7 skips, `no_signal` for 65.
+
+NEXT: nothing in the allocation seam. Do [618d4c4b]. The instrumentation now
+accumulates on its own, so when exit_conf is genuinely computed again the
+distribution is measurable back-to-back instead of inferred -- and if
+`via=trident` does not rise once confidence clears its floor, THEN there is a
+real defect in the arbitrator.
