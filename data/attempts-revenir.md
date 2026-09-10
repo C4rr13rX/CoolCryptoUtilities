@@ -2238,3 +2238,51 @@ entry_price_corroboration, which CORRECTLY corroborates the contaminated COMP
 entry 42.82 because the feed genuinely carries that regime. Until a tick can be
 attributed to a pool, every symbol-level edge measurement in this repo is
 measuring a blend of two assets.
+
+## 2026-09-10 -- Iris, pass 100 -- [4af9a51f] cost vs stop vs direction: it is DIRECTION
+
+**Hypothesis (mine, carried from pass 99):** the live-tradeable ghost book is
+negative because the feed is regime-split, and cleaning or gating the split
+symbols flips the sign. **RESULT: FALSIFIED, by my own measurement.** Excluding
+all 47 regime-split symbols the clean-feed tradeable book is still negative at
+every window -- 7d 62 trips -0.2850%, 5d -0.3381%, 3d -0.6220%. The regime split
+is a real feed defect (3ad6172) and it is NOT this money. Do not build the
+regime gate expecting the sign to move.
+
+**Second hypothesis, the one the item names ("the cost model and the stop are
+the work"):** the stop is recoverable money. It looks overwhelming -- `stop_loss`
+is 8 of 88 trips (9%) carrying 66% of the book's gross loss, mean -3.77% against
+a winner's +1.04%. **RESULT: FALSIFIED.** Shipped `scripts/stop_width_replay.py`
+(1896a1d, 7 mutation-proved tests), which recovers the tick path each round trip
+actually lived through from `market_stream` -- the entry ts is not stored, but
+the entry PRICE is a tick, so the entry is the latest matching tick at or before
+the exit -- and re-runs ONLY the stop against it. 87 of 88 placed, 1 unplaceable
+and excluded rather than assumed; validated at median hold 25.7 min with the
+path's last tick within 0.5% of the recorded exit for 69% of trips.
+
+    as booked  -0.7356
+    0.25% -0.7372   0.50% -0.9532   0.75% -1.0912   1.00% -1.0365
+    1.50% -0.9858   2.00% -1.0078   3.00% -1.0024
+
+U-shaped, negative at every width, no re-entry credited so each is a FLOOR. The
+mid widths take -0.75% losses on trips that recovered. This CONTRADICTS
+`tight-stop-beats-the-selector` on the tradeable population.
+
+**Third, and the one that ends the cost argument:** break-even gross is 0.4774%
+of notional at the median $1.50 clip, 0.3362% at the whole $23.18 wallet, and
+0.3187% at an INFINITE clip -- the variable leg alone. Delivered gross is
+-0.3144%. **The shortfall is 0.6331pp at an infinite clip.** No clip size closes
+a 0.63pp gap in GROSS. Not one strategy is net-positive at n>=3 (best:
+obv_accumulation@5d, 8 trips, +0.0294 gross, -0.0242 net).
+
+**Verdict: DIRECTION.** The entry has no edge on live-tradeable symbols. Cost,
+stop, clip and feed regime are all now retired with numbers.
+
+**NEXT, filed as [aee0af15]:** `rsi_reversal` is 10 trips and -0.4327 -- 61% of
+the whole book's gross loss from 11% of its trips, at 30% win -- and it is the
+strategy the status board ranks CLOSEST TO GRADUATION. Its horizon variants do
+not share the defect (@1w +0.0312, @1d +0.0035, @12h +0.0022); the loss is in
+the BASE variant, the one with a live branch. Also: `atf_static` is the opposite
+shape, gross only -0.0791 but net -0.3420, so for that strategy alone cost IS
+binding. And AERO-USDC is 26 of 88 trips -- 30% of the entire tradeable evidence
+budget -- at -0.4985 net.
