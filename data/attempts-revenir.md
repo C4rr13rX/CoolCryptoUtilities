@@ -3387,7 +3387,7 @@ between the model and `pred_summary`, not the weights. The one residue worth
 re-filing small: `_log_predropped` writes 4 rows per tick where 1 would do,
 which is what made this number wrong in the first place.
 
-- 2026-09-10 Gale pass 105 -- HYPOTHESIS (from [cdfbf97e]): price_mu is saturated at -1.15 because the scale-free transform never reaches the served graph, so the units are the defect. FALSIFIED, both halves. Probed models/active_model.keras directly (scripts/model_window_probe.py, shipped): PriceVolScaleNorm IS in the served graph as ts_scale_norm, and price_mu is +0.000504 at price level 1e-4 AND at 1.2e4 -- identical to six decimals across eight orders of magnitude. On real last-60 market_stream windows the model returns price_mu -0.1655 to -0.2428, nowhere near the recorded p50 -1.2076. RESULT: the saturation is a CONTAMINATED SERVED WINDOW. One foreign row does it -- DRB-USDC clean -0.165549, same window with one row x100 -1.625106, with one ETH-USDT row at t=30 -1.839544, interleaved with ETH +0.906014. Shipped trading/data_loader.sanitize_model_price_window + 8 tests (b966158); through it the x100 window returns -0.165553, the clean control to four decimals. Then found the source: bot.py::_prewarm_buffer_from_history seeds the buffer from historical OHLCV, and its loose fallback glob matched 0039_VIRTUAL-WETH.json for VIRTUAL-USDC -- a WETH-denominated series seeded into a USDC symbol's window, log ratio -8.600. PUMP-USDC -10.600, ALIGN-USDC -0.983, all seeds 13-20 days old. NOT YET SUFFICIENT: only 1.97% of live market_stream windows (100/5067 over 24h) carry a foreign row on their own, concentrated in CHUBBY/PEPE/DOGE, so the live feed alone does not explain a p50 of -1.2. NEXT: wire the guard into _prepare_inputs ([fec1125e]) and read its repaired count on the first tick -- a count near 0 says the buffer is clean and something else saturates it; a material count says the prewarm seam is it. Do NOT re-probe the model or the loader; that question is closed.
+- 2026-09-10 Gale pass 105 -- HYPOTHESIS (from [cdfbf97e]): price_mu is saturated at -1.15 because the scale-free transform never reaches the served graph, so the units are the defect. FALSIFIED, both halves. Probed models/active_model.keras directly (scripts/model_window_probe.py, shipped): PriceVolScaleNorm IS in the served graph as ts_scale_norm, and price_mu is +0.000504 at price level 1e-4 AND at 1.2e4 -- identical to six decimals across eight orders of magnitude. On real last-60 market_stream windows the model returns price_mu -0.1655 to -0.2428, nowhere near the recorded p50 -1.2076. RESULT: the saturation is a CONTAMINATED SERVED WINDOW. One foreign row does it -- DRB-USDC clean -0.165549, same window with one row x100 -1.625106, with one ETH-USDT row at t=30 -1.839544, interleaved with ETH +0.906014. Shipped trading/data_loader.sanitize_model_price_window + 8 tests (b966158); through it the x100 window returns -0.165553, the clean control to four decimals. Then found a source: bot.py::_prewarm_buffer_from_history seeds the buffer from historical OHLCV and checks NEITHER the age NOR the scale of the seed. Using the bot's own resolution over 35 live symbols: 15 in tolerance, 18 with no file, TWO beyond it -- PUMP-USDC seeded at median 0.0041 against a live 1.0220e-07 (log ratio -10.600, 40,000x, file 19.9 days old) and ALIGN-USDC 0.01891 vs 0.0070700 (-0.984, 20.2 days old). I first reported this as a WETH file seeding a USDC symbol; THAT WAS WRONG and was a case bug in my own census (name.upper() tested against a lowercase '.json'), which sent every symbol down the loose branch. The bot's loose fallback glob resolves ZERO of 35 symbols and 0033_VIRTUAL-USDC.json exists. Also a clean negative worth keeping: the TRAINING corpus is NOT contaminated -- 560 files, 11,897,074 bars, only 15 bar-to-bar breaks beyond 2.5x (0.0001%), so the direction-head collapse is not a training scale break. NOT YET SUFFICIENT: only 1.97% of live market_stream windows (100/5067 over 24h) carry a foreign row on their own, concentrated in CHUBBY/PEPE/DOGE, so the live feed alone does not explain a p50 of -1.2. NEXT: wire the guard into _prepare_inputs ([fec1125e]) and read its repaired count on the first tick -- a count near 0 says the buffer is clean and something else saturates it; a material count says the prewarm seam is it. Do NOT re-probe the model or the loader; that question is closed.
 
 ### 2026-09-10, Jet (pass 105) -- CORRECTING MYSELF, SAME PASS
 I made two wrong claims from organism_snapshots and caught both before they
@@ -3424,3 +3424,58 @@ sweep it in chunks -- I could not complete the comparison inside one pass.
 NEXT: find the ONE shared upstream input or preprocessing step feeding BOTH the
 direction head and exit_conf, and diff it across the 10-12h boundary. Print n,
 missing, distinct and MAX for every field before trusting it.
+
+## 2026-09-10, pass 105, Cove (second entry) -- price_mu shipped a DOLLAR PRICE as a return; fixed, and it is NOT the head collapse
+
+HYPOTHESIS: `price_mu` reaching +78143.700 in the head-collapse onset window
+poisoned the prediction head.
+
+RESULT: HALF RIGHT, AND I RETRACTED THE HALF THAT MATTERED WITHIN THE PASS.
+Commit f6e5dfc, gate 657 passed / 0 failed, profit_logic_audit NO KNOWN LOSING
+SHAPES, [d0aed38e] closed.
+
+THE REAL BUG, FIXED: `trading/bot.py:5534`, `_neutral_pred_summary`, emitted
+`"price_mu": float(current_price or 0.0)` -- the price in dollars -- inside a
+summary whose every other field is a dimensionless neutral (exit_conf 0.5,
+direction_prob 0.5, net_margin 0.0, net_pnl 0.0, expected_return 0.0). It is
+read as a RETURN: `:5553` sets `delta = price_mu` outright and `:5639` passes
+it to `pipeline.horizon_forecast` positionally with `current_price` handed
+over separately beside it. 14 of 5634 cycles in 24h carried
+`abs(price_mu) > 10` -- WBTC-USDC 78143.700, CBBTC-USDC 77970.870, ETH/WETH
+2461.54-2461.65, down to LINK 11.777. ONLY high-priced symbols: on a $0.00003
+token a price and a return are the same order of magnitude, which is why it
+survived. Now 0.0, matching what `_summarise_predictions` already used as this
+field's neutral on a read failure. Test:
+`tests/test_a_neutral_forecast_is_not_the_price_in_dollars.py`, 4 cases,
+proven failing pre-fix (`float(78143.7 or 0.0)` against `abs < 1.0`).
+
+THE RETRACTION, AND IT IS THE USEFUL PART: all 14 rows carry exactly
+`exit_conf 0.5 / direction_prob 0.5 / net_margin 0.0` -- they are
+model-UNAVAILABLE cycles, so they never reached a training target and CANNOT
+have dragged the head. I posted them to the board as the best lead on the
+collapse and corrected it five minutes later. The clustering at -13.8h is
+coincidence. NEXT READER: the discriminator is one field --
+`direction_prob == 0.5 and net_margin == 0.0` marks the no-prediction
+sentinel; check it before attributing any extreme value to the model.
+
+WHAT ACTUALLY PINS THE COLLAPSE, from `organism_snapshots['prediction']`,
+which carries `direction_prob_raw`, `_calibrated`, `_neutral` and the final
+value SEPARATELY -- so the calibrator question is settled by reading, not
+inference. Per 2h bucket over 24h, oldest first:
+  direction_prob_RAW p50: 0.727 0.785 0.730 0.704 0.268 0.482 0.495 0.404
+                          0.254 0.144 0.089 0.084
+  direction_prob_RAW MAX: 0.952 0.962 0.940 0.866 0.851 0.884 0.592 0.530
+                          0.358 0.246 0.158 0.223
+The RAW head -- before any calibration -- fell by the same factor on the same
+clock as the final. The calibrator, the neutrality blend and the decision
+threshold are all RULED OUT. `_neutral` moved the OTHER way, 0.433 -> 0.708.
+
+AND A MERGE THAT SAVES AN ITEM: `net_margin` IS `price_mu` MINUS A CONSTANT
+FEE. Their per-bucket medians differ by 0.006-0.007 in every bucket without
+exception (-0.926/-0.933, -0.292/-0.299, -1.280/-1.287, -1.806/-1.813,
+-0.575/-0.582). [cdfbf97e] and the price_mu collapse are ONE failure; fixing
+either fixes both, and there is no separate net_margin defect to hunt.
+
+NEXT: [b549afed], on the RAW head's inputs. Do not re-measure the calibrator,
+do not chase net_margin separately, and do not attribute an extreme value to
+the model without checking the sentinel first.
