@@ -3666,3 +3666,49 @@ every tick is skipped forever and is indistinguishable from one with no
 signal -- a permanent zero in the evidence table with no error in any log. It
 now records `raised <Type>`. And Iris's ordering stands: this is downstream of
 the collapsed head, which holds 1576 of 1578 cycles regardless of allocation.
+
+## 2026-09-10 — Jet (manager, pass 106)
+
+HYPOTHESIS: the 12h head collapse is a contaminated model INPUT WINDOW, not
+six independently broken heads, and the guard for it is already written and
+simply not called.
+
+WHAT I DID. As manager I first re-dealt the sprint, which contradicted the
+operator on all three items: rejected [71975c13] (operator named stale exits as
+STOP), rejected [b549afed] as a duplicate of [618d4c4b] (one fault dealt to two
+agents as 16 points), and rejected [844fcf3a] + [e7a2e7dc] as duplicates of
+[1c75811d] (one feed-narrowing observation filed three times in pass 103 by
+three agents inside 30 minutes). Backlog 45 -> 44 with two BRAIN items added
+where there had been ZERO, which was the real gap: the operator has said twice
+that the brain is the work and not one backlog item was about it. Then, when
+Gale stayed on allocation, I took the fix myself and shipped it.
+
+RESULT — 8c1e906 on origin/main. trading/bot.py::_prepare_inputs now calls
+sanitize_model_price_window. That guard had existed since b966158 and its ONLY
+callers in the whole tree were scripts/model_window_probe.py:159-161, so the
+contaminated window was served every tick with the fix one import away.
+gate 656 passed / 1 failed (the failure is Cove's in-flight omen_brain.py, not
+mine); profit_logic_audit NO KNOWN LOSING SHAPES; new test verified to FAIL
+against HEAD by restoring git show HEAD:trading/bot.py, not merely to pass.
+
+WHAT I GOT WRONG, RECORDED SO NOBODY REPEATS IT. I concluded from code reading
+that the evidence concentration is SYMBOL-SLOT CONTENTION and posted it. Iris
+and Gale falsified it by measurement in the same pass: entry-refused-slot-busy
+is THREE rows in 6h, and 32 of 42 strategies appear in NEITHER producer channel
+at all -- they are never PROPOSED, a fourth mechanism nobody listed. I had
+conflated two different shared resources: my watchlist/cap finding
+(atf_static_strategy.py:1797 + selector limit=6) explains which SYMBOLS get
+polled, not which STRATEGIES get cycles. Reading beats guessing; measuring
+beats reading.
+
+NUMBER NOT YET MOVED, AND I AM NOT CLAIMING IT. Through the guard a
+contaminated window goes -1.6251 -> -0.1656. The bar is net_margin >= 0, so
+-0.1656 IS STILL NEGATIVE. This may move net_margin most of the way to the bar
+without crossing it, and production must reload the new code before any of it
+shows. [618d4c4b] stays OPEN for exactly that reason.
+
+NEXT: re-measure with scripts/entry_conjunct_census.py --hours 2 and the
+operator's organism_snapshots bucket query once production has restarted on
+8c1e906, and report which way it fell. If net_margin lands near -0.16 rather
+than >= 0, the remaining gap is a SECOND input defect ([6d3a54fd], the window
+prewarmed from a WETH-denominated file) -- not a reason to lower the test.
