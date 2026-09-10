@@ -443,6 +443,9 @@ GATE_TESTS = (
     # Live exit booking -- step 9 of the path to a paid trade. Five of its
     # seven tests were red and outside the gate's view.
     "test_live_exit_books_the_receipt_fill.py",
+    # Graduation and re-arm. Two of its five were red: the fixture predated
+    # both the tradeable-evidence bar and the symbol-edge gate.
+    "test_ghost_only_never_graduates.py",
 )
 
 

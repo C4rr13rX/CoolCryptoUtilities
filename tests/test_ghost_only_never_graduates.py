@@ -30,6 +30,12 @@ def ledger(tmp_path, monkeypatch):
     return StrategyLedger(path=tmp_path / "ledger.json")
 
 
+#: A symbol with NO ledger history, so the symbol-edge gate has nothing to
+#: refuse it on. Never put a traded symbol here: the gate reads the live book,
+#: and a unit test keyed to that is red the day the symbol starts losing.
+SPEND_SYMBOL = "ZQTESTLIVE-USDC"
+
+
 def test_ghost_only_executor_never_graduates(ledger):
     """A flawless ghost record still buys no live approval."""
     for _ in range(30):
@@ -45,9 +51,27 @@ def test_ghost_only_executor_never_graduates(ledger):
 
 
 def test_spendable_strategy_still_graduates_normally(ledger):
-    """The bar is on one executor, not on graduation itself."""
-    for _ in range(6):
-        ledger.record("atf_static", profit=0.05, mode="ghost", confidence=0.9)
+    """The bar is on one executor, not on graduation itself.
+
+    Two things this fixture got wrong as the ledger moved under it, and BOTH
+    are needed -- fixing only the first leaves it red:
+
+      * no ``symbol=``. Graduation counts _tradeable_of(ghost), and a row with
+        no symbol can never be judged tradeable, so a flawless ghost record
+        bought zero tradeable evidence.
+      * a TRADED symbol is refused by the symbol-edge gate on its real ledger
+        history (atf_static on AERO-USDC: 17 round trips at -0.470% against
+        0.465% of cost, t=-3.61). That refusal is correct; keying a unit test
+        to a symbol whose live history changes under it is not. SPEND_SYMBOL
+        has no ledger history and must stay that way.
+
+    The count is 25 rather than 6 because the bar is 20 TRADEABLE round trips.
+    That is more evidence to clear the bar, not a lowered bar -- nothing here
+    touches MIN_TRADES or MIN_WINRATE.
+    """
+    for _ in range(25):
+        ledger.record("atf_static", profit=0.05, mode="ghost", confidence=0.9,
+                      symbol=SPEND_SYMBOL)
     assert ledger.is_live_approved("atf_static")
     assert ledger.approved_ids() == ["atf_static"]
 
@@ -95,15 +119,23 @@ def test_demotion_reason_survives_a_fresh_ghost_book(ledger):
 
 
 def test_performance_demotion_remains_recoverable(ledger):
-    """Guards against over-correcting: ordinary demotion must still be undoable."""
-    for _ in range(6):
-        ledger.record("mean_reversion", profit=0.05, mode="ghost")
+    """Guards against over-correcting: ordinary demotion must still be undoable.
+
+    Same two-part fixture fix as test_spendable_strategy_still_graduates_normally
+    -- see its docstring for why the symbol and the count both had to move.
+    """
+    for _ in range(25):
+        ledger.record("mean_reversion", profit=0.05, mode="ghost",
+                      symbol=SPEND_SYMBOL)
     assert ledger.is_live_approved("mean_reversion")
 
     ledger.demote("mean_reversion", "3 consecutive live losses")
     assert not ledger.is_live_approved("mean_reversion")
 
-    # Demotion blanks the ghost book; earning it again re-approves.
-    for _ in range(6):
-        ledger.record("mean_reversion", profit=0.05, mode="ghost")
+    # Demotion blanks the ghost book; earning it again re-approves. The re-arm
+    # rule judges evidence gathered SINCE the demotion, so the book has to be
+    # re-earned to the full bar -- 25, not 6, and on the same no-history symbol.
+    for _ in range(25):
+        ledger.record("mean_reversion", profit=0.05, mode="ghost",
+                      symbol=SPEND_SYMBOL)
     assert ledger.is_live_approved("mean_reversion")
