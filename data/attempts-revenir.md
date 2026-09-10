@@ -2094,3 +2094,24 @@ ALSO LEFT ON THE TABLE, both filed: ed0d721e (75% of the ghost lane's decision
 budget re-decides one banned symbol 88 times an hour, and ZERO round trips
 have closed in 8.4 hours) and one corrupt directive carrying target/price =
 12551319.6, which is the exact shape that fires an instant take-profit.
+
+- 2026-09-10 pass 98, Iris, SECOND ENTRY -- the census that should be read before any further
+  cost-model or gate work. HYPOTHESIS: the ghost lane closed nothing for 8.5 hours because
+  exits were failing. WRONG, and the truth is upstream. DID: counted all 494 trading_ops in
+  that window. RESULT: enter/ghost_candidate_quote_ok 182, hold/entry-predropped-edge-ban
+  163, enter/ghost_candidate 55, strategy_publish 50, hold/entry-refused-lattice 38,
+  exit/ghost-exit 3, enter/ghost-entry 2, hold/position-abandoned-dark-feed 1. The lane is
+  not closing because it is not OPENING: 237 entry candidates produced TWO entries, 0.8%.
+  TWO SEPARATE LOSSES. (a) The edge ban is one symbol -- 121 of 163 pre-drops are AERO-USDC
+  (74%), then ZORA 24, XCAT 15, DRB 3. The candidate generator keeps proposing the symbol
+  the gate is most certain about. (b) The BIGGER loss records no reason at all: 149 of the
+  237 candidates are THREE symbols quoted OK about 50 times each and never entering --
+  ZORA-USDC 50, VVV-USDC 50, DRB-USDC 49 -- each status=ghost_candidate_quote_ok and NOT ONE
+  followed by an entry, a refusal op, or a lattice refusal. They die between quote_ok and
+  entry with nothing written. And the only symbol that entered, WTCOIN-USDC (2 of 16),
+  entered from atf_static_scout, the ghost-only executor with no live branch, so even those
+  two are evidence that can never be spent.
+  NEXT: do NOT change a gate and do NOT tune a cost model on this book -- it gained ONE row
+  in 8.5 hours. Instrument the path between ghost_candidate_quote_ok and ghost-entry so a
+  refused candidate writes its reason, then re-run this census. Backlog d7d87724 carries the
+  numbers. You cannot fix a refusal that does not say why.
