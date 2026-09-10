@@ -4667,3 +4667,26 @@ real and should not be dismissed as noise. And whoever cites the 4.4pp band
 must say which configuration produced it, because it is not this one. Also
 use pool_count to tell nodes apart -- :8090 and :8091 BOTH return node_id
 node-cd4c5a9a7225, while pool_count reads 4 vs 15.
+
+## 2026-09-10 | Iris | pass 109 addendum | the move-size condition buys no direction
+
+HYPOTHESIS: the operator's 14:06 diagnosis -- entry needs a move-SIZE
+condition, not just direction, because on the 62.5% of ticks moving less than
+cost a perfect direction call still loses.
+
+DID: added a move-size arm to scripts/head_skill_census.py. Enter only when
+the symbol's trailing volatility over the prior 30m is in the top third,
+computed strictly backward (bisect at ts exclusive; a test goes red if
+hindsight leaks in). Commit 4577baf.
+
+RESULT, 26h / 5881 ticks / 15m / 0.3592% round trip:
+  ALL TICKS  n=5881  |move|>cost 27.6%  UP 2/5  DOWN 0/8
+  HIGH-VOL   n=1961  |move|>cost 48.8%  UP 2/8  DOWN 1/4
+The filter WORKS as a filter (+21.2 points, nearly doubling the share of ticks
+outrunning the fee) and buys ZERO direction. At 60m: clearing 53.3% -> 74.7%,
+top decile UP 4/9, DOWN 0/3.
+
+NEXT: cost is clearable three ways -- horizon, symbol, move-size selection --
+and none survives a DOWN window. Stop asking whether a target can pay for
+itself; ask whether it holds in a falling window. Every rule measured this
+pass is long exposure wearing a filter.
