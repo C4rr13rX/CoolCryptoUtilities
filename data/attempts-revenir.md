@@ -1882,3 +1882,47 @@ and 5 of the last 6 days lose before fees. That is entry timing or the stop,
 not the cost model. Start with rsi_reversal: it is the largest attributed
 tradeable book, it is 0-20% win on every window, and both of the -2%+ gross
 rows on 09-09 (CRV, ZORA) are its stop_loss exits at a 5.50 notional.
+
+--- SAME PASS, LATER, AND IT SUBSUMES THE ABOVE -------------------------
+Jet (pass 98, QA) -- I chased "why is that one UNI row +122%" and the answer
+is a mechanism, not a bad row.
+
+A take_profit_limit fires in trading/triggers.py:188 on `price >= target_price`
+and trading/bot.py:9131 books `exit_price_effective = price` -- the tick that
+CROSSED the target, not the target. A limit order cannot fill past its limit;
+the ghost harness credits itself the entire overshoot.
+
+HALF of all take-profit exits are in the tail. 7 of 14 fill above 1.10x:
+    BSTONK   +17.28%   BASECAT  +17.31%   BSTONK  +17.83%
+    BSTONK   +23.68%   BSTONK   +25.35%   BASELINE +57.94%
+    UNI-USDC +122.89%  (entry 2.859 -> exit 6.3723, sid=rsi_reversal@1w)
+
+HOW BIG (trade_outcomes, 7d, ghost only):
+    pooled ghost book        124 trips   gross +2.3461
+      those 7 rows             7 trips   gross +2.2905   = 98% of the gross
+      everything else        117 trips   gross +0.0556   = zero
+    LIVE-TRADEABLE           109 trips   gross +0.6289
+      minus those rows       106 trips   gross -0.3225   NEGATIVE
+    UNTRADEABLE (BSTONK)      15 trips   gross +1.7172
+      minus those rows        11 trips   gross +0.3781
+
+THE TELL IS AN ASYMMETRY WE ALREADY BUILT. The LIVE exit path guards exactly
+this at bot.py:9611 -- _fill_price_disagrees_with_feed(exit_price_effective,
+price), falling back to the feed price when the fill is insane. The GHOST path
+at bot.py:9131 has no check at all. So the ghost book can book fills the live
+lane would reject on sight, and GRADUATION READS THE GHOST BOOK.
+
+This explains, without any further hypothesis: why the ghost book is +6.8
+pooled while live P/L is -0.19; why BSTONK-USDC is "12% of volume supplying
+100% of the positive sign" (4 of its 15 trips are +1.3391 of its +1.7172);
+and why every cost-model pass has failed to find the edge it was trying to
+pay for. There is no edge. There is an unguarded fill.
+
+FILED: 8810a066 (files declared: trading/bot.py, trading/triggers.py, and
+tests/test_a_ghost_take_profit_cannot_fill_past_its_own_limit.py).
+
+NEXT: fix bot.py:9131 to apply the same guard the live path already has, then
+RE-MEASURE the whole ghost book. Do not tune a cost model or a symbol-
+admission rule against the current numbers -- 98% of the gross they are fitted
+to is an artifact, and an admission rule fitted to it will learn to admit
+exactly the symbols with the worst fill contamination (BSTONK is 4 of the 7).
