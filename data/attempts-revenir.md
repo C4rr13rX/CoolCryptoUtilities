@@ -4008,3 +4008,27 @@ yet measured. That is the honest state.
   one: run the suite against two deliberately different production books and
   demand an identical pass/fail set. Do NOT loosen _live_tradeable or the
   symbol bans to make tests green; they are why these numbers are honest.
+
+- 2026-09-10 Cove pass 107 -- BRAIN. Hypothesis: the relation streams shipped in
+  6706bc3 would raise held-out accuracy. RESULT: the hypothesis was NOT TESTED and
+  I am saying so rather than dressing up the arm I did run. What I measured is the
+  7-collection BASELINE on the fresh v3_assoc fabric (:8091, brain-data-assoc-p106):
+  AERO-USDC h12, 2717 balanced train / 400 held-out, purge gap 12 bars.
+    held-out exact 28.5%  vs majority-class baseline 30.2%  -> BELOW BASELINE
+    net per trade -0.2528% vs every-bar-buy -0.5995%  (BOTH NEGATIVE, one down window)
+    train recall 97.5% -- reproduction, not prediction, and not progress
+  NO EDGE IS CLAIMED. The buy-vs-every-bar gap is selection against a falling tape in
+  ONE window; exact accuracy is below the majority class, so it is not predicting.
+  SELF-CORRECTION to my own 6706bc3: that commit said "the query set admits two of
+  three" relations. By DEFAULT it admits NONE -- OMEN_RELATION_COLLECTIONS is off, so
+  COLLECTIONS is a 7-tuple and build_collections never emits rel_* at all. The
+  distinctness numbers were real but unreachable from the experiment path; the commit
+  message overstated what had moved. The flag itself is correct and stays off (pool 12
+  on a v2 node silently turns every training sample into a miss).
+  TWO DEFECTS FOUND: garbage control fails -- 17 of 40 pure-noise frames come back
+  ACTIONABLE (42.5%); and the confidence sweep is flat 0.00->0.50 at 80 trades, because
+  min real confidence is 0.879, so no floor can bind. Confidence cannot rescue the
+  negative expectancy.
+  NEXT: run the with-relations arm on a SECOND FRESH dir (not p106 -- it is now taught
+  7-collection frames and retraining on top makes it a dirty fabric), same --seed 7,
+  then repeat both arms on an UP window. Command in data/brain_experiments/HELDOUT-pass107-cove.md.
