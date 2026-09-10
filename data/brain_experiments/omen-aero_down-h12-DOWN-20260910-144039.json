@@ -1,0 +1,177 @@
+{
+  "corpus": "data\\brain_experiments\\p108_aero_down.json",
+  "symbol": "aero_down",
+  "bars": 900,
+  "bar_seconds": 3600,
+  "horizon_bars": 12,
+  "round_trip_cost": 0.0065,
+  "omen_threshold": 0.00975,
+  "train_window": [
+    345,
+    695
+  ],
+  "test_window": [
+    707,
+    887
+  ],
+  "train_end_pinned": false,
+  "heldout_regime": "DOWN",
+  "heldout_window_up_rate": 0.2722222222222222,
+  "heldout_window_mean_forward": -0.021835806896992306,
+  "heldout_ts_range": [
+    1736067600,
+    1736712000
+  ],
+  "trained_pairs": 311,
+  "failed_pairs": 0,
+  "train_seconds": 30.8,
+  "skipped_training": false,
+  "collection_distinctness": {
+    "geometry": 0.9903536977491961,
+    "temporal": 1.0,
+    "flow": 0.39228295819935693,
+    "volatility": 0.18971061093247588,
+    "cross": 0.5337620578778135,
+    "horizon": 0.003215434083601286,
+    "instrument": 0.003215434083601286,
+    "rel_move_vol": 0.9614147909967846,
+    "rel_shape_flow": 0.3665594855305466,
+    "rel_trend_noise": 0.617363344051447
+  },
+  "measured_query_collections": [
+    "geometry",
+    "temporal",
+    "flow",
+    "cross",
+    "rel_move_vol",
+    "rel_shape_flow",
+    "rel_trend_noise"
+  ],
+  "query_collections": [
+    "geometry",
+    "temporal",
+    "flow",
+    "cross",
+    "rel_move_vol",
+    "rel_shape_flow",
+    "rel_trend_noise"
+  ],
+  "query_source": "measured",
+  "regime_source": "computed",
+  "conflicting_frame_tuples": 0,
+  "recall_ceiling": 1.0,
+  "consensus": false,
+  "train_recall": 1.0,
+  "recall_sample": 200,
+  "recall_answered": 200,
+  "recall_abstained": 0,
+  "recall_misses": [],
+  "garbage_distinct": 4,
+  "garbage_total": 40,
+  "garbage_actionable": 7,
+  "garbage_confidence": [
+    0.5266860127449036,
+    0.5325110554695129,
+    0.5334503650665283,
+    0.5360974073410034,
+    0.5380731225013733,
+    0.5409871935844421,
+    0.5447958707809448,
+    0.5475251078605652,
+    0.5519658923149109,
+    0.5526002049446106,
+    0.5526800155639648,
+    0.5531851053237915,
+    0.5533475279808044,
+    0.554050087928772,
+    0.5577338933944702,
+    0.5599592924118042,
+    0.5606133937835693,
+    0.5606253147125244,
+    0.5615649223327637,
+    0.5616750717163086,
+    0.5621298551559448,
+    0.565366804599762,
+    0.5654029846191406,
+    0.5670541524887085,
+    0.5670639276504517,
+    0.5676520466804504,
+    0.5678781270980835,
+    0.568475067615509,
+    0.5689459443092346,
+    0.5691551566123962,
+    0.5704171657562256,
+    0.571604311466217,
+    0.5718604922294617,
+    0.5722581148147583,
+    0.5801041126251221,
+    0.5804929137229919,
+    0.5851816534996033,
+    0.5864563584327698,
+    0.5876261591911316,
+    0.5983765125274658
+  ],
+  "real_confidence_percentiles": "min 0.865 med 0.932 p90 0.955 max 0.975",
+  "confidence_sweep": [
+    {
+      "floor": 0.0,
+      "trades": 42,
+      "per_trade": -0.025467624462655363,
+      "hit_rate": 0.19047619047619047
+    },
+    {
+      "floor": 0.05,
+      "trades": 42,
+      "per_trade": -0.025467624462655363,
+      "hit_rate": 0.19047619047619047
+    },
+    {
+      "floor": 0.1,
+      "trades": 42,
+      "per_trade": -0.025467624462655363,
+      "hit_rate": 0.19047619047619047
+    },
+    {
+      "floor": 0.2,
+      "trades": 42,
+      "per_trade": -0.025467624462655363,
+      "hit_rate": 0.19047619047619047
+    },
+    {
+      "floor": 0.3,
+      "trades": 42,
+      "per_trade": -0.025467624462655363,
+      "hit_rate": 0.19047619047619047
+    },
+    {
+      "floor": 0.5,
+      "trades": 42,
+      "per_trade": -0.025467624462655363,
+      "hit_rate": 0.19047619047619047
+    }
+  ],
+  "heldout_admitted": 180,
+  "heldout_total": 180,
+  "heldout_exact_accuracy": 0.31666666666666665,
+  "baseline_majority": 0.55,
+  "baseline_up_rate": 0.2722222222222222,
+  "predicted_mix": {
+    "slide": 52,
+    "murk": 50,
+    "trough": 42,
+    "crest": 8,
+    "climb": 28
+  },
+  "true_mix": {
+    "slide": 99,
+    "murk": 44,
+    "trough": 25,
+    "climb": 2,
+    "crest": 10
+  },
+  "buy_omens": 42,
+  "buy_hit_rate": 0.19047619047619047,
+  "buy_net_total": -1.0696402274315253,
+  "buy_net_per_trade": -0.025467624462655363,
+  "every_bar_net_per_trade": -0.0283358068969923
+}

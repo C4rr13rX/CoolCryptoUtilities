@@ -103,9 +103,28 @@ def _entry_row(ts, size, spent, price, tx, trade_id):
     }
 
 
-def _settled_row(tx, trade_id):
+def _settled_row(tx, trade_id, purpose="live_entry", ts=0.0):
+    """A settled swap in the shape the chain actually writes.
+
+    ``purpose`` IS NOT OPTIONAL AND IT IS WHY THESE TESTS WERE RED.
+
+    This fixture predates the ``purpose`` filter in
+    ``bot._unmatched_live_entry_details``, which walks the settled rows and
+    keeps only ``purpose == "live_entry"``, breaking on ``live_exit``. With no
+    such key the fixture's rows read as neither, every one was skipped, the
+    scan returned [] and ``_adopt_orphaned_live_holding`` returned None -- so
+    all ten tests in this file failed on the same line for a reason that had
+    nothing to do with adoption.
+
+    Production is right and must not be loosened. Measured 2026-09-10 over the
+    last 40 ``live-swap-settled`` rows in the live database: ``purpose`` is
+    present on 40 of 40, reading live_entry 20, live_exit 19, quote_topup 1.
+    Dropping that filter would let a settled SELL, or the stablecoin top-up
+    swap, be counted as an unmatched BUY -- which is how a basis gets computed
+    over money that was never spent on the base asset.
+    """
     return {
-        "ts": 0.0,
+        "ts": ts,
         "wallet": "live",
         "chain": "base",
         "symbol": SYMBOL,
@@ -114,6 +133,7 @@ def _settled_row(tx, trade_id):
         "details": {
             "tx_hash": tx,
             "trade_id": trade_id,
+            "purpose": purpose,
             "buy": CBBTC,
             "sell": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
             "confirmed": True,
@@ -141,7 +161,20 @@ class _DB(_Stub):
                 }
             )
         self._rows = sorted(rows, key=lambda r: r["ts"], reverse=True)
-        self._settled = [_settled_row(b[4], b[5]) for b in BUYS]
+        # NEWEST FIRST, and carrying a real ``ts`` -- because that is what
+        # ``db.fetch_trades`` returns and what the scan is written against.
+        # These rows were built in BUYS order (oldest first) with ts pinned to
+        # 0.0, so the fixture handed a newest-first reader an oldest-first list
+        # with no ordering information in it at all. Two consequences: the
+        # adopted tx list came back reversed, and -- far worse for anything
+        # this file is meant to guard -- the "a settled sell closes everything
+        # older" break in `_unmatched_live_entry_details` would have broken on
+        # the wrong rows, which no test here could have caught.
+        self._settled = sorted(
+            (_settled_row(b[4], b[5], ts=b[0]) for b in BUYS),
+            key=lambda r: r["ts"],
+            reverse=True,
+        )
 
     def fetch_trades(self, *, limit=200, statuses=None, wallets=None,
                      symbol=None, since_ts=None):

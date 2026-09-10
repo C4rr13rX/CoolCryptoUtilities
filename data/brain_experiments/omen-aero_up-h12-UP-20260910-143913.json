@@ -1,0 +1,177 @@
+{
+  "corpus": "data\\brain_experiments\\p108_aero_up.json",
+  "symbol": "aero_up",
+  "bars": 900,
+  "bar_seconds": 3600,
+  "horizon_bars": 12,
+  "round_trip_cost": 0.0065,
+  "omen_threshold": 0.00975,
+  "train_window": [
+    345,
+    695
+  ],
+  "test_window": [
+    707,
+    887
+  ],
+  "train_end_pinned": false,
+  "heldout_regime": "UP",
+  "heldout_window_up_rate": 0.7388888888888889,
+  "heldout_window_mean_forward": 0.04334106996728788,
+  "heldout_ts_range": [
+    1754427600,
+    1755072000
+  ],
+  "trained_pairs": 303,
+  "failed_pairs": 0,
+  "train_seconds": 19.6,
+  "skipped_training": false,
+  "collection_distinctness": {
+    "geometry": 0.9801980198019802,
+    "temporal": 1.0,
+    "flow": 0.2706270627062706,
+    "volatility": 0.19801980198019803,
+    "cross": 0.45874587458745875,
+    "horizon": 0.0033003300330033004,
+    "instrument": 0.0033003300330033004,
+    "rel_move_vol": 0.9537953795379538,
+    "rel_shape_flow": 0.31353135313531355,
+    "rel_trend_noise": 0.6105610561056105
+  },
+  "measured_query_collections": [
+    "geometry",
+    "temporal",
+    "flow",
+    "cross",
+    "rel_move_vol",
+    "rel_shape_flow",
+    "rel_trend_noise"
+  ],
+  "query_collections": [
+    "geometry",
+    "temporal",
+    "flow",
+    "cross",
+    "rel_move_vol",
+    "rel_shape_flow",
+    "rel_trend_noise"
+  ],
+  "query_source": "measured",
+  "regime_source": "computed",
+  "conflicting_frame_tuples": 0,
+  "recall_ceiling": 1.0,
+  "consensus": false,
+  "train_recall": 1.0,
+  "recall_sample": 200,
+  "recall_answered": 200,
+  "recall_abstained": 0,
+  "recall_misses": [],
+  "garbage_distinct": 5,
+  "garbage_total": 40,
+  "garbage_actionable": 11,
+  "garbage_confidence": [
+    0.5227651596069336,
+    0.5309292078018188,
+    0.53240567445755,
+    0.5344410538673401,
+    0.5345802903175354,
+    0.5347497463226318,
+    0.5354447364807129,
+    0.5369712710380554,
+    0.5395756959915161,
+    0.5401009917259216,
+    0.5409273505210876,
+    0.541665256023407,
+    0.5429984331130981,
+    0.5454530119895935,
+    0.5478801131248474,
+    0.5494242310523987,
+    0.5497757792472839,
+    0.5512028932571411,
+    0.55329430103302,
+    0.5533456802368164,
+    0.5540590286254883,
+    0.5548557043075562,
+    0.5549528002738953,
+    0.5569366216659546,
+    0.5571460723876953,
+    0.5604538917541504,
+    0.5617061853408813,
+    0.5630271434783936,
+    0.5673112273216248,
+    0.5674764513969421,
+    0.5696218609809875,
+    0.5701106786727905,
+    0.5724654793739319,
+    0.5789376497268677,
+    0.5829847455024719,
+    0.5833303928375244,
+    0.5887417793273926,
+    0.589790403842926,
+    0.5920621156692505,
+    0.5929007530212402
+  ],
+  "real_confidence_percentiles": "min 0.858 med 0.932 p90 0.951 max 0.990",
+  "confidence_sweep": [
+    {
+      "floor": 0.0,
+      "trades": 12,
+      "per_trade": 0.009848778480384983,
+      "hit_rate": 0.5
+    },
+    {
+      "floor": 0.05,
+      "trades": 12,
+      "per_trade": 0.009848778480384983,
+      "hit_rate": 0.5
+    },
+    {
+      "floor": 0.1,
+      "trades": 12,
+      "per_trade": 0.009848778480384983,
+      "hit_rate": 0.5
+    },
+    {
+      "floor": 0.2,
+      "trades": 12,
+      "per_trade": 0.009848778480384983,
+      "hit_rate": 0.5
+    },
+    {
+      "floor": 0.3,
+      "trades": 12,
+      "per_trade": 0.009848778480384983,
+      "hit_rate": 0.5
+    },
+    {
+      "floor": 0.5,
+      "trades": 12,
+      "per_trade": 0.009848778480384983,
+      "hit_rate": 0.5
+    }
+  ],
+  "heldout_admitted": 180,
+  "heldout_total": 180,
+  "heldout_exact_accuracy": 0.29444444444444445,
+  "baseline_majority": 0.5888888888888889,
+  "baseline_up_rate": 0.7388888888888889,
+  "predicted_mix": {
+    "slide": 37,
+    "trough": 12,
+    "murk": 30,
+    "crest": 56,
+    "climb": 45
+  },
+  "true_mix": {
+    "trough": 20,
+    "climb": 106,
+    "murk": 19,
+    "crest": 13,
+    "slide": 22
+  },
+  "buy_omens": 12,
+  "buy_hit_rate": 0.5,
+  "buy_net_total": 0.11818534176461978,
+  "buy_net_per_trade": 0.009848778480384983,
+  "every_bar_net_per_trade": 0.03684106996728787
+}

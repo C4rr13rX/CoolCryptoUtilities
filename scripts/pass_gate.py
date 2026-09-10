@@ -101,6 +101,24 @@ GATE_TESTS = (
     # reason), and the signal id still CAN approve on its own record, so the
     # split earns graduation rather than making it unreachable.
     "test_scout_evidence_is_not_the_bots.py",
+    # SETTLED BUYS THAT NEVER BECAME POSITIONS, AND THE CONTRACT AN EXIT AIMS AT.
+    #
+    # Every exit in this bot is driven off self.positions[symbol], so a settled
+    # buy that leaves no row is never offered to the take-profit, the stop or
+    # the timed exit -- 3.75 USDC of a 17.45 USDC book, 21% of it, was stranded
+    # behind five settled swaps. The sibling file pins which CONTRACT the size
+    # is read from: matching the settled row on trade_id broke on the SELL,
+    # whose `buy` field is the QUOTE token, and booked 17.54249 CBETH at
+    # 2861.26 -- a $50,193 position in a token the wallet holds zero of. Had an
+    # exit fired on it, base_token_address (USDC) would have sized the sell
+    # from the stable leg and sold the whole book.
+    #
+    # Both files were RED for several passes and neither was gated: 12 of the
+    # suite's 22 invisible failures were here, all on one stale fixture that
+    # omitted `purpose` from its settled rows, so the scan matched nothing and
+    # adoption returned None before reading any balance at all.
+    "test_an_unbooked_holding_is_adopted.py",
+    "test_adoption_reads_the_token_it_bought.py",
     # THE ONLY WALL CLOCK THE EXIT RULES HAVE, POOL-WIDE.
     #
     # Every exit rule in this bot is sample-driven, so a position whose feed

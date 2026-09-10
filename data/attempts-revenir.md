@@ -4525,3 +4525,31 @@ repo's expensive bugs are the ones where the instrument REPORTS one thing and DO
 another, so the run looks healthy and the number means nothing. Two in one pass, from
 different causes, both invisible to every check anyone was running. Verify the seam, not
 the function.
+
+2026-09-10 Gale pass 109 -- the query path fires, and the relation topology is measured at last
+
+HYPOTHESIS: pass 108's byte-identical relation arms were a broken comparison
+(the measured query set was printed and never fired), not a null result.
+
+DID: on a fresh :8091 node, one fabric per window, trained once and re-measured
+with `--skip-train` under different `--query-collections`. Six cells: UP and
+DOWN x {flat default query, flat measured query, relations trained AND fired}.
+
+RESULT, all held-out, 180 predictions per cell:
+- THE QUERY PATH FIRES. Same fabric, only the query set changed: DOWN buy
+  omens 41 -> 28 and four of five label counts moved; UP exact 20.0% -> 26.7%.
+- THE PASS-108 NULL IS CONFIRMED A BROKEN COMPARISON. The pre-fix run trained
+  ten collections including all three rel_* streams and its output is
+  byte-identical to a flat fabric that never saw one: 41 omens,
+  -0.031564844684075666, every label count equal. Trained and never queried.
+- RELATIONS MOVE EXACT ACCURACY UP IN BOTH WINDOWS: DOWN 30.0 -> 31.7%,
+  UP 26.7 -> 29.4%. Same direction twice. rel_move_vol distinctness 0.961/0.954.
+- IT DOES NOT BEAT BASELINE. All six cells sit 23-29 points BELOW the majority
+  class (55.0% DOWN, 58.9% UP). Per-trade beats its baseline in exactly one
+  cell of six (DOWN relations -2.5468% vs -2.8336% every-bar) and loses in the
+  UP window by 2.7 points, so it is one window, not an edge. OMEN_STRATEGY_ENABLED stays 0.
+
+NEXT: not another topology tweak. A fabric at 100% train recall and 30%
+held-out against a 55% majority is reproducing, not generalising; a change
+worth 2 points cannot close a 25-point gap. Ask why the gap is there first.
+Report: data/brain_experiments/QUERY-PATH-PROOF-pass109-gale.md

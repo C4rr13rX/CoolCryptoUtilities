@@ -89,7 +89,20 @@ def _entry_row(ts=1788491703.8893654):
     }
 
 
-def _settled(ts, tx, buy, sell):
+def _settled(ts, tx, buy, sell, purpose):
+    """``purpose`` IS NOT OPTIONAL, and omitting it is why this file was red.
+
+    ``bot._unmatched_live_entry_details`` walks the settled rows keeping only
+    ``purpose == "live_entry"`` and breaking on ``live_exit``. These rows
+    carried no such key, so BOTH read as neither: every row was skipped, the
+    scan returned [], adoption bailed before asking any balance at all, and the
+    two tests that assert a balance IS read failed while the two that assert
+    nothing is adopted passed for entirely the wrong reason.
+
+    Production is right. Measured 2026-09-10 over the last 40
+    ``live-swap-settled`` rows in the live database: ``purpose`` is present on
+    40 of 40 -- live_entry 20, live_exit 19, quote_topup 1.
+    """
     return {
         "ts": ts,
         "wallet": "live",
@@ -102,6 +115,7 @@ def _settled(ts, tx, buy, sell):
             # BOTH swaps of the round trip carry the SAME trade_id. That is the
             # whole trap: it does not identify which side this row is.
             "trade_id": TRADE_ID,
+            "purpose": purpose,
             "buy": buy,
             "sell": sell,
             "confirmed": True,
@@ -111,15 +125,32 @@ def _settled(ts, tx, buy, sell):
 
 
 class _DB(_Stub):
-    """Serves trading_ops the way db.fetch_trades does: NEWEST FIRST."""
+    """Serves trading_ops the way db.fetch_trades does: NEWEST FIRST.
 
-    def __init__(self):
+    ``sold`` picks which of the two states this database is in, and the
+    distinction is the whole reason the file has four tests.
+
+    sold=True is the measured 2026-09-04 round trip: the buy AND the sell have
+    both settled. Adoption must refuse, and it now refuses twice over -- the
+    settled sell closes everything older, and the wallet holds 0 CBETH.
+
+    sold=False is the state adoption EXISTS for: the buy settled and nothing
+    has sold out of it. Only here can the "which contract's balance do we
+    read" question be asked at all, so the two tests that assert CBETH and
+    never USDC use it. Leaving the sell in place would make them assert
+    against a scan that legitimately stopped before the balance read -- a test
+    passing on a break it was not written to exercise.
+    """
+
+    def __init__(self, sold=True):
         self.logged: list = []
         self._rows = [_entry_row()]
         self._settled = [
-            _settled(1788495452.0, SELL_TX, USDC, CBETH),   # newest: the SELL
-            _settled(1788491703.0, BUY_TX, CBETH, USDC),    # the BUY
+            _settled(1788495452.0, SELL_TX, USDC, CBETH, "live_exit"),
+            _settled(1788491703.0, BUY_TX, CBETH, USDC, "live_entry"),
         ]
+        if not sold:
+            self._settled = self._settled[1:]
 
     def fetch_trades(self, *, limit=200, statuses=None, wallets=None,
                      symbol=None, since_ts=None):
@@ -148,10 +179,10 @@ class _Swapper:
         raise AssertionError(f"balance asked about an unexpected contract: {token}")
 
 
-def _bot(swapper):
+def _bot(swapper, *, sold=True):
     bot = TradingBot.__new__(TradingBot)
     TradingBot._ensure_runtime_state(bot)
-    bot.db = _DB()
+    bot.db = _DB(sold=sold)
     bot.metrics = _Stub()
     bot.positions = {}
     bot.bus_routes = {}
@@ -200,7 +231,7 @@ def test_the_stable_leg_is_never_adopted_as_a_position():
 def test_the_balance_is_read_from_the_token_that_was_bought():
     """Never from the quote token, whose balance is the wallet's cash."""
     swapper = _Swapper()
-    bot = _bot(swapper)
+    bot = _bot(swapper, sold=False)   # nothing has sold out of the buy yet
 
     bot._adopt_orphaned_live_holding(SYMBOL, chain="base", price=MARK)
 
@@ -227,8 +258,9 @@ def test_no_position_claims_the_quote_tokens_address():
 def test_a_settled_buy_with_real_tokens_behind_it_is_still_adopted():
     """The fix must not stop adoption working -- only stop it reading USDC."""
     swapper = _Swapper()
-    bot = _bot(swapper)
-    # Same round trip, but the wallet really does still hold the cbETH.
+    bot = _bot(swapper, sold=False)
+    # Same buy, nothing sold out of it, and the wallet really does still hold
+    # the cbETH.
     held_raw = 262122199594547          # 0.000262122199594547 at 18 decimals
 
     def _balance(chain, token):
