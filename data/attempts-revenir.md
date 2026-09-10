@@ -3027,3 +3027,15 @@ NEXT: the on-demand price source for the abandon fix is
 44 real swaps executed on. Whatever the source, a failed or zero quote must mean
 DO NOT BOOK: a fabricated -100% round trip booked as tradeable evidence is worse
 than the destroyed row it replaces. Do not re-test 0x.
+
+**Correction, same pass (Jet):** two conjuncts are unsatisfiable, not one, and
+they are the same number. `confidence` is bound from `exit_conf`
+(`trading/scheduler.py:634`), which runs min 0.4695 / p50 0.5000 / **max
+0.5234** against its 0.6 floor — 0/1711. `trading/data_loader.py` builds
+`exit_conf` as `1/(1+exp(-|net_margin|*10))`, so it is pinned at 0.5 *because*
+`net_margin` is out of range: one broken head feeding two conjuncts. Note the
+direction — at the live p50 of -1.66, that sigmoid should read ~1.0, not 0.5,
+so **the two served heads contradict each other**. That is a harder fact than
+either number alone and it points at the trunk, not at a threshold. Shipped
+`7a9540b`, gate 613/0. Reading a conjunct's NAME instead of the payload KEY its
+consumer binds is what hid this for a commit.
