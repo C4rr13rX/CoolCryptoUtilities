@@ -296,6 +296,20 @@ GATE_TESTS = (
     # repricing row, BSTONK's 12%-of-volume/100%-of-sign, this), so the
     # leave-one-out now prints beside every edge the script reports.
     "test_an_edge_carried_by_one_row_is_not_reported_as_an_edge.py",
+    # THE ROOT CAUSE OF THE TWO ENTRIES ABOVE. take_profit_limit and
+    # target_hit both fire on price >= target_price and the GHOST exit booked
+    # the tick that crossed the target, not the target -- crediting the
+    # position with the whole gap between two samples. 7 of the 14 TP exits in
+    # 7 days booked above 1.10x their target and those SEVEN ROWS are +2.2905
+    # of the ghost book's +2.3461 of gross; the other 117 trips carry +0.0556.
+    # The live-tradeable book without them is 106 trips at -0.3225, NEGATIVE.
+    # The LIVE path has had a fill-plausibility guard since the entry fix and
+    # the ghost path had none, so the ghost book recorded fills the live lane
+    # rejects on sight -- and the ghost book is what earns a live licence.
+    # Both directions are pinned: a limit exit cannot book past its limit plus
+    # one leg's fee, and a stop/timed/model exit is NOT clamped to a target
+    # that was never reached, which would book a profit that did not happen.
+    "test_a_ghost_take_profit_cannot_fill_past_its_own_limit.py",
     # The gate that was refusing 100% of entries, and the half of its tests
     # that matters. `_tick_jumps` read prices without timestamps, so a 40%
     # move across a 31-hour hole in the feed scored as a single-tick jump and

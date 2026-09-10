@@ -97,6 +97,59 @@ except Exception:  # pragma: no cover - optional dependency
     UltraSwapBridge = None  # type: ignore
 
 
+#: Exit reasons that are LIMIT orders against a stored target. Both fire on
+#: ``price >= target_price``, so both can be tripped by a tick that has already
+#: travelled well past the limit.
+LIMIT_EXIT_REASONS = ("take_profit_limit", "target_hit")
+
+
+def limit_exit_fill_price(*, price: float, target: float, entry: float,
+                          fee_rate: float, reason: Any,
+                          is_live: bool) -> float:
+    """What a limit exit may book, given the tick that tripped it.
+
+    A LIMIT EXIT MAY NOT BOOK THE OVERSHOOT THAT TRIPPED IT. Booking the tick
+    credits the position with the whole distance the price travelled PAST its
+    own limit -- which is not a fill, it is the gap between two samples. A real
+    limit order fills at the limit.
+
+    Measured 2026-09-10 over the 124 closed ghost round trips of the last 7
+    days: 7 of the 14 take-profit exits booked above 1.10x their target
+    (BSTONK +17.28/+17.83/+23.68/+25.35%, BASECAT +17.31%, BASELINE +57.94%,
+    UNI-USDC +122.89% -- entry 2.859, exit 6.3723), and those SEVEN ROWS are
+    +2.2905 of the book's +2.3461 of gross. The other 117 trips carry +0.0556,
+    which is zero. The live-tradeable book without them is 106 trips at -0.3225
+    of gross, NEGATIVE. Graduation reads this book.
+
+    The LIVE path has had a fill-plausibility guard since the entry fix
+    (``_fill_price_disagrees_with_feed``); the ghost path had none. That is the
+    worst direction for the difference to run in -- the evidence that earns a
+    licence was measured on fills the licensed lane would reject on sight.
+
+    The tolerance is one leg's FEE RATE rather than a new literal: a fill
+    inside the cost of trading is ordinary slippage against the limit, and
+    beyond that it is the sampling gap. Longs only -- both reasons compare
+    upward, so a target at or below the entry is not this shape and is left
+    alone rather than guessed at.
+
+    Live exits are returned unchanged. They book a real receipt, and clamping a
+    number the chain actually paid would be inventing one.
+    """
+    try:
+        price = float(price)
+        target = float(target)
+        entry = float(entry)
+        fee = max(0.0, float(fee_rate))
+    except (TypeError, ValueError):
+        return price
+    if is_live or str(reason) not in LIMIT_EXIT_REASONS:
+        return price
+    if not (target > entry > 0.0):
+        return price
+    capped = target * (1.0 + fee)
+    return capped if price > capped else price
+
+
 def _env_fraction(name: str, default: float, *, lo: float = 0.0, hi: float = 1.0) -> float:
     """Read a 0..1 FRACTION from the environment, clamped, never a percent.
 
@@ -9128,7 +9181,46 @@ class TradingBot:
             total_quote_spent = float(pos.get("quote_spent", entry_price * held_size))
             total_gas_native = float(pos.get("gas_spent_native", 0.0) or 0.0)
 
-            exit_price_effective = price
+            # A LIMIT EXIT MAY NOT BOOK THE OVERSHOOT THAT TRIPPED IT.
+            #
+            # `take_profit_limit` (trading/triggers.py) and `target_hit` above
+            # both fire on `price >= target_price`. Booking `price` credits the
+            # position with the entire distance the tick travelled PAST its own
+            # limit -- which is not a fill, it is the gap between two samples,
+            # and a real limit order would have filled at the limit.
+            #
+            # Measured 2026-09-10 over the 124 closed ghost round trips of the
+            # last 7 days: 7 of the 14 take-profit exits booked above 1.10x
+            # their target (BSTONK +17.28/+17.83/+23.68/+25.35%, BASECAT
+            # +17.31%, BASELINE +57.94%, UNI-USDC +122.89%), and those SEVEN
+            # ROWS are +2.2905 of the book's +2.3461 of gross. The other 117
+            # trips carry +0.0556, which is zero. Graduation reads this book.
+            #
+            # The LIVE path has had this guard since the entry fix -- see
+            # `_fill_price_disagrees_with_feed` at the swap booking below. The
+            # ghost path had none, so the ghost book could record fills the
+            # live lane would reject on sight, which is the worst direction for
+            # the difference to run in: the evidence that earns a licence was
+            # measured on trades the licensed lane could not have taken.
+            #
+            # The tolerance is one leg's fee rather than a new literal. A fill
+            # inside the cost of trading is ordinary slippage against the
+            # limit; beyond that it is the sampling gap, and the limit is the
+            # honest price. Longs only, because both triggers compare upward.
+            exit_price_effective = limit_exit_fill_price(
+                price=price, target=target_price_held, entry=entry_price_held,
+                fee_rate=fees, reason=reason, is_live=pos_is_live)
+            if exit_price_effective != price:
+                log_message(
+                    "trading",
+                    "[ghost] %s take-profit tick %.12g overshot its own limit "
+                    "%.12g by %.2f%%; booking the limit + %.4f%% fee tolerance "
+                    "(%.12g) instead"
+                    % (symbol, price, target_price_held,
+                       100.0 * (price / target_price_held - 1.0),
+                       100.0 * float(fees), exit_price_effective),
+                    severity="warning",
+                )
             base_sold = exit_size
             quote_received = 0.0
             cost_portion = 0.0
