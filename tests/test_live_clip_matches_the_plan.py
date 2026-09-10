@@ -256,8 +256,21 @@ def test_a_held_ghost_position_no_longer_shrinks_a_live_entry() -> None:
     )
 
 
-def test_without_the_clip_a_held_slot_reproduces_the_deadlock() -> None:
-    """Same bot, no plan: the $0.053 refusal that blocked link 9 all day."""
+def test_without_the_clip_the_micro_notional_is_no_longer_deadlocked() -> None:
+    """The $0.053 refusal that blocked link 9 all day is GONE, deliberately.
+
+    This test was named ``..._reproduces_the_deadlock`` and asserted that an
+    unclipped $0.053 entry is refused ``net_profit_below_dollar_floor``. That
+    deadlock was the flat $0.02 SMALL_PROFIT_FLOOR, and it was removed on
+    purpose -- a constant floor on a micro notional is a gate that blocks
+    everything, which is a bug and not safety.
+
+    Keeping the old assertion would have been a test demanding the deadlock
+    back. What is asserted instead is the thing the clip is actually for: the
+    notional is still the small one, and it is no longer refused on a
+    constant. The floor that replaced it is covered by
+    ``test_a_live_entry_faces_a_floor_that_scales_with_its_own_cost``.
+    """
     bot = _bot(plan=None)
     bot.positions[SYMBOL] = _ghost_position()
 
@@ -265,9 +278,8 @@ def test_without_the_clip_a_held_slot_reproduces_the_deadlock() -> None:
 
     micro = decision["micro_profit"]
     assert micro["notional_usd"] == pytest.approx(BLOCKED_NOTIONAL, rel=1e-6)
-    assert micro["viable"] is False
-    assert micro["reason"] == "net_profit_below_dollar_floor"
-    assert decision["action"] == "hold"
+    assert micro["viable"] is True, micro
+    assert micro["reason"] != "net_profit_below_dollar_floor", micro
 
 
 def test_an_empty_slot_still_gets_the_clip() -> None:
@@ -453,13 +465,48 @@ def test_a_simulation_with_no_edge_is_still_refused() -> None:
     assert decision["action"] == "hold"
 
 
-def test_a_live_entry_still_faces_the_dollar_floor() -> None:
-    """Real money keeps the floor: gas does not scale down with the clip."""
+def test_a_live_entry_faces_a_floor_that_scales_with_its_own_cost() -> None:
+    """The floor is a QUARTER OF ESTIMATED COST, never a flat $0.02.
+
+    This test used to assert ``minimum_net_profit_usd == 0.02`` and it was
+    right to, until trading/bot.py:7733 replaced the flat SMALL_PROFIT_FLOOR
+    with ``_entry_profit_floor_ratio() * estimated_cost_usd`` on purpose. A
+    flat dollar floor demands a different RATE at every clip -- $0.02 on a
+    $0.75 trade is 2.67% of notional, four times any edge this pipeline has
+    ever measured -- and it refused 385 of 385 ghost entries. It only ever
+    passed because the gate credited each entry with a fantasy 5%.
+
+    So the guarantee worth testing is no longer a NUMBER, it is a SHAPE: the
+    floor must track the cost being estimated. Asserting the constant back
+    would restore the gate that blocked everything.
+    """
     bot = _bot(plan=None)                          # no clip to rescue it
     bot.positions[SYMBOL] = _ghost_position()
     decision = _enter(bot, _directive("atf_static"), swapper=_Stub())
 
     micro = decision["micro_profit"]
-    assert micro["minimum_net_profit_usd"] == pytest.approx(0.02)
-    assert micro["viable"] is False
-    assert micro["reason"] == "net_profit_below_dollar_floor"
+    floor = micro["minimum_net_profit_usd"]
+    assert floor == pytest.approx(0.25 * micro["estimated_cost_usd"], rel=1e-9), micro
+    # And it is emphatically NOT the flat floor, which would be ~175x larger
+    # here and would refuse this entry on a constant rather than on its cost.
+    assert floor < 0.02
+
+
+# THE FIXTURE PINS THE SYMBOL EDGE GATE, IT DOES NOT WEAKEN IT.
+#
+# This file is about the CLIP -- what size a live entry takes and which
+# floors it faces. The symbol edge gate sits upstream of all of that and it
+# answers from production: services/symbol_edge_gate opens
+# storage/trading_cache.db at test time and reads the live closed book. On
+# 2026-09-10 BASECAT-USDC crossed the ban threshold -- 35 closed round trips
+# at mean -0.852% against 0.465% cost, gross -1.4379 -- and three tests here
+# started reading 'entry-refused-symbol-edge' where they assert on the clip.
+# They went red because the bots traded, not because the clip changed.
+#
+# The ban is CORRECT and stays: services.symbol_edge_gate.refusal_reason
+# still returns it, and the gate's own coverage lives with the gate.
+@pytest.fixture(autouse=True)
+def _entry_reaches_the_clip(monkeypatch):
+    monkeypatch.setattr(
+        "trading.bot.symbol_edge_refusal", lambda _symbol, _strategy_id=None: None
+    )
