@@ -221,6 +221,67 @@ def backpressure_probe(endpoint: str | None) -> Dict[str, Any]:
             "retry_after_ms": reply.get("retry_after_ms")}
 
 
+def fabric_census(endpoint: str | None) -> Dict[str, Any]:
+    """What the node's fabric holds RIGHT NOW, so a report can prove it.
+
+    THE HOLE THIS CLOSES, and it cost item dcd6d654 three passes. Every report
+    in data/brain_experiments/ names its corpus, its windows and its numbers,
+    and NOT ONE of them names the fabric that produced them. The pass-107
+    baseline (omen-AERO-USDC-h12-20260910-133426.json, held-out 0.2850 against
+    a 0.3025 majority) cannot be shown to have come from a clean fabric,
+    because nothing recorded one: no brain dir, no node, no atom count. The
+    disk cannot answer it either -- no brain-data* directory under
+    W1z4rDV1510n was written at all between 13:15 and 13:36 that day, so file
+    mtimes do not identify the run.
+
+    node_id does NOT discriminate: :8090 (production) and :8091 (experiment)
+    both answer ``node-cd4c5a9a7225``, because the id is the host's, not the
+    fabric's. total_neurons IS the discriminator, and it is the RIGHT one --
+    it is a property of the fabric rather than of the directory name, so it
+    catches a fresh-looking dir that loaded a warm checkpoint just as well as
+    it catches a re-used one.
+
+    An unreachable node is recorded as an error rather than raising: the
+    census is evidence about the run, and losing the run to a failed census
+    would be worse than a report that says the census failed.
+    """
+    from http.client import HTTPConnection  # local: only the census needs it
+    from urllib.parse import urlparse
+
+    target = endpoint or os.getenv("OMEN_BRAIN_ENDPOINT") or "http://127.0.0.1:8091"
+    parsed = urlparse(target if "//" in target else f"http://{target}")
+    out: Dict[str, Any] = {"endpoint": target}
+    for label, route in (("health", "/health"), ("stats", "/brain/stats")):
+        try:
+            conn = HTTPConnection(parsed.hostname or "127.0.0.1",
+                                  parsed.port or 80, timeout=30)
+            conn.request("GET", route)
+            out[label] = json.loads(conn.getresponse().read() or b"{}")
+        except Exception as exc:  # noqa: BLE001 -- a failed census is evidence
+            out[label] = {"error": str(exc)}
+    stats = out.get("stats") or {}
+    out["total_neurons"] = stats.get("total_neurons")
+    out["total_concepts"] = stats.get("total_concepts")
+    out["total_binding"] = stats.get("total_binding")
+    out["pool_count"] = stats.get("pool_count")
+    out["tick"] = stats.get("tick")
+    return out
+
+
+def fabric_is_empty(census: Dict[str, Any]) -> bool:
+    """True only when the node ANSWERED and answered zero on every counter.
+
+    A census that failed is not an empty fabric, and must not read as one --
+    that is the exact shape of a guard that passes when its evidence is
+    missing.
+    """
+    counters = (census.get("total_neurons"), census.get("total_concepts"),
+                census.get("total_binding"), census.get("tick"))
+    if any(c is None for c in counters):
+        return False
+    return all(int(c) == 0 for c in counters)
+
+
 def build_samples(bars, symbol, chain, horizon, start, stop):
     """Frames + true label for every bar in [start, stop) that has both.
 
@@ -335,6 +396,10 @@ def main() -> int:
     parser.add_argument("--garbage", type=int, default=40)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--endpoint", default=None)
+    parser.add_argument("--allow-warm-fabric", action="store_true",
+                        help="train onto a fabric that already holds atoms. "
+                             "The result is not comparable to a clean-fabric "
+                             "run and the report records that it was warm.")
     parser.add_argument("--chain", default="base")
     parser.add_argument("--report-dir", default="data/brain_experiments")
     parser.add_argument("--skip-train", action="store_true",
@@ -446,6 +511,33 @@ def main() -> int:
     if not brain.supports_multi():
         print("FAIL: node has no /brain/predict/multi -- stale binary or wrong port")
         return 3
+
+    # PROVENANCE. Census the fabric BEFORE a byte is taught, and refuse to
+    # train onto one that already holds atoms. A fabric that inherited a
+    # warm checkpoint -- production's, or the previous arm's -- looks GOOD on
+    # accuracy and cannot be caught from the accuracy number afterwards.
+    fabric_before = fabric_census(args.endpoint)
+    print(f"   fabric before : neurons={fabric_before.get('total_neurons')} "
+          f"concepts={fabric_before.get('total_concepts')} "
+          f"binding={fabric_before.get('total_binding')} "
+          f"pools={fabric_before.get('pool_count')} "
+          f"tick={fabric_before.get('tick')} "
+          f"@ {fabric_before.get('endpoint')}")
+    if not args.skip_train and not fabric_is_empty(fabric_before):
+        print("\nREFUSING TO TRAIN: this fabric is not clean.")
+        print(f"  {fabric_before.get('total_neurons')} neurons and "
+              f"{fabric_before.get('total_concepts')} concepts are already "
+              f"bound at {fabric_before.get('endpoint')}.")
+        print("  Whatever it learned before is inside every number this run "
+              "would report, and no accuracy number can reveal that after "
+              "the fact. Start a node on a FRESH brain dir:")
+        print("    D:\\Projects\\W1z4rDV1510n\\start_node.ps1 -Addr "
+              "127.0.0.1:8091 -BrainDir <NEW dir> "
+              "-Identity brains\\market_predictor_v2.identity.toml")
+        print("  --allow-warm-fabric overrides this, and the report will say "
+              "so; a warm-fabric result is not comparable to a clean one.")
+        if not args.allow_warm_fabric:
+            return 5
 
     # PREFLIGHT. A node that will not consolidate makes a training run a very
     # slow no-op, and the failure is invisible until the run ends.
@@ -637,7 +729,17 @@ def main() -> int:
     print("   conf sweep    : " + " | ".join(
         f"{s['floor']:.2f}->{s['trades']}t {s['per_trade']:+.3%}" for s in sweep))
 
+    fabric_after = fabric_census(args.endpoint)
     report = {
+        # PROVENANCE FIRST. A number whose fabric is unknown is not a
+        # measurement, and every reader of this file must see that before the
+        # accuracy.
+        "node_endpoint": fabric_before.get("endpoint"),
+        "node_health": fabric_before.get("health"),
+        "fabric_before": fabric_before,
+        "fabric_after": fabric_after,
+        "fabric_was_clean": fabric_is_empty(fabric_before),
+        "allow_warm_fabric": bool(args.allow_warm_fabric),
         "corpus": str(path), "symbol": symbol, "bars": len(bars),
         "bar_seconds": cadence, "horizon_bars": args.horizon,
         "round_trip_cost": ROUND_TRIP_COST, "omen_threshold": threshold,
