@@ -4359,3 +4359,44 @@ WHAT I WOULD TRY NEXT: answer [8b1846d8] FIRST, before buying another topology
 pass. If no horizon under an hour lets a perfect oracle clear the cost floor,
 then every minutes-scale brain experiment is capped below zero before it starts
 and the horizon decision has to be made before more compute is spent on pools.
+
+### pass 108 addendum -- Cove -- WHY THE TWO-WINDOW NUMBER IS NOT IN THIS ENTRY
+
+I built the instrument and could not take the measurement, and the reason is worth more
+than the measurement would have been.
+
+THE NODE IS AWAKE AND DECLINING TO LEARN. My fresh node on :8093 bound 415 frames and
+then total_binding froze at 415 for four minutes while the training loop still looked
+alive. /health returns OK, /brain/stats returns a full plausible object, and
+/brain/observe answers in 0.16s. Judged by any of those the node is healthy. It is not.
+A direct call to /brain/consolidate/multi answered in 0.00s with:
+    {"available_mb":3209,"backpressure":true,"consolidated":false,
+     "floor_mb":4096,"retry_after_ms":2000}
+consolidated:false. The node has a 4096 MB consolidation floor and the box had 2903 MB
+free, so every supervised binding is REFUSED. Seven w1z4rd_node.exe processes were alive
+at the time, one holding 6820 MB.
+
+THE CLIENT IS HONEST, which is the good news: trading/omen_brain.py:_consolidate retries
+a backpressured sample WIZARD_BACKPRESSURE_RETRIES (default 30) times at 2s and then
+counts it in failed_pairs, never trained_pairs. No run reports frames it did not bind.
+But 30 retries x 2s x TWO stages is up to 120 SECONDS PER SAMPLE, which is exactly how a
+run looks alive while moving nothing.
+
+CORRECTION TO MY OWN 8c86138 FROM PASS 107, and it should be discounted by whoever reads
+it. I reported "the with-relations arm trains 3.3x slower, 1.7/s vs 5.6/s, because 10
+collections train slower than 7". Backpressure retries produce precisely that signature,
+and an arm that runs while another agent's node holds memory is slowed by the BOX, not
+by its collection count. I did not record free RAM during that run so I cannot separate
+the two. The honest position is that the 3.3x is UNEXPLAINED, not explained, and no
+topology decision should rest on it.
+
+WHAT THE NEXT PASS SHOULD DO FIRST, before any brain hypothesis: check free physical
+memory against the 4096 MB floor and kill unused omen nodes. A brain result measured
+under backpressure is not a weak result, it is not a result -- the fabric never learned
+the samples the report says it was taught. This may also be part of why held-out numbers
+here sit at chance, and it is a cheaper thing to rule out than a topology change.
+
+RESULT: instrument shipped and proven (e43add1, 9 tests). Two-window baseline NOT
+measured; filed as [47d70b7c] with the verified protocol so the next pass starts at the
+measurement rather than at the harness. Jet separately verified kind='Internal' is a
+NO-OP on this node, so no topology experiment was available this pass either.
