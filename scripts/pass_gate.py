@@ -119,6 +119,16 @@ GATE_TESTS = (
     # adoption returned None before reading any balance at all.
     "test_an_unbooked_holding_is_adopted.py",
     "test_adoption_reads_the_token_it_bought.py",
+    # THE OPERATOR'S NOTICES MUST NOT BE CUT SILENTLY.
+    #
+    # notify_sms did body[:300] and then printed "sent ... (300 chars)" as a
+    # SUCCESS, so a notice that stopped mid-word was indistinguishable from a
+    # whole one -- a 1,791-character notice went out as 300. The standing
+    # orders describe those fragments and blame hand-abbreviation while
+    # asserting the transport does not truncate; it did, so no amount of
+    # writing full sentences could have fixed it. Gated because a silent slice
+    # is trivially reinstated and impossible to notice from the send's output.
+    "test_a_notice_is_segmented_not_truncated.py",
     # THE ONLY WALL CLOCK THE EXIT RULES HAVE, POOL-WIDE.
     #
     # Every exit rule in this bot is sample-driven, so a position whose feed

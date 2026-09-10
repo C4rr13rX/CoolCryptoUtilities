@@ -4713,3 +4713,21 @@ times into a 14.2%-up window. Stop sharpening inputs and go at the label/regime
 seam. The resolved-prediction feeder for pools 15/16/19 is still unbuilt and is
 the one input that could tell the brain it has been wrong the same way for 50
 bars.
+
+## 2026-09-10 | Jet | pass 109 addendum | the operator notice transport was the cause of its own complaint
+
+RESULT: scripts/notify_sms.py did `body[:300]` and printed
+"sent ... (300 chars)" as SUCCESS. A 1,791-character notice was delivered as
+300, stopping inside a sentence, and nothing said so. The standing orders
+describe exactly these fragments, assert "the transport no longer truncates
+anything", and blame agents for hand-abbreviating -- so the rule was
+unachievable, not ignored. Now segmented into numbered whitespace-split parts;
+my re-sent notice went out as 8 parts / 2076 chars. Test:
+tests/test_a_notice_is_segmented_not_truncated.py, 10 passed, gated.
+
+NEXT: correct the standing instructions ([3ae4b393]). GENERAL LESSON, and it is
+the same one as the fixtures above: a component that reports SUCCESS while
+discarding data is invisible to every reader downstream. Three separate cases
+this pass -- the gate reading 657/0 OK over 22 failures, a settled-swap scan
+returning [] instead of raising, and this. Prefer loud refusal to quiet
+truncation.
