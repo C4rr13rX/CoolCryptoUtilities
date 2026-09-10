@@ -42,6 +42,7 @@ from typing import Any, Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 __all__ = [
     "cooccurrence_motif",
+    "relative_bands",
     "sequence_motif",
     "layer_distinctness",
     "L1_STREAMS",
@@ -148,13 +149,99 @@ def _band_of(frame: Optional[str]) -> str:
     return "mid"
 
 
+def _numeric_of(frame: Optional[str]) -> Optional[float]:
+    """One comparable scalar for a frame, or None.
+
+    The bucket tokens already carry magnitude, so this reads THEM rather than
+    re-deriving anything: a signed token (u12/d8) becomes +12/-8, a ratio or
+    quantile token (r14/q17) becomes its level, and the frame's score is the
+    mean over its tokens. Same idea as ``_band_of``'s sign counting, but it
+    keeps the MAGNITUDE, which is what makes a relative band possible.
+    """
+    if not frame or not isinstance(frame, str):
+        return None
+    values = []
+    for token in str(frame).split():
+        _, _, value = token.partition("=")
+        if not value or value == "na":
+            continue
+        head, digits = value[0], value[1:]
+        try:
+            level = float(digits)
+        except ValueError:
+            continue
+        if head == "u":
+            values.append(level)
+        elif head == "d":
+            values.append(-level)
+        elif head in ("r", "q"):
+            values.append(level)
+    if not values:
+        return None
+    return sum(values) / len(values)
+
+
+def relative_bands(frame_sets: Sequence[Mapping[str, str]],
+                   streams: Sequence[str] = None) -> Dict[str, Tuple[float, float]]:
+    """Per-stream (low, high) cut points, from the corpus's OWN distribution.
+
+    WHY THIS EXISTS, and it is a bug this module shipped. ``_band_of`` bands on
+    absolute token signs, which is wrong for any stream whose tokens do not
+    change sign. Measured on p108_aero_down over 500 bars:
+
+        volatility  vol v24=u10 v168=u11 exp=r11 rng=u10   ->  hi 500/500
+        flow        flw v=r7 vt=r10 bs=q9 bs24=q9          ->  mid 427/500
+
+    Volatility is a MAGNITUDE -- it is always "positive", so three ``u`` tokens
+    every bar is by construction, not by market state, and no re-banding of
+    signs can fix it. Flow's quantiles sit near the middle and its ratios
+    straddle the neutral centre, so it reads mid 85% of the time.
+
+    Gale's census on the same corpus: 3 live slots of 5. A motif with two dead
+    slots has a vocabulary two slots smaller than it appears, and every
+    held-out number measured on it was measured through a partly blind
+    encoder.
+
+    The fix is to ask what is HIGH FOR THIS STREAM rather than what is
+    positive: terciles of the stream's own scores over the corpus. Returned as
+    cut points so a train window can compute them once and a held-out window
+    can reuse them WITHOUT refitting -- refitting on the test window would leak
+    the test distribution into the frame, which is the same class of error as
+    fitting a motif map in-sample and reading its lift as an edge.
+    """
+    names = list(streams) if streams is not None else list(L1_STREAMS)
+    out: Dict[str, Tuple[float, float]] = {}
+    for name in names:
+        scores = sorted(v for v in
+                        (_numeric_of(frames.get(name)) for frames in frame_sets)
+                        if v is not None)
+        if len(scores) < 3:
+            continue
+        lo = scores[len(scores) // 3]
+        hi = scores[(2 * len(scores)) // 3]
+        if lo == hi:
+            # A stream that is genuinely constant has no terciles. Say so by
+            # omitting it rather than inventing cut points that band nothing.
+            continue
+        out[name] = (lo, hi)
+    return out
+
+
 def cooccurrence_motif(frames: Mapping[str, str],
-                       streams: Sequence[str] = L1_STREAMS) -> str:
+                       streams: Sequence[str] = L1_STREAMS,
+                       bands: Optional[Mapping[str, Tuple[float, float]]] = None) -> str:
     """L1: which variables are doing something together, right now.
 
     Not a re-encoding of the bar -- a statement about WHICH L0 streams are
     simultaneously extreme and in which direction. Many instants share one
     motif, which is exactly what a flat sensory conjunction cannot do.
+
+    ``bands`` are per-stream cut points from ``relative_bands``, fitted on the
+    TRAIN window and passed in unchanged for the held-out window. Supply them:
+    without them a stream whose tokens never change sign lands in one band
+    every bar and its slot is dead, which measured 3 live slots of 5 on
+    p108_aero_down. Absolute sign banding is kept as the fallback so a caller
+    with no corpus still gets a motif rather than an exception.
 
     Returns a byte-disjoint token: the ``co1`` prefix cannot appear inside an
     L2 name (``co2``) or an omen label, which matters on a substrate whose
@@ -162,7 +249,21 @@ def cooccurrence_motif(frames: Mapping[str, str],
     """
     parts = []
     for name in streams:
-        parts.append("%s=%s" % (name[:3], _band_of(frames.get(name))))
+        frame = frames.get(name)
+        cuts = (bands or {}).get(name)
+        if cuts is not None:
+            score = _numeric_of(frame)
+            if score is None:
+                band = "na"
+            elif score <= cuts[0]:
+                band = "lo"
+            elif score >= cuts[1]:
+                band = "hi"
+            else:
+                band = "mid"
+        else:
+            band = _band_of(frame)
+        parts.append("%s=%s" % (name[:3], band))
     return "co1 " + " ".join(parts)
 
 
