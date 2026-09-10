@@ -294,7 +294,40 @@ def _exit(bot: TradingBot, swapper, *, price: float):
     async def _no_sync(self, *args, **kwargs):
         return None
 
-    with mock.patch.object(
+    # The phantom-position guard runs BEFORE the exit and asks the CHAIN, not
+    # this fixture's wallet: _position_is_real_on_chain builds an eth_call
+    # balanceOf and sends it through services.token_contract_guard._rpc. With
+    # that unmocked the call returns nothing, the guard reads "wallet holds 0",
+    # drops the position and releases it -- so the exit under test never ran,
+    # bot.db.outcomes stayed empty and outcomes[-1] raised IndexError. Five of
+    # the seven tests here were red that way, and outside the pass gate.
+    #
+    # The fixture ALREADY held AERO 1.546280953235675 while the guard logged
+    # "wallet holds 0": the mock wallet was never the thing being read, so
+    # topping it up would not have fixed this. The guard is newer than the test
+    # and is correct -- trading_ops has 0 rows matching "phantom" across the
+    # whole table, so it has never once eaten an outcome row in production.
+    #
+    # The balance comes from the SWAPPER's book, which is the same object the
+    # exit sizes itself from. Reading it from anywhere else would let the guard
+    # and the exit disagree about one position, which is the exact bug class
+    # _position_is_real_on_chain exists to end.
+    #
+    # This does NOT bypass the guard: the guard runs, reads a real balance and
+    # correctly keeps the position. Do not replace it with a patch of
+    # _position_is_real_on_chain itself -- that switches the guard off, and
+    # these tests would stop noticing if it began dropping live positions.
+    # Proven to bite: forcing this balance to 0.0 puts all five back to red.
+    def _balance_rpc(chain, method, params, *args, **kwargs):
+        held = float(getattr(swapper, "quantities", {}).get("AERO", 0.0) or 0.0)
+        return "0x%064x" % int(to_base_units(str(held), 18)), True
+
+    with mock.patch("services.token_contract_guard._rpc", _balance_rpc), \
+            mock.patch.object(
+        TradingBot, "_live_wallet_address", lambda self: WALLET
+    ), mock.patch.object(
+        TradingBot, "_init_bridge", lambda self: _Bridge()
+    ), mock.patch.object(
         TradingBot, "_resolve_live_trade_asset",
         lambda self, chain, sym, explicit=None: (
             sym, explicit or (AERO if str(sym).upper() == "AERO" else USDC)

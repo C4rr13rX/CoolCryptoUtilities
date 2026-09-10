@@ -440,6 +440,9 @@ GATE_TESTS = (
     # passing both ways.
     "test_a_bearish_model_cannot_outrank_the_stale_clock.py",
     "test_an_opinion_cannot_spend_a_round_trip_the_move_never_earned.py",
+    # Live exit booking -- step 9 of the path to a paid trade. Five of its
+    # seven tests were red and outside the gate's view.
+    "test_live_exit_books_the_receipt_fill.py",
 )
 
 
