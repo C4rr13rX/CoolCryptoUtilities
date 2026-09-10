@@ -3479,3 +3479,45 @@ either fixes both, and there is no separate net_margin defect to hunt.
 NEXT: [b549afed], on the RAW head's inputs. Do not re-measure the calibrator,
 do not chase net_margin separately, and do not attribute an extreme value to
 the model without checking the sentinel first.
+
+### 2026-09-10, Jet (pass 105) -- THE GATE IS BLIND TO 22 FAILURES AND ONE FILE
+RAN THE FULL SUITE WITH NO -k, WHICH NOBODY HAD DONE. Command, and use THIS one:
+  python -X utf8 -m pytest tests/ -q --no-header --continue-on-collection-errors -p no:randomly
+It takes 14m31s: 22 FAILED, 2599 passed, 1 skipped, 1 ERROR. pass_gate --check on
+the same tree reads 657 passed / 0 failed OK. THE GATE COVERS ~25% OF THE SUITE.
+DO NOT CHECK THE SUITE WITH -k. Every standing-failure count on this board came
+from a -k sweep, and -k SELECTS -- it silently skips whole FILES. That is exactly
+how five graduation-bar failures and a collection ERROR stayed unnamed while
+everyone quoted "21 standing failures". Filed as [54aaf3b7] p1.
+THE FAILURES ARE MIXED, NOT ONE CLASS -- I bisected rather than assuming, after
+first posting the wrong generalisation that it was all pollution:
+  REAL, fails ALONE in 1.61s --
+    test_graduation_status_names_the_wall.py::test_a_big_pooled_book_on_a_
+    blocked_strategy_is_not_progress. It asserts wall.startswith("STRUCTURALLY
+    BLOCKED") and gets "EVIDENCE (TRADEABLE) -- the closest strategy
+    (rsi_reversal) has 6/20 ghost trades..." -- WORD FOR WORD the wall the
+    SCOREBOARD printed this pass. THE TEST READS THE LIVE PRODUCTION LEDGER,
+    data/strategy_ledger.json, NOT A FIXTURE. It passed when the ledger said
+    STRUCTURALLY BLOCKED and fails now that it says EVIDENCE. Worse than a red
+    test: it is not testing the precedence order it claims to, and it will go
+    green on its own when the ledger drifts back. FIX IT WITH A FIXTURE LEDGER;
+    do NOT re-point the assertion at EVIDENCE, which re-binds it to today.
+  ORDER-DEPENDENT, passes alone and fails in the full run --
+    test_strategy_ledger.py's tradeable pair (1 passed in 1.87s alone).
+  CHEAP REPRO for two of them, 4.02s instead of 14 minutes:
+    pytest tests/test_strategy_ledger.py tests/test_graduation_status_names_the_
+    wall.py tests/test_the_round_trip_cost_measured_its_own_default.py -q
+A LIVE-LEDGER-READING TEST IS ALSO A BETTER EXPLANATION THAN CONCURRENT COMMITS
+for the gate flapping Gale reported at 08:50 (644/0, 645/1, 646/0 back to back):
+the running system WRITES that ledger while the gate READS it.
+THE COLLECTION ERROR IS NOT AN IMPORT FAILURE. It is AttributeError: 'float'
+object has no attribute 'ret' at services/symbol_edge_gate.py:470 in _verdict.
+NOT A LIVE BUG, CONFIRMED not assumed: the only callers are two internal ones in
+_rebuild (lines 546/581, fed by _load_book), scripts/tradeable_book.py:551 (a
+script), and one test file. No production caller passes floats, and production
+wrote 717 entry-predropped-edge-ban rows in 24h, which proves the path reaches
+_verdict and returns. GOTCHA: the file SKIPS CLEAN in isolation (1 skipped, no
+error) and only errors in the full run, so you cannot reproduce it file-alone.
+NEXT: fixture-ise the ledger-reading tests first -- they are the ones that make
+the gate's number untrustworthy in BOTH directions -- then add all five
+graduation-bar files to GATE_TESTS.
