@@ -388,6 +388,73 @@ def _fmt(value: Any, spec: str = ".4f") -> str:
         return str(value)
 
 
+# Measured from receipts, never a flat 0.65%: 0.3187% of notional plus a
+# 0.004047 fixed leg per round trip.
+ROUND_TRIP_PCT = 0.3187
+ROUND_TRIP_FIXED = 0.004047
+
+
+def _print_horizon_table(
+    preds: List[Dict[str, Any]],
+    stream: Dict[str, Tuple[List[float], List[float]]],
+    args: Any,
+) -> int:
+    """Can ANY horizon clear the round trip, even with a perfect direction call?
+
+    The last column is a CEILING NOBODY CAN REACH: it assumes the direction is
+    called correctly on every tick and the whole move is captured, then pays the
+    cost once. Where that ceiling is negative, no head and no strategy can make
+    the horizon pay -- the move is smaller than the toll.
+
+    Measured 2026-09-10 over 24h it printed a negative ceiling at 5 and 10
+    minutes, and the MEDIAN tick cleared the cost at no horizon under ~45 min.
+    That is a direct finding against the "single-digit minutes" target.
+    """
+    horizons = (5.0, 10.0, 15.0, 30.0, 60.0, 120.0)
+    print("=" * 78)
+    print("HORIZON vs COST FLOOR -- what a PERFECT direction call nets at each horizon")
+    print("=" * 78)
+    print(
+        f"  cost basis {ROUND_TRIP_PCT}% of notional + {ROUND_TRIP_FIXED} fixed, "
+        "measured from receipts"
+    )
+    print("  the last column is an unreachable CEILING: perfect direction, full capture")
+    print()
+    print(
+        "  horizon      n   median|ret|%   %ticks>cost   mean|ret|%   perfect-oracle net%"
+    )
+    for horizon_min in horizons:
+        moves: List[float] = []
+        for row in preds:
+            series = stream.get(row["symbol"])
+            if series is None:
+                continue
+            base = price_at(series, row["ts"], args.tolerance_sec)
+            fwd = price_at(series, row["ts"] + horizon_min * 60.0, args.tolerance_sec)
+            if not base or not fwd or base <= 0:
+                continue
+            realised = (fwd - base) / base
+            if abs(realised) > args.max_abs_return:
+                continue
+            moves.append(abs(realised) * 100.0)
+        if not moves:
+            continue
+        moves.sort()
+        n = len(moves)
+        mean = sum(moves) / n
+        over = sum(1 for v in moves if v > ROUND_TRIP_PCT) / n * 100.0
+        print(
+            f"  {horizon_min:>5.0f}min {n:>6}   {_quantile(moves, 0.5):>10.4f}   "
+            f"{over:>10.1f}%   {mean:>9.4f}   {mean - ROUND_TRIP_PCT:>+16.4f}"
+        )
+    print()
+    print("  A NEGATIVE ceiling means the horizon cannot pay at any skill level.")
+    print("  Compare the MEDIAN column against the cost too -- the mean is skew-inflated")
+    print("  by a few large movers, so a positive ceiling can still lose on the typical tick.")
+    print()
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--db", default=DEFAULT_DB)
@@ -423,6 +490,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="median |forward return| below this many basis points counts as a FLAT tape",
     )
     ap.add_argument("--min-scored", type=int, default=30)
+    ap.add_argument(
+        "--horizon-table",
+        action="store_true",
+        help="sweep horizons and print what a PERFECT direction call would net at each",
+    )
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
@@ -436,6 +508,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         preds = load_predictions(conn, since)
     finally:
         conn.close()
+
+    if args.horizon_table:
+        return _print_horizon_table(preds, stream, args)
 
     matched: List[Dict[str, Any]] = []
     no_symbol = no_base = no_forward = implausible = 0
