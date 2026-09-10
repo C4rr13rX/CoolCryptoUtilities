@@ -5185,11 +5185,29 @@ class TrainingPipeline:
         try:
             self.ensure_confusion_fresh()
         except Exception as exc:  # noqa: BLE001 - the gate must not crash the tick
+            # THE TRACEBACK, NOT JUST THE MESSAGE.
+            #
+            # This handler logged `{exc!r}` alone, and that is not enough to
+            # diagnose the failure it is currently catching 30 times per 400KB
+            # of log: AttributeError("'TrainingPipeline' object has no
+            # attribute '_train_lock'").  `_train_lock` is assigned in
+            # __init__ and has been since 7e522d4 (2025-11-08), so the
+            # interesting fact is not WHAT is missing but WHICH FRAME built an
+            # object without it -- an __init__ that raised between
+            # model_dir.mkdir() and the assignment, a caller bypassing
+            # __init__, or a second class of the same name.  The repr names
+            # none of them.
+            #
+            # The gate still must not crash the tick, so this widens what is
+            # recorded and changes nothing about control flow.
+            import traceback as _tb
+
             log_message(
                 "training",
                 f"confusion refresh raised before the live readiness check: "
                 f"{exc!r}; judging on the cached report, which may be stale",
                 severity="error",
+                details={"traceback": _tb.format_exc()},
             )
 
         report = self._last_confusion_report or {}
