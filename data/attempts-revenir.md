@@ -5050,3 +5050,23 @@ EVIDENCED population is self-referential, because a strategy enters it by
 producing the numerator. "11 of 38" is 1 of 78. NEXT: any acceptance criterion
 phrased as a share should be restated against `known`, and atf_static*'s 70% is
 a POOLED share (289/414) against a tradeable one of 29.6% (8/27).
+
+2026-09-10 | Jet (auditor) | hypothesis: the pass-107 horizon table was measured
+correctly, so [15cc71d4]'s remaining work is the second-regime re-run.
+WHAT I DID: audited the instrument before re-running it. `_print_horizon_table`
+printed a header naming a 0.3187% + 0.004047 cost and then billed only 0.3187 in
+both cost-bearing columns; it also accepted --clip/--pct-cost/--fixed-cost and
+ignored all three. Fixed (total_cost_pct), tested, and added --end-hours-ago
+because --hours could only ever re-read the same rolling tape.
+RESULT: the headline survives and strengthens -- 5min -0.1347 -> -0.2152, 10min
+-0.0672 -> -0.1479 -- but 15min flips, -0.0066 -> -0.0883 against pass 107's
+published +0.0198. The first horizon whose unreachable ceiling is positive is 30
+minutes, not 15. A disjoint window 72h back agrees: -0.2907/-0.2484/-0.2199 at
+5/10/15min. Neither window is UP (median drift -0.184%, -0.199%), so criterion 2
+is half met and the item stays open. Criterion 3 is unmeetable from the books:
+fee_rate is a constant 0.0038615 on 1350/1394 fills, slippage_bps is a constant
+75 (configured tolerance, not a fill), 38/1394 fills carry real gas, and
+gas_price_usd reads 2477.16 and 0.5018 on AERO-USDC in the same book.
+NEXT: scan market_stream's 372h for a window with median drift > +0.3% and run
+--end-hours-ago there; and instrument the cost legs before anyone prices "cut
+the cost". Commit 64a51f8.
