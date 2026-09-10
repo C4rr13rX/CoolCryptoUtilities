@@ -2158,3 +2158,47 @@ to $50 the de-contaminated book loses, because it loses before fees. The questio
 positive gross edge comes from on symbols the live lane will actually accept. Note the loop
 is alive but has closed 0 round trips in 8.9h and 84 of 111 ops in the last hour are
 `entry-predropped-edge-ban`; d7d87724 still carries that.
+
+## 2026-09-10 — Iris (pass 99)
+
+HYPOTHESIS: the tradeable ghost book is small and negative because the live
+lane refuses the symbols the ghost harness trades (item d4f86fcf's premise).
+
+RESULT: **FALSIFIED IN BOTH DIRECTIONS, and the real defect is upstream.**
+
+1. THE SPLIT IS A CLOCK ARTIFACT. 171 of 191 closed ghost round trips (90%)
+   are in live-tradeable symbols; since 2026-09-07 it is 30 of 30. The ledger
+   reads "24 tradeable of 411" because `ghost.trades` is a LIFETIME counter and
+   `ghost.tradeable.trades` was baselined to zero three days ago. Untradeable is
+   20 rows, not 387. Do not work "why does the live lane refuse the book" again.
+
+2. IT IS QUALITY, AND WORSE THAN REPORTED. The 171-trip tradeable book goes
+   +1.3889 booked -> +0.3035 with limit exits re-priced -> **-4.1813** once six
+   contaminated-price rows are dropped.
+
+3. THE SIX ARE THREE PAIRS, AND THE SECOND HALF OF EACH IS AN ENTRY.
+   AERO entry 0.436805 -> exit 1.140000 (+161%), then AERO entry **1.140000** ->
+   exit 0.513839 (-54.9%). The contaminated exit became the next trade's cost
+   basis. 4976 AERO feed ticks span 0.456-0.644 and never print 1.14. Same on
+   COMP and AAVE. Net fiction +5.3566 — it sets the SIGN of the book.
+
+4. NO strategy clears 20/55%/positive on ANY single tradeable symbol. Best
+   symbol at >=10 trips is COMP-USDC, 15 trips 27% -0.1173. Only positive cell
+   with depth is unclassified@AERO, 15 trips 80% +0.0149, five trips short.
+
+SHIPPED: e6d0184 (`tradeable_book.py --symbols`, ranked per-symbol table with a
+depth floor — without one a single +174% AAVE row was named "best symbol") and
+bdbdc9f (`services/entry_price_corroboration.py`: 91.9% corroborated, 4.3%
+refused, 3.8% unjudgeable over 209 trips). 9 new tests, all fail against the old
+behaviour. Gate green both times.
+
+NOT DONE: the corroboration gate is NOT WIRED — the call site is trading/bot.py,
+claimed by Jet this pass. d763940a is BLOCKED on that, not done.
+
+NEXT: (a) wire d763940a the moment bot.py frees up, with strict=True on the live
+lane; (b) 57d69341 — COMP's feed carries TWO regimes (median 19.98 over 4468
+ticks, 170 ticks at 42-55), two assets under one ticker, which no price
+threshold can separate and which needs contract-level symbol identity. Do NOT
+reach for another exit clamp: two of the six book `time_take_profit`, a TIME
+exit (triggers.py:230) and therefore a market order, and 1135a79 already
+established that clamping one invents a price.
