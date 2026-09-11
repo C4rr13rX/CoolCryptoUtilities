@@ -2,6 +2,37 @@
 
 **Pass 110 — Cove — 2026-09-10**
 
+---
+
+> ## ⚠ 2026-09-10 pass 111 — STALE ENCODER. READ SECTION 9 BEFORE CITING ANY NUMBER BELOW.
+>
+> **Every held-out number in sections 4, 4b, 7 and 8 was measured through an
+> encoder with 3 live slots of 5.** `_band_of` bands on absolute token signs.
+> Volatility is a MAGNITUDE — its frame carries three `u` tokens every bar by
+> construction — so it read `hi` on 97.2% of bars; flow's quantiles sit near the
+> middle and its ratios straddle the neutral centre, so it read `mid` on 100%.
+> Neither is fixable by re-banding signs. `relative_bands()` (7d2a74e) fits
+> terciles on each stream's OWN scores and takes the L1 vocabulary from 21/25
+> motifs to 100/125 on these same two corpora.
+>
+> **THE VERDICT CHANGED.** Re-measured back-to-back on this corpus under both
+> bandings (section 9): in the DOWN window the held-out edge goes from
+> **−0.2128% to +1.0378%** and trough precision from 17.4% to **32.1%** against
+> a 14.3% base rate. This report's headline — "the buy-low lift does not
+> generalise" — **is not supported under the fixed encoder** and must not be
+> cited as if it were.
+>
+> **What is NOT invalidated:** the abstraction result (L1 comes in far under its
+> L0 input) holds in direction under both bandings, and section 2's argument
+> that the sensory dilution floor is the wrong test for an abstraction layer is
+> an argument, not a measurement, and stands.
+>
+> **Still not an edge.** The DOWN window turns positive; the UP window becomes
+> UNMEASURABLE rather than negative. That fails the standing both-windows rule.
+> See section 9 for why, stated plainly.
+
+---
+
 ## The one-line result
 
 The L1 motif layer passes the falsification test the operator asked for
@@ -85,7 +116,7 @@ The **sign agrees across both windows**: `tem=lo` motifs hold the troughs,
 `tem=hi` motifs hold almost none (0.0–3.0% trough across 400+ samples in the
 two windows combined).
 
-## 4. Held out: the lift does NOT survive
+## 4. Held out: the lift does NOT survive  — **STALE (sign-banded encoder, 3 live slots of 5). Superseded by section 9.**
 
 Fit the motif → trough map on the train window, freeze it, apply it to the
 held-out window. Called = bars whose train lift ≥ 1.3. Scored on the
@@ -114,7 +145,7 @@ A 2.25–2.69x in-sample lift collapsing to a +3.1pp precision bump with a
 negative net is the signature of a map fitted to the train window's regime
 rather than to a repeatable relation.
 
-## 4b. The SELL-HIGH half, measured here for the first time
+## 4b. The SELL-HIGH half, measured here for the first time  — **magnitudes STALE (sign-banded encoder). Direction survives; see section 9.**
 
 `omen_experiment.py:552` opens a position only on a buy-low omen because the
 live lane is long-only — so a crest is an abstention and **its accuracy is
@@ -205,7 +236,14 @@ python -X utf8 -m pytest tests/test_a_motif_layer_that_abstracts_nothing_is_cut.
 
 ---
 
-## 7. ADDENDUM — the encoder was blind, and fixing it does not rescue the edge
+## 7. ADDENDUM — the encoder was blind, and fixing it does not rescue the edge  — **HALF-FIXED ONLY. Its conclusion is WRONG; see section 9.**
+
+> This addendum fixed the `q`-token blindness in geometry and stopped there. It
+> did not fix volatility or flow, which is why its own closing paragraph says
+> "still not fixed, and named". Its conclusion — "the held-out edge still does
+> not appear" — was drawn from a 3-of-5 encoder and is reversed for the DOWN
+> window in section 9.
+
 
 Gale independently ran the falsification on AERO 0004 (3000 bars) and produced
 the per-stream census that explains section 5's caveat: **`_band_of` never saw
@@ -259,7 +297,7 @@ python -X utf8 scripts/omen_layer_probe.py \
 # exits 1: L2 DOES NOT ABSTRACT (0.4520 against 0.3000)
 ```
 
-## 8. MOTIF_SEQUENCE_STEPS swept, and set to 3
+## 8. MOTIF_SEQUENCE_STEPS swept, and set to 3  — **STALE SWEEP. The 0.8% margin means nothing; see section 9.**
 
 The addendum left L2 failing its own guard. Swept the step count on both
 windows, 719 samples each, **after** the encoder fix — which matters, because
@@ -279,3 +317,100 @@ probe now exits 0 on both windows.
 
 Anyone taking this further should re-run the probe on their corpus and drop to
 2 rather than argue with the number.
+
+---
+
+# 9. PASS 111 — BOTH BANDINGS ON ONE CORPUS, AND THE VERDICT CHANGED
+
+**Cove — 2026-09-10 — item [10140855]**
+
+The operator's encoder fix (`relative_bands`, 7d2a74e) was not reachable from
+this probe: `omen_layer_probe.py` called `cooccurrence_motif(frames)` with no
+`bands` argument, so every arm above ran the sign-banded encoder whatever else
+changed. `--relative-bands` now threads the cut points through, **off by
+default**, so both encoders are measurable on one corpus and the encoder fix is
+isolated from the market.
+
+**Fit discipline.** Under `--heldout` the terciles are fitted on the TRAIN
+window only and reused frozen on the test window. Refitting on the full corpus
+would put the test window's own distribution inside the frame it is scored on —
+the same class of leak as fitting the motif→trough map in-sample.
+
+## 9.1 What the encoder fix does to the vocabulary
+
+| corpus-wide, 719 samples | sign | relative |
+|---|---:|---:|
+| L1 vocabulary, UP | 21 | **100** |
+| L1 vocabulary, DOWN | 25 | **125** |
+| L2 vocabulary, UP | 214 | 575 |
+| L2 vocabulary, DOWN | 213 | 597 |
+
+Roughly a five-fold alphabet. That is the fix working, and it is also why
+section 8's 0.8% L2 margin is void: a path over a five-times larger alphabet is
+five times closer to being an identifier.
+
+## 9.2 The held-out arm, both bandings, back-to-back
+
+Same corpus, same windows, same cost, same `--min-lift 1.3 --min-support 20`.
+The **only** difference between the rows is the encoder.
+
+| window | banding | train vocab | called | share | per-trade net | buy-every-bar | **EDGE** | trough prec. | base |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| UP | sign | 15 | 9 | 5.4% | +2.9030% | +3.8377% | −0.9346% | 0.0% | 7.1% |
+| UP | **relative** | 97 | **0** | 0.0% | — | +3.8377% | **unmeasurable** | — | 7.1% |
+| DOWN | sign | 24 | 109 | 64.9% | −3.1416% | −2.9288% | −0.2128% | 17.4% | 14.3% |
+| DOWN | **relative** | 90 | **56** | 33.3% | **−1.8910%** | −2.9288% | **+1.0378%** | **32.1%** | 14.3% |
+
+## 9.3 Read this honestly
+
+**The DOWN cell is a real change and it is positive.** The edge moves
+−0.2128% → **+1.0378%** per trade, trough precision 17.4% → **32.1%** against a
+14.3% base rate — 2.25x the base rate out of sample, on 56 calls, above the
+20-call support floor. And the rule stopped being a rubber stamp: it called
+64.9% of the window under the blind encoder and 33.3% under the fixed one. A
+filter that halves what it admits and doubles its precision is behaving like a
+filter rather than like a relabelled baseline.
+
+**The UP cell is UNMEASURABLE, not negative, and that distinction is the whole
+point of this item.** Relative banding produced 97 motifs over ~350 train
+samples, so no motif reached n≥20 with lift ≥1.3 and the rule called **zero**
+bars. Nothing was traded, so there is no per-trade net to compare. Reporting
+that as a −3.8377% edge — the arithmetic the table would produce if you divided
+by the baseline anyway — would be inventing a loss out of an abstention.
+
+**Therefore no edge is claimed.** The standing rule is an UP window AND a DOWN
+window, and one positive window beside one unmeasurable window is not two
+windows. What has changed is what the record says: pass 110's negative was
+*evidence against L1* and it is now *evidence about a broken encoder*.
+
+**The vocabulary explosion is the next constraint, and it is nameable.** 97
+motifs over 350 train samples is 0.28 distinct-per-sample on the TRAIN window —
+L1 itself is now approaching the 0.30 identifier guard it was built to sit far
+under. Terciles per stream over five streams is 3⁵ = 243 possible motifs, and
+the corpus is only 719 samples. So the encoder fix bought live slots at the
+cost of support, and the UP window is where that bill came due. **The fix for
+the UP arm is more corpus, not a lower support floor** — dropping `--min-support`
+to manufacture calls would be buying evidence by loosening a guard.
+
+## 9.4 Reproduce
+
+```
+# both bandings, one corpus, back to back
+python -X utf8 scripts/omen_layer_probe.py --corpus data/brain_experiments/p108_aero_down.json \
+  --horizon 12 --heldout
+python -X utf8 scripts/omen_layer_probe.py --corpus data/brain_experiments/p108_aero_down.json \
+  --horizon 12 --heldout --relative-bands
+```
+
+Every result now prints and records `banding`, `band_streams` and
+`l1_vocabulary_train`, so a number lifted out of a JSON file carries the
+encoder that produced it. That is the defect this item existed to fix: the
+pass-110 numbers were not wrong because anyone was careless, they were wrong
+because **the report had no field saying which encoder made them.**
+
+Guard test:
+
+```
+python -X utf8 -m pytest tests/test_a_result_names_the_encoder_that_made_it.py -q
+```
+
