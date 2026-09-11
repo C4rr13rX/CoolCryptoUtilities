@@ -423,9 +423,18 @@ def run_arm(args) -> int:
                 continue
             pairs.append({"frames": mutant["frames"], "label": mutant["label"],
                           "regime": mutant["regime"], "kind": kind})
+    # NEGATIVE CONTROL. The mutated arm differs from base in TWO ways: the
+    # mutations, and the pair count (300 -> 900). --repeat teaches the SAME
+    # base pairs that many times, matching the count while adding no new
+    # information. If repetition alone narrows the gap, the mutation result is
+    # explained by volume and not by invariance, and it must be withdrawn.
+    if args.repeat > 1:
+        pairs = pairs * args.repeat
     rng.shuffle(pairs)
 
     arm_name = ("base+" + "+".join(kinds)) if kinds else "base"
+    if args.repeat > 1:
+        arm_name += f" x{args.repeat} (repetition control)"
     print(f"ARM {arm_name}")
     print(f"  train [{plan['train_start']}, {plan['train_stop']}) -> "
           f"{len(balanced)} base samples -> {len(pairs)} pairs "
@@ -587,6 +596,10 @@ def main() -> int:
     parser.add_argument("--skip-train", action="store_true",
                         help="re-measure the fabric already on the node -- how "
                              "the second window is made comparable to the first")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="negative control: teach the base pairs N times, "
+                             "matching a mutated arm's pair count with no new "
+                             "information")
     parser.add_argument("--dry-run", action="store_true",
                         help="size the arm and send the node nothing")
     args = parser.parse_args()
