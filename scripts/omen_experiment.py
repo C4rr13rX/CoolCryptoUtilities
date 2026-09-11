@@ -55,6 +55,50 @@ from trading.omen_brain import (  # noqa: E402
 )
 from trading.omen_metacognition import self_frames  # noqa: E402
 from trading.omen_resolved_history import ResolvedHistory  # noqa: E402
+from trading.omen_scoreboard import READABLE_TRADES  # noqa: E402
+
+#: [3366105d] THE READABILITY FLOOR IS ON LABELS, NOT ONLY ON TRADES, AND IT
+#: IS A CEILING THE WINDOW IMPOSES BEFORE THE BRAIN SPEAKS. Measured pass 114,
+#: node-free, over 150 eligible 3600s corpora (b1bbd12): at the shipped omen
+#: threshold (OMEN_COST_MULTIPLE 1.5 -- 0.9750% against a 0.6500% round trip)
+#: the MEDIAN corpus labels 14.46% of its bars ``trough``. So a 60-bar held-out
+#: window CONTAINS 8.7 trough labels in total, and 8.7 is the hard ceiling on
+#: buy omens before recall is even asked about. Pass 111's four arms reported
+#: buy_omens of 1, 9, 7 and 2 out of 60 -- every one of them inside that
+#: ceiling, so not one of those counts was evidence about the brain.
+#:
+#: The floor is the same 30 that ``trading.omen_scoreboard.READABLE_TRADES``
+#: puts on trades, imported rather than restated so the two cannot drift: a
+#: cell that may not be quoted on 29 trades may not be quoted on a window that
+#: could not have produced 30 in the first place.
+READABLE_LABEL_FLOOR = READABLE_TRADES
+
+#: 30 trough calls at the median 14.46% base rate needs 30/0.1446 = 207.5 bars
+#: AT PERFECT RECALL, and strictly more at any real recall. Named here so the
+#: arithmetic behind the default window is readable rather than folklore.
+#:
+#: LOWERING THE THRESHOLD TO BUY LABELS IS A TRAP AND IT IS MEASURED: moving
+#: OMEN_COST_MULTIPLE to 0.5 raises the trough rate to 18.57%, which is 1.28x
+#: the labels for a label that no longer means the forward move paid its own
+#: round trip. The window is what gets raised, never the threshold.
+MIN_READABLE_HELDOUT_BARS_AT_3600S = 208
+
+#: The default held-out window, in BARS, chosen at 1.92x
+#: MIN_READABLE_HELDOUT_BARS_AT_3600S so a corpus whose trough rate is well
+#: below the 14.46% median still clears the label floor. It is written into
+#: every report (``heldout_default_bars``) because a default that only lives in
+#: an argparse line cannot be compared against the window a report actually
+#: used. Bars rather than labels is the honest unit HERE: the label count is
+#: not knowable until the window is cut, so the window is sized in bars and
+#: then the labels it actually contains are MEASURED and reported beside every
+#: cell they cap.
+DEFAULT_HELDOUT_BARS = 400
+
+#: What a cell reads when its window or its call count cannot carry it. The
+#: exact string is asserted by
+#: tests/test_a_sixty_bar_window_cannot_carry_a_per_trade_net.py, because the
+#: whole point is that a reader skimming the JSON sees a word, not a number.
+UNREADABLE = "UNREADABLE"
 
 #: [1f8c2461] THE SELF-FRAME ABSTENTION GATE. Measured pass 111: the self
 #: frames carry real information about the trough label in BOTH market
@@ -365,6 +409,228 @@ def validate_report_horizon(report: Mapping[str, Any]) -> None:
         raise ValueError(
             f"report horizon disagrees with itself: {bars_} bars of "
             f"{cadence}s is {implied:.2f} min, not {minutes_:.2f} min")
+
+
+def window_label_ceiling(bars: Sequence[Mapping[str, Any]], start: int,
+                         stop: int, horizon: int) -> Dict[str, Any]:
+    """How many trough and crest labels a candidate window CONTAINS.
+
+    Used by ``--list-windows``, which is where a held-out window is picked and
+    was therefore the last place that could still hand someone a 60-bar window
+    with a straight face. It showed the window's REGIME and nothing about
+    whether the window could carry a number, so every candidate looked equally
+    usable. Cheap enough to run over every candidate: ``label_omen`` is a
+    forward return plus a 60-bar min/max.
+    """
+    counts: Counter = Counter()
+    for index in range(max(start, LOOKBACK_BARS), stop):
+        label = label_omen(bars, index, horizon_bars=horizon)
+        if label is not None:
+            counts[label] += 1
+    scored = sum(counts.values())
+    return {
+        "scored_bars": scored,
+        "trough": counts.get(OMEN_TROUGH, 0),
+        "crest": counts.get(OMEN_CREST, 0),
+        "trough_base_rate": (counts.get(OMEN_TROUGH, 0) / scored) if scored else 0.0,
+        "readable": counts.get(OMEN_TROUGH, 0) >= READABLE_LABEL_FLOOR,
+    }
+
+
+def readability_cell(side: str, label: str, label_n: int, window_bars: int,
+                     *, trades: int | None, net_per_trade: float | None,
+                     floor: int = READABLE_LABEL_FLOOR,
+                     scored: bool = True) -> Dict[str, Any]:
+    """One side of the book, with the two n's that decide whether it may be read.
+
+    Two separate things can make a per-trade net unquotable, and a report that
+    conflates them sends the next pass to fix the wrong one:
+
+      * THE WINDOW'S CEILING -- ``label_n``, how many bars in this held-out
+        window actually carry this label. No recall, however perfect, produces
+        more calls than that. A 60-bar window holding 9 troughs cannot produce
+        30 buys, so its buy cell is unreadable before the brain says anything,
+        and the fix is a longer window.
+      * THE CALL COUNT -- ``trades``, how many calls the brain actually made.
+        A 400-bar window holding 58 troughs that yields 4 buys is unreadable
+        too, but the fix there is recall, not bars.
+
+    Both reasons are recorded, so the cell says which. ``net_per_trade`` is a
+    float only when the cell is readable; otherwise it is the literal string
+    ``UNREADABLE`` and the raw number moves to ``net_per_trade_raw`` -- kept
+    for reproducibility, named so it cannot be quoted by accident.
+
+    ``scored=False`` is the sell half here: this harness is long-only, so the
+    crest cell carries its label ceiling and nothing else. It exists rather
+    than being omitted because an absent cell reads as "not applicable" and
+    what is true is "never measured".
+    """
+    reasons: List[str] = []
+    if label_n < floor:
+        reasons.append(
+            f"the held-out window CONTAINS only {label_n} {label!r} labels in "
+            f"{window_bars} bars, below the {floor}-label floor -- {label_n} "
+            f"is the ceiling on {side} calls at PERFECT recall, so no count "
+            f"from this window is evidence about the brain. Lengthen the "
+            f"window (>= {MIN_READABLE_HELDOUT_BARS_AT_3600S} bars at 3600s); "
+            f"never lower the omen threshold to manufacture labels")
+    if not scored:
+        reasons.append(
+            f"the {side} half is NOT SCORED by this harness, which is "
+            f"long-only: a crest is an abstention here, not a short. "
+            f"scripts/omen_both_halves.py scores it")
+    elif trades is not None and trades < floor:
+        reasons.append(
+            f"only {trades} {side} calls were made, below the {floor}-trade "
+            f"floor: a per-trade mean on {trades} trades has no standard "
+            f"error and is one number wearing a percentage sign")
+    readable = not reasons
+    cell: Dict[str, Any] = {
+        "side": side,
+        "label": label,
+        "label_n": int(label_n),
+        "label_base_rate": (label_n / window_bars) if window_bars else None,
+        "window_bars": int(window_bars),
+        "trades": trades,
+        "floor": int(floor),
+        "scored": bool(scored),
+        "readable": readable,
+        "net_per_trade": net_per_trade if readable else UNREADABLE,
+        "unreadable_because": reasons,
+    }
+    if not readable and net_per_trade is not None:
+        cell["net_per_trade_raw"] = net_per_trade
+    return cell
+
+
+def heldout_readability(test_samples: Sequence[Mapping[str, Any]],
+                        *, buy_trades: int, buy_net_total: float,
+                        floor: int = READABLE_LABEL_FLOOR) -> Dict[str, Any]:
+    """The report fields that put every per-trade net beside the n that caps it.
+
+    Returns a block that splices straight into the report:
+
+        report = {..., **heldout_readability(test_samples, buy_trades=...)}
+
+    and which OVERRIDES ``buy_net_per_trade`` with the string ``UNREADABLE``
+    whenever the window or the call count cannot carry it. That override is
+    the whole mechanism: the key a reader quotes is the key that is guarded,
+    rather than a new advisory key beside an unchanged number.
+
+    The base rate is measured on THIS window rather than assumed from the
+    pass-114 median, because the median is a fact about a 3600s corpus and a
+    600s corpus at the same wall-clock horizon labels a different share of its
+    bars.
+    """
+    window_bars = len(test_samples)
+    counts = Counter(s["label"] for s in test_samples)
+    trough_n = counts.get(OMEN_TROUGH, 0)
+    crest_n = counts.get(OMEN_CREST, 0)
+    buy = readability_cell(
+        "buy", OMEN_TROUGH, trough_n, window_bars,
+        trades=int(buy_trades),
+        net_per_trade=(buy_net_total / buy_trades) if buy_trades else None,
+        floor=floor)
+    sell = readability_cell(
+        "sell", OMEN_CREST, crest_n, window_bars,
+        trades=None, net_per_trade=None, floor=floor, scored=False)
+    return {
+        "readable_label_floor": int(floor),
+        "min_readable_heldout_bars_at_3600s": MIN_READABLE_HELDOUT_BARS_AT_3600S,
+        "heldout_window_bars": window_bars,
+        "heldout_label_counts": {k: int(v) for k, v in counts.items()},
+        "heldout_label_base_rates": {
+            k: (v / window_bars) if window_bars else None
+            for k, v in counts.items()
+        },
+        "heldout_trough_labels": trough_n,
+        "heldout_trough_base_rate": (trough_n / window_bars) if window_bars else None,
+        "heldout_crest_labels": crest_n,
+        "heldout_crest_base_rate": (crest_n / window_bars) if window_bars else None,
+        "readability": {"buy": buy, "sell": sell},
+        # The guarded keys. These are the ones every existing reader and every
+        # report in data/brain_experiments/ quotes, so these are the ones that
+        # must stop being bare numbers when the window cannot carry them.
+        "buy_net_per_trade": buy["net_per_trade"],
+        "sell_net_per_trade": sell["net_per_trade"],
+        "heldout_readable": bool(buy["readable"]),
+    }
+
+
+def render_readability(block: Mapping[str, Any]) -> str:
+    """The readability block as lines a reader sees beside the money line."""
+    lines = [
+        f"   label ceiling : {block['heldout_trough_labels']} trough "
+        f"({block['heldout_trough_base_rate']:.2%} of "
+        f"{block['heldout_window_bars']} held-out bars) and "
+        f"{block['heldout_crest_labels']} crest "
+        f"({block['heldout_crest_base_rate']:.2%}) -- that is the CEILING on "
+        f"calls at perfect recall, floor is "
+        f"{block['readable_label_floor']} labels"
+    ]
+    for side in ("buy", "sell"):
+        cell = block["readability"][side]
+        if cell["readable"]:
+            lines.append(f"   {side:<14}: n={cell['trades']} "
+                         f"{cell['net_per_trade']:+.4%} per trade, READABLE")
+            continue
+        lines.append(f"   {side:<14}: UNREADABLE (label n={cell['label_n']}, "
+                     f"calls n={cell['trades']}) -- "
+                     + "; ".join(cell["unreadable_because"]))
+    return "\n".join(lines)
+
+
+#: Every report must carry the ceiling beside the count. Checked at WRITE
+#: time, exactly like REPORT_HORIZON_FIELDS, so a report that a reader could
+#: quote a per-trade net from without seeing its n never reaches the directory.
+REPORT_READABILITY_FIELDS = (
+    "readable_label_floor", "heldout_window_bars", "heldout_trough_labels",
+    "heldout_trough_base_rate", "heldout_crest_labels", "readability",
+    "heldout_default_bars",
+)
+
+
+def validate_report_readability(report: Mapping[str, Any]) -> None:
+    """Refuse a report whose per-trade net is not guarded by its own window.
+
+    The sibling of ``validate_report_horizon`` and it exists for the same
+    reason: the failure it prevents is a report already written. Four pass-111
+    artifacts carried ``buy_net_per_trade`` +0.0031 with ``buy_omens`` 1 in a
+    different key, and the positive was quoted for a month.
+
+    Two things are checked, and the second is the one that matters:
+
+      1. The ceiling fields are PRESENT, so a reader sees how many labels the
+         window contained beside the count of calls it produced.
+      2. No guarded cell holds a bare float while its own window or call count
+         is below the floor. Splice order in ``main`` is what puts the guarded
+         value in the report today, and splice order is exactly the kind of
+         thing a later edit reorders without noticing.
+    """
+    missing = [f for f in REPORT_READABILITY_FIELDS if report.get(f) is None]
+    if missing:
+        raise ValueError(
+            f"report is missing {missing}: a per-trade net without the label "
+            f"ceiling of the window that produced it is the presentation bug "
+            f"[3366105d] exists to close, not a measurement")
+    cells = report["readability"]
+    for side in ("buy", "sell"):
+        cell = cells.get(side)
+        if not isinstance(cell, Mapping):
+            raise ValueError(
+                f"report has no {side!r} readability cell: an ABSENT cell "
+                f"reads as 'not applicable' and what is true is 'never "
+                f"measured'")
+        key = f"{side}_net_per_trade"
+        value = report.get(key)
+        if cell["readable"]:
+            continue
+        if value != UNREADABLE:
+            raise ValueError(
+                f"{key} is {value!r} on an unreadable cell (label n="
+                f"{cell['label_n']}, calls n={cell['trades']}, floor "
+                f"{cell['floor']}): it must read {UNREADABLE!r}. "
+                + "; ".join(cell["unreadable_because"]))
 
 
 class WindowError(ValueError):
@@ -709,7 +975,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--train", type=int, default=2000)
-    parser.add_argument("--test", type=int, default=400)
+    parser.add_argument("--test", type=int, default=DEFAULT_HELDOUT_BARS,
+                        help=f"held-out window in BARS (default "
+                             f"{DEFAULT_HELDOUT_BARS}). It is not free to "
+                             f"lower: at the pass-114 median trough rate of "
+                             f"14.46% a window needs "
+                             f"{MIN_READABLE_HELDOUT_BARS_AT_3600S} bars at "
+                             f"3600s to CONTAIN "
+                             f"{READABLE_LABEL_FLOOR} trough labels at perfect "
+                             f"recall, and a window holding fewer writes its "
+                             f"per-trade cells as {UNREADABLE} rather than as "
+                             f"a percentage")
     add_horizon_args(parser)
     parser.add_argument("--recall-sample", type=int, default=200)
     parser.add_argument("--garbage", type=int, default=40)
@@ -815,15 +1091,32 @@ def main() -> int:
             return 2
         print(f"\ncandidate held-out windows of {args.test} bars "
               f"(train {args.train} + {args.horizon}-bar purge before each):")
-        print(f"{'test_end':>9} {'regime':>7} {'up_rate':>8} {'mean_fwd':>10}  window")
+        print(f"{'test_end':>9} {'regime':>7} {'up_rate':>8} {'mean_fwd':>10} "
+              f"{'trough':>7} {'rate':>7}  {'readable':>8}  window")
         step = max(1, args.test // 2)
+        unreadable = 0
         for end in range(latest, earliest - 1, -step):
             info = window_regime(bars, end - args.test, end, args.horizon)
             if not info["bars"]:
                 continue
+            # The CEILING beside the regime: a window can be a textbook DOWN
+            # window and still be incapable of carrying a per-trade net.
+            ceiling = window_label_ceiling(bars, end - args.test, end,
+                                           args.horizon)
+            unreadable += 0 if ceiling["readable"] else 1
             print(f"{end:>9} {info['regime']:>7} {info['up_rate']:>7.1%} "
-                  f"{info['mean_forward']:>+9.4%}  "
+                  f"{info['mean_forward']:>+9.4%} "
+                  f"{ceiling['trough']:>7} {ceiling['trough_base_rate']:>6.2%}  "
+                  f"{('yes' if ceiling['readable'] else 'NO'):>8}  "
                   f"[{end - args.test}, {end})")
+        if unreadable:
+            print(f"\n{unreadable} candidate window(s) of {args.test} bars hold "
+                  f"fewer than {READABLE_LABEL_FLOOR} trough labels. That is a "
+                  f"CEILING, not a result: no recall produces more buys than "
+                  f"the window contains, and a per-trade net from one of these "
+                  f"is written {UNREADABLE}. Raise --test (>= "
+                  f"{MIN_READABLE_HELDOUT_BARS_AT_3600S} bars at 3600s); do "
+                  f"NOT lower the omen threshold to manufacture labels.")
         print("\nPick one UP and one DOWN end, then measure BOTH on ONE fabric:")
         print(f"  run 1: --train-end <T> --test-end <UP>")
         print(f"  run 2: --train-end <T> --test-end <DOWN> --skip-train")
@@ -1103,8 +1396,16 @@ def main() -> int:
     wins = sum(1 for t in trades if t > 0)
     hit = wins / max(1, len(trades))
     buy_and_hold = [s["forward"] - ROUND_TRIP_COST for s in test_samples]
+    # The window's own label ceiling, BEFORE the per-trade line, because the
+    # ceiling is what decides whether that line may be read at all.
+    readability = heldout_readability(test_samples, buy_trades=len(trades),
+                                      buy_net_total=total)
+    per_trade_text = (f"{total / len(trades):+.4%} per trade"
+                      if readability["heldout_readable"] and trades
+                      else f"per trade {UNREADABLE}")
     print(f"4. NET OF COST   : {len(trades)} buy omens, {hit:.1%} paid, "
-          f"total {total:+.4f} ({total / max(1, len(trades)):+.4%} per trade)")
+          f"total {total:+.4f} ({per_trade_text})")
+    print(render_readability(readability))
     print(f"   every-bar buy : {len(buy_and_hold)} trades, "
           f"{sum(buy_and_hold) / max(1, len(buy_and_hold)):+.4%} per trade")
     # The lift over every-bar-buy is the number a reader will quote as an
@@ -1131,6 +1432,10 @@ def main() -> int:
             "floor": floor, "trades": len(kept),
             "per_trade": (sum(kept) / len(kept)) if kept else 0.0,
             "hit_rate": (sum(1 for p in kept if p > 0) / len(kept)) if kept else 0.0,
+            # Same floor, same reason: a floor that "improves" the per-trade
+            # mean by keeping 3 buys has not found an edge, it has found 3
+            # trades, and the sweep is exactly where that gets quoted.
+            "readable": len(kept) >= READABLE_LABEL_FLOOR,
         })
     print("   conf sweep    : " + " | ".join(
         f"{s['floor']:.2f}->{s['trades']}t {s['per_trade']:+.3%}" for s in sweep))
@@ -1241,7 +1546,10 @@ def main() -> int:
         "true_mix": dict(truth),
         "buy_omens": len(trades), "buy_hit_rate": hit,
         "buy_net_total": total,
-        "buy_net_per_trade": total / max(1, len(trades)),
+        # buy_net_per_trade and sell_net_per_trade are NOT set here. The
+        # readability splice below owns them, so the key a reader quotes is
+        # the key the label ceiling guards -- setting a bare number here and
+        # an advisory flag beside it is the presentation bug this closes.
         "every_bar_net_per_trade": (sum(buy_and_hold) / max(1, len(buy_and_hold))),
         "selection_lift_per_trade": (total / max(1, len(trades))
                                      - lift["every_bar_mean"]),
@@ -1250,10 +1558,21 @@ def main() -> int:
         "selection_p_value": lift["p_value"],
         "selection_trials": lift["trials"],
         "self_gate": gate_result,
+        # THE DEFAULT, NAMED IN THE REPORT. A default that lives only in an
+        # argparse line cannot be compared against the window a report used,
+        # and [3366105d] exists because four pass-111 reports were read as if
+        # their 60-bar windows were the same instrument as a 400-bar one.
+        "heldout_default_bars": DEFAULT_HELDOUT_BARS,
+        "heldout_window_was_default": int(args.test) == DEFAULT_HELDOUT_BARS,
+        # LAST, so it overrides buy_net_per_trade rather than being overridden.
+        **readability,
     }
     # Refuse to WRITE an uncomparable report rather than discover six passes
     # later that a number cannot be placed against another corpus.
     validate_report_horizon(report)
+    # And refuse a report whose per-trade cells are not guarded by the label
+    # ceiling of the window that produced them. [3366105d]
+    validate_report_readability(report)
     report_dir = ROOT / args.report_dir
     report_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
