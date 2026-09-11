@@ -9,7 +9,7 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 
 import tensorflow as tf
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from keras.callbacks import Callback
 from keras.layers import (
@@ -430,6 +430,195 @@ def build_multimodal_model(
     )
 
     return model, headline_vec, full_vec, losses, loss_weights
+
+
+# ---------------------------------------------------------------------
+# Deploy-time calibration guard for the price_mu head
+# ---------------------------------------------------------------------
+
+#: How far the head's magnitude may sit from the magnitude of the label it was
+#: fitted on before an artifact is refused promotion.
+#:
+#: WHY THIS GUARD EXISTS AT ALL. ``price_mu`` carries ``loss_weight`` 0.0 (see
+#: ``loss_weights`` above): nothing trains it directly. It is supervised only
+#: through ``price_gaussian``/``gaussian_nll_loss``, whose mu gradient is scaled
+#: by ``precision = exp(-log_var)`` and so switches off as ``log_var`` rises,
+#: and through ``net_margin`` MSE. Both are indirect, so the head can drift
+#: decades away from its own target while every training metric still looks
+#: sane -- and it did: measured 2026-09-11 on 40 clean windows drawn from the
+#: very corpus the head was fitted on, median |predicted price_mu| was 1.399697
+#: against a median label of 0.002858, a ratio of 489.8x. The label is a
+#: one-bar natural-log return whose p99 over 2,277,175 corpus samples is
+#: 0.034602, so the head answers three decades outside the support of its
+#: target. ``price_mu`` feeds ``delta``, ``net_margin`` and ``net_pnl``, which
+#: are three of the entry conjunction's five terms, so an uncalibrated head
+#: makes every cost-derived entry test unjudgeable.
+#:
+#: 10x is deliberately loose. It is not a claim that a 9x head is good; it is
+#: the line past which the number is not a return at all.
+CALIBRATION_MAX_RATIO = 10.0
+
+#: Windows to probe before a promotion decision. 40 is what the standing probe
+#: (``scripts/model_window_probe.py --train-samples 40``) uses, and the ratio it
+#: reads is stable at that size because the defect is three orders of magnitude.
+CALIBRATION_SAMPLE_COUNT = 40
+
+#: Where trading/data_loader.py draws its training bars from.
+CALIBRATION_CORPUS_DIR = os.path.join("data", "historical_ohlcv")
+
+
+def corpus_calibration_windows(
+    width: int,
+    count: int = CALIBRATION_SAMPLE_COUNT,
+    *,
+    corpus_dir: str = CALIBRATION_CORPUS_DIR,
+    seed: int = 20260911,
+):
+    """Draw ``count`` (closes, net_volumes, mu_true) triples from the corpus.
+
+    ``mu_true`` is built exactly as ``trading/data_loader.py`` builds it -- the
+    natural-log return from the LAST bar of the window to the bar immediately
+    after it -- so the guard measures the head against its own target and not
+    against some other definition of "the move".
+
+    Returns an empty list when the corpus is missing, which callers must treat
+    as "cannot judge", never as "passed".
+    """
+    import glob
+    import json
+    import math
+    import random
+
+    files = sorted(glob.glob(os.path.join(corpus_dir, "**", "*.json"), recursive=True))
+    if not files:
+        return []
+    rng = random.Random(seed)
+    rng.shuffle(files)
+    out = []
+    for path in files:
+        if len(out) >= count:
+            break
+        try:
+            with open(path, encoding="utf8") as handle:
+                rows = json.load(handle)
+        except Exception:
+            continue
+        if not isinstance(rows, list) or len(rows) < width + 8 or not isinstance(rows[0], dict):
+            continue
+        for _ in range(3):
+            if len(out) >= count:
+                break
+            end = rng.randrange(width, len(rows) - 1)
+            sl = rows[end - width:end]
+            closes = [float(r.get("close") or 0.0) for r in sl]
+            vols = [float(r.get("net_volume") or 0.0) for r in sl]
+            nxt = float(rows[end].get("close") or 0.0)
+            if min(closes) <= 0.0 or nxt <= 0.0:
+                continue
+            out.append((closes, vols, math.log(nxt) - math.log(closes[-1])))
+    return out
+
+
+def price_mu_calibration(model, windows) -> Dict[str, Any]:
+    """Measure the served ``price_mu`` head against the label it was fitted on.
+
+    Every auxiliary input is the stub ``trading/bot.py::_prepare_inputs`` feeds
+    on a live tick (notably ``gas_fee_input`` 0.0015 and ``tax_rate_input``
+    0.005), so the price/volume window is the only thing that varies.
+
+    Returns a dict with ``ratio`` = median |predicted| / median |label|, the
+    two medians, the served ``log_var`` distribution, and ``samples``. A ratio
+    of ``float('inf')`` means the label median underflowed and the artifact
+    cannot be judged.
+    """
+    import numpy as np
+
+    if not windows:
+        return {"samples": 0, "ratio": float("nan"), "median_pred": float("nan"),
+                "median_label": float("nan"), "median_log_var": float("nan"),
+                "log_var_saturated_ratio": float("nan")}
+
+    order = [i.name.split(":")[0] for i in model.inputs]
+    width = [int(i.shape[1]) for i in model.inputs if "price_vol" in i.name][0]
+    tech = [int(i.shape[1]) for i in model.inputs if "tech_input" in i.name][0]
+    seq = [int(i.shape[1]) for i in model.inputs if "sentiment_seq" in i.name][0]
+    # The head order trading/bot.py::_summarise_predictions reads.
+    mu_index, log_var_index = 1, 2
+
+    preds, truths, log_vars = [], [], []
+    for prices, volumes, mu_true in windows:
+        if len(prices) != width:
+            continue
+        pv = np.stack(
+            [np.asarray(prices, np.float32), np.asarray(volumes, np.float32)], -1
+        ).reshape(1, width, 2)
+        feed = {
+            "price_vol_input": pv,
+            "sentiment_seq": np.zeros((1, seq, 1), np.float32),
+            "headline_text": tf.constant([["calibration probe"]], tf.string),
+            "full_text": tf.constant([[""]], tf.string),
+            "tech_input": np.zeros((1, tech), np.float32),
+            "hour_input": np.array([[12]], np.int32),
+            "dow_input": np.array([[2]], np.int32),
+            "gas_fee_input": np.full((1, 1), 0.0015, np.float32),
+            "tax_rate_input": np.full((1, 1), 0.005, np.float32),
+            "asset_id_input": np.array([[0]], np.int32),
+        }
+        out = model.predict([feed[k] for k in order], verbose=0)
+        preds.append(float(np.asarray(out[mu_index]).reshape(-1)[0]))
+        log_vars.append(float(np.asarray(out[log_var_index]).reshape(-1)[0]))
+        truths.append(float(mu_true))
+
+    if not preds:
+        return {"samples": 0, "ratio": float("nan"), "median_pred": float("nan"),
+                "median_label": float("nan"), "median_log_var": float("nan"),
+                "log_var_saturated_ratio": float("nan")}
+
+    pred_arr = np.abs(np.asarray(preds, np.float64))
+    true_arr = np.abs(np.asarray(truths, np.float64))
+    log_var_arr = np.asarray(log_vars, np.float64)
+    median_pred = float(np.median(pred_arr))
+    median_label = float(np.median(true_arr))
+    ratio = median_pred / median_label if median_label > 0.0 else float("inf")
+    return {
+        "samples": int(pred_arr.size),
+        "ratio": float(ratio),
+        "median_pred": median_pred,
+        "median_label": median_label,
+        "max_pred": float(pred_arr.max()),
+        "max_label": float(true_arr.max()),
+        "median_log_var": float(np.median(log_var_arr)),
+        "log_var_saturated_ratio": float(np.mean(log_var_arr >= 7.9)),
+    }
+
+
+def calibration_rejection_reason(
+    report: Dict[str, Any],
+    *,
+    max_ratio: float = CALIBRATION_MAX_RATIO,
+) -> Optional[str]:
+    """Return why this artifact must not be promoted, or ``None`` to allow it.
+
+    A report with zero samples is NOT a pass -- it is "the corpus could not be
+    read", and the caller decides. It is returned here as ``None`` so a missing
+    corpus cannot freeze promotion forever, and the caller logs the sample
+    count beside the verdict.
+    """
+    import math as _math
+
+    samples = int(report.get("samples") or 0)
+    if samples <= 0:
+        return None
+    ratio = float(report.get("ratio", float("nan")))
+    if _math.isnan(ratio):
+        return None
+    if ratio > max_ratio:
+        return (
+            f"price_mu is uncalibrated: median |predicted| {report['median_pred']:.6f} "
+            f"is {ratio:.1f}x the median label {report['median_label']:.6f} over "
+            f"{samples} clean corpus windows (bar {max_ratio:.0f}x)"
+        )
+    return None
 
 
 # ---------------------------------------------------------------------

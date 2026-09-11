@@ -2084,6 +2084,40 @@ class TrainingPipeline:
             )
             raise
 
+    def _price_mu_calibration_report(self, model: Any) -> Dict[str, Any]:
+        """Probe ``model``'s price_mu head against the label it was fitted on.
+
+        Never raises: a probe that cannot run returns ``samples`` 0, which
+        ``_calibration_rejection_reason`` treats as "cannot judge" rather than
+        as a pass, and the sample count is logged beside the verdict so a
+        silently-skipped guard is visible.
+        """
+        md = _get_model_defs()
+        if md is None:
+            return {"samples": 0, "error": "model_definition unavailable"}
+        try:
+            width = int(self.window_size)
+            windows = md.corpus_calibration_windows(width, md.CALIBRATION_SAMPLE_COUNT)
+            report = md.price_mu_calibration(model, windows)
+            report["max_ratio"] = float(md.CALIBRATION_MAX_RATIO)
+            return report
+        except Exception as exc:  # noqa: BLE001 - a broken probe must not block training
+            log_message(
+                "training",
+                f"price_mu calibration probe failed: {type(exc).__name__}: {exc}",
+                severity="warning",
+            )
+            return {"samples": 0, "error": f"{type(exc).__name__}: {exc}"}
+
+    def _calibration_rejection_reason(self, report: Dict[str, Any]) -> Optional[str]:
+        md = _get_model_defs()
+        if md is None:
+            return None
+        try:
+            return md.calibration_rejection_reason(report)
+        except Exception:  # noqa: BLE001
+            return None
+
     def promote_candidate(
         self,
         path: Path,
@@ -2191,6 +2225,32 @@ class TrainingPipeline:
         )
         with _utf8_text_io():
             model = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
+
+        # A SCORE IS NOT A CALIBRATION. Refuse an artifact whose price_mu head
+        # answers outside the support of its own label.
+        #
+        # ``score`` here is a composite of directional accuracy and ghost
+        # outcomes, and the artifact deployed 2026-09-11 01:57 passed it while
+        # answering 489.8x its own training label on clean in-corpus windows.
+        # It could, because nothing on the promotion path had ever looked at
+        # the MAGNITUDE of price_mu -- and price_mu feeds delta, net_margin and
+        # net_pnl, three of the entry conjunction's five terms.
+        calibration = self._price_mu_calibration_report(model)
+        rejection = self._calibration_rejection_reason(calibration)
+        if rejection:
+            log_message(
+                "training",
+                f"promotion REFUSED for {path.name}: {rejection}",
+                severity="error",
+                details={"calibration": calibration, "candidate": str(path)},
+            )
+            self.metrics.feedback(
+                "promotion",
+                severity=FeedbackSeverity.WARNING,
+                label="calibration_refused",
+                details={"iteration": self.iteration, "reason": rejection, **calibration},
+            )
+            return None
         model.save(versioned_path, include_optimizer=False)
         try:
             shutil.copy2(versioned_path, tmp_path)
@@ -2218,7 +2278,26 @@ class TrainingPipeline:
                 log_message("training", f"TFLite model exported to {tflite_path}")
             except Exception as exc:
                 log_message("training", f"TFLite export failed (non-blocking): {exc}", severity="warning")
-        self.db.register_model_version(version=version, metrics={"score": score}, path=str(versioned_path), activate=True)
+        # EVERY DEPLOY LEAVES A ROW, AND THE ROW CARRIES THE CALIBRATION.
+        #
+        # model_versions held 0 rows on 2026-09-11 while models/active_model.keras
+        # had been rebuilt that morning, so a 1800x head regression could not be
+        # attributed to any artifact after the fact -- there was nothing to diff
+        # against. The metrics below are what the next such regression will be
+        # read off: the ratio, both medians, and the served log_var.
+        self.db.register_model_version(
+            version=version,
+            metrics={
+                "score": float(score),
+                "price_mu_ratio": calibration.get("ratio"),
+                "price_mu_median_pred": calibration.get("median_pred"),
+                "price_mu_median_label": calibration.get("median_label"),
+                "price_mu_log_var_median": calibration.get("median_log_var"),
+                "calibration_samples": calibration.get("samples"),
+            },
+            path=str(versioned_path),
+            activate=True,
+        )
         self._active_model = model
         self.active_accuracy = float(evaluation.get("dir_accuracy", score)) if evaluation else score
         if evaluation and evaluation.get("best_threshold") is not None:
@@ -2440,7 +2519,46 @@ class TrainingPipeline:
                 weight_pos *= max(0.5, self._pos_weight_multiplier)
                 sample_weights["price_dir"][positive_mask] = weight_pos
                 sample_weights["net_margin"][positive_mask] = weight_pos
-            margin_intensity = np.clip(np.abs(margin_arr), 0.1, 5.0)
+            # INTENSITY IS RELATIVE TO THE LABEL'S OWN SPREAD, NOT TO AN
+            # ABSOLUTE 0.1 FLOOR -- AND THAT FLOOR HAD SILENTLY BECOME A FLAT
+            # 10x DOWN-WEIGHT ON THE ONLY LOSS THAT PINS ``price_mu``.
+            #
+            # This was ``np.clip(np.abs(margin_arr), 0.1, 5.0)``. That curve was
+            # written for the OLD ``net_margin`` label, whose median |value| was
+            # 0.4977 (see the comment at trading/data_loader.py:53) -- inside the
+            # band, so the weight really did rank big moves above small ones.
+            # When the label was corrected to ``mu - (gas + tax)`` over a ONE-BAR
+            # natural-log return, the whole distribution fell out of the bottom
+            # of the band and the "intensity" became a constant.
+            #
+            # Measured 2026-09-11 over 415,846 labels from data/historical_ohlcv:
+            #     median |mu|                     0.003445
+            #     median |net_margin|             0.006724
+            #     p99    |net_margin|             0.037053
+            #     fraction with |net_margin| < 0.1   99.96%
+            #     mean of clip(|nm|, 0.1, 5.0)    0.100042
+            # So 99.96% of samples got the identical weight 0.1, and the
+            # ``net_margin`` MSE -- nominally ``loss_weight`` 1.0, and the only
+            # direct supervision ``price_mu`` has, since ``price_mu`` itself
+            # carries ``loss_weight`` 0.0 -- was trained at an effective 0.1.
+            #
+            # THE OTHER SUPERVISION PATH IS NOT THE ONE THAT FAILED. Probed the
+            # deployed artifact on 40 clean corpus windows the same day: the
+            # served ``log_var`` has median 1.3715, max 2.0318, and 0.0% of
+            # windows sit at the +8.0 clip, so ``precision = exp(-log_var)``
+            # is 0.2538 and the gaussian path's mu gradient is attenuated 4x,
+            # not switched off. What was switched off was this line.
+            #
+            # Dividing by the batch's own median restores the curve the code
+            # meant: a median-sized move weighs 1.0, a flat bar floors at 0.1,
+            # an outsized one earns up to 5x, and the MEAN weight returns to
+            # ~1.0 instead of 0.1.
+            margin_scale = float(np.median(np.abs(margin_arr))) if margin_arr.size else 0.0
+            if not np.isfinite(margin_scale) or margin_scale <= 0.0:
+                margin_scale = 1.0
+            margin_intensity = np.clip(np.abs(margin_arr) / margin_scale, 0.1, 5.0)
+            self._last_dataset_meta["margin_intensity_scale"] = margin_scale
+            self._last_dataset_meta["margin_intensity_mean"] = float(np.mean(margin_intensity))
             sample_weights["net_margin"] *= margin_intensity
             sample_weights["net_pnl"] *= margin_intensity
             horizon_weights = self._horizon_sample_weights(

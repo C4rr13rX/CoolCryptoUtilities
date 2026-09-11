@@ -187,12 +187,15 @@ def main() -> int:
     if not corpus:
         print("   no usable corpus files under data/historical_ohlcv")
     else:
-        preds, truths = [], []
+        preds, truths, log_vars = [], [], []
         for prices, vols, mu_true in corpus:
-            preds.append(run(prices, vols, "corpus")["price_mu"])
+            out = run(prices, vols, "corpus")
+            preds.append(out["price_mu"])
+            log_vars.append(out["price_log_var"])
             truths.append(mu_true)
         preds = np.asarray(preds, np.float64)
         truths = np.asarray(truths, np.float64)
+        log_vars = np.asarray(log_vars, np.float64)
         print(f"   label  mu = log(next close / this close), one bar ahead")
         print(f"   TRUE  : median |mu|   {np.median(np.abs(truths)):.6f}   p99 {np.percentile(np.abs(truths), 99):.6f}"
               f"   max {np.abs(truths).max():.6f}")
@@ -201,6 +204,24 @@ def main() -> int:
         ratio = np.median(np.abs(preds)) / max(np.median(np.abs(truths)), 1e-12)
         print(f"   RATIO : predicted magnitude is {ratio:.1f}x the label it was fitted on")
         print(f"   SIGN  : head and label agree on direction {float((np.sign(preds) == np.sign(truths)).mean()) * 100:.1f}% of {preds.size}")
+        # WHICH OF THE TWO SUPERVISION PATHS IS FAILING.
+        #
+        # price_mu carries loss_weight 0.0 (model_definition.py:415). It is
+        # supervised only indirectly, by two routes:
+        #   * price_gaussian / gaussian_nll_loss, where log_var is the free
+        #     second unit of the same Dense(2). The mu gradient out of that
+        #     loss is scaled by precision = exp(-log_var), so a log_var driven
+        #     to the +8.0 clip (model_definition.py:207) leaves precision at
+        #     3.4e-4 and the mu term is effectively switched off.
+        #   * net_margin MSE at loss_weight 1.0 -- the only strong path.
+        # Printing the served log_var says which one is alive.
+        precision = np.exp(-np.clip(log_vars, math.log(1e-6), 8.0))
+        print(f"   LOGVAR: median {np.median(log_vars):.6f}   min {log_vars.min():.6f}"
+              f"   max {log_vars.max():.6f}   (clip band {math.log(1e-6):.3f} .. 8.0)")
+        print(f"   PRECIS: exp(-log_var) median {np.median(precision):.6e}"
+              f"   -- the factor the gaussian path scales the mu gradient by")
+        saturated = float(np.mean(log_vars >= 7.9)) * 100.0
+        print(f"   SATUR : {saturated:.1f}% of windows sit at the +8.0 log_var clip")
 
     conn = sqlite3.connect(args.db)
     now = time.time()

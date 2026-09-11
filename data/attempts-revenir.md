@@ -5665,3 +5665,39 @@ Next: any sell-side arm must be scored against the MIRRORED same-regime
 baseline, not against zero and not against the buy half's baseline. The open
 question is whether a feature richer than range position separates the crest
 subset from the window it sits in.
+
+## 2026-09-11 Jet — which of price_mu's two supervision paths is dead [2a503d95]
+
+HYPOTHESIS (the item's own): price_mu reads 489.8x its label because log_var
+saturates high, so precision = exp(-log_var) kills the mu gradient out of
+gaussian_nll_loss.
+
+DID: added a log_var arm to scripts/model_window_probe.py and probed the
+deployed artifact on the same 40 clean data/historical_ohlcv windows; then
+measured the net_margin sample weight over 415,846 corpus labels.
+
+RESULT: THE LOG_VAR SUSPECT IS FALSIFIED. Served log_var median 1.3715, min
+-0.0109, max 2.0318, and 0.0% of windows at the +8.0 clip; precision median
+0.2538, so that path is attenuated 4x, not switched off. THE FAILING PATH IS
+net_margin MSE, and the number is its sample weight: pipeline.py:2443 used
+clip(|net_margin|, 0.1, 5.0), and 99.96% of |net_margin| = |mu - 0.0065| falls
+BELOW 0.1 (median 0.006724, p99 0.037053), so that "intensity" curve was the
+CONSTANT 0.1 -- a flat 10x down-weight on the only loss that directly pins
+price_mu, which itself carries loss_weight 0.0. The band was written for the
+OLD label (median |net_margin| 0.4977) and collapsed silently when the label
+was corrected to a one-bar log return. Fixed by dividing by the batch median:
+median weight 0.1 -> 1.0, mean -> ~1.0. Also correcting the item: 
+db.register_model_version HAS two callers (pipeline.py 1953, 2221); the table
+is empty because promote_candidate has never completed, not because nothing
+calls it.
+
+SHIPPED: model_definition.price_mu_calibration / corpus_calibration_windows /
+calibration_rejection_reason (bar 10x), wired into promote_candidate, which now
+returns None and logs "promotion REFUSED" instead of deploying; the
+register_model_version call now carries ratio, both medians and log_var.
+7 tests, all green, and the guard is shown REFUSING THE REAL ARTIFACT ON DISK.
+
+NEXT: the retrain is NOT done -- criteria 4 and 5 of [2a503d95] need a full
+pipeline training cycle to re-measure the ratio and the entry census, which
+does not fit a 30-minute pass. The guard makes the next artifact honest; it
+does not calibrate this one.
