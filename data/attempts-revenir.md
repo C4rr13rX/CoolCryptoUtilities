@@ -5166,3 +5166,20 @@ control in both windows. Still below majority in both, still 3-4 bars of 120,
 so the control makes the DIRECTION believable and not the SIZE.
 NEXT: [f4c0975a] -- 400-bar test windows so a 2.5pp move is 10 bars, plus
 deep_flatten. Cheap: the node measured 24 pairs/s, not 5.6.
+
+2026-09-10 Jet (manager, pass 112) -- HYPOTHESIS: the horizon finding was never
+testable in an UP window because no UP window existed in stored tape. FALSE, and
+the real cause was the instrument. scripts/market_stream_drift_scan.py over
+373.5h of market_stream found 12 of 30 candidate 24h windows clearing +0.300%
+median per-symbol drift (best +5.572% at --end-hours-ago 168). The horizon table
+still printed NO ROWS there: it took its rows from organism_snapshots prediction
+records while reading no prediction field, so it could only be measured where the
+head was speaking. RESULT, --tape-rows, three windows on one instrument back to
+back, perfect-oracle net % at 5/10/15/30min: now -0.2120/-0.1441/-0.0884/+0.0468;
+72h ago -0.2940/-0.1884/-0.1644/+0.0082; 168h ago -0.0463/+0.1727/+0.3449/+0.8371.
+Control: the new row source reproduces the published recent-window numbers to
+within 0.004 points. 5min is negative in all three; 10min and 15min flip sign by
+window so neither is a floor; the median tick clears the 0.3996% cost at no
+horizon under 60min in any window. NEXT: the operator has the decision (longer
+horizon vs cost reduction); the cost leg cannot be costed until fee_rate,
+slippage and gas are instrumented per fill rather than constants.
