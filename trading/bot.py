@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import threading
 import time
 import uuid
@@ -313,6 +314,61 @@ _HORIZON_SECONDS = {
     "1h": 3600.0, "5h": 18000.0, "12h": 43200.0,
     "1d": 86400.0, "3d": 259200.0, "5d": 432000.0, "1w": 604800.0,
 }
+
+#: Units a horizon suffix can name, in seconds.
+_HORIZON_UNIT_SECONDS = {
+    "m": 60.0, "min": 60.0, "mins": 60.0,
+    "h": 3600.0, "hr": 3600.0, "hrs": 3600.0,
+    "d": 86400.0, "w": 604800.0,
+}
+
+_HORIZON_LABEL_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(m|min|mins|h|hr|hrs|d|w)\s*$")
+
+
+def horizon_seconds(label: Any) -> float:
+    """Seconds a horizon label names, or 0.0 if it names none.
+
+    A FIXED TABLE WAS SILENTLY DISARMING THE ONLY COST TEST ON THE DIRECTIVE
+    PATH. `_lattice_refusal` looks the label up and returns None -- allowing the
+    trade with no cost test at all -- when the lookup misses. Measured over the
+    7 days to 2026-09-11 on 126 directive-path entries (the path that placed
+    every one of the 10 live entries in that window), 53 of them (42%) took
+    exactly that exit:
+
+        horizon   entries   in the old table?
+        atf            35   no
+        45m            13   NO  <- default_horizon of five strategies
+        20m             5   NO  <- default_horizon of two strategies
+        (12h/1w/5h/1d/5d/3d/30m/15m/1h/5m: 73)  yes
+
+    "45m" and "20m" are not exotic: they are the `default_horizon` class
+    attribute of rsi_reversal, obv_accumulation, bollinger_squeeze,
+    supertrend_follow, mean_reversion (45m) and stochastic_reversal,
+    volume_spike (20m). Seven of the strategies in the population emitted a
+    horizon the gate could not read, so their entries were never priced.
+
+    Parsing the label instead of looking it up closes that for anything of the
+    form <number><unit>. A label naming no duration at all -- "atf" -- still
+    returns 0.0 and still fails open, because this layer must never become the
+    reason nothing trades; the caller now records that it happened so the
+    residual is a number rather than a guess.
+    """
+    text = str(label or "").strip().lower()
+    if not text:
+        return 0.0
+    known = _HORIZON_SECONDS.get(text)
+    if known:
+        return float(known)
+    match = _HORIZON_LABEL_RE.match(text)
+    if not match:
+        return 0.0
+    try:
+        magnitude = float(match.group(1))
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(magnitude) or magnitude <= 0:
+        return 0.0
+    return magnitude * _HORIZON_UNIT_SECONDS[match.group(2)]
 
 
 class _InsufficientHistory(RuntimeError):
@@ -1898,28 +1954,41 @@ class TradingBot:
         module missing, too short a window, an exception -- returns None and
         lets the existing guards decide. This layer only ever ADDS a reason to
         refuse; it must never become the reason nothing trades.
+
+        A FAIL-OPEN THAT IS NOT COUNTED IS INDISTINGUISHABLE FROM A PASS. This
+        is the only cost test on the directive path -- the path that placed 126
+        of 128 entries and all 10 live entries in the 7 days to 2026-09-11 --
+        and until now nothing recorded which of its exits was taken, so "the
+        lattice allowed it" and "the lattice never looked" read the same in the
+        log. `self._lattice_last_exit` names the exit; the caller stamps it into
+        the decision so the next census is a count rather than a reconstruction.
         """
+        self._lattice_last_exit = "disabled"
         if not self._lattice_enabled():
             return None
 
         try:
             action = str(getattr(directive, "action", "") or "")
             if action != "enter":
+                self._lattice_last_exit = "not_an_entry"
                 return None                # exits are not forecasts
 
             expected = float(getattr(directive, "expected_return", 0.0) or 0.0)
             if expected <= 0:
+                self._lattice_last_exit = "expected_return_not_positive"
                 return None                # nothing to judge
 
             horizon_label = str(getattr(directive, "horizon", "") or "")
-            horizon_sec = _HORIZON_SECONDS.get(horizon_label, 0.0)
+            horizon_sec = horizon_seconds(horizon_label)
             if horizon_sec <= 0:
+                self._lattice_last_exit = f"unreadable_horizon:{horizon_label[:24]}"
                 return None                # no stated horizon to check
 
             history = list(self._buffer)[-400:]
             prices = [float(row.get("price") or 0.0) for row in history]
             prices = [p for p in prices if p > 0]
             if len(prices) < 64:
+                self._lattice_last_exit = f"short_window:{len(prices)}"
                 return None                # unmeasurable; the guards below apply
 
             import sys
@@ -1944,9 +2013,12 @@ class TradingBot:
                 notional_usd=notional,
             )
             if result.get("passed"):
+                self._lattice_last_exit = "answered_pass"
                 return None
+            self._lattice_last_exit = "answered_refuse"
             return f"{result.get('stopped_at')}: {result.get('reason')}"[:220]
-        except Exception:  # noqa: BLE001 - never block a trade on this
+        except Exception as exc:  # noqa: BLE001 - never block a trade on this
+            self._lattice_last_exit = f"exception:{type(exc).__name__}"
             return None
 
     def _lattice_enabled(self) -> bool:
@@ -8295,6 +8367,13 @@ class TradingBot:
             # today and remain sufficient on their own. A new check that can
             # silently stop all trading is worse than the gap it closes.
             lattice_refusal = self._lattice_refusal(symbol, directive, sample)
+            # Which exit the only cost test on this path took, recorded on the
+            # decision so a fail-open is countable instead of being read as a
+            # pass. 42% of directive entries in the 7 days to 2026-09-11 took
+            # the unreadable-horizon exit and nothing in the log said so.
+            decision["lattice_exit"] = str(
+                getattr(self, "_lattice_last_exit", "") or "not_evaluated"
+            )
             if lattice_refusal:
                 decision.update(
                     {
