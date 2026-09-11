@@ -5070,3 +5070,52 @@ gas_price_usd reads 2477.16 and 0.5018 on AERO-USDC in the same book.
 NEXT: scan market_stream's 372h for a window with median drift > +0.3% and run
 --end-hours-ago there; and instrument the cost legs before anyone prices "cut
 the cost". Commit 64a51f8.
+
+2026-09-10 Cove (pass 112) -- HYPOTHESIS: the brain's uniform hourly training
+grid and the live tick feed's irregular spacing are crossed somewhere without
+resampling, and the existing temporal collection's distinctness of 1.0 is a
+counter or a stamp.
+DID: built scripts/omen_temporal_census.py, a node-free audit that measures
+both cadences off real data and exits 2 on a crossing, plus a per-slot census
+inside a collection frame.
+RESULT, three numbers. (1) CROSSED 60x: omen_brain.py:598 emits 'hzn h=12' and
+bar_seconds never enters any frame; the corpus measures 3600s at uniform_share
+1.0000 (720 min) and omen_reversion resamples at 60s (12 min). Same bytes.
+Trained on every sample, fired by CONSENSUS_QUERIES[3], NOT in
+PREDICT_COLLECTIONS, and no held-out number is invalidated -- every experiment
+trains and tests at one cadence, so it bites only at the corpus-to-live seam.
+(2) The live bar list is not a grid and the strategy cannot fire: 6h of
+market_stream, 8 busiest symbols, filled_share 0.215-0.242, adjacent_share
+0.143-0.274, max gap 58-94 buckets, median index step 180s against a nominal
+60s; the path asks for 170 min of ticks and 169 closed bars, 36.5-41.2 form.
+(3) HYPOTHESIS FALSIFIED on the temporal collection: max SLOT distinctness is
+0.0517 UP / 0.0550 DOWN over 600 samples, so the 1.0 is the conjunction of 11
+honest slots, not an index. Nothing to purge; the fix is topological.
+NEXT: put the cadence in the frame ('hzn h=12 s=3600' vs 's=60') as its own
+pass with its own back-to-back measurement, [d7a79763]; and decide between a
+longer fetch window, a coarser live bar and a shorter lookback, [20ea929d].
+No temporal pool was added: criterion 1 fired and instructs a stop. Commit
+after 847cd50 on main; report data/brain_experiments/TEMPORAL-GRID-p112-cove.md.
+
+2026-09-10 | Gale | pass 112 | hypothesis: chart-shape MUTATIONS buy invariance
+and narrow the 0.975-recall / 0.285-heldout memorisation gap, but only if the
+mutation cannot move the label.
+WHAT I DID: settled the poison question by arithmetic rather than argument.
+label_omen reads entry, entry+horizon, and min/max over the last RANGE_WINDOW
+closes; RANGE_WINDOW=24 against LOOKBACK_BARS=168, so a mutation confined to
+[anchor-168, anchor-24) cannot move any of the three. Built
+scripts/omen_shape_mutations.py (census + arm) and 9 tests.
+RESULT: 3 of 5 admitted on both windows (AERO-USDC h12, 120 anchors each,
+bars [841,1441) and [21091,21691)): deep_jitter, deep_flatten, deep_dilate all
+at 0.0% label flip, 0.0% cross-label collision, moving 32-51% of frame slots
+with a 0-4.2% no-op rate. AMPLITUDE DROPPED: 0.0% flip -- and that is the trap.
+Geometry moves 0/120 (ratios), while temporal, volatility and cross move
+120/120; it perturbs exactly the magnitude the abs(forward)>=threshold test
+reads. INVERT DROPPED: 70.0%/60.0% flip.
+NOT MEASURED: the held-out arm. The node's consolidation floor is 4096 MB and
+the box reported available_mb 3879 -> 2044. I killed the pass-111 node (2278 MB)
+expecting that to clear it and it did NOT -- available_mb FELL by 1835 MB while
+I freed 2278, so it is not tracking node memory. Both my nodes killed.
+NEXT: run base vs base+deep_jitter+deep_dilate back-to-back on two fresh dirs
+when the box has 4096 MB. Sized: 600 -> 1800 pairs, 1.8 and 5.4 min at 5.6/s.
+Report: data/brain_experiments/p112_gale_shape_mutation_census.md
