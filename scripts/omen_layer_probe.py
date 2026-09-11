@@ -40,7 +40,7 @@ from trading.omen_brain import (  # noqa: E402
 )
 from trading.omen_layers import (  # noqa: E402
     L1_STREAMS, MOTIF_SEQUENCE_STEPS, cooccurrence_motif, layer_distinctness,
-    relative_bands, sequence_motif,
+    relative_bands, sequence_motif, sticky_motifs,
 )
 
 #: The L0 streams a motif is built FROM. ``instrument`` and ``horizon`` are
@@ -61,7 +61,8 @@ def load_bars(path: Path) -> List[Dict[str, Any]]:
 
 def build_layer_frames(bars: Sequence[Mapping[str, Any]], symbol: str,
                        chain: str, horizon: int, start: int, stop: int,
-                       bands: Optional[Mapping[str, Any]] = None
+                       bands: Optional[Mapping[str, Any]] = None,
+                       margin: float = 0.0
                        ) -> List[Dict[str, str]]:
     """L0 frames plus their L1 motif and L2 motif-path, per bar.
 
@@ -79,14 +80,36 @@ def build_layer_frames(bars: Sequence[Mapping[str, Any]], symbol: str,
     """
     out: List[Dict[str, str]] = []
     motif_history: List[str] = []
+
+    # HYSTERESIS IS A FACT ABOUT A SEQUENCE, not about one bar, so the whole
+    # window is encoded in ONE call rather than bar by bar. margin=0.0 is
+    # byte-identical to the old per-bar cooccurrence_motif call, with and
+    # without bands, which is what lets the two margins be compared on one
+    # fabric -- pinned by tests/test_hysteresis_margin_zero_is_byte_identical.
+    #
+    # A HOLE DOES NOT RESET THE HELD BAND: the market did not stop, only our
+    # view of it did. The hole is still recorded as a break in the L2 path, so
+    # no adjacency is claimed that the corpus does not have.
+    built: List[Any] = []              # (index, frames) for every buildable bar
+    order: List[Optional[int]] = []    # position in `built`, or None for a hole
     for index in range(max(start, LOOKBACK_BARS), stop):
         try:
             frames = build_collections(bars, index, horizon_bars=horizon,
                                        symbol=symbol, chain=chain)
         except (ValueError, IndexError):
+            order.append(None)
+            continue
+        order.append(len(built))
+        built.append((index, frames))
+
+    motifs = sticky_motifs([f for _, f in built], bands, margin)
+
+    for slot in order:
+        if slot is None:
             motif_history.append("")      # a hole, not an adjacency
             continue
-        motif = cooccurrence_motif(frames, bands=bands)
+        index, frames = built[slot]
+        motif = motifs[slot]
         motif_history.append(motif)
         recent = [m for m in motif_history[-MOTIF_SEQUENCE_STEPS:] if m]
         row = dict(frames)
@@ -160,7 +183,8 @@ def label_skew(rows: Sequence[Mapping[str, str]], key: str,
 def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
                  horizon: int, train: int, test: int,
                  min_lift: float, min_support: int,
-                 relative: bool = False) -> Dict[str, Any]:
+                 relative: bool = False,
+                 margin: float = 0.0) -> Dict[str, Any]:
     """Does the L1 motif carry BUY-LOW information out of sample, with no node?
 
     THE REASON THIS EXISTS BEFORE ANY NODE RUN. A fabric cannot extract from a
@@ -185,7 +209,7 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
                  bands: Optional[Mapping[str, Any]] = None
                  ) -> List[Dict[str, Any]]:
         out = build_layer_frames(bars, symbol, chain, horizon, start, stop,
-                                 bands=bands)
+                                 bands=bands, margin=margin)
         keep = []
         for row in out:
             idx = row.get("_index")
@@ -267,6 +291,7 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
         # which encoder produced it.
         "banding": "relative" if relative else "sign",
         "band_streams": sorted(bands) if bands else [],
+        "margin": margin,
         "l1_vocabulary_train": len({r["L1_cooccurrence"] for r in tr}),
         "train_window": [train_start, train_stop], "train_n": len(tr),
         "test_window": [test_start, test_stop], "test_n": len(te),
@@ -313,6 +338,17 @@ def main() -> int:
                              "abstracting. 0.75 is a quarter off the "
                              "vocabulary; anything gentler is a rounding "
                              "difference dressed up as a layer.")
+    parser.add_argument("--hysteresis", type=float, default=0.0,
+                        help="L1 band STICKINESS, as a fraction of each "
+                             "stream's own band width ([2a53f971]). A slot "
+                             "holds its band until the score is pushed this "
+                             "far past the boundary. 0.0 is byte-identical to "
+                             "plain banding, so the two are comparable on one "
+                             "fabric; 0.50 measured an L1 change rate of "
+                             "37.6%% DOWN / 38.2%% UP against 73.1%% / 74.0%% "
+                             "at 0.0. Only meaningful with --relative-bands: "
+                             "a stream with no fitted cut points has no band "
+                             "width to be sticky about.")
     parser.add_argument("--json-out", default=None)
     parser.add_argument("--heldout", action="store_true",
                         help="fit the motif->trough map on a train window and "
@@ -348,7 +384,8 @@ def main() -> int:
     if args.relative_bands:
         corpus_bands = relative_bands(rows) or None
         rows = build_layer_frames(bars, symbol, args.chain, args.horizon,
-                                  args.start, stop, bands=corpus_bands)
+                                  args.start, stop, bands=corpus_bands,
+                                  margin=args.hysteresis)
 
     n = len(rows)
     print(f"corpus {path.name}: {len(bars)} bars, {n} frame sets "
@@ -450,7 +487,8 @@ def main() -> int:
     if args.heldout:
         edge = heldout_edge(bars, symbol, args.chain, args.horizon,
                             args.train, args.test, args.min_lift,
-                            args.min_support, relative=args.relative_bands)
+                            args.min_support, relative=args.relative_bands,
+                            margin=args.hysteresis)
         print("\n" + "=" * 70)
         print("HELD-OUT EDGE OF THE L1 MOTIF ALONE -- no node, no fabric")
         print("=" * 70)
