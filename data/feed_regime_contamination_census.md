@@ -152,3 +152,48 @@ or quietly always fires, on 38.4% of windows.
 each with a different correct bound, is the argument for sanitising the window
 once at the source instead. That decision is still open and needs the one place
 it would live to be named before anything is written.
+
+## Criterion 3: the window, at `sample_arrays`, reusing the repairer that already exists
+
+**Decided: sanitise the window at the source, and do not write a second
+repairer.** `trading/data_loader.py:69 sanitize_model_price_window` already does
+exactly this job for the MODEL's window — it anchors on the window's median in
+log space, carries the last good price forward rather than dropping the row (so
+the window keeps its length), returns a `repaired_count` meant to be logged, and
+leaves a window with no usable rows untouched. It is the same defect on a
+different consumer, and the reason it exists is the same number this census
+found: one foreign row in sixty was the saturated `price_mu` of -1.2.
+
+**What it would repair, measured on the same 3,894 windows:**
+
+    60-bar windows over the 22 symbols : 3894
+      poisoned                          : 1497  (38.4%)
+      fully repaired by sanitize_...    : 1410  (94.2% of poisoned)
+      still carrying a foreign row      :   87
+
+The 87 residual are the symbols where the foreign regime is the MAJORITY inside
+the window — BOB-USDC at 49.6% of ticks, DOGE-USDC at 31.9%, PEPE-USDC at 100%
+of windows. A median-anchored repairer cannot help there, and should not: when
+half the window is the other asset, the window has no single anchor and the
+honest answer is that the SYMBOL is two symbols. That is the existing two-regime
+item, not this one.
+
+**Why the source and not each consumer.** Seventeen call sites, each with a
+different correct bound: donchian's band wants a high that is reachable,
+stochastic's %K wants a range that is not seven decades, `expected_return`
+wants a ratio under 2.0. Writing seventeen bounds is seventeen chances to pick
+the wrong one, and the bound shipped in `make_candidate` only catches the loud
+failure — a strategy that silently stops entering because its breakout band is
+unreachable passes every bound anyone would write. One repair at
+`trading/strategies/base.py:sample_arrays`, the single place every strategy in
+this package obtains its window, fixes all seventeen at once and is the only
+change that can be measured as one number.
+
+**Criterion 4 is the wiring and its before/after, and is NOT done.** It is a
+behaviour change on the money path for every strategy and needs: the
+`repaired_count` logged per symbol per tick (a serving path quietly repairing
+every tick is an upstream feed bug and the count is how anyone finds out), a
+re-run of this census showing 1,410 windows clean, and a re-run of the
+directive-path census showing the `make_candidate` bound still refuses 1 of 123
+and passes the other 122 — so the two guards are not double-counting. Sizing it
+honestly: that is a pass's work with a gate run, not the tail of this one.
