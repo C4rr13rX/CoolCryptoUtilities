@@ -5392,3 +5392,35 @@ feeding every other statistic those strategies compute.
 **Commits.** fc5b8d4 (horizon parser + lattice exit recording + census),
 0fce105 (plausibility bound in `make_candidate`). Gate 719/2, both failures
 `tests/test_strategy_ledger.py` and reproduced with my changes stashed.
+
+## 2026-09-11 -- Jet (QA, pass 116) -- the 179-byte checkpoint is an evicted neuron body, not a disk or a lock
+
+HYPOTHESIS: [45e24952]'s criterion 1 asks for the errno behind production's
+failed checkpoint, and the standing note gave an inference ("serialises a
+borrowed in-RAM fabric view that cannot be written"). A deterministic failure
+at a FIXED byte offset is a serialisation error, not an I/O error, so it
+should be findable in the source and reproducible without a node.
+
+WHAT I DID: decoded brain.bin.tmp (tick 59750, 4 pools, pool 0 labelled
+"binding" -- matching /brain/stats tick 59793, pool_count 4, so the torn temp
+IS production's), then read the borrowed serializer chain down to
+NeuronSlots::serialize. Wrote two tests reproducing the shape and removed the
+guards to check they were not vacuous. Then posted to the RUNNING binary's
+manual checkpoint endpoint, which branches on uses_wbrain_storage() where the
+auto thread does not.
+
+RESULT: the errno is crates/brain/src/pool.rs:401 -- "legacy snapshot requires
+every neuron body to be resident", fired because production has 525,547 of
+665,101 neurons EVICTED to the wbrain store. 179 bytes is the fabric header
+plus pool 0's config, with "neurons" as the next field. With the guard
+removed bincode writes EIGHT BYTES: [13,38,10,0,0,0,0,0], a length prefix
+claiming 665,101 neurons followed by none -- the 4.5-exabyte-allocation file.
+POST /brain/checkpoint returned ok:true, storage wbrain, tick 59806 in 6m42s
+and grew brain.wbrain 16,023,476,049 -> 17,884,785,317 bytes: 1.86 GB of
+learned state that was not on disk before. Commit be94c99, 5 passed 0 failed,
+3 failed with the guards removed.
+
+NEXT: the item is blocked only on swapping bin/w1z4rd_node.exe for
+bin/w1z4rd_node.exe.staged-20260911-checkpointfix and restarting :8090 --
+an operator decision. Watch D:, which is 97% full with 34 GB free while each
+successful checkpoint adds ~1.9 GB.
