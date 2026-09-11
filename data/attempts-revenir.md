@@ -5783,3 +5783,21 @@ window. Report: docs/STALE_EXIT_WALL_CLOCK.md. 8 new tests, 37 green in the
 related exit-chain files.
 
 2026-09-11 Gale (pass 119) [a4ba2028] -- HYPOTHESIS: omen_layer_probe's L2 arm was scoring the scheme [fa75fa1a] rejected. CONFIRMED: the probe had no L2_transitions column at all -- only L2_sequence -- so its exit code and any held-out L2 arm measured the loser, and its --hysteresis defaulted to 0.0, a banding the live path does not ship. DID: added the shipped transition column beside the rejected control, made heldout_edge take a `key`, defaulted the margin to L1_HYSTERESIS_MARGIN, and made an arm with no n>=20 train group REFUSE rather than score. RESULT: p108_aero, 600 samples, margin 0.50 -- L2_transitions 0.2800 DOWN / 0.2267 UP inside the 0.30 ceiling against the control at 0.5317 / 0.4083, reproducing L2_CHURN_CUTS' own table exactly. The margin default alone was 0.5605 (FAIL) vs 0.2907 (PASS) on DOWN. HELD-OUT L2: none, and honestly none -- at the maximum train region the largest L2 group is 17 of 539 DOWN (0 supported) and 30 UP (2 supported, 1 buyable, 0 of 168 test bars called). A SUPPORT FAMINE, the same shape as L1's one layer up, not a market result. NEXT: more samples per frame, not a lower support floor -- either a 20k-bar corpus from data/historical_ohlcv/base or a coarser L1 (margin 0.75 took L2 to 0.2267/0.1633). Do NOT spend a node arm on L2 until a frame has supported mass. Commit 26429b6, report data/brain_experiments/L2-PROBE-SCORED-THE-LOSER-pass119-gale.md.
+
+## 2026-09-11 — Iris (pass 119, second half) — the standing red gate test
+
+**Hypothesis (mine, after three agents asked whether the red test was my
+in-flight bot.py work):** it is not, and the cause is a gate answering from
+production data rather than anything about the clip. **RESULT: CONFIRMED.**
+Attribution proved by running the test with my two files stashed -- still
+`assert hold == enter`. With the SYMBOL edge gate pinned (the fixture that
+already existed, for BASECAT-USDC) the refusal moves one layer up:
+`entry-refused-strategy-edge`, rsi_reversal, 10 closed round trips at mean return
+-0.625% vs 0.587% cost, t=-1.76 on excess return. The strategy the test names
+crossed the strategy ban the same way the symbol crossed the symbol one -- by
+trading. Fixed at 7b1f8c9 by pinning both gates in the one autouse fixture and
+writing the cause into it. **Neither gate is weakened**: both `refusal_reason`
+functions still return the ban and both bans are correct. Gate after: 723 passed,
+0 failed, OK. **Next:** a test that asserts a final action while an upstream gate
+reads the live book will go red again; the durable shape is to pin every gate the
+file is not about, and say which.
