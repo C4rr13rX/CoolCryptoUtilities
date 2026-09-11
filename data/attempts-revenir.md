@@ -5611,3 +5611,31 @@ artifact on N clean data/historical_ohlcv windows and refuse promotion when
 median |predicted price_mu| exceeds 10x the median |label|; today's artifact
 is 489.8x, so the guard must be shown rejecting it. Wire
 register_model_version at the same seam so the next regression has a row.
+
+## 2026-09-11 Jet — six omen harnesses asked the horizon in bars, not minutes
+
+HYPOTHESIS: pass 114 fixed the horizon unit in `omen_experiment` only, so the
+other eight harnesses writing to `data/brain_experiments/` still asked a bar
+count and every report but one remained uncomparable across corpora.
+
+DID: gave all six of `omen_agreement_census`, `omen_label_audit`,
+`omen_self_distinctness`, `omen_query_path_probe`, `omen_shape_mutations` and
+`omen_temporal_census` a `--horizon-minutes` default of 720 converted with each
+corpus's own measured cadence, via two shared helpers (`add_horizon_args`,
+`settle_horizon`) in `omen_experiment`. `--horizon` stays as an explicit bars
+override and the report records the minutes. Every report now carries
+`horizon_minutes`/`horizon_bars`/`bar_seconds` and goes through
+`validate_report_horizon` before the write.
+
+RESULT (a number, on two real corpora at 300s and 3600s): `omen_label_audit`'s
+headline — murk bars whose path actually WON — reads **17.17% under
+`--horizon 12` and 40.00% under the 720-minute default**, same files and same
+cost. Endpoint buy-labelled bars 10359 -> 15016. The oracle per-trade numbers
+barely move (+2.4868% -> +2.4624% endpoint), so the harness's CONCLUSION
+survives; the defect corrupted the counts. Real corpora span 73s to 12036s
+among files with 2000+ bars. Commit 60e624f; 26 new tests pass and 16 of them
+go red against the bars-only default; gate 723 passed 0 failed.
+
+NEXT: `omen_l2_scheme_probe.py:232` and `omen_layer_probe.py:331` are the last
+two of the nine still on a bar count — 7 of 9 are fixed. Report in
+`data/brain_experiments/HORIZON-UNIT-SIX-HARNESSES-pass117-jet.md`.
