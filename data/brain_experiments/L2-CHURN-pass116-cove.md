@@ -184,3 +184,49 @@ Every number here is AERO-USDC on base. `p108_aero_up/down` are the only bar
 corpora in `data/brain_experiments/`, so **the churn cut has not been tested on
 a second pair** and could be fitted to this one. That is the first thing to do
 to this encoder, and it is node-free.
+
+## Result 6 — A SECOND PAIR, AND L2 FAILS THE GUARD ON IT ENTIRELY
+
+Measured in the same pass, because the "still unmeasured" section above was one
+command away from being measured. Built `p116_arbweth_up.json` and
+`p116_arbweth_down.json` from `data/historical_ohlcv/arbitrum/0039_ARB-WETH.json`
+(40,504 bars) by sliding a 900-bar block and taking the most-up and most-down
+block by close-to-close return: **UP +13.49%, DOWN -11.22%**, 600 samples each,
+shipped banding, window 12, steps 2.
+
+    corpus              L1       L2_path   L2_SHIPPED   L1 change rate
+    p116_arbweth_down  0.1950   0.4650    0.4700 FAIL   62.4%
+    p116_arbweth_up    0.1150   0.4467    0.4533 FAIL   62.3%
+
+    (AERO, for comparison: L2 0.2800 / 0.2267 PASS, change rate 37.6% / 38.2%)
+
+**L2 is an identifier on ARB-WETH, with or without the churn symbol.** The
+churn symbol is close to free here (+0.0050) precisely because the path is
+already near-unique — there is nothing left for it to split.
+
+**THE CAUSE IS L1, NOT L2, AND IT IS THE SAME MECHANISM AS BEFORE.** The sticky
+L1 takes AERO's change rate to 37.6%/38.2% and a change-order path over that is
+fine; on ARB-WETH the same `L1_HYSTERESIS_MARGIN = 0.50` only reaches
+62.3%/62.4%, and a path over an alphabet that changes on nearly two bars in
+three is near-unique by construction — exactly the finding that opened
+[fa75fa1a] in the first place.
+
+So `L1_HYSTERESIS_MARGIN = 0.50` is **fitted to AERO-USDC**. It is not a
+property of the feed, and the L2 guard passing is not a property of the encoder
+— it is a property of AERO. The margin is what needs re-sweeping per pair (or
+replacing with something that targets a change RATE rather than a fixed band
+fraction), and no node arm on L2 should be spent until it holds on more than
+one pair.
+
+**One caveat on the DOWN window, stated because it makes half the table
+unreadable rather than merely weak:** `p116_arbweth_down` has a **0.0% trough
+base rate** — the omen label never fires in that window — so every group, lift
+and coverage number for that corpus is meaningless. The DISTINCTNESS numbers
+are unaffected (they do not use the label) and they are what this section
+claims. A window with no positive label needs replacing before any skew or lift
+is quoted from it.
+
+    python -X utf8 scripts/omen_l2_scheme_probe.py \
+        --corpus data/brain_experiments/p116_arbweth_down.json \
+        --corpus data/brain_experiments/p116_arbweth_up.json \
+        --symbol ARB-WETH --chain arbitrum
