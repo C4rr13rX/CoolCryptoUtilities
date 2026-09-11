@@ -5653,18 +5653,31 @@ scored on a 208-bar held-out window by `money_scoreboard`. UP and DOWN windows
 scanned per corpus with `window_regime`, 167 eligible 3600s corpora, 720-minute
 horizon.
 
-RESULT (negative, and it kills the hypothesis): all four cells readable, all
-four below their matched baseline. UP buy n=4641 +1.1258% vs every-bar +1.2206%
-(-0.09pp); UP sell n=16662 -2.6211% vs -1.2206% (-1.40pp); DOWN buy n=15680
--2.5629% vs -2.4246% (-0.14pp); DOWN sell n=4799 +1.2379% vs +2.4246% (-1.19pp).
-The DOWN crest number looked big in the ceiling because everything falls in a
-down window, not because crest calls are good. Report:
-data/brain_experiments/BOTH-HALVES-pass118-iris.md
+RESULT (negative, and it kills the hypothesis). CORRECTED FIGURES -- the first
+version of this entry quoted the sell edges against a baseline that was wrong
+by two round trips; these are the numbers after 5812522. All four cells
+readable: UP buy n=4641 +1.1258% vs buy-every-bar +1.2206% (-0.0948pp); UP sell
+n=16662 -2.6211% vs sell-every-bar -2.5206% (-0.1005pp); DOWN buy n=15680
+-2.5629% vs -2.4246% (-0.1382pp); DOWN sell n=4799 +1.2379% vs sell-every-bar
++1.1246% (+0.1133pp). The DOWN crest number looked big in pass 114's ceiling
+because everything falls in a down window, not because crest calls are good:
++0.1133pp is an eleventh of the level and a sixteenth of the +1.8884% ceiling.
+Report: data/brain_experiments/BOTH-HALVES-pass118-iris.md
 
-Next: any sell-side arm must be scored against the MIRRORED same-regime
-baseline, not against zero and not against the buy half's baseline. The open
-question is whether a feature richer than range position separates the crest
-subset from the window it sits in.
+SECOND RESULT, arithmetic, and it moved two signs: render_scoreboard mirrored
+the sell baseline as -every_bar_net_per_trade since it was written. every_bar is
+mean(forward) - cost, so selling every bar is -mean(forward) - cost, i.e.
+-baseline - 2*cost. Negating it credits the round trip to the seller: every sell
+cell in this repo was flattered by 2 x 0.6500% = 1.30pp. Caught on a synthetic
+window where every bar falls exactly 1% and the true crest edge is zero; the
+code reported exactly -2*cost. Fixed as omen_scoreboard.sell_every_bar, with the
+edge promoted to a field (buy_edge_vs_baseline, crest_edge_vs_baseline) so no
+caller re-derives it -- the first re-derivation, in omen_both_halves._verdict,
+had already repeated the same error.
+
+Next: a feature richer than range position, and [ed2e7055] -- omen_trough_census
+still pools by hand, so the 1.30pp error is still live in every number it prints,
+and pool_scoreboards cannot replace it until boards carry horizon_minutes.
 
 ## 2026-09-11 Jet — which of price_mu's two supervision paths is dead [2a503d95]
 
