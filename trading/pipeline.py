@@ -2125,7 +2125,13 @@ class TrainingPipeline:
         score: float,
         metadata: Optional[Dict[str, Any]] = None,
         evaluation: Optional[Dict[str, float]] = None,
-    ) -> str:
+    ) -> Optional[str]:
+        """Deploy ``path`` as the active model, or return None if it is refused.
+
+        Returns None when the calibration guard rejects the candidate -- the
+        only consumer, ``result["active_version"]`` at the single call site, is
+        read back with ``.get`` and treats that as "nothing was promoted".
+        """
         # Shadow period: keep the challenger running alongside the active model
         # for N iterations before fully promoting it.  This implements the design
         # requirement of running the higher-accuracy model in parallel until its
