@@ -9276,7 +9276,24 @@ class TradingBot:
                             "trade_id": trade_id,
                             "quote_spent": float(quote_spent),
                             "gas_spent_native": float(gas_spent_native),
-                            "slippage_bps": slippage,
+                            # THE BUY LEG USED TO CARRY NO PRICED COST AT ALL.
+                            # It recorded gas in native units and nothing to
+                            # value them with, so every live round trip's cost
+                            # was a single scalar booked against the sell leg
+                            # and no split into legs was possible. Fields and
+                            # their measured/configured status: services/fill_cost.py
+                            **self._leg_cost_fields(
+                                leg="buy",
+                                chain=chain_name,
+                                symbol=symbol,
+                                route=route,
+                                price=price,
+                                notional_usd=float(quote_spent),
+                                gas_spent_native=float(gas_spent_native),
+                                expected_price=float(price),
+                                executed_price=float(executed_entry_price),
+                                tolerance_bps=slippage,
+                            ),
                         },
                     )
                 except Exception:
@@ -9440,7 +9457,19 @@ class TradingBot:
                     executed_amount=float(trade_size),
                     expected_price=float(price),
                     executed_price=float(price),
-                    extra={"mode": "ghost_entry", "trade_id": trade_id, "fee_rate": float(fees)},
+                    extra={
+                        "mode": "ghost_entry",
+                        "trade_id": trade_id,
+                        # CONFIGURED, not observed: this is the round-trip rate
+                        # the ghost lane charged itself, and it is the whole
+                        # round trip rather than this leg. See fill_cost.py --
+                        # it read 0.0065 on 1253 of 1350 rows because nobody
+                        # ever changed the default, so it is not evidence of
+                        # what a fill cost.
+                        "fee_rate": float(fees),
+                        "leg": "buy",
+                        "notional_usd": float(quote_spent),
+                    },
                 )
             except Exception:
                 pass
@@ -9674,6 +9703,9 @@ class TradingBot:
             cost_portion = 0.0
             gas_spent_native_exit = 0.0
             native_price_usd = 0.0
+            # ``unpriced`` is not a source of a price -- it is the honest name
+            # for a leg that never reached the live branch that prices gas.
+            native_price_source = "unpriced"
             fee_cost = 0.0
             # Stays empty for ghost exits, which have no chain to point at.
             exit_tx_hash = ""
@@ -10177,7 +10209,9 @@ class TradingBot:
                 cost_portion = total_quote_spent * allocation_ratio
                 gas_portion_native = total_gas_native * allocation_ratio
                 total_gas_native_realized = gas_portion_native + gas_spent_native_exit
-                native_price_usd = self._estimate_native_price(chain_name, route, price, symbol)
+                native_price_usd, native_price_source = self._native_price_with_source(
+                    chain_name, route, price, symbol
+                )
                 fee_cost = total_gas_native_realized * native_price_usd
 
                 total_quote_spent = max(0.0, total_quote_spent - cost_portion)
@@ -10737,7 +10771,26 @@ class TradingBot:
                             "quote_received": float(quote_received),
                             "cost_portion": float(cost_portion),
                             "gas_spent_native": float(gas_spent_native_exit),
-                            "gas_price_usd": float(native_price_usd),
+                            # ``gas_price_usd`` was renamed: it never held a gas
+                            # price. It held the NATIVE TOKEN's USD price, and
+                            # on 5 of the first 18 live exits it held the TRADED
+                            # PAIR's price -- AERO at $0.4877, cbETH at $2836.06,
+                            # cbBTC at $80884.98 against a real ETH $2498.78.
+                            # The source field is what makes that visible in the
+                            # row itself. services/fill_cost.py documents both.
+                            **self._leg_cost_fields(
+                                leg="sell",
+                                chain=chain_name,
+                                symbol=symbol,
+                                route=route,
+                                price=price,
+                                notional_usd=float(quote_received),
+                                gas_spent_native=float(gas_spent_native_exit),
+                                expected_price=float(price),
+                                executed_price=float(exit_price_effective),
+                                native_price_usd=float(native_price_usd),
+                                native_price_source=str(native_price_source),
+                            ),
                             "fee_cost_usd": float(fee_cost),
                             "gross_profit": float(gross_profit),
                             "profit": economic_profit,
@@ -10768,8 +10821,17 @@ class TradingBot:
                         extra={
                             "mode": "ghost_exit",
                             "trade_id": trade_id,
+                            "leg": "sell",
+                            "notional_usd": float(exit_size * price),
+                            # BOTH CONFIGURED, and both describe the WHOLE round
+                            # trip booked against this one leg -- a ghost exit
+                            # has no receipt, so there is nothing to split. This
+                            # is the field that looked like a measured cost and
+                            # is not; services/fill_cost.py says so in the
+                            # schema so a reader cannot mistake it again.
                             "fee_rate": float(fees),
                             "fee_cost": float(fee_cost),
+                            "fee_cost_is_round_trip": True,
                             "gross_profit": float(gross_profit),
                             "profit": economic_profit,
                             "retained_profit": retained_profit,
@@ -11539,6 +11601,20 @@ class TradingBot:
         return 0.0
 
     def _estimate_native_price(self, chain: str, route: List[str], price: float, symbol: str) -> float:
+        return self._native_price_with_source(chain, route, price, symbol)[0]
+
+    def _native_price_with_source(
+        self, chain: str, route: List[str], price: float, symbol: str
+    ) -> Tuple[float, str]:
+        """The native token's USD price AND where the number came from.
+
+        The source is recorded on every fill that prices gas, because the
+        2026-09-04 defect was invisible in the value alone: $2836.06 looks like
+        a plausible ETH price and is in fact cbETH's. A row whose source reads
+        ``route_native`` on a pair that is not selling native IS that defect,
+        and ``services.fill_cost`` refuses to treat it as evidence. See
+        ``services/fill_cost.py`` for what each field holds.
+        """
         chain_l = chain.lower()
         native_symbol = NATIVE_SYMBOL.get(chain_l, chain.upper())
         route_upper = [token.upper() for token in route]
@@ -11556,13 +11632,17 @@ class TradingBot:
             and route_upper[0] == native_symbol
             and route_upper[-1] in self.stable_tokens
         ):
-            return float(price)
+            return float(price), "route_native"
+        source = "price_book"
         price_candidate = self._lookup_usd_price(chain_l, native_symbol)
         if price_candidate <= 0.0:
             wrapped = WRAPPED_NATIVE_SYMBOL.get(chain_l)
             if wrapped:
                 price_candidate = self._lookup_usd_price(chain_l, wrapped)
+                if price_candidate > 0.0:
+                    source = "price_book_wrapped"
         if price_candidate <= 0.0:
+            source = "fallback_constant"
             env_key = f"FALLBACK_NATIVE_PRICE_{chain_l.upper()}"
             fallback_raw = os.getenv(env_key)
             eth_like = native_symbol in {"ETH", "WETH"} or symbol.upper().endswith("WETH")
@@ -11574,15 +11654,73 @@ class TradingBot:
                 if not fallback_raw:
                     price_candidate = FALLBACK_NATIVE_PRICE
             if fallback_raw:
+                source = "fallback_env"
                 try:
                     price_candidate = float(fallback_raw)
                 except (TypeError, ValueError):
                     price_candidate = FALLBACK_NATIVE_PRICE if eth_like else 0.0
+                    source = "fallback_constant"
         if price_candidate <= 0.0:
             if native_symbol in {"ETH", "WETH"} or symbol.upper().endswith("WETH"):
-                return 1800.0
-            return 100.0
-        return price_candidate
+                return 1800.0, "fallback_constant"
+            return 100.0, "fallback_constant"
+        return price_candidate, source
+
+    def _leg_cost_fields(
+        self,
+        *,
+        leg: str,
+        chain: str,
+        symbol: str,
+        route: List[str],
+        price: float,
+        notional_usd: float,
+        gas_spent_native: float,
+        expected_price: float,
+        executed_price: float,
+        tolerance_bps: Any = None,
+        native_price_usd: Optional[float] = None,
+        native_price_source: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """The cost fields for ONE leg of a round trip, measured not assumed.
+
+        Every field here is defined in ``services/fill_cost.py`` with its
+        measured/configured/unmeasurable status. Two things are deliberately
+        absent: a DEX fee, because an AMM takes its fee out of the output amount
+        and it cannot be separated from spread or impact from a receipt; and a
+        "slippage_bps" that holds the tolerance, because a permitted worst case
+        recorded in a cost column is what made 26 of 26 rows read 75.0.
+        """
+        from services.fill_cost import realised_slippage_bps
+
+        if native_price_usd is None or native_price_source is None:
+            native_price_usd, native_price_source = self._native_price_with_source(
+                chain, list(route or []), price, symbol
+            )
+        try:
+            gas_usd = float(gas_spent_native) * float(native_price_usd)
+        except (TypeError, ValueError):
+            gas_usd = 0.0
+        slip_bps = realised_slippage_bps(
+            expected_price=expected_price, executed_price=executed_price, leg=leg
+        )
+        fields: Dict[str, Any] = {
+            "leg": leg,
+            "notional_usd": float(notional_usd),
+            "native_token_price_usd": float(native_price_usd),
+            "native_token_price_source": str(native_price_source),
+            "gas_cost_usd": float(gas_usd),
+            "realised_slippage_bps": None if slip_bps is None else float(slip_bps),
+            "slippage_cost_usd": (
+                None if slip_bps is None else float(notional_usd) * float(slip_bps) / 10_000.0
+            ),
+            "leg_cost_usd": float(gas_usd) + (
+                0.0 if slip_bps is None else float(notional_usd) * float(slip_bps) / 10_000.0
+            ),
+        }
+        if tolerance_bps is not None:
+            fields["slippage_tolerance_bps"] = tolerance_bps
+        return fields
 
     def _estimate_token_price(self, chain: str, symbol: str, *, route: List[str], price: float) -> float:
         symbol_u = symbol.upper()
@@ -12054,7 +12192,10 @@ class TradingBot:
                             "mode": "gas_refill",
                             "sell": token,
                             "buy": "native",
-                            "slippage_bps": slippage,
+                            # RENAMED from slippage_bps: this is the worst fill
+                            # the router was allowed to accept, not the one we
+                            # got. It read 75.0 on 26 of 26 rows.
+                            "slippage_tolerance_bps": slippage,
                             "tx_hash": outcome.tx_hash,
                         },
                     )

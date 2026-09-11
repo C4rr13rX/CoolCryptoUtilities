@@ -1,0 +1,101 @@
+{
+  "fill_rows": 1394,
+  "lanes": {
+    "live": {
+      "round_trips": 12,
+      "fully_measured_round_trips": 10,
+      "buy_gas_usd_median": 0.0025357800424806775,
+      "buy_gas_usd_n": 10,
+      "sell_gas_usd_median": 0.002156594567204585,
+      "sell_gas_usd_n": 10,
+      "buy_slippage_bps_median": 21.734729492768743,
+      "buy_slippage_bps_n": 12,
+      "sell_slippage_bps_median": 6.03934706215829,
+      "sell_slippage_bps_n": 12,
+      "notional_usd_median": 0.75,
+      "quarantined_legs": [
+        {
+          "symbol": "AERO-USDC",
+          "leg": "sell",
+          "native_token_price_usd": 0.5018,
+          "source": null,
+          "reason": "$0.501800 is outside ETH's $200-$20000 band on base"
+        },
+        {
+          "symbol": "AERO-USDC",
+          "leg": "sell",
+          "native_token_price_usd": 0.4877085958272926,
+          "source": null,
+          "reason": "$0.487709 is outside ETH's $200-$20000 band on base"
+        }
+      ],
+      "buy_legs_back_filled": 10,
+      "round_trip_scalar_on_sell_leg": 0,
+      "buy_leg_charged_nothing": 12
+    },
+    "ghost": {
+      "round_trips": 183,
+      "fully_measured_round_trips": 0,
+      "buy_gas_usd_median": null,
+      "buy_gas_usd_n": 0,
+      "sell_gas_usd_median": null,
+      "sell_gas_usd_n": 0,
+      "buy_slippage_bps_median": 0.0,
+      "buy_slippage_bps_n": 183,
+      "sell_slippage_bps_median": -0.0,
+      "sell_slippage_bps_n": 183,
+      "notional_usd_median": null,
+      "quarantined_legs": [],
+      "buy_legs_back_filled": 0,
+      "round_trip_scalar_on_sell_leg": 183,
+      "buy_leg_charged_nothing": 183
+    }
+  },
+  "cross_lane_round_trips": [
+    {
+      "trade_id": "2:CBBTC-USDC:490d9726bea04d8f8ea5c8394c867995",
+      "symbol": "CBBTC-USDC",
+      "ts": 1788453645.0,
+      "entry_mode": "live_entry",
+      "exit_mode": "ghost_exit"
+    },
+    {
+      "trade_id": "2:BSTONK-USDC:32fff2d5ea0549bd917fcf25e23acc36",
+      "symbol": "BSTONK-USDC",
+      "ts": 1788455198.0,
+      "entry_mode": "live_entry",
+      "exit_mode": "ghost_exit"
+    }
+  ],
+  "gas_native_median": {
+    "buy": 9.887365558645001e-07,
+    "sell": 8.40246589932e-07
+  },
+  "gas_native_n": {
+    "buy": 20,
+    "sell": 18
+  },
+  "native_price_usd_used": 2498.77748000803,
+  "native_price_usd_n": 15,
+  "rederived": {
+    "fixed_usd": 0.004570221896030538,
+    "fixed_usd_published": 0.004047,
+    "rate": 0.0027774076554927035,
+    "rate_published": 0.003187
+  },
+  "field_status": {
+    "leg": "measured",
+    "notional_usd": "measured",
+    "gas_spent_native": "measured",
+    "native_token_price_usd": "measured",
+    "native_token_price_source": "measured",
+    "gas_cost_usd": "derived",
+    "realised_slippage_bps": "measured",
+    "slippage_cost_usd": "derived",
+    "slippage_tolerance_bps": "configured",
+    "dex_fee_usd": "unmeasurable",
+    "fee_rate": "configured",
+    "fee_cost": "configured",
+    "fee_cost_usd": "measured"
+  }
+}
