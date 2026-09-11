@@ -236,7 +236,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--horizon", type=int, default=12)
     parser.add_argument("--samples", type=int, default=900,
                         help="bars to census per corpus, newest-first window")
-    parser.add_argument("--live-hours", type=float, default=6.0)
+    # 48 and not 6, and the difference is a result this script got wrong once.
+    # At 3600s buckets, six hours gives about six buckets per symbol, so
+    # "every bucket filled" is six-for-six and the sweep's widest row reads a
+    # meaningless 1.000. Over 48h the same row reads 0.879. A denominator this
+    # small is exactly the error the width sweep exists to avoid making.
+    parser.add_argument("--live-hours", type=float, default=48.0)
     parser.add_argument("--json-out", default="")
     args = parser.parse_args(argv)
 
