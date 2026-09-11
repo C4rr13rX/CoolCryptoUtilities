@@ -79,19 +79,30 @@ def forward_return(bars: Sequence[Mapping[str, Any]], index: int,
     return (exit_ - entry) / entry
 
 
-def _cell(nets: Sequence[float], paid: int) -> Dict[str, Any]:
-    """One side of the book: n, total, per-trade, precision, readability."""
-    n = len(nets)
+def _cell_from_totals(n: int, net_total: float, paid: int) -> Dict[str, Any]:
+    """One side of the book from its TOTALS: n, total, per-trade, precision.
+
+    Split out from ``_cell`` so that pooling many corpora into one cell goes
+    through exactly the same readability rule as scoring one corpus. A pooled
+    cell that computed its own ``readable`` would be free to disagree with a
+    per-corpus one, and the disagreement would be invisible in the report.
+    """
     return {
         "n": n,
-        "net_total": sum(nets),
+        "paid": paid,
+        "net_total": net_total,
         # max(1, n) would report 0.0000% on an empty cell, which reads as a
         # measured break-even rather than as nothing measured. None reads as
         # what it is.
-        "net_per_trade": (sum(nets) / n) if n else None,
+        "net_per_trade": (net_total / n) if n else None,
         "precision_paid": (paid / n) if n else None,
         "readable": n >= READABLE_TRADES,
     }
+
+
+def _cell(nets: Sequence[float], paid: int) -> Dict[str, Any]:
+    """One side of the book: n, total, per-trade, precision, readability."""
+    return _cell_from_totals(len(nets), sum(nets), paid)
 
 
 def money_scoreboard(
@@ -160,6 +171,70 @@ def money_scoreboard(
         # Kept under the old key names so a reader of an existing report finds
         # the same numbers, but a reader of THIS dict cannot find the net
         # without walking past the n that sits beside it.
+        "buy_omens": buy["n"],
+        "buy_net_per_trade": buy["net_per_trade"],
+        "trough_precision": buy["precision_paid"],
+        "crest_omens": sell["n"],
+        "crest_net_per_trade": sell["net_per_trade"],
+        "crest_precision": sell["precision_paid"],
+        "readable": buy["readable"] and sell["readable"],
+    }
+
+
+def pool_scoreboards(boards: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Add up many per-corpus scoreboards into ONE board of the same shape.
+
+    Why this is here rather than in the experiment script
+    -----------------------------------------------------
+    A single 208-bar held-out window cannot carry 30 trades on BOTH halves,
+    so the only way to read the sell half at all is to pool many corpora.
+    Pooling is where the arithmetic quietly goes wrong: averaging per-corpus
+    ``net_per_trade`` values weights a 2-trade corpus the same as a 90-trade
+    one, and that is how a two-trade outlier becomes a headline. This pools
+    the TOTALS and divides once, and it runs the pooled n through the same
+    ``READABLE_TRADES`` floor as a single corpus, so a pooled cell and a
+    per-corpus cell cannot disagree about whether they may be quoted.
+
+    A board with a different ``horizon_bars`` or ``round_trip_cost`` is not
+    poolable with the others -- those are two different games priced at two
+    different costs -- so this raises rather than silently mixing them. The
+    horizon may legitimately differ in BARS across corpora of different
+    cadence; a caller pooling across cadences must pool in minutes, which is
+    why the mismatch is an error the caller has to answer rather than a
+    warning it can skip.
+    """
+    boards = list(boards)
+    if not boards:
+        raise ValueError("nothing to pool: pool_scoreboards needs >= 1 board")
+    horizons = {b["horizon_bars"] for b in boards}
+    costs = {round(float(b["round_trip_cost"]), 12) for b in boards}
+    if len(horizons) != 1 or len(costs) != 1:
+        raise ValueError(
+            f"refusing to pool boards scored at different games: "
+            f"horizon_bars {sorted(horizons)}, cost {sorted(costs)}")
+
+    def _sum(side: str, key: str) -> float:
+        return sum(b[side][key] for b in boards)
+
+    buy = _cell_from_totals(int(_sum("buy", "n")), _sum("buy", "net_total"),
+                            int(_sum("buy", "paid")))
+    sell = _cell_from_totals(int(_sum("sell", "n")), _sum("sell", "net_total"),
+                             int(_sum("sell", "paid")))
+    every_n = sum(int(b["every_bar_n"]) for b in boards)
+    every_total = sum((b["every_bar_net_per_trade"] or 0.0) * int(b["every_bar_n"])
+                      for b in boards)
+    return {
+        "horizon_bars": boards[0]["horizon_bars"],
+        "round_trip_cost": boards[0]["round_trip_cost"],
+        "omen_threshold": boards[0]["omen_threshold"],
+        "readable_trades_floor": READABLE_TRADES,
+        "pooled_boards": len(boards),
+        "scored_bars": sum(int(b["scored_bars"]) for b in boards),
+        "dropped_no_future": sum(int(b["dropped_no_future"]) for b in boards),
+        "buy": buy,
+        "sell": sell,
+        "every_bar_n": every_n,
+        "every_bar_net_per_trade": (every_total / every_n) if every_n else None,
         "buy_omens": buy["n"],
         "buy_net_per_trade": buy["net_per_trade"],
         "trough_precision": buy["precision_paid"],

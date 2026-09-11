@@ -5639,3 +5639,29 @@ go red against the bars-only default; gate 723 passed 0 failed.
 NEXT: `omen_l2_scheme_probe.py:232` and `omen_layer_probe.py:331` are the last
 two of the nine still on a bar count — 7 of 9 are fixed. Report in
 `data/brain_experiments/HORIZON-UNIT-SIX-HARNESSES-pass117-jet.md`.
+
+## 2026-09-11 Iris -- the sell-high half, held out, in an UP and a DOWN window
+
+Hypothesis: pass 114's true-label ceiling (DOWN crest +1.8884%/trade > DOWN buy
++1.6396%) means the unmeasured sell half carries headroom a predictor can take.
+
+Did: added `omen_scoreboard.pool_scoreboards` (pools TOTALS, not means, through
+the same 30-trade floor) and `scripts/omen_both_halves.py` -- a node-free
+held-out experiment whose predictor is the causal half of `label_omen` (range
+position over 24 bars), with both bands fitted on a 600-bar train window and
+scored on a 208-bar held-out window by `money_scoreboard`. UP and DOWN windows
+scanned per corpus with `window_regime`, 167 eligible 3600s corpora, 720-minute
+horizon.
+
+RESULT (negative, and it kills the hypothesis): all four cells readable, all
+four below their matched baseline. UP buy n=4641 +1.1258% vs every-bar +1.2206%
+(-0.09pp); UP sell n=16662 -2.6211% vs -1.2206% (-1.40pp); DOWN buy n=15680
+-2.5629% vs -2.4246% (-0.14pp); DOWN sell n=4799 +1.2379% vs +2.4246% (-1.19pp).
+The DOWN crest number looked big in the ceiling because everything falls in a
+down window, not because crest calls are good. Report:
+data/brain_experiments/BOTH-HALVES-pass118-iris.md
+
+Next: any sell-side arm must be scored against the MIRRORED same-regime
+baseline, not against zero and not against the buy half's baseline. The open
+question is whether a feature richer than range position separates the crest
+subset from the window it sits in.
