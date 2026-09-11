@@ -52,7 +52,71 @@ from trading.omen_brain import (  # noqa: E402
     build_collections, collection_distinctness, discriminating_collections,
     label_omen, label_regime, omen_threshold,
 )
+from trading.omen_metacognition import self_frames  # noqa: E402
 from trading.omen_resolved_history import ResolvedHistory  # noqa: E402
+
+#: [1f8c2461] THE SELF-FRAME ABSTENTION GATE. Measured pass 111: the self
+#: frames carry real information about the trough label in BOTH market
+#: directions (self_outcome DOWN +0.183 against a null median +0.046, p=0.001;
+#: UP +0.251 against +0.061, p=0.000) AND querying those same pools COST
+#: 0.81pp per trade UP and 1.32pp DOWN. Both are true. The dilution law is a
+#: fact about the QUERY MECHANISM, not about whether a stream is informative,
+#: so the frames are used OUTSIDE the query: the fabric answers exactly as it
+#: does today, and the self frame at that bar decides whether the buy is
+#: PLACED. Abstention is free; a wrong trade costs ROUND_TRIP_COST.
+SELF_GATE_KEYS = ("self_outcome", "self_error_run")
+
+#: A bucket needs this many TRAIN samples before its trough rate is allowed
+#: to refuse anything. Below it, "0.000 trough" is a small-sample accident --
+#: at a 13-15% base rate a 10-sample bucket reads zero by chance 20% of the
+#: time.
+SELF_GATE_MIN_SUPPORT = 30
+
+
+def fit_self_gate(train_samples: Sequence[Mapping[str, Any]],
+                  *, min_support: int = SELF_GATE_MIN_SUPPORT) -> Dict[str, Any]:
+    """Buckets whose TRAIN trough rate is exactly zero over enough samples.
+
+    Fitted on the train window ONLY and frozen before a single held-out bar is
+    scored. That ordering is the whole point: the L1 motif map in pass 110 was
+    a map fitted to the window it was then scored on, and it died of it. The
+    fitted bucket list is printed and written into the report so a reader can
+    check it was not tuned to the scoring window's regime.
+    """
+    refuse: Dict[str, List[str]] = {}
+    support: Dict[str, Dict[str, List[int]]] = {}
+    for key in SELF_GATE_KEYS:
+        counts: Dict[str, List[int]] = {}
+        for sample in train_samples:
+            frame = sample.get("self", {}).get(key)
+            if frame is None:
+                continue
+            cell = counts.setdefault(frame, [0, 0])
+            cell[0] += 1 if sample["label"] == OMEN_TROUGH else 0
+            cell[1] += 1
+        refuse[key] = sorted(
+            frame for frame, (troughs, seen) in counts.items()
+            if seen >= min_support and troughs == 0
+        )
+        support[key] = counts
+    troughs = sum(1 for s in train_samples if s["label"] == OMEN_TROUGH)
+    return {
+        "min_support": int(min_support),
+        "train_samples": len(train_samples),
+        "train_trough_rate": troughs / max(1, len(train_samples)),
+        "refuse": refuse,
+        "bucket_support": support,
+    }
+
+
+def self_gate_refuses(gate: Mapping[str, Any],
+                      sample: Mapping[str, Any]) -> str | None:
+    """The key whose frozen bucket refuses this bar, or None to allow it."""
+    frames = sample.get("self") or {}
+    for key in SELF_GATE_KEYS:
+        if frames.get(key) in gate["refuse"].get(key, ()):  # frozen list
+            return key
+    return None
 
 
 def _causal_majority(visible) -> str:
@@ -482,6 +546,11 @@ def build_samples(bars, symbol, chain, horizon, start, stop):
         samples.append({
             "index": index,
             "frames": frames,
+            # The self frame is attached to EVERY sample regardless of
+            # OMEN_META_COLLECTIONS, because the gate reads it outside the
+            # query. It is not sent to the node from here, so a non-meta run
+            # still produces byte-identical query frames.
+            "self": self_frames(visible),
             "label": label,
             "regime": label_regime(bars, index),
             "ts": int(bars[index]["timestamp"]),
@@ -598,6 +667,16 @@ def main() -> int:
                              "consolidate. The result is NOT a measurement -- "
                              "the fabric never learns the samples the report "
                              "says it was taught")
+    parser.add_argument("--self-gate", action="store_true",
+                        help="[1f8c2461] Fit the self-frame abstention gate on "
+                             "the TRAIN window, freeze it, and report the buy "
+                             "book both ungated and gated. Never changes what "
+                             "is sent to the node -- the frames are used "
+                             "OUTSIDE the query.")
+    parser.add_argument("--self-gate-min-support", type=int,
+                        default=SELF_GATE_MIN_SUPPORT,
+                        help="train samples a bucket needs before its zero "
+                             "trough rate may refuse a buy")
     parser.add_argument("--guess-regime", action="store_true",
                         help="let stage 1 guess the regime instead of "
                              "computing it -- the pre-2026-09-07 behaviour, "
@@ -696,6 +775,27 @@ def main() -> int:
           f"a long-only rule flatters itself in an UP window.")
     print("train label mix :", dict(Counter(s['label'] for s in train_samples)))
     print("test  label mix :", dict(Counter(s['label'] for s in test_samples)))
+
+    # THE GATE IS FITTED AND FROZEN HERE, before the node is even asked for a
+    # prediction, so it cannot have seen a held-out bar. The fitted bucket
+    # list is printed in full for the same reason.
+    self_gate = None
+    if args.self_gate:
+        self_gate = fit_self_gate(
+            train_samples, min_support=args.self_gate_min_support)
+        print(f"SELF GATE (fitted on TRAIN ONLY, frozen): "
+              f"{self_gate['train_samples']} train samples, train trough rate "
+              f"{self_gate['train_trough_rate']:.1%}, min support "
+              f"{self_gate['min_support']}")
+        for key in SELF_GATE_KEYS:
+            buckets = self_gate["refuse"][key]
+            print(f"   refuse {key:<15} {len(buckets)} bucket(s)")
+            for frame in buckets:
+                seen = self_gate["bucket_support"][key][frame][1]
+                print(f"      0/{seen:<4} trough on train   {frame!r}")
+            if not buckets:
+                print("      (none -- no bucket reaches zero trough at this "
+                      "support, so the gate cannot refuse on this key)")
 
     brain = OmenBrain(endpoint=args.endpoint)
     if not brain.supports_multi():
@@ -871,6 +971,14 @@ def main() -> int:
     #: Every buy omen, paired with its confidence, so the floor that would
     #: have been best is READ OFF the run instead of guessed at.
     buys_by_conf: List[tuple] = []
+    #: The gate's book, and the precision of both books. Trough PRECISION is
+    #: reported on each side because "the gate helped" and "the gate stopped
+    #: trading" look identical in a per-trade mean: refusing every buy is not
+    #: an edge.
+    gated_trades: List[float] = []
+    gated_is_trough: List[bool] = []
+    ungated_is_trough: List[bool] = []
+    gate_refusals: Counter = Counter()
     for sample in test_samples:
         omen = predict(sample)
         predicted.append(omen.omen if omen.verdict == "admitted" else "__hold__")
@@ -884,6 +992,18 @@ def main() -> int:
         if omen.is_actionable and omen.action == "buy":
             trades.append(sample["forward"] - ROUND_TRIP_COST)
             buys_by_conf.append((omen.confidence, sample["forward"] - ROUND_TRIP_COST))
+            # THE GATE, scored on the SAME predictions rather than a second
+            # run: the ungated and gated books differ only by the frozen
+            # bucket list, so no run-to-run fabric variance can leak into the
+            # comparison. (89.2% and 93.6% thirty-four minutes apart is why.)
+            if self_gate is not None:
+                refused_by = self_gate_refuses(self_gate, sample)
+                if refused_by is None:
+                    gated_trades.append(sample["forward"] - ROUND_TRIP_COST)
+                    gated_is_trough.append(sample["label"] == OMEN_TROUGH)
+                else:
+                    gate_refusals[refused_by] += 1
+            ungated_is_trough.append(sample["label"] == OMEN_TROUGH)
 
     truth = Counter(s["label"] for s in test_samples)
     majority = max(truth.values()) / max(1, len(test_samples))
@@ -930,6 +1050,58 @@ def main() -> int:
         })
     print("   conf sweep    : " + " | ".join(
         f"{s['floor']:.2f}->{s['trades']}t {s['per_trade']:+.3%}" for s in sweep))
+
+    # 5 -- THE SELF-FRAME ABSTENTION GATE. Same fabric, same predictions, one
+    # frozen bucket list between the two books.
+    gate_result: Dict[str, Any] | None = None
+    if self_gate is not None:
+        ungated_n = len(trades)
+        gated_n = len(gated_trades)
+        ungated_per = total / max(1, ungated_n)
+        gated_per = sum(gated_trades) / max(1, gated_n)
+        ungated_prec = (sum(ungated_is_trough) / max(1, len(ungated_is_trough)))
+        gated_prec = (sum(gated_is_trough) / max(1, len(gated_is_trough)))
+        refused = ungated_n - gated_n
+        print(f"5. SELF GATE     : ungated {ungated_n} buys "
+              f"{ungated_per:+.4%}/trade, trough precision {ungated_prec:.1%}")
+        print(f"   gated         : {gated_n} buys {gated_per:+.4%}/trade, "
+              f"trough precision {gated_prec:.1%}  "
+              f"({refused} refused: {dict(gate_refusals)})")
+        # An abstention gate can "improve" a per-trade mean by refusing almost
+        # everything, and it can only be judged against how much it refused.
+        if gated_n == 0:
+            note = ("REFUSES EVERY BUY -- that is being switched off, not an "
+                    "edge")
+        elif gated_n < 30:
+            note = (f"UNRANKABLE -- {gated_n} trades after gating is below the "
+                    "n=30 floor, a per-trade mean here has no standard error")
+        elif refused == 0:
+            note = "NO-OP -- the frozen buckets refused nothing in this window"
+        else:
+            note = (f"{gated_per - ungated_per:+.4%}/trade against the same "
+                    f"fabric ungated, keeping {gated_n}/{ungated_n} buys")
+        print(f"   verdict       : {note}")
+        gate_result = {
+            "min_support": self_gate["min_support"],
+            "train_samples": self_gate["train_samples"],
+            "train_trough_rate": self_gate["train_trough_rate"],
+            "refuse_buckets": {k: list(v) for k, v in self_gate["refuse"].items()},
+            "refuse_bucket_train_support": {
+                key: {frame: self_gate["bucket_support"][key][frame][1]
+                      for frame in self_gate["refuse"][key]}
+                for key in SELF_GATE_KEYS
+            },
+            "ungated_trades": ungated_n,
+            "gated_trades": gated_n,
+            "refused_trades": refused,
+            "refused_by_key": dict(gate_refusals),
+            "ungated_net_per_trade": ungated_per,
+            "gated_net_per_trade": gated_per,
+            "delta_net_per_trade": gated_per - ungated_per,
+            "ungated_trough_precision": ungated_prec,
+            "gated_trough_precision": gated_prec,
+            "verdict": note,
+        }
 
     fabric_after = fabric_census(args.endpoint)
     report = {
@@ -993,6 +1165,7 @@ def main() -> int:
         "selection_z": lift["z"],
         "selection_p_value": lift["p_value"],
         "selection_trials": lift["trials"],
+        "self_gate": gate_result,
     }
     # Refuse to WRITE an uncomparable report rather than discover six passes
     # later that a number cannot be placed against another corpus.
