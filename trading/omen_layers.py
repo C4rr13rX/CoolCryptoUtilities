@@ -46,10 +46,12 @@ __all__ = [
     "sticky_motifs",
     "sequence_motif",
     "transition_motif",
+    "churn_band",
     "layer_distinctness",
     "L1_STREAMS",
     "MOTIF_SEQUENCE_STEPS",
     "L2_TRANSITION_STEPS",
+    "L2_CHURN_CUTS",
     "L1_HYSTERESIS_MARGIN",
     "IDENTIFIER_CEILING",
 ]
@@ -115,6 +117,39 @@ MOTIF_SEQUENCE_STEPS = 3
 #: window allows, because a regime that holds for forty bars costs it one
 #: symbol. Length of memory is the window, not the step count.
 L2_TRANSITION_STEPS = 2
+
+#: Where the window's CHANGE RATE is cut into bands for the L2 churn symbol.
+#:
+#: THE SYMBOL THAT GIVES THE CHANGE-ORDER PATH ITS DWELL BACK, and the reason
+#: it is a rate over the whole window rather than a count per position is the
+#: entire measured difference between it and run-length. Run-length attaches a
+#: dwell bucket to EVERY kept symbol, so it multiplies the alphabet once per
+#: position and reads 0.7117 DOWN / 0.5983 UP -- it fails the guard harder than
+#: the fixed path it replaces. This attaches ONE bucket to the whole frame, so
+#: the alphabet grows by a bounded factor of at most len(cuts)+1 and in
+#: practice by far less, because churn and path are correlated.
+#:
+#: Cut points are on ``changes / adjacencies`` inside the window, not on a raw
+#: count, so the symbol means the same thing at any window length.
+#:
+#: TWO BUCKETS, NOT THREE, AND THE CUT IS LOW. Measured 2026-09-11 on
+#: p108_aero_down/up, 600 samples each, every candidate priced off ONE build of
+#: each corpus (scripts/omen_l2_scheme_probe.py, CHURN CUT SWEEP), worst of the
+#: two windows against the 0.30 ceiling:
+#:
+#:     cuts            worst distinctness   verdict
+#:     (none)          0.2633               the frame with no dwell at all
+#:     (0.15,)         0.2800               PASSES -- shipped
+#:     (0.20,)         0.2967               passes by 0.0033, too thin
+#:     (0.30,)         0.3183               fails
+#:     (0.25, 0.55)    0.3433               fails -- three buckets is too dear
+#:
+#: So dwell costs 0.0167 of distinctness here and there is room for exactly one
+#: cut. A low cut is also the RIGHT one rather than merely the cheap one: the
+#: property criterion 3 asks for is "did this regime hold or did it churn", and
+#: at the shipped window of 12 bars this says held when at most one change
+#: occurred across all eleven adjacencies.
+L2_CHURN_CUTS = (0.15,)
 
 #: How sticky L1's bands are, as a fraction of each band's own width.
 #:
@@ -455,7 +490,8 @@ def sequence_motif(motifs: Sequence[str],
 
 
 def transition_motif(motifs: Sequence[str],
-                     steps: int = L2_TRANSITION_STEPS) -> str:
+                     steps: int = L2_TRANSITION_STEPS,
+                     churn_cuts: Sequence[float] = L2_CHURN_CUTS) -> str:
     """L2: the last ``steps`` motifs that were DIFFERENT from their predecessor.
 
     THE SCHEME THAT PASSES, and the reason it passes is that it stops sampling
@@ -475,6 +511,26 @@ def transition_motif(motifs: Sequence[str],
     the dwell bucket is an extra symbol per position, so it widens the alphabet
     in a layer whose whole problem is that its alphabet is too wide.
 
+    THE FRAME IS A PATH PLUS A CHURN SYMBOL, and the second half was added in
+    pass 116 because the first half alone does not carry dwell. At the shipped
+    ``L2_TRANSITION_STEPS`` a persistent regime (A A A A B B B B, one change)
+    and an alternating one (A B A B A B A B, seven) have the same multiset and
+    collapse to the same two kept symbols -- a change-keyed tail cannot encode
+    how many times the alphabet changed, so both were ONE identical frame.
+    ``churn_band`` supplies that missing fact in a single token for the whole
+    frame, which is what separates it from run-length. Measured cost at the
+    shipped cut: worst-of-both distinctness 0.2633 -> 0.2800, still inside the
+    ceiling. Full numbers at ``L2_CHURN_CUTS``.
+
+    WHAT DWELL COSTS IN SUPPORT, said plainly because it is not free. The churn
+    symbol splits groups as well as separating regimes: DOWN goes from 3
+    supported groups covering 10.5% to 1 covering 3.4%, and UP from 5 covering
+    21.9% with a best lift of 4.21x to 4 covering 15.5% at 1.71x. So the layer
+    now carries the property it exists for and has LESS supported mass than the
+    frame that did not. Which of the two a node arm should query is an open
+    question this encoder does not answer, and both are measurable from
+    scripts/omen_l2_scheme_probe.py in one process.
+
     REPEATS ARE DROPPED, ORDER IS NOT. The symbols stay oldest-first, so
     A->B->C and C->B->A are different frames. That is the one property L2
     exists to carry, and losing it would make this a bag of motifs -- which is
@@ -491,13 +547,64 @@ def transition_motif(motifs: Sequence[str],
     atoms are bytes and where "loss_big" once swallowed "loss".
     """
     if not motifs:
-        return "co2t path=na"
+        return "co2t path=na chn=na"
     changed = []
     for motif in motifs:
         item = _compact_motif(motif)
         if not changed or item != changed[-1]:
             changed.append(item)
-    return "co2t path=%s" % "|".join(changed[-steps:])
+    return "co2t path=%s chn=%s" % ("|".join(changed[-steps:]),
+                                    churn_band(motifs, churn_cuts))
+
+
+def churn_band(motifs: Sequence[str],
+               cuts: Sequence[float] = L2_CHURN_CUTS) -> str:
+    """How OFTEN the L1 alphabet changed across the window, as one symbol.
+
+    THE DWELL THE CHANGE-ORDER PATH THROWS AWAY, and the defect it repairs was
+    measured rather than argued. A ``steps``-symbol tail over a change-keyed
+    alphabet cannot say how many times the alphabet changed: at the shipped
+    ``L2_TRANSITION_STEPS`` a persistent regime (A A A A B B B B, one change)
+    and an alternating one (A B A B A B A B, seven changes) carry the SAME
+    multiset and collapse to the same two kept symbols, so the path alone gave
+    them one identical frame. Jet found that in pass 116 against a two-line
+    repro and it is the reason [fa75fa1a] was reopened.
+
+    ONE SYMBOL FOR THE WHOLE FRAME, NOT ONE PER POSITION. That is the whole
+    design, and the contrast is run-length: attaching a dwell bucket to every
+    kept symbol multiplies the alphabet once per position and reads 0.7117 DOWN
+    / 0.5983 UP, worse than the fixed path it was meant to replace. A single
+    window-level band multiplies it by at most ``len(cuts) + 1`` and, because
+    churn and path are correlated, by materially less than that in the corpus.
+
+    The rate is ``changes / adjacencies`` rather than a raw count, so the
+    symbol carries the same meaning at any window length -- a count would
+    silently re-band itself the moment someone changed the window.
+
+    ``motifs`` is oldest-first. Empty strings are HOLES (a bar whose L0 frames
+    could not be built) and are dropped before the adjacencies are counted, so
+    no churn is claimed across a gap the corpus does not have.
+    """
+    compact = [_compact_motif(m) for m in motifs if m]
+    if len(compact) < 2:
+        return "na"
+    changes = sum(1 for a, b in zip(compact, compact[1:]) if a != b)
+    return _band_of_rate(changes / (len(compact) - 1), cuts)
+
+
+def _band_of_rate(rate: float, cuts: Sequence[float] = L2_CHURN_CUTS) -> str:
+    """Band one change RATE. Split out so the cut-point sweep in
+    scripts/omen_l2_scheme_probe.py prices candidates through the SAME
+    arithmetic the live encoder uses, instead of a probe-local copy that can
+    drift away from it between passes.
+    """
+    if rate < 0:
+        return "na"
+    names = ("lo", "mid", "hi", "vhi", "xhi")
+    for position, bound in enumerate(cuts):
+        if rate <= bound:
+            return names[position]
+    return names[min(len(cuts), len(names) - 1)]
 
 
 def layer_distinctness(frame_sets: Sequence[Mapping[str, str]],
