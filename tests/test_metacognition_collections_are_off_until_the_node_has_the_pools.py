@@ -255,6 +255,46 @@ def test_the_scale_frame_is_sharp_enough_to_survive_the_dilution_filter(monkeypa
         "identifier, which maximises recall and destroys generalisation")
 
 
+def test_pool_18_is_selected_into_the_query_on_its_own_merit(monkeypatch):
+    """Distinctness above the bar is not the thing that matters -- SELECTION is.
+
+    The test above measures the ratio. This one asserts the consequence the
+    ratio exists for, and they can come apart: ``discriminating_collections``
+    is what actually decides which pools a query fires, and a refactor that
+    moved pool 18 out of ``COLLECTIONS``, or renamed its frame key, would leave
+    the ratio assertion passing while the regime pool went back to never
+    firing. That is the pass-109 failure exactly -- the frame was computed,
+    trained, and never queried -- and it was invisible for three passes because
+    nothing asserted on the query set.
+
+    "On its own merit" is the whole point and is why no ``minimum=`` override
+    is passed here: the bar is the real ``MIN_QUERY_DISTINCTNESS``, and pool 18
+    has to clear it the same way geometry and flow do. An experiment can force
+    a pool into the query with ``--query-collections``, and a number measured
+    through that override says nothing about whether the pool earns its place.
+    """
+    mod = _reload(monkeypatch, meta="1")
+    bars = _bars(700, vol=0.006, seed=29)
+    frame_sets = [mod.build_collections(bars, i, horizon_bars=6, symbol="TEST")
+                  for i in range(260, 700)]
+
+    picked = mod.discriminating_collections(frame_sets)
+    assert "temporal_scale" in picked, (
+        "temporal_scale is not in the measured query set "
+        f"{picked} -- pool 18 is trained and never queried, which is the "
+        "pass-109 defect: the ONE pool aimed at multi-scale regime does not "
+        "fire and no number measured on this fabric reflects it")
+
+    # The fallback path returns a SINGLE collection when nothing clears the
+    # bar. Landing there would satisfy the assertion above by accident on a
+    # corpus where temporal_scale happened to be the sharpest stream, so the
+    # merit claim needs the set to be a real one.
+    assert len(picked) > 1, (
+        f"discriminating_collections fell back to {picked} -- that is the "
+        "'no collection cleared the bar' path, not a query set, and pool 18's "
+        "presence in it is an artifact of the fallback rather than merit")
+
+
 # A "nudge vs dislocation" test was written here and REMOVED, deliberately.
 # It asserted that a 0.05%/bar drift and a 5%/bar rise produce different scale
 # frames. They do not, and that is correct: every scale is measured in units of
