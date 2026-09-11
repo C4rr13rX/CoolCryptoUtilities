@@ -114,3 +114,28 @@ The directive-driven entry path (`directive.action == "enter"`) is an `elif`
 **above** this branch, so a strategy-emitted entry never reaches the model
 conjunction and this conjunct does not bind on it. That is the path
 `atf_static` actually trades. Filed separately.
+
+## Addendum — price_mu is a z-score, not a return ([1b0fd55f])
+
+Measured on the same newest 5,000 cycles, the full distribution of `delta`:
+
+    p1   -2.1002    p25  -1.5034    p50  -0.3423    p75  +0.1295
+    p95  +1.1784    p99  +1.3466    max  +1.5385    min  -2.7811
+
+    |delta| < 1%        0.68% of cycles
+    delta >= 0.99      10.84%
+    delta <= -0.90     36.48%
+    delta in [0.9,1.0]  2.22%
+
+It is **not** clipped at a cap — it runs from -2.78 to +1.54 with a median of
+-0.342, which is the shape of a standardised variable, not of a 15-minute
+return on a feed whose median absolute move is 0.1227%. `net_margin` sits on
+the same scale (median -0.3488, max +1.5320), which also explains the
+separately filed "net_margin is a saturated negative on every symbol": a
+z-scored target is negative more often than not.
+
+So the hypothesis for [1b0fd55f] is specific and cheap to test: the price_mu
+target was normalised during training and the prediction is never inverse
+transformed. That is a units bug at a boundary, not a model-quality problem,
+and it would make every cost-derived comparison in the entry path meaningless
+at once -- which is what is observed.
