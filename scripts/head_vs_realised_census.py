@@ -537,6 +537,31 @@ def window_regime(
     return {"regime": regime, "median_drift_pct": median, "symbols": len(drifts)}
 
 
+def tape_rows(
+    stream: Dict[str, Tuple[List[float], List[float]]],
+    lo: float,
+    hi: float,
+) -> List[Dict[str, Any]]:
+    """Every priced ``market_stream`` tick in the window, as (symbol, ts) rows.
+
+    The horizon table and ``window_regime`` both want "a set of (symbol, ts)
+    points to price forward from". They were handed prediction snapshots because
+    that is what the rest of this census works on -- but neither reads a
+    prediction field, so the snapshot dependency bought nothing and cost every
+    window where the head was silent. Rows carry no ``direction_prob``: anything
+    that scores the HEAD must keep using ``preds``, and a caller that mixes them
+    up gets a KeyError rather than a silent wrong answer.
+    """
+    rows: List[Dict[str, Any]] = []
+    for symbol, (times, _prices) in stream.items():
+        left = bisect.bisect_left(times, lo)
+        right = bisect.bisect_left(times, hi)
+        for ts in times[left:right]:
+            rows.append({"symbol": symbol, "ts": ts})
+    rows.sort(key=lambda r: r["ts"])
+    return rows
+
+
 def _print_horizon_table(
     preds: List[Dict[str, Any]],
     stream: Dict[str, Tuple[List[float], List[float]]],
@@ -561,6 +586,18 @@ def _print_horizon_table(
     printed 15min as +0.0198 when the honest number is negative. It now charges
     ``total_cost_pct`` and honours --clip / --pct-cost / --fixed-cost, which the
     table previously accepted and ignored.
+
+    ITS ROWS ARE TICKS, NOT PREDICTIONS -- see ``--tape-rows``. Everything this
+    table computes is |forward return| from ``market_stream`` against a cost; it
+    reads nothing whatsoever out of a prediction. But it was fed ``preds``, the
+    snapshot rows, so it could only be measured where the head happened to have
+    been emitting non-sentinel predictions. Measured pass 112: the 24h window
+    ending 168h ago is an UP window (+5.572% median per-symbol drift) and the
+    table printed NO ROWS AT ALL there -- n blank at every horizon and "0
+    symbols, too few to classify" -- because no usable snapshot exists that far
+    back. That is why "neither measured window is an UP window" survived three
+    passes: it was never a choice of window, it was the instrument gating a
+    pure-tape measurement behind the model's own history.
     """
     horizons = (5.0, 10.0, 15.0, 30.0, 60.0, 120.0)
     cost = total_cost_pct(args.pct_cost, args.fixed_cost, args.clip)
@@ -689,6 +726,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="sweep horizons and print what a PERFECT direction call would net at each",
     )
+    ap.add_argument(
+        "--tape-rows",
+        action="store_true",
+        help=(
+            "build the horizon table's rows from market_stream ticks rather than "
+            "prediction snapshots. The table reads no prediction field, so this is "
+            "the only way to land it on a window where the head was silent -- which "
+            "is every window older than the current rolling one"
+        ),
+    )
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
@@ -705,16 +752,31 @@ def main(argv: Optional[List[str]] = None) -> int:
         # longest forward horizon, or every tick near the end loses its forward
         # price and the window silently measures only its own first half.
         stream = load_stream(conn, since - args.tolerance_sec)
-        preds = [
-            row
-            for row in load_predictions(conn, since)
-            if row["ts"] <= until
-        ]
+        # --tape-rows needs no prediction, and loading them is not free: parsing
+        # every organism_snapshots payload in a 24h window took ~7 minutes on
+        # this box, which is a quarter of an agent pass spent on rows that are
+        # then discarded. Skip it rather than pay it.
+        preds = (
+            []
+            if (args.horizon_table and args.tape_rows)
+            else [row for row in load_predictions(conn, since) if row["ts"] <= until]
+        )
     finally:
         conn.close()
 
     if args.horizon_table:
-        return _print_horizon_table(preds, stream, args, since, until)
+        rows = preds
+        if args.tape_rows:
+            # The table reads no prediction field, so the honest row source for
+            # it is the tape itself. Without this the table can only be measured
+            # where the head was emitting predictions, which on this box is the
+            # recent flat-to-down window and nowhere else.
+            rows = tape_rows(stream, since, until)
+            print(
+                f"  ROWS FROM THE TAPE: {len(rows)} market_stream ticks in the window, "
+                f"not {len(preds)} prediction snapshots"
+            )
+        return _print_horizon_table(rows, stream, args, since, until)
 
     matched: List[Dict[str, Any]] = []
     no_symbol = no_base = no_forward = implausible = 0
