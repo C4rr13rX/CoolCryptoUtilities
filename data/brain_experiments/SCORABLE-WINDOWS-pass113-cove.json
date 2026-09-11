@@ -1,0 +1,722 @@
+{
+  "train": 350,
+  "test": 60,
+  "horizon": 12,
+  "margin": 0.5,
+  "rows": [
+    {
+      "corpus": "0004_AERO-USDC.json",
+      "symbol": "AERO-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.000851
+    },
+    {
+      "corpus": "0005_AERO-USDC.json",
+      "symbol": "AERO-USDC",
+      "called_n": 23,
+      "called_net": -0.029473,
+      "baseline_net": -0.02516
+    },
+    {
+      "corpus": "0006_AERO-USDC.json",
+      "symbol": "AERO-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.010723
+    },
+    {
+      "corpus": "0007_AERO-USDC.json",
+      "symbol": "AERO-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": 0.012649
+    },
+    {
+      "corpus": "0007_EURC-USDC.json",
+      "symbol": "EURC-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007859
+    },
+    {
+      "corpus": "0009_JITOSOL-CBBTC.json",
+      "symbol": "JITOSOL-CBBTC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.003724
+    },
+    {
+      "corpus": "0009_VVV-WETH.json",
+      "symbol": "VVV-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.038716
+    },
+    {
+      "corpus": "0010_JITOSOL-CBBTC.json",
+      "symbol": "JITOSOL-CBBTC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.01533
+    },
+    {
+      "corpus": "0010_SOL-USDC.json",
+      "symbol": "SOL-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.020202
+    },
+    {
+      "corpus": "0010_VVV-WETH.json",
+      "symbol": "VVV-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.002667
+    },
+    {
+      "corpus": "0011_AERO-WETH.json",
+      "symbol": "AERO-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.025224
+    },
+    {
+      "corpus": "0011_CBETH-WETH.json",
+      "symbol": "CBETH-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.00626
+    },
+    {
+      "corpus": "0011_JITOSOL-CBBTC.json",
+      "symbol": "JITOSOL-CBBTC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.002082
+    },
+    {
+      "corpus": "0011_VIRTUAL-WETH.json",
+      "symbol": "VIRTUAL-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.013704
+    },
+    {
+      "corpus": "0012_HYPE-BASEDHYPE.json",
+      "symbol": "HYPE-BASEDHYPE",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": 0.00318
+    },
+    {
+      "corpus": "0012_SOL-USDC.json",
+      "symbol": "SOL-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.004144
+    },
+    {
+      "corpus": "0012_USDT-USDC.json",
+      "symbol": "USDT-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.006562
+    },
+    {
+      "corpus": "0013_AERO-WETH.json",
+      "symbol": "AERO-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.000851
+    },
+    {
+      "corpus": "0013_CBETH-WETH.json",
+      "symbol": "CBETH-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.006206
+    },
+    {
+      "corpus": "0013_SOL-USDC.json",
+      "symbol": "SOL-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.015516
+    },
+    {
+      "corpus": "0013_USDT-USDC.json",
+      "symbol": "USDT-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.006519
+    },
+    {
+      "corpus": "0014_EURC-USDC.json",
+      "symbol": "EURC-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007859
+    },
+    {
+      "corpus": "0014_SOL-USDC.json",
+      "symbol": "SOL-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.000168
+    },
+    {
+      "corpus": "0014_VVV-WETH.json",
+      "symbol": "VVV-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": 0.016811
+    },
+    {
+      "corpus": "0015_AERO-WETH.json",
+      "symbol": "AERO-WETH",
+      "called_n": 23,
+      "called_net": -0.029473,
+      "baseline_net": -0.02516
+    },
+    {
+      "corpus": "0015_EURC-USDC.json",
+      "symbol": "EURC-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007859
+    },
+    {
+      "corpus": "0015_SOL-CBBTC.json",
+      "symbol": "SOL-CBBTC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.015516
+    },
+    {
+      "corpus": "0016_EURC-USDC.json",
+      "symbol": "EURC-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007859
+    },
+    {
+      "corpus": "0016_SOL-CBBTC.json",
+      "symbol": "SOL-CBBTC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.004144
+    },
+    {
+      "corpus": "0016_USDT-WETH.json",
+      "symbol": "USDT-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.00653
+    },
+    {
+      "corpus": "0016_VIRTUAL-WETH.json",
+      "symbol": "VIRTUAL-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.027258
+    },
+    {
+      "corpus": "0016_VVV-WETH.json",
+      "symbol": "VVV-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.038146
+    },
+    {
+      "corpus": "0017_AERO-WETH.json",
+      "symbol": "AERO-WETH",
+      "called_n": 5,
+      "called_net": 0.00636,
+      "baseline_net": -0.013393
+    },
+    {
+      "corpus": "0017_EURC-USDC.json",
+      "symbol": "EURC-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007859
+    },
+    {
+      "corpus": "0017_SOL-USDC.json",
+      "symbol": "SOL-USDC",
+      "called_n": 2,
+      "called_net": -0.000804,
+      "baseline_net": -0.002147
+    },
+    {
+      "corpus": "0017_VIRTUAL-WETH.json",
+      "symbol": "VIRTUAL-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007366
+    },
+    {
+      "corpus": "0018_AERO-WETH.json",
+      "symbol": "AERO-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.002171
+    },
+    {
+      "corpus": "0018_CBETH-WETH.json",
+      "symbol": "CBETH-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.006368
+    },
+    {
+      "corpus": "0018_VVV-WETH.json",
+      "symbol": "VVV-WETH",
+      "called_n": 12,
+      "called_net": -0.000889,
+      "baseline_net": -0.009007
+    },
+    {
+      "corpus": "0019_AERO-CBBTC.json",
+      "symbol": "AERO-CBBTC",
+      "called_n": 5,
+      "called_net": 0.00636,
+      "baseline_net": -0.013393
+    },
+    {
+      "corpus": "0019_EURC-WETH.json",
+      "symbol": "EURC-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007859
+    },
+    {
+      "corpus": "0019_SOL-CBBTC.json",
+      "symbol": "SOL-CBBTC",
+      "called_n": 2,
+      "called_net": 0.002088,
+      "baseline_net": -0.005445
+    },
+    {
+      "corpus": "0019_USDT-USDC.json",
+      "symbol": "USDT-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.006564
+    },
+    {
+      "corpus": "0019_VIRTUAL-WETH.json",
+      "symbol": "VIRTUAL-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.031852
+    },
+    {
+      "corpus": "0020_CBETH-CBBTC.json",
+      "symbol": "CBETH-CBBTC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.014818
+    },
+    {
+      "corpus": "0020_VVV-WETH.json",
+      "symbol": "VVV-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.002667
+    },
+    {
+      "corpus": "0021_AERO-WETH.json",
+      "symbol": "AERO-WETH",
+      "called_n": 1,
+      "called_net": -0.004578,
+      "baseline_net": 0.003958
+    },
+    {
+      "corpus": "0021_ETH-USDC.json",
+      "symbol": "ETH-USDC",
+      "called_n": 5,
+      "called_net": -0.014896,
+      "baseline_net": 0.007058
+    },
+    {
+      "corpus": "0021_VIRTUAL-WETH.json",
+      "symbol": "VIRTUAL-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": 0.022486
+    },
+    {
+      "corpus": "0023_EURC-WETH.json",
+      "symbol": "EURC-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007859
+    },
+    {
+      "corpus": "0023_VIRTUAL-WETH.json",
+      "symbol": "VIRTUAL-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": 0.022486
+    },
+    {
+      "corpus": "0023_VVV-WETH.json",
+      "symbol": "VVV-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.013283
+    },
+    {
+      "corpus": "0024_AERO-CBBTC.json",
+      "symbol": "AERO-CBBTC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.020039
+    },
+    {
+      "corpus": "0024_CBETH-CBBTC.json",
+      "symbol": "CBETH-CBBTC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": 0.008064
+    },
+    {
+      "corpus": "0025_VIRTUAL-WETH.json",
+      "symbol": "VIRTUAL-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.017386
+    },
+    {
+      "corpus": "0025_ZRO-WETH.json",
+      "symbol": "ZRO-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.022319
+    },
+    {
+      "corpus": "0026_AERO-USDC.json",
+      "symbol": "AERO-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": 0.019209
+    },
+    {
+      "corpus": "0026_MORPHO-WETH.json",
+      "symbol": "MORPHO-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": 0.001961
+    },
+    {
+      "corpus": "0069_LINK-USDC.json",
+      "symbol": "LINK-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.012397
+    },
+    {
+      "corpus": "0072_CRV-USDC.json",
+      "symbol": "CRV-USDC",
+      "called_n": 9,
+      "called_net": 0.010815,
+      "baseline_net": -0.002693
+    },
+    {
+      "corpus": "0073_LINK-USDC.json",
+      "symbol": "LINK-USDC",
+      "called_n": 24,
+      "called_net": -0.016278,
+      "baseline_net": -0.01293
+    },
+    {
+      "corpus": "0075_WBTC-USDC.json",
+      "symbol": "WBTC-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.010953
+    },
+    {
+      "corpus": "0082_LINK-USDC.json",
+      "symbol": "LINK-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.025936
+    },
+    {
+      "corpus": "0084_CRV-USDC.json",
+      "symbol": "CRV-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.020038
+    },
+    {
+      "corpus": "0085_CRV-USDC.json",
+      "symbol": "CRV-USDC",
+      "called_n": 1,
+      "called_net": -0.040515,
+      "baseline_net": -0.018176
+    },
+    {
+      "corpus": "0088_WBTC-USDC.json",
+      "symbol": "WBTC-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.005185
+    },
+    {
+      "corpus": "0090_WBTC-USDC.json",
+      "symbol": "WBTC-USDC",
+      "called_n": 29,
+      "called_net": -0.012626,
+      "baseline_net": -0.011672
+    },
+    {
+      "corpus": "0091_CRV-USDC.json",
+      "symbol": "CRV-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": 0.015031
+    },
+    {
+      "corpus": "0093_WBTC-USDC.json",
+      "symbol": "WBTC-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007999
+    },
+    {
+      "corpus": "0114_CRV-USDC.json",
+      "symbol": "CRV-USDC",
+      "called_n": 10,
+      "called_net": -0.035819,
+      "baseline_net": -0.025528
+    },
+    {
+      "corpus": "0116_UNI-USDC.json",
+      "symbol": "UNI-USDC",
+      "called_n": 9,
+      "called_net": -0.007238,
+      "baseline_net": -0.009745
+    },
+    {
+      "corpus": "0118_COMP-USDC.json",
+      "symbol": "COMP-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.012917
+    },
+    {
+      "corpus": "0119_UNI-USDC.json",
+      "symbol": "UNI-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.004188
+    },
+    {
+      "corpus": "0126_UNI-USDC.json",
+      "symbol": "UNI-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.010584
+    },
+    {
+      "corpus": "0127_UNI-USDC.json",
+      "symbol": "UNI-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.022047
+    },
+    {
+      "corpus": "0128_CRV-USDC.json",
+      "symbol": "CRV-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007366
+    },
+    {
+      "corpus": "0130_AAVE-USDC.json",
+      "symbol": "AAVE-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.000111
+    },
+    {
+      "corpus": "0132_LINK-USDC.json",
+      "symbol": "LINK-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.017213
+    },
+    {
+      "corpus": "0142_COMP-USDC.json",
+      "symbol": "COMP-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.016573
+    },
+    {
+      "corpus": "0152_SHIB-USDC.json",
+      "symbol": "SHIB-USDC",
+      "called_n": 12,
+      "called_net": -0.016146,
+      "baseline_net": -0.018321
+    },
+    {
+      "corpus": "0159_SHIB-USDC.json",
+      "symbol": "SHIB-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.021178
+    },
+    {
+      "corpus": "0174_UNI-USDC.json",
+      "symbol": "UNI-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007665
+    },
+    {
+      "corpus": "0180_SHIB-USDC.json",
+      "symbol": "SHIB-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.017435
+    },
+    {
+      "corpus": "9000_WETH-USDC.json",
+      "symbol": "WETH-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.00676
+    },
+    {
+      "corpus": "9001_WETH-USDT.json",
+      "symbol": "WETH-USDT",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.00676
+    },
+    {
+      "corpus": "9002_WBTC-USDC.json",
+      "symbol": "WBTC-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007564
+    },
+    {
+      "corpus": "9003_WBTC-WETH.json",
+      "symbol": "WBTC-WETH",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.007999
+    },
+    {
+      "corpus": "9004_LINK-USDC.json",
+      "symbol": "LINK-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.006524
+    },
+    {
+      "corpus": "9005_UNI-USDC.json",
+      "symbol": "UNI-USDC",
+      "called_n": 26,
+      "called_net": -0.015912,
+      "baseline_net": -0.02062
+    },
+    {
+      "corpus": "9006_AAVE-USDC.json",
+      "symbol": "AAVE-USDC",
+      "called_n": 1,
+      "called_net": -0.001531,
+      "baseline_net": -0.014975
+    },
+    {
+      "corpus": "9007_ARB-USDC.json",
+      "symbol": "ARB-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.019565
+    },
+    {
+      "corpus": "9008_OP-USDC.json",
+      "symbol": "OP-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.024938
+    },
+    {
+      "corpus": "9009_DAI-USDC.json",
+      "symbol": "DAI-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.006562
+    },
+    {
+      "corpus": "9010_PEPE-USDC.json",
+      "symbol": "PEPE-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.006894
+    },
+    {
+      "corpus": "9011_DOGE-USDC.json",
+      "symbol": "DOGE-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.00954
+    },
+    {
+      "corpus": "9012_SHIB-USDC.json",
+      "symbol": "SHIB-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.011231
+    },
+    {
+      "corpus": "9013_CRV-USDC.json",
+      "symbol": "CRV-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.037746
+    },
+    {
+      "corpus": "9014_MKR-USDC.json",
+      "symbol": "MKR-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.001161
+    },
+    {
+      "corpus": "9015_LDO-USDC.json",
+      "symbol": "LDO-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.021603
+    },
+    {
+      "corpus": "9016_SNX-USDC.json",
+      "symbol": "SNX-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.013475
+    },
+    {
+      "corpus": "9017_SUSHI-USDC.json",
+      "symbol": "SUSHI-USDC",
+      "called_n": 0,
+      "called_net": 0.0,
+      "baseline_net": -0.015116
+    },
+    {
+      "corpus": "9018_COMP-USDC.json",
+      "symbol": "COMP-USDC",
+      "called_n": 1,
+      "called_net": 0.010979,
+      "baseline_net": -0.003944
+    }
+  ]
+}

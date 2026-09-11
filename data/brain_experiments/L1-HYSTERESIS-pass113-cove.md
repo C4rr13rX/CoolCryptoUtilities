@@ -128,6 +128,57 @@ this horizon -- not negative.
    is now in `trading/omen_layers.sticky_motifs` rather than probe-local, so
    whoever takes it wires the scheme rather than re-deriving the banding.
 
+## 6. THE SAME QUESTION AT 102x THE SAMPLE -- AND IT IS A NEGATIVE
+
+Section 2 said "this corpus cannot be scored". The instruction here is to go
+and get more samples rather than write that down as a finding, so I did.
+
+**Corpus:** every `data/historical_ohlcv/base/*.json` with >=600 bars whose
+MEDIAN BAR SPACING IS 3600s -- 102 corpora. The cadence filter is deliberate
+and comes from [4d0b539b]: the corpus spans 166s to 345600s bars, so
+`--horizon 12` means 12 hours on these 102 and something else entirely
+elsewhere. Comparing across mixed cadences would be comparing 33 minutes with
+48 days under one flag.
+
+**Method:** last 482 bars of each corpus; train 350, purge 12, test 60;
+relative bands fitted on TRAIN and frozen; hysteresis margin 0.50; motif->trough
+map fitted on TRAIN with n>=20 and lift>=1.3. One process, no node contacted,
+production :8090 untouched. 102 of 102 produced a number; no errors, no skips.
+Machine-readable: `data/brain_experiments/SCORABLE-WINDOWS-pass113-cove.json`.
+
+| window class | corpora | that CALL >=1 trade | trades | per-trade net | buy-every-bar | EDGE |
+|--------------|---------|---------------------|--------|---------------|---------------|------|
+| UP (baseline > 0)  | 11 | 2  | 6   | -1.3176% | +0.6541% | **-1.97pp** |
+| DOWN (baseline <= 0) | 91 | 17 | 194 | -1.5575% | -1.6617% | **+0.10pp** |
+| both               | 102 | 19 | 200 | -1.5503% | -1.5922% | +0.04pp |
+
+**THE VERDICT: NO HELD-OUT EDGE.** The DOWN side's +0.10pp over 194 trades is
+not a result -- at this feed's 2% per-trade dispersion the standard error over
+194 trades is about 0.14pp, so +0.10pp is under one standard error of zero. The
+UP side is negative and has 6 trades, which is no number at all. **The rule
+fails the both-windows test, and it fails it with 10x the trades any previous
+arm here had.**
+
+**THE SECOND FINDING, AND IT IS THE BIGGER ONE: 83 OF 102 WINDOWS CALL NOTHING.**
+Section 2 read the AERO UP zero as a property of that corpus. It is not -- an
+81% abstention rate is what this rule DOES. Abstention is free and that is not
+automatically bad, but it means the 200 trades above are drawn from 19 windows,
+so the edge estimate is a 19-window estimate wearing a 102-window label.
+
+**WHAT THIS SETTLES.** The pass-110 held-out negative is now RE-ESTABLISHED,
+under the FIXED encoder and with hysteresis, at far higher power than the run
+that produced it: L1 co-occurrence motifs alone carry no buy-low edge over
+buy-every-bar on 1-hour base-chain bars at a 12-bar horizon. Section 4 of this
+report said that question was unmeasured in an up window; it is measured now,
+and the answer is no. Anyone citing section 2's DOWN +0.1269% must cite this
+section with it.
+
+**WHAT IT DOES NOT SETTLE.** This is the motif rule scored DIRECTLY, with no
+fabric. It says there is little for a node to find in L1 alone at this horizon
+and cadence; it does not test L1 AS A POOL alongside L0, which is what
+[2a53f971]'s node arm was for, and it says nothing about L2 or about the
+metacognition pools.
+
 ## SHIPPED THIS PASS
 
 * `trading/omen_layers.py` -- `sticky_motifs()` moved out of the probe into the
