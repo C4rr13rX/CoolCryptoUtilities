@@ -597,12 +597,22 @@ class ProductionManager:
                  interval_sec=float(os.getenv("NEWS_ENRICH_INTERVAL_SEC", "900")),
                  min_free_mb=1200.0),
             # -- model: valuable, but never at the cost of trading ---------
+            # Detaching them is what makes that comment true. The min_free_mb
+            # guard only ever covered MEMORY; the queue was never covered, and
+            # a model task joined on the scheduler thread is time the feed
+            # tasks behind it do not get. Measured over 6h on 2026-09-11
+            # (scripts/seq_queue_budget.py): dataset_warmup timed out 28 times
+            # and held 93.4s per 10 minutes -- 15.6% of the whole queue --
+            # waiting for a worker the timeout was going to abandon rather than
+            # kill. Detaching abandons it immediately instead; is_running()
+            # still refuses to start a second copy, so nothing else changes.
             Task("dataset_warmup", self._task_dataset_warmup,
                  category="model", kwargs={"focus_assets": focus_assets},
-                 timeout_sec=120.0, interval_sec=600.0, min_free_mb=2000.0),
+                 timeout_sec=120.0, interval_sec=600.0, min_free_mb=2000.0,
+                 detach=True),
             Task("candidate_training", self._task_candidate_training,
                  category="model", timeout_sec=180.0, interval_sec=900.0,
-                 min_free_mb=3000.0),
+                 min_free_mb=3000.0, detach=True),
             # -- housekeeping ---------------------------------------------
             Task("telemetry_flush", self._task_telemetry_flush,
                  category="housekeeping", timeout_sec=30.0, interval_sec=120.0),

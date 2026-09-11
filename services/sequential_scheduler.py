@@ -63,10 +63,23 @@ class Task:
     interval_sec: float = 0.0
     #: Skip when free RAM is below this. Heavy tasks set it; trading does not.
     min_free_mb: float = 0.0
-    #: Hard cap on one execution.
+    #: How long the scheduler waits before abandoning one execution.
+    #:
+    #: NOT a hard cap: the worker is a daemon thread and is abandoned, never
+    #: killed. The only thing this bounds is how long the QUEUE waits.
     timeout_sec: float = 120.0
     #: Never deferred for pressure. Reserved for the trade path.
     critical: bool = False
+    #: Start the worker and return immediately instead of joining it.
+    #:
+    #: Only safe because the timeout never killed anything: a detached task is
+    #: abandoned at once rather than after `timeout_sec`, and `is_running()`
+    #: still refuses to start a second copy on top of it. What changes is that
+    #: the tasks BEHIND it -- the feed among them -- stop paying for its run.
+    #: Measured 2026-09-11: dataset_warmup timed out 28 times in 6h and held
+    #: 93.4s per 10 minutes, 15.6% of the queue, waiting for a thing it was
+    #: going to abandon anyway.
+    detach: bool = False
 
     last_run: float = 0.0
     last_ok: Optional[bool] = None
@@ -76,6 +89,10 @@ class Task:
     deferrals: int = 0
     overruns: int = 0
     total_sec: float = 0.0
+    #: Seconds the SCHEDULER THREAD itself spent blocked on this task. For a
+    #: joined task that is the whole run; for a detached one it is ~0. This is
+    #: the number that answers "what is making the feed wait".
+    held_sec: float = 0.0
 
     #: The worker from the most recent execution. A timed-out task is ABANDONED,
     #: not killed, so this thread can outlive the join that gave up on it.
@@ -154,6 +171,11 @@ class SequentialScheduler:
         self.cycles = 0
         self.deferred_total = 0
         self.overrun_total = 0
+        #: Seconds the scheduler thread was blocked, per category, since start.
+        #: Read live this answers "what makes the feed wait" without waiting for
+        #: a timeout to be logged -- the log can only ever show a floor.
+        self.held_sec_by_category: Dict[str, float] = {}
+        self.started_ts = time.time()
 
     # -- registration -------------------------------------------------------
 
@@ -281,10 +303,30 @@ class SequentialScheduler:
                     result[0] = task.fn(**task.kwargs) if task.kwargs else task.fn()
                 except Exception as exc:  # noqa: BLE001
                     error[0] = exc
+                    # A detached task has nobody waiting to read `error`, so it
+                    # records its own outcome. Without this a detached failure
+                    # is silent, which is worse than the delay it removes.
+                    if task.detach:
+                        task.last_ok = False
+                        task.last_error = "%s: %s" % (type(exc).__name__, exc)
+                        task.failures += 1
+                        self._emit("task_error", {"task": task.name, "error": task.last_error})
+                else:
+                    if task.detach:
+                        task.last_ok = True
+                        task.last_error = ""
+                finally:
+                    if task.detach:
+                        task.total_sec += time.time() - started
 
             thread = threading.Thread(target=_target, name="seq-%s" % task.name, daemon=True)
             task.thread = thread
             thread.start()
+            if task.detach:
+                # Do not wait. `is_running()` still declines to start a second
+                # copy next pass, so this is the same abandonment the timeout
+                # produced -- minus the seconds the queue spent waiting for it.
+                return
             thread.join(timeout=max(1.0, task.timeout_sec))
             if thread.is_alive():
                 # Do not kill it -- the thread is daemon and will finish or die
@@ -307,7 +349,16 @@ class SequentialScheduler:
             task.last_ok = True
             task.last_error = ""
         finally:
-            task.total_sec += time.time() - started
+            # held_sec is what the QUEUE paid; total_sec is what the WORK took.
+            # They are the same number for a joined task and diverge for a
+            # detached one, which is the entire point of the distinction.
+            held = time.time() - started
+            task.held_sec += held
+            self.held_sec_by_category[task.category] = (
+                self.held_sec_by_category.get(task.category, 0.0) + held
+            )
+            if not task.detach:
+                task.total_sec += held
 
     def _emit(self, event: str, payload: Dict[str, Any]) -> None:
         if self._on_event:
@@ -336,9 +387,19 @@ class SequentialScheduler:
         with self._lock:
             tasks = list(self._tasks)
         p = read_pressure()
+        now = time.time()
+        windows = max(1e-9, (now - self.started_ts) / 600.0)
         return {
             "cycles": self.cycles,
             "deferred_total": self.deferred_total,
+            "overrun_total": self.overrun_total,
+            "uptime_sec": round(now - self.started_ts, 1),
+            # The question this scheduler exists to answer: how many seconds per
+            # ten minutes does each category make everything behind it wait?
+            "held_sec_per_10min_by_category": {
+                cat: round(secs / windows, 2)
+                for cat, secs in sorted(self.held_sec_by_category.items())
+            },
             "pressure": {
                 "cpu_pct": p.cpu if not p.unknown else None,
                 "free_mb": p.free_mb if not p.unknown else None,
@@ -356,9 +417,18 @@ class SequentialScheduler:
                     "category": t.category,
                     "priority": CATEGORY_PRIORITY.get(t.category, 9),
                     "critical": t.critical,
+                    "detached": t.detach,
                     "runs": t.runs,
                     "failures": t.failures,
                     "deferrals": t.deferrals,
+                    "overruns": t.overruns,
+                    "held_sec_per_10min": round(t.held_sec / windows, 2),
+                    # A task whose previous run is STILL GOING is not running at
+                    # all -- data_ingest has been observed abandoned for 6879s,
+                    # and nothing in the old status showed that.
+                    "stuck_for_sec": (
+                        round(now - t.last_run, 1) if t.is_running() and t.last_run else None
+                    ),
                     # None, not 0 -- "never run" is not "ran and took no time".
                     "last_run": t.last_run or None,
                     "last_ok": t.last_ok,

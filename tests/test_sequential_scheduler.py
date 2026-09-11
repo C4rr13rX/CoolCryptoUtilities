@@ -252,5 +252,131 @@ class StatusTest(unittest.TestCase):
         self.assertIn("cpu_pause_pct", st["thresholds"])
 
 
+class ModelTaskMustNotHoldTheQueueTest(unittest.TestCase):
+    """A model task is not allowed to make the FEED wait for it.
+
+    Measured 2026-09-11 over six hours of logs/system.log with
+    scripts/seq_queue_budget.py: dataset_warmup timed out 28 times and held the
+    scheduler thread 93.36 seconds per ten minutes -- 15.6% of the whole queue
+    -- because `_execute` joined it on the scheduler's own thread. The join
+    bought nothing: the worker is a daemon thread that is ABANDONED on timeout,
+    never killed, so waiting 120 seconds only decided when the scheduler would
+    admit that. Every second of it was a second data_ingest, sitting behind it
+    in the same SequentialScheduler, did not get.
+
+    These fail against the pre-detach scheduler: run_once() blocked for the
+    slow model task's full duration and the feed task ran only after it.
+    """
+
+    def test_a_slow_model_task_does_not_delay_the_feed_task_behind_it(self):
+        order = []
+        started = threading.Event()
+
+        def slow_model():
+            started.set()
+            order.append("model_started")
+            time.sleep(3.0)
+            order.append("model_finished")
+
+        def feed():
+            order.append("feed_ran")
+
+        s = SequentialScheduler()
+        # category order puts model AFTER feed, so force model first by cycling
+        # the rotation to the pass where it leads.
+        s.add(Task("m", slow_model, category="model", timeout_sec=3.0, detach=True))
+        s.add(Task("f", feed, category="feed"))
+
+        began = time.time()
+        summary = s.run_once()
+        elapsed = time.time() - began
+
+        self.assertTrue(started.wait(2.0), "the detached model worker never started")
+        # The scheduler must NOT have waited for the 3s worker.
+        self.assertLess(
+            elapsed, 1.5,
+            "run_once took %.2fs -- the scheduler is still joining the model task, "
+            "which is exactly the 93.4s/10min the feed was paying" % elapsed,
+        )
+        self.assertIn("f", summary["ran"])
+        self.assertIn("feed_ran", order)
+        self.assertNotIn(
+            "model_finished", order,
+            "the cycle only ended after the model worker finished",
+        )
+
+    def test_a_detached_task_is_still_never_started_twice(self):
+        """Detaching must not become a way to stack copies of a slow task.
+
+        The overrun guard is the whole reason detaching is safe: an abandoned
+        worker already blocks its own restart, so removing the join changes
+        WHEN it is abandoned, not WHETHER a second copy can start.
+        """
+        runs = []
+
+        def slow():
+            runs.append(1)
+            time.sleep(2.0)
+
+        s = SequentialScheduler()
+        s.add(Task("m", slow, category="model", timeout_sec=2.0, detach=True))
+        s.run_once()
+        s.run_once()
+        s.run_once()
+        self.assertEqual(len(runs), 1, "a second copy was started on top of the first")
+        self.assertGreaterEqual(s.overrun_total, 1)
+
+    def test_a_detached_failure_is_recorded_and_not_silent(self):
+        """Nobody is joining, so the worker has to record its own outcome."""
+        def boom():
+            raise RuntimeError("model blew up")
+
+        s = SequentialScheduler()
+        t = Task("m", boom, category="model", detach=True)
+        s.add(t)
+        s.run_once()
+        for _ in range(50):
+            if t.last_ok is False:
+                break
+            time.sleep(0.05)
+        self.assertIs(t.last_ok, False)
+        self.assertIn("model blew up", t.last_error)
+        self.assertEqual(t.failures, 1)
+
+    def test_held_seconds_are_attributed_to_the_category_that_blocked(self):
+        """The measurement the fix is judged by, live rather than from a log.
+
+        The log can only ever show a FLOOR -- a task that finishes inside its
+        timeout logs nothing -- so the scheduler counts the seconds itself.
+        """
+        s = SequentialScheduler()
+        s.add(Task("joined", lambda: time.sleep(0.4), category="housekeeping"))
+        s.add(Task("detached", lambda: time.sleep(0.4), category="model", detach=True))
+        s.run_once()
+        held = s.status()["held_sec_per_10min_by_category"]
+        self.assertGreater(held["housekeeping"], held["model"],
+                           "the detached task is still charging the queue")
+
+    def test_production_registers_both_model_tasks_detached(self):
+        """The fix has to be wired, not just available.
+
+        Asserted against the registration itself rather than a comment: this
+        repo has shipped a test that passed on a word appearing only in a
+        comment.
+        """
+        import inspect
+        import production
+
+        src = inspect.getsource(production.ProductionManager._build_sequential_scheduler)
+        for name in ("dataset_warmup", "candidate_training"):
+            idx = src.index('Task("%s"' % name)
+            # the Task(...) call ends at the next Task( or the closing bracket
+            nxt = src.find('Task("', idx + 6)
+            chunk = src[idx: nxt if nxt != -1 else len(src)]
+            self.assertIn('category="model"', chunk)
+            self.assertIn("detach=True", chunk,
+                          "%s is a model task still joined on the scheduler thread" % name)
+
+
 if __name__ == "__main__":
     unittest.main()
