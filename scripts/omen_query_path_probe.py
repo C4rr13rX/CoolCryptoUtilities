@@ -50,10 +50,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.omen_experiment import (  # noqa: E402
+    add_horizon_args,
     bar_seconds,
     build_samples,
     load_bars,
     plan_windows,
+    settle_horizon,
+    validate_report_horizon,
 )
 from trading.omen_brain import COLLECTIONS, OmenBrain  # noqa: E402
 
@@ -95,7 +98,7 @@ def main() -> int:
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--train", type=int, default=600)
     parser.add_argument("--test", type=int, default=120)
-    parser.add_argument("--horizon", type=int, default=12)
+    add_horizon_args(parser)
     parser.add_argument("--endpoint", default=None)
     parser.add_argument("--chain", default="base")
     parser.add_argument("--query-a", required=True,
@@ -112,6 +115,11 @@ def main() -> int:
     symbol = path.stem.split("_", 1)[-1]
     bars = load_bars(path)
     cadence = bar_seconds(bars)
+    try:
+        horizon = settle_horizon(args, cadence)
+    except ValueError as exc:
+        print(f"cannot resolve horizon: {exc}")
+        return 2
 
     known = {c.name for c in COLLECTIONS}
     query_a = tuple(n.strip() for n in args.query_a.split(","))
@@ -197,8 +205,10 @@ def main() -> int:
     print(f"\nVERDICT: {verdict}\n  {note}")
 
     if args.report:
-        Path(args.report).write_text(json.dumps({
+        report = {
             "corpus": str(path),
+            **horizon["report_fields"],
+            "horizon_source": horizon["horizon_source"],
             "train": len(train_samples),
             "test": len(test_samples),
             "query_a": list(query_a),
@@ -209,7 +219,10 @@ def main() -> int:
             "streams_fired_b": {str(k): v for k, v in fired_b.items()},
             "verdict": verdict,
             "note": note,
-        }, indent=2), encoding="utf-8")
+        }
+        validate_report_horizon(report)
+        Path(args.report).write_text(json.dumps(report, indent=2),
+                                     encoding="utf-8")
         print(f"wrote {args.report}")
 
     return 0 if verdict == "QUERY PATH LIVE" else 1

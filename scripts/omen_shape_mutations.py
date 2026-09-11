@@ -71,6 +71,9 @@ from trading.omen_brain import (  # noqa: E402
     measure_bar_seconds,
     label_regime,
 )
+from scripts.omen_experiment import (  # noqa: E402
+    add_horizon_args, settle_horizon, validate_report_horizon,
+)
 
 #: Bars strictly older than this many back from the anchor cannot touch the
 #: label. Derived from the labeller, never hard-coded: if RANGE_WINDOW moves,
@@ -390,6 +393,11 @@ def run_arm(args) -> int:
     symbol = path.stem.split("_", 1)[-1]
     bars = load_bars(path)
     cadence = bar_seconds(bars)
+    try:
+        horizon = settle_horizon(args, cadence)
+    except ValueError as exc:
+        print(f"cannot resolve horizon: {exc}")
+        return 2
     rng = random.Random(args.seed)
 
     refused = [k for k in args.mutate if not MUTATIONS[k][2]]
@@ -524,7 +532,8 @@ def run_arm(args) -> int:
 
     result = {
         "arm": arm_name, "corpus": str(path), "symbol": symbol,
-        "horizon": args.horizon,
+        **horizon["report_fields"],
+        "horizon_source": horizon["horizon_source"],
         "train_window": [plan["train_start"], plan["train_stop"]],
         "test_window": [plan["test_start"], plan["test_stop"]],
         "heldout_regime": regime["regime"],
@@ -568,6 +577,7 @@ def run_arm(args) -> int:
               f"{len(test_samples)} bars, not the money line.")
     result["buy_power_sufficient"] = buy_calls >= 28
     if args.report:
+        validate_report_horizon(result)
         Path(args.report).write_text(json.dumps(result, indent=2))
         print(f"  wrote {args.report}")
     return 0
@@ -577,7 +587,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["census", "arm"])
     parser.add_argument("--corpus", required=True)
-    parser.add_argument("--horizon", type=int, default=12)
+    add_horizon_args(parser)
     parser.add_argument("--chain", default="base")
     parser.add_argument("--start", type=int, default=LOOKBACK_BARS)
     parser.add_argument("--stop", type=int, default=10**9)
@@ -624,6 +634,11 @@ def main() -> int:
     bars = json.loads(path.read_text())
     if isinstance(bars, dict):
         bars = bars.get("bars", bars.get("data", []))
+    try:
+        horizon = settle_horizon(args, measure_bar_seconds(bars, default=3600))
+    except ValueError as exc:
+        print(f"cannot resolve horizon: {exc}")
+        return 2
     rng = random.Random(args.seed)
 
     print(f"corpus {path.name}: {len(bars)} bars, symbol {symbol}")
@@ -651,6 +666,9 @@ def main() -> int:
             bad.append(f"{kind} (no-op {row['noop_rate']:.0%})")
 
     if args.report:
+        result.update(horizon["report_fields"])
+        result["horizon_source"] = horizon["horizon_source"]
+        validate_report_horizon(result)
         Path(args.report).write_text(json.dumps(result, indent=2))
         print(f"\nwrote {args.report}")
 

@@ -51,7 +51,11 @@ Usage
   OMEN_BRAIN_ENDPOINT=127.0.0.1:8093 python -X utf8 \
       scripts/omen_agreement_census.py \
       --corpus data/historical_ohlcv/base/0004_AERO-USDC.json \
-      --train 1500 --test 200 --horizon 12 --seed 7 --label DOWN
+      --train 1500 --test 200 --horizon-minutes 720 --seed 7 --label DOWN
+
+The horizon is asked in MINUTES and converted with this corpus's own measured
+cadence; --horizon still takes bars as an explicit override so an old run
+reproduces exactly, and the report records both units either way.
 
 Never point it at 127.0.0.1:8090 -- that is production's fabric.
 """
@@ -77,8 +81,9 @@ from trading.omen_brain import (  # noqa: E402
     collection_distinctness, discriminating_collections,
 )
 from omen_experiment import (  # noqa: E402
-    WindowError, backpressure_probe, balance, bar_seconds, build_samples,
-    load_bars, plan_windows, window_regime,
+    WindowError, add_horizon_args, backpressure_probe, balance, bar_seconds,
+    build_samples, load_bars, plan_windows, settle_horizon,
+    validate_report_horizon, window_regime,
 )
 
 
@@ -145,7 +150,7 @@ def main() -> int:
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--train", type=int, default=1500)
     parser.add_argument("--test", type=int, default=200)
-    parser.add_argument("--horizon", type=int, default=12)
+    add_horizon_args(parser)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--chain", default="base")
     parser.add_argument("--endpoint", default=None)
@@ -173,6 +178,14 @@ def main() -> int:
     cadence = bar_seconds(bars)
     print(f"corpus {path.name}: {len(bars)} bars, {cadence}s cadence, {symbol}")
     print(f"endpoint {endpoint}; round trip {ROUND_TRIP_COST:.4%}")
+
+    # Settled once, in both units, before anything is planned or sampled: every
+    # args.horizon below this line is bars, and the report carries the minutes.
+    try:
+        horizon = settle_horizon(args, cadence)
+    except ValueError as exc:
+        print(f"cannot resolve horizon: {exc}")
+        return 2
 
     try:
         plan = plan_windows(len(bars), args.train, args.test, args.horizon,
@@ -359,7 +372,8 @@ def main() -> int:
 
     report = {
         "corpus": str(path), "symbol": symbol, "bars": len(bars),
-        "bar_seconds": cadence, "horizon_bars": args.horizon,
+        **horizon["report_fields"],
+        "horizon_source": horizon["horizon_source"],
         "round_trip_cost": ROUND_TRIP_COST,
         "train_window": [plan["train_start"], plan["train_stop"]],
         "test_window": [plan["test_start"], plan["test_stop"]],
@@ -387,8 +401,13 @@ def main() -> int:
     report_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     tag = f"-{args.label}" if args.label else ""
+    # Checked BEFORE the write: a report that cannot say what horizon it
+    # measured must never reach data/brain_experiments/, because the next
+    # reader cannot tell it from a run at a different cadence.
+    validate_report_horizon(report)
     out = (report_dir /
-           f"agreement-{symbol}-h{args.horizon}-{regime['regime']}{tag}-{stamp}.json")
+           f"agreement-{symbol}-h{horizon['horizon_minutes']:.0f}m"
+           f"{horizon['horizon_bars']}b-{regime['regime']}{tag}-{stamp}.json")
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"report -> {out}")
 

@@ -30,8 +30,13 @@ The four numbers that decide which target is worth learning:
 
 Usage
 -----
-  python -X utf8 scripts/omen_label_audit.py --symbols 12 --horizon 12
+  python -X utf8 scripts/omen_label_audit.py --symbols 12 --horizon-minutes 720
   python -X utf8 scripts/omen_label_audit.py --corpus data/historical_ohlcv/base/0004_AERO-USDC.json
+
+This sweeps MANY corpora, so the horizon is asked in MINUTES and converted with
+each file's own measured cadence: one bar count across a sweep spanning 60s to
+14400s pooled a 12-minute question with a 2-day one under a single "h12".
+--horizon still takes bars as an explicit override on every file.
 """
 from __future__ import annotations
 
@@ -53,6 +58,10 @@ from trading.omen_brain import (  # noqa: E402
 )
 from trading.omen_path import (  # noqa: E402
     PATH_FLAT, PATH_STOP, PATH_WIN, omen_take, walk_path,
+)
+from scripts.omen_experiment import (  # noqa: E402
+    add_horizon_args, horizon_bars as horizon_bars_for, horizon_request,
+    settle_horizon, validate_report_horizon,
 )
 
 #: Endpoint labels that tell a strategy to buy.
@@ -150,7 +159,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="explicit corpus path; repeatable")
     parser.add_argument("--symbols", type=int, default=12,
                         help="how many corpora to sweep when none given")
-    parser.add_argument("--horizon", type=int, default=12)
+    add_horizon_args(parser)
     parser.add_argument("--take", type=float, default=None,
                         help="take-profit as a FRACTION; default omen_take()")
     parser.add_argument("--stop", type=float, default=None,
@@ -169,8 +178,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         root = ROOT / "data" / "historical_ohlcv"
         paths = sorted(root.rglob("*.json"))
 
+    try:
+        asked = horizon_request(args)
+    except ValueError as exc:
+        print(f"cannot resolve horizon: {exc}")
+        return 2
+
     print(f"omen label audit -- endpoint vs path")
-    print(f"  horizon      {args.horizon} bars")
+    if asked["minutes"] is not None:
+        print(f"  horizon      {asked['minutes']:.0f} min, converted PER CORPUS "
+              f"with that file's own cadence")
+    else:
+        print(f"  horizon      {asked['bars']} bars on every corpus "
+              f"(explicit override; the minutes differ per cadence)")
     print(f"  take / stop  {100*take:.4f}% / {100*stop:.4f}%")
     print(f"  round trip   {100*abs(args.cost):.4f}%")
     print(f"  endpoint thr {100*omen_threshold(args.cost):.4f}%")
@@ -185,6 +205,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     walked = 0
     used: List[str] = []
     cadences: List[int] = []
+    per_corpus: List[Dict[str, Any]] = []
 
     for path in paths:
         if len(used) >= args.symbols and not args.corpus:
@@ -192,12 +213,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         bars = load_bars(path)
         if len(bars) < args.min_bars or not has_ohlc(bars):
             continue
-        result = audit_corpus(bars, horizon=args.horizon, take=take,
+        # Converted with THIS file's cadence, not the sweep's median. A sweep
+        # over 12 corpora spanning 60s to 14400s previously applied one bar
+        # count to all of them, so the pooled oracle P/L mixed a 12-minute
+        # question with a 2-day one and reported a single "h12".
+        cadence_here = bar_seconds(bars)
+        resolved = settle_horizon(args, cadence_here, label=path.name)
+        result = audit_corpus(bars, horizon=resolved["horizon_bars"], take=take,
                               stop=stop, cost=args.cost)
         if result["walked"] < 200:
             continue
         used.append(path.name)
-        cadences.append(bar_seconds(bars))
+        cadences.append(cadence_here)
+        per_corpus.append({"corpus": path.name, "bar_seconds": cadence_here,
+                           "horizon_bars": resolved["horizon_bars"],
+                           "horizon_minutes": resolved["horizon_minutes"]})
         for key, count in result["cross"].items():
             totals[key] += count
         endpoint_all.extend(result["endpoint_oracle"])
@@ -212,8 +242,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
 
     cadence = int(statistics.median(cadences)) if cadences else 3600
+    # The headline triple is stated at the MEDIAN cadence and is the only
+    # self-consistent one for a pooled sweep; the per-corpus list below carries
+    # what each file actually asked, which is what makes the pool readable.
+    headline = {
+        "bar_seconds": cadence,
+        "horizon_bars": (asked["bars"] if asked["bars"] is not None
+                         else horizon_bars_for(asked["minutes"], cadence)),
+    }
+    headline["horizon_minutes"] = round(
+        headline["horizon_bars"] * cadence / 60.0, 4)
+    spread = sorted({c["horizon_bars"] for c in per_corpus})
     print(f"corpora {len(used)}  bars walked {walked}  "
-          f"cadence {cadence}s ({cadence/60:.0f} min/bar)")
+          f"median cadence {cadence}s ({cadence/60:.0f} min/bar)")
+    print(f"horizon {headline['horizon_minutes']:.0f} min at the median "
+          f"cadence = {headline['horizon_bars']} bars; per-corpus bar counts "
+          f"{spread}")
     print()
 
     # --- 1. missed trades ------------------------------------------------
@@ -270,15 +314,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"   path wins  : median {at(0.5)} bars "
               f"({at(0.5)*cadence/60:.0f} min), "
               f"p90 {at(0.9)} bars ({at(0.9)*cadence/60:.0f} min)")
-    print(f"   endpoint   : always {args.horizon} bars "
-          f"({args.horizon*cadence/60:.0f} min)")
+    print(f"   endpoint   : always the horizon -- "
+          f"{headline['horizon_bars']} bars at the median cadence "
+          f"({headline['horizon_minutes']:.0f} min)")
     print()
 
     print(f"ambiguous deciding bars (both barriers in one bar, counted as stops): "
           f"{ambiguous} ({100*ambiguous/walked:.2f}% of walks)")
 
     payload = {
-        "horizon": args.horizon, "take": take, "stop": stop,
+        **headline,
+        "horizon_source": "bars" if asked["bars"] is not None else "minutes",
+        "horizon_per_corpus": per_corpus,
+        "take": take, "stop": stop,
         "cost": args.cost, "cadence_seconds": cadence,
         "corpora": used, "walked": walked, "ambiguous": ambiguous,
         "cross": dict(totals),
@@ -288,6 +336,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "hold_bars_median": statistics.median(holds) if holds else None,
     }
     if args.report:
+        validate_report_horizon(payload)
         Path(args.report).parent.mkdir(parents=True, exist_ok=True)
         Path(args.report).write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"report -> {args.report}")

@@ -29,7 +29,13 @@ it runs before anything is added.
     python -X utf8 scripts/omen_temporal_census.py \
         --corpus data/brain_experiments/p108_aero_up.json \
         --corpus data/brain_experiments/p108_aero_down.json \
-        --horizon 12
+        --horizon-minutes 720
+
+The horizon is asked in MINUTES and converted with each corpus's OWN modal
+gap, because two corpora at different cadences asked the same '--horizon 12'
+and got two different wall-clock questions under one name -- which is the
+exact crossing this script was written to detect. --horizon still takes bars
+as an explicit override.
 
 Exit codes: 0 when the grid audit finds no crossing, 2 when it does. Nothing
 here trains, queries a node, or writes to a brain directory.
@@ -51,6 +57,10 @@ from trading.omen_brain import (  # noqa: E402
     COLLECTIONS, LOOKBACK_BARS, RETURN_SPANS, build_collections,
     horizon_frame, measure_bar_seconds,
     collection_distinctness,
+)
+from scripts.omen_experiment import (  # noqa: E402
+    add_horizon_args, horizon_bars as horizon_bars_for, horizon_request,
+    settle_horizon, validate_report_horizon,
 )
 
 #: The live resampling constants, read from the strategy rather than restated,
@@ -237,7 +247,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--corpus", action="append", required=True,
                         help="repeatable; one per window")
     parser.add_argument("--symbol", default="AERO-USDC")
-    parser.add_argument("--horizon", type=int, default=12)
+    add_horizon_args(parser)
     parser.add_argument("--samples", type=int, default=900,
                         help="bars to census per corpus, newest-first window")
     # 48 and not 6, and the difference is a result this script got wrong once.
@@ -249,7 +259,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--json-out", default="")
     args = parser.parse_args(argv)
 
-    report: Dict[str, Any] = {"symbol": args.symbol, "horizon_bars": args.horizon,
+    try:
+        asked = horizon_request(args)
+    except ValueError as exc:
+        print(f"cannot resolve horizon: {exc}")
+        return 2
+
+    report: Dict[str, Any] = {"symbol": args.symbol,
+                              "horizon_source": ("bars" if asked["bars"]
+                                                 is not None else "minutes"),
                               "corpora": [], "live": None}
 
     print("=" * 74)
@@ -273,17 +291,40 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               f"median {profile['median_gap_sec']}s, max {profile['max_gap_sec']}s")
         print(f"    uniform_share {profile['uniform_share']:.4f} "
               f"over {profile.get('span_hours', 0.0):.1f}h")
-        frame = horizon_frames(bars, args.horizon, args.symbol)
-        train_minutes = args.horizon * profile["modal_gap_sec"] / 60.0
+        # Converted with THIS corpus's own modal gap, which is the cadence the
+        # frame is built at two lines down. One bar count across corpora of
+        # different cadence is the crossing this whole script exists to name,
+        # and the script was committing it in its own argument parsing.
+        cadence_here = int(profile["modal_gap_sec"] or 3600)
+        resolved = settle_horizon(args, cadence_here, label=path.name)
+        bars_here = resolved["horizon_bars"]
+        frame = horizon_frames(bars, bars_here, args.symbol)
+        train_minutes = bars_here * cadence_here / 60.0
         print(f"    horizon frame handed to the fabric: {frame!r} "
-              f"= {train_minutes:.0f} min ahead")
+              f"= {train_minutes:.0f} min ahead ({bars_here} bars)")
         report["corpora"].append({"corpus": path.name, "grid": profile,
                                   "horizon_frame": frame,
+                                  "bar_seconds": cadence_here,
+                                  "horizon_bars": bars_here,
                                   "horizon_minutes": train_minutes})
         all_frames[path.name] = build_frame_sets(
-            bars, args.symbol, args.horizon,
-            max(LOOKBACK_BARS, len(bars) - args.horizon - args.samples),
-            len(bars) - args.horizon)
+            bars, args.symbol, bars_here,
+            max(LOOKBACK_BARS, len(bars) - bars_here - args.samples),
+            len(bars) - bars_here)
+
+    # The headline triple, at the median of the corpora's own cadences. The
+    # per-corpus list above is the one that carries what each file asked; this
+    # one exists so a reader of the top of the file knows the question, and so
+    # validate_report_horizon can refuse a report that does not say.
+    corpus_cadences = sorted(c["bar_seconds"] for c in report["corpora"])
+    median_cadence = (corpus_cadences[len(corpus_cadences) // 2]
+                      if corpus_cadences else 3600)
+    report["bar_seconds"] = median_cadence
+    report["horizon_bars"] = (asked["bars"] if asked["bars"] is not None
+                              else horizon_bars_for(asked["minutes"],
+                                                    median_cadence))
+    report["horizon_minutes"] = round(
+        report["horizon_bars"] * median_cadence / 60.0, 4)
 
     live_minutes = LIVE_HORIZON_BARS * LIVE_BAR_SECONDS / 60.0
     # Built by the SAME function the fabric is handed, not re-spelled here.
@@ -417,6 +458,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                   f"is the CONJUNCTION of {len(census)} honest slots.")
 
     if args.json_out:
+        validate_report_horizon(report)
         Path(args.json_out).write_text(
             json.dumps(report, indent=2), encoding="utf-8")
         print(f"\nwrote {args.json_out}")

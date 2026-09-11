@@ -241,6 +241,102 @@ def resolve_horizon(cadence_seconds: int, minutes: float | None = None,
             "horizon_source": "minutes"}
 
 
+#: The help text for ``--horizon-minutes`` and ``--horizon``, written once so
+#: nine harnesses cannot describe the same two flags differently. Measured pass
+#: 114: eight harnesses besides this one still took a bar count and defaulted
+#: to 12, so the fix here covered one report in nine and every other report was
+#: still uncomparable across corpora.
+HORIZON_MINUTES_HELP = (
+    f"MINUTES of wall clock the omen is about, converted to bars using this "
+    f"corpus's own MEASURED cadence (default {DEFAULT_HORIZON_MINUTES:.0f}, "
+    f"which is exactly the old 12-bar default on the 3600s cadence most of "
+    f"this corpus carries, so an hourly run reproduces bar-for-bar). Minutes "
+    f"is the default unit because bars are not comparable across a corpus "
+    f"spanning 60s to 345600s: the same '--horizon 12' asked about 12 minutes "
+    f"on one file and 48 DAYS on another, and both reports wrote 'h12'")
+
+HORIZON_BARS_HELP = (
+    "bars ahead the omen is about -- an EXPLICIT override of "
+    "--horizon-minutes, kept so an old run can be reproduced bar-for-bar. It "
+    "asks a different question of every cadence, so the report records the "
+    "minutes it worked out to")
+
+
+def add_horizon_args(parser: argparse.ArgumentParser) -> None:
+    """Give a harness the one horizon interface every harness must have.
+
+    Both flags default to ``None`` so ``settle_horizon`` can tell "the caller
+    said nothing" (take the minutes default) from "the caller asked in bars"
+    (reproduce an old run exactly). A harness that defaults ``--horizon`` to a
+    bar count instead cannot make that distinction and silently asks a
+    different question of every cadence, which is the bug this exists for.
+    """
+    parser.add_argument("--horizon-minutes", type=float, default=None,
+                        help=HORIZON_MINUTES_HELP)
+    parser.add_argument("--horizon", type=int, default=None,
+                        help=HORIZON_BARS_HELP)
+
+
+def horizon_request(args: argparse.Namespace) -> Dict[str, Any]:
+    """What the caller ASKED, in the unit they asked it, frozen on first call.
+
+    A multi-corpus harness settles the horizon once PER FILE, and
+    ``settle_horizon`` rewrites ``args.horizon`` to bars each time. Without
+    this freeze the second file would see a bar count on ``args.horizon``,
+    conclude the caller asked in bars, and silently apply the FIRST file's bar
+    count to a corpus at a different cadence -- which is the exact defect this
+    whole change exists to remove, reintroduced one loop iteration later.
+    """
+    frozen = getattr(args, "_horizon_request", None)
+    if frozen is not None:
+        return frozen
+    minutes = getattr(args, "horizon_minutes", None)
+    bars = getattr(args, "horizon", None)
+    if minutes is not None and bars is not None:
+        raise ValueError(
+            "--horizon-minutes and --horizon are the same quantity in two "
+            "units: pass one. Bars are corpus-specific; minutes are not.")
+    if minutes is None and bars is None:
+        minutes = DEFAULT_HORIZON_MINUTES
+    frozen = {"minutes": minutes, "bars": bars}
+    args._horizon_request = frozen
+    return frozen
+
+
+def settle_horizon(args: argparse.Namespace, cadence_seconds: int,
+                   *, label: str = "") -> Dict[str, Any]:
+    """Settle the horizon for ONE corpus, in both units, and say so aloud.
+
+    Rewrites ``args.horizon`` to the bar count every downstream call wants and
+    ``args.horizon_minutes`` to the wall clock the report must carry, then
+    returns a dict whose three horizon keys splice straight into that report:
+
+        report = {..., **settle_horizon(args, cadence)["report_fields"]}
+
+    Safe to call once per corpus in a sweep: the caller's REQUEST is frozen by
+    ``horizon_request`` on the first call, so each file converts the same
+    question with its own cadence. ``label`` names the corpus when a harness
+    settles several, because the same minutes resolve to a DIFFERENT bar count
+    per file and the reader has to see that happen.
+    """
+    asked = horizon_request(args)
+    resolved = resolve_horizon(cadence_seconds, minutes=asked["minutes"],
+                               bars=asked["bars"])
+    resolved["bar_seconds"] = int(cadence_seconds)
+    resolved["report_fields"] = {
+        "horizon_bars": resolved["horizon_bars"],
+        "horizon_minutes": resolved["horizon_minutes"],
+        "bar_seconds": int(cadence_seconds),
+    }
+    args.horizon = resolved["horizon_bars"]
+    args.horizon_minutes = resolved["horizon_minutes"]
+    where = f" [{label}]" if label else ""
+    print(f"horizon{where} {resolved['horizon_minutes']:.0f} min = "
+          f"{resolved['horizon_bars']} bars of {cadence_seconds}s "
+          f"(asked in {resolved['horizon_source']})")
+    return resolved
+
+
 #: Every report under data/brain_experiments/ must carry all three, because
 #: any two of them determine the third and a reader with only one cannot tell
 #: what question was asked. Checked at WRITE time so a report that would be
@@ -614,24 +710,7 @@ def main() -> int:
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--train", type=int, default=2000)
     parser.add_argument("--test", type=int, default=400)
-    parser.add_argument("--horizon-minutes", type=float, default=None,
-                        help=f"MINUTES of wall clock the omen is about, "
-                             f"converted to bars using this corpus's own "
-                             f"measured cadence (default "
-                             f"{DEFAULT_HORIZON_MINUTES:.0f}, which is exactly "
-                             f"the old 12-bar default on the 3600s cadence "
-                             f"most of this corpus carries). Minutes is the "
-                             f"default unit because bars are not comparable "
-                             f"across a corpus spanning 60s to 345600s: the "
-                             f"same '--horizon 12' asked about 12 minutes on "
-                             f"one file and 48 DAYS on another, and both "
-                             f"reports wrote 'h12'")
-    parser.add_argument("--horizon", type=int, default=None,
-                        help="bars ahead the omen is about -- an EXPLICIT "
-                             "override of --horizon-minutes, kept so an old "
-                             "run can be reproduced bar-for-bar. It asks a "
-                             "different question of every cadence, so the "
-                             "report records the minutes it worked out to")
+    add_horizon_args(parser)
     parser.add_argument("--recall-sample", type=int, default=200)
     parser.add_argument("--garbage", type=int, default=40)
     parser.add_argument("--seed", type=int, default=7)

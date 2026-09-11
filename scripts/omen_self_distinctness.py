@@ -37,6 +37,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.omen_experiment import (  # noqa: E402
+    add_horizon_args, bar_seconds, settle_horizon, validate_report_horizon,
+)
 from trading.omen_brain import LOOKBACK_BARS, label_omen  # noqa: E402
 from trading.omen_metacognition import self_frames  # noqa: E402
 from trading.omen_resolved_history import ResolvedHistory  # noqa: E402
@@ -70,7 +73,13 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--bars", type=int, default=3000)
-    ap.add_argument("--horizon", type=int, default=12)
+    add_horizon_args(ap)
+    ap.add_argument("--report", default=None,
+                    help="write the distinctness and separation numbers as "
+                         "JSON here. The file carries horizon_minutes, "
+                         "horizon_bars and bar_seconds, because a distinctness "
+                         "measured at one cadence is not comparable with one "
+                         "measured at another and 'h12' never said which.")
     ap.add_argument("--window", type=int, default=32,
                     help="how many settled rows a self-frame reads")
     ap.add_argument("--end", type=int, default=None,
@@ -95,6 +104,12 @@ def main() -> int:
 
     path = Path(args.corpus)
     bars = load_bars(path)
+    cadence = bar_seconds(bars)
+    try:
+        horizon = settle_horizon(args, cadence)
+    except ValueError as exc:
+        print(f"cannot resolve horizon: {exc}")
+        return 2
     stop = (len(bars) - args.horizon - 1) if args.end is None else min(
         int(args.end), len(bars) - args.horizon - 1)
     start = max(LOOKBACK_BARS, stop - args.bars)
@@ -106,7 +121,8 @@ def main() -> int:
             truth[index] = label
 
     print(f"corpus {path.name}  bars [{start}, {stop})  "
-          f"{len(truth)} labelled  horizon {args.horizon}")
+          f"{len(truth)} labelled  horizon {args.horizon} bars "
+          f"= {horizon['horizon_minutes']:.0f} min of {cadence}s")
 
     history = ResolvedHistory(args.horizon)
     frame_rows = []
@@ -158,10 +174,13 @@ def main() -> int:
 
     print("\n0. DISTINCTNESS (distinct frames / samples), self pools only:")
     verdict_ok = True
+    pools: dict = {}
     for key in SELF_KEYS:
         values = [row[key] for row in frame_rows]
         distinct = len(set(values))
         score = distinct / total if total else 0.0
+        pools[key] = {"distinct": distinct, "samples": total,
+                      "distinctness": round(score, 6)}
         if distinct <= CONSTANT_VALUES:
             note = "CONSTANT -- one value, bound and carrying nothing"
             verdict_ok = False
@@ -244,6 +263,7 @@ def main() -> int:
         scored = [(h / s, s, f) for f, (h, s) in buckets.items() if s >= 30]
         if len(scored) < 2:
             print(f"  {key:<16} too few populated frames to separate")
+            pools.setdefault(key, {})["separation"] = "too_few_frames"
             continue
         scored.sort()
         base = sum(1 for c in next_correct if c) / max(
@@ -283,10 +303,40 @@ def main() -> int:
               f"spread is at the {beat*100:.1f}th percentile")
         print(f"       worst: {lo_f}")
         print(f"       best : {hi_f}")
+        pools.setdefault(key, {}).update({
+            "separation": mark.split(" --")[0],
+            "base_rate": round(base, 6),
+            "spread": round(spread, 6),
+            "null_p95": round(p95, 6),
+            "null_percentile": round(beat, 6),
+            "buckets": len(groups),
+        })
     print("  A spread inside its own null means the pool holds a vocabulary "
           "that is unrelated to being right, and wiring it to a node buys "
           "nothing. max-minus-min over small buckets is large BY CONSTRUCTION, "
           "so a spread is only evidence when it beats that.")
+
+    if args.report:
+        report = {
+            "corpus": str(path),
+            **horizon["report_fields"],
+            "horizon_source": horizon["horizon_source"],
+            "window": [start, stop],
+            "labelled": len(truth),
+            "samples": total,
+            "self_frame_window": args.window,
+            "null_trials": null_trials,
+            "null_seed": null_seed,
+            "shuffled_frames_control": bool(args.shuffle_frames),
+            "empty_band": list(EMPTY_BAND),
+            "pools": pools,
+            "all_pools_have_a_vocabulary": verdict_ok,
+        }
+        validate_report_horizon(report)
+        out = Path(args.report)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"report -> {out}")
     return 0 if verdict_ok else 1
 
 
