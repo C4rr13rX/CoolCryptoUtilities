@@ -5295,3 +5295,24 @@ and the same two symbols REVERSED read 28.6% on n=21 -- order carries outcome
 information. IN-SAMPLE, one pair, not an edge, DOWN weak at 1.47x. NEXT:
 scripts/omen_layer_probe.py still computes the REJECTED L2_sequence, so it would
 score the loser -- filed as [a4ba2028] and it must land before any L2 held-out arm.
+
+2026-09-11 Gale [781bf37c] -- Hypothesis: the entry-basis guard shipped for ghost
+leaves the LIVE lane able to spend real money on a price the feed never
+published. Confirmed and closed. Wired
+entry_price_is_corroborated(strict=True) into trading/bot.py at the
+live_approved branch, upstream of the dry-run return, the bridge, the
+SwapService import and swapper.swap; refusal downgrades to ghost like
+token_unresolved does, and a failed read fails OPEN. RESULT, the number that
+decides whether the gate is safe to run: replayed over 251 distinct entry
+DECISIONS in 7 days of trading_ops it refuses 1 (0.4%). The same guard over the
+216 closed round trips at their BOOKED basis refuses 16 (7.4%), which
+reproduces the item's figure and is the wrong denominator for a gate that reads
+the decision price. The one refusal is BSTONK-USDC, decision price 0.001914286
+against a feed whose 118 ticks that hour ran 0.002823-0.003230 (median
+0.002922, so 0.66x) -- and that trade WON +0.2420 net, said plainly. Cost: two
+existing test files had to pin the guard, because their 2026-09-03 fixture
+prices are not prices today's feed publishes. Commit 0f75eda, gate 721/0. NEXT:
+the same replay says nothing about how many entry decisions are made on a STALE
+sample -- only 22 of the 61 symbols streamed in 24h have a tick inside the
+guard's 2h window, so a live decision taken on a 20-hour-old price is now
+refused and nobody has counted how often that happens.
