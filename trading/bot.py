@@ -8625,6 +8625,85 @@ class TradingBot:
                 )
                 live_approved = False
 
+            # A BASIS NOTHING CORROBORATES MUST NOT BE SPENT REAL MONEY ON.
+            #
+            # [781bf37c], following [d763940a]. The ghost branch below refuses
+            # an entry whose price is beyond 2.5x the median of the symbol's
+            # own prior entries -- the AERO 1.140000 row that inherited a fake
+            # +161% exit as its cost basis. The LIVE lane needs the same
+            # refusal and CANNOT take it in the same place: the live basis is
+            # booked from a SETTLED receipt, and refusing there would strand a
+            # position whose money has already left the wallet and lose the
+            # record of a swap that happened -- the same class as
+            # disarming-stranded-the-live-position. So the live reading is
+            # taken HERE, on the price the strategy is judging, before any swap
+            # is submitted and before any position slot is touched.
+            #
+            # strict=True, which is the reading services.entry_price_corroboration
+            # documents for the live lane: a price NOTHING has confirmed is
+            # refused rather than allowed. Measured over the 216 closed round
+            # trips, strict refuses 7.4% against the ghost reading's 5.1%, so
+            # the expected bite is known -- a gate turning back an order of
+            # magnitude more than that is mis-wired, not safe.
+            #
+            # Downgrade rather than return, like the two refusals above: the
+            # ghost lane still records the observation under its own lenient
+            # reading, so the cost is a skipped live entry and never a lost
+            # measurement. Dry run is excluded on the same grounds as the two
+            # guards above -- it submits no swap and books no basis, so there
+            # is no money here to protect.
+            if live_approved and not self._live_trades_dry_run():
+                try:
+                    from services.entry_price_corroboration import (
+                        entry_price_is_corroborated,
+                    )
+
+                    live_basis_ok = bool(
+                        entry_price_is_corroborated(
+                            symbol, price, at_ts=sample_ts, strict=True
+                        )
+                    )
+                except Exception:
+                    # Unjudgeable, never refused: an import or database problem
+                    # must not masquerade as a contaminated price and close the
+                    # live lane. A gate that blocks everything is a bug.
+                    live_basis_ok = True
+                if not live_basis_ok:
+                    log_message(
+                        "live-swap",
+                        "REFUSING a live entry on %s at %.12g: no feed tick "
+                        "corroborates this price and the book's own prior "
+                        "entries do not support it. Downgrading to ghost -- "
+                        "real money is not spent on a basis nothing confirms."
+                        % (symbol, float(price)),
+                        severity="error",
+                    )
+                    try:
+                        self.db.log_trade(
+                            wallet="live",
+                            chain=chain_name,
+                            symbol=symbol,
+                            action="hold",
+                            status="live-entry-blocked",
+                            details={
+                                "symbol": symbol,
+                                "reason": "uncorroborated_entry_basis",
+                                "price": float(price),
+                                "trade_id": trade_id,
+                                "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
+                                "executed": False,
+                            },
+                        )
+                    except Exception:
+                        pass
+                    self.metrics.feedback(
+                        "live_trading",
+                        severity=FeedbackSeverity.WARNING,
+                        label="entry_blocked_uncorroborated_basis",
+                        details={"symbol": symbol, "price": float(price), "trade_id": trade_id},
+                    )
+                    live_approved = False
+
             if live_approved:
                 if self._live_trades_dry_run():
                     decision.update(

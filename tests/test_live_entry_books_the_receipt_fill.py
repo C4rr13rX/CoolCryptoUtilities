@@ -331,8 +331,22 @@ def test_a_raising_fill_reader_does_not_lose_the_trade_path():
 # The ban is CORRECT and stays: services.symbol_edge_gate.refusal_reason
 # still returns it, and the gate's own coverage lives with the gate. What is
 # pinned here is only this file's precondition -- that the entry is reached.
+#
+# The live entry-basis guard [781bf37c] is the same shape and is pinned for the
+# same reason. It refuses a live entry whose price no feed tick corroborates,
+# reading the same production market_stream at test time -- and this file's
+# 0.0384847 is a fixture price, chosen in 2026-09-03 to match a real receipt,
+# not a price today's feed publishes. So the guard correctly turns these six
+# red without a line of their code changing. The guard is CORRECT and stays;
+# its own coverage is in tests/test_live_money_is_never_spent_on_an_uncorroborated_basis.py,
+# which drives the real function against a real sqlite feed. What is pinned
+# here is only this file's precondition -- that the entry is reached.
 @pytest.fixture(autouse=True)
 def _entry_reaches_the_booking_path(monkeypatch):
     monkeypatch.setattr(
         "trading.bot.symbol_edge_refusal", lambda _symbol, _strategy_id=None: None
+    )
+    monkeypatch.setattr(
+        "services.entry_price_corroboration.entry_price_is_corroborated",
+        lambda *a, **k: True,
     )

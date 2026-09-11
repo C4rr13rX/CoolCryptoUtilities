@@ -165,6 +165,18 @@ def _live_execution(monkeypatch):
     """Live approved and dry-run off: the state the refusal was observed in."""
     monkeypatch.setenv("LIVE_TRADES_DRY_RUN", "0")
     monkeypatch.setenv("STRATEGY_GRADUATION_ENFORCED", "1")
+    # The live entry-basis guard [781bf37c] is pinned here for the same reason
+    # the symbol-edge gate is discussed in the docstring below: it reads the
+    # production market_stream at test time, and ZQTESTLIVE-USDC is a symbol
+    # invented for this file precisely so that no ledger and no feed knows it.
+    # Under strict=True an unknown symbol is refused -- correctly, that is what
+    # strict means for real money -- which would demote this test's entry to
+    # ghost before it ever reached the bridge branch under test. The guard's own
+    # coverage is in tests/test_live_money_is_never_spent_on_an_uncorroborated_basis.py.
+    monkeypatch.setattr(
+        "services.entry_price_corroboration.entry_price_is_corroborated",
+        lambda *a, **k: True,
+    )
 
 
 def test_an_unresolvable_token_still_opens_a_ghost_position() -> None:
