@@ -5465,3 +5465,36 @@ and matches the 3600s training cadence costs a ~170-hour tick buffer. The
 question is not "which width is right" but **train the fabric at the cadence
 the live path can actually form**, measured in an up window and a down window.
 Commits `f3d0a8d`, `7b9b1c4`.
+
+## 2026-09-11 — Iris (pass 116): a 0.74% tick defect was a 38.4% window defect
+
+**Hypothesis.** The 1.25-billion-percent forecast found by the [7231f8ac] census
+is not one bad row: the same contaminated window feeds every other statistic the
+strategies compute.
+
+**What I did.** Wrote `scripts/feed_regime_contamination_census.py`, measured the
+tick table over 7 days, counted poisoned 60-bar windows, counted the consumers,
+then repaired the window once at `sample_arrays` reusing
+`trading/data_loader.py:sanitize_model_price_window`.
+
+**Result, as numbers.** 22 of 198 streamed symbols carry a second price regime;
+323 of 43,920 ticks (0.74%) sit in it; 1,497 of 3,894 sixty-bar windows (38.4%)
+hold at least one, because a window is 60 chances to include one. CLANKER-USDC
+published the identical price 13.01897021 three times inside 17 minutes on
+2026-09-07, 7.5 decades above its other 492 ticks. The repairer fully cleans
+1,410 of the 1,497 (94.2%); the 87 residual are BOB/DOGE/PEPE, where the foreign
+regime is the MAJORITY in the window and no median anchor exists. Gate 723/0.
+
+**What I nearly broke, and it is the lesson.** `money_button` REFUSES a
+mixed-denomination window on purpose rather than filtering it, with its reason
+in the code. My repair deleted its input; its three `MixedDenominationFeeds`
+tests failed and are the only reason I noticed. It now takes `sanitize=False`.
+A repair at a shared seam silently disarms any guard downstream of it that was
+refusing on exactly what you repaired.
+
+**What I would try next.** The quiet consumers now read a clean window — measure
+whether donchian_breakout and stochastic_reversal start producing candidates on
+the 22 symbols, because "a strategy that silently stopped entering" is a
+testable claim and the starved-population item wants it.
+
+**Commits.** f617518, f0ebf5c, 1fe7cea, 7f804bd.
