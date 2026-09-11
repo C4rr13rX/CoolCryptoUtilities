@@ -7314,13 +7314,59 @@ class TradingBot:
             # for the notional it is about to spend, not the rate at the clip.
             min_margin_gate = max(min_margin_required, entry_fees)
             net_margin_after_fees = margin - entry_fees
+            # THE CONJUNCTION TESTED DIRECTION AND NEVER MOVE SIZE.
+            #
+            # direction_prob and exit_conf are about WHETHER, margin is about
+            # the net_margin head's own arithmetic, and `delta` -- which IS the
+            # model's forward expected return (`price_mu`, a fraction; see
+            # _summarise_predictions) -- was read for its SIGN alone. So a move
+            # that is correctly predicted and too small to pay for itself was
+            # admitted, and on this feed that is most ticks: median absolute
+            # 15-minute return 0.2233% against a round trip of 0.3187% +
+            # $0.004047/notional, so only 37.5% of ticks move further than cost.
+            # No level fix to the direction head touches that -- a head calling
+            # direction 100% correctly still loses on the other 62.5%.
+            #
+            # THE THRESHOLD IS THE MEASURED COST FLOOR, NOT A ROUND NUMBER.
+            # services/roundtrip_cost.py measures this account's settled
+            # receipts as
+            #
+            #     cost_usd = 0.004047 + 0.003187 * notional
+            #     c(N)     = 0.003187 + 0.004047 / N      (as a fraction)
+            #
+            # and `entry_fees` above is exactly c(N) for the notional this
+            # entry is about to spend. A long entry pays c(N) whatever the
+            # price does, so it can only break even if the price moves at
+            # least c(N) the way it was predicted. `delta` and c(N) are both
+            # dimensionless fractions of notional, so they compare directly
+            # with no conversion.
+            #
+            # Size-dependence is the point and is why a flat percentage is
+            # wrong: at the $6.00 live clip c(N) is 0.3862%, at the $0.75 ghost
+            # floor it is 0.8583%. This repo has already shipped a flat 0.65%
+            # and it was wrong at both ends.
+            #
+            # The multiplier exists so the bar can be raised without a code
+            # change once a capture fraction is measured; it defaults to 1.0,
+            # which makes the threshold the cost floor itself and nothing more.
+            # Because entry_fees is strictly positive, this conjunct implies
+            # the `delta >= 0.0` it replaces: it is STRICTER, never looser, and
+            # no confidence threshold, margin floor or plausibility guard is
+            # touched.
+            try:
+                _move_mult = float(os.getenv("ENTRY_MIN_MOVE_COST_MULT", "1.0"))
+            except (TypeError, ValueError):
+                _move_mult = 1.0
+            min_expected_move = max(0.0, entry_fees) * max(0.0, _move_mult)
+            decision["min_expected_move"] = float(min_expected_move)
+            decision["expected_move_clears_cost"] = bool(delta >= min_expected_move)
             if (
                 direction_prob >= enter_threshold
                 and exit_conf_val >= enter_threshold
                 and margin >= min_margin_gate
                 and net_margin_after_fees >= MIN_NET_MARGIN
                 and expected_profit_units >= SMALL_PROFIT_FLOOR
-                and delta >= 0.0
+                and delta >= min_expected_move
             ):
                 should_enter = True
                 reason = "model-long"

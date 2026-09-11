@@ -1,0 +1,116 @@
+# Entry tests DIRECTION but never MOVE SIZE — [4d3310e7], pass 112, Iris
+
+Corpus: `organism_snapshots`, the newest 39,820 decision cycles, **484.3 hours**
+to 2026-09-10 19:57, **198 symbols**. Forward returns from `market_stream`
+(339 symbols), first tick at least H later, discarded if no tick lands inside
+H + 10 minutes — a gap in the feed is not a zero return.
+
+Command:
+
+    python -X utf8 scripts/entry_move_size_census.py --limit 40000 --mult 1.0 --mult 1.5
+
+## What was wrong
+
+`trading/bot.py`'s model-long entry conjunction read four quantities.
+`direction_prob` and `exit_conf` are confidences, `net_margin` is the margin
+head's own arithmetic, and `delta` — which **is** the model's forward expected
+return (`price_mu`, a dimensionless fraction) — was read for its SIGN alone:
+
+    and delta >= 0.0
+
+Nothing in the conjunction asked **how far**. A correctly predicted move that
+cannot pay its own round trip was admitted.
+
+## The threshold, derived
+
+`services/roundtrip_cost.py` measures this account's settled receipts as
+`cost_usd = 0.004047 + 0.003187 * notional`, so as a fraction of notional
+
+    c(N) = 0.003187 + 0.004047 / N
+
+`entry_fees` in that branch is already exactly `c(N)` for the notional the
+entry is about to spend, so the conjunct compares two fractions of the same
+notional and introduces **no new constant**. Size dependence is the point:
+
+| notional | c(N) |
+|---|---|
+| $6.00 (live clip) | 0.3862% |
+| $1.22 (median implied over the corpus) | 0.6500% |
+| $0.75 (ghost floor) | 0.8583% |
+
+A flat percentage is wrong at both ends; this repo has already shipped a flat
+0.65%.
+
+## How far the tape actually moves
+
+| horizon | median abs move | clears the 0.6500% round trip |
+|---|---|---|
+| 15 min | 0.1227% (n=31,302) | 24.0% |
+| 30 min | 0.2132% (n=29,013) | 30.8% |
+
+So on 76% of ticks at 15 minutes a perfectly correct direction call still loses
+money. That is an arithmetic property of the cost floor, not a model defect.
+
+## Is the condition stricter?
+
+By construction, yes and unconditionally: `entry_fees > 0` always, so
+`delta >= entry_fees` implies the `delta >= 0.0` it replaces. It can only ever
+refuse; it can never admit anything the old test refused.
+
+**The conjunct in isolation**, over the same 39,820 cycles:
+
+| test | cycles admitted |
+|---|---|
+| `delta >= 0.0` (before) | 19,518 (49.0%) |
+| `delta >= 1.0 x c(N)` (after) | **5,451 (13.7%)** — 72.1% fewer |
+| `delta >= 1.5 x c(N)` | 5,018 (12.6%) |
+
+**The full conjunction**, same window: 9 cycles admitted before, 9 after — no
+fall. That is not the conjunct failing. The model-long path admits **9 cycles
+in 484 hours** because `enter_threshold` is
+`max(decision_threshold 0.89, MIN_CONFIDENCE 0.65)` and `direction_prob` has
+collapsed; all 9 survivors happened to carry a `delta` far above cost. The
+item's "entries admitted must FALL" criterion is not measurable on a path that
+admits 9 cycles in 20 days, and it is reported here as not met rather than
+redefined.
+
+## Score on the admitted subset
+
+| set | 15 min | 30 min |
+|---|---|---|
+| admitted (before == after) | n=8, mean NET **-0.3774%**, median -0.3861%, win 0% | n=6, mean NET -0.3398%, win 0% |
+| every cycle (baseline) | n=31,302, **median** NET -0.6197%, win 12.7% | n=29,013, median NET -0.6182%, win 15.8% |
+
+The admitted set's mean beats the baseline's median by ~0.24pp. **n=8 is not an
+edge** and is not claimed as one — it is 8 trades over 20 days and it is still
+negative in absolute terms. The baseline's *mean* gross reads +26,784%, which is
+feed contamination (the known two-price-regime rows), so the median is the only
+honest baseline statistic here and is the one quoted.
+
+## The finding that matters more than the fix
+
+`delta` is not on the tape's scale, so the cost-derived floor cannot bite on
+recent data. Over the newest 5,000 cycles (19.0h):
+
+    median |delta| 93.1649%   vs   median realised |15m move| 0.1240%
+    -> 751.4x too large; |delta| overstates the move on 99.1% of 4,698 cycles
+    (at 30 min: 93.7103% vs 0.1921%, 487.7x, overstates on 99.0%)
+
+A head whose median forecast is a 93% forward return makes any cost-derived
+floor vacuous — which is why the same conjunct removes 72.1% of cycles over
+484h and 1.1% over the newest 19h. The conjunct is correct arithmetic on an
+uncalibrated input. **`price_mu`'s scale is the binding problem, and it is
+filed separately rather than patched here.**
+
+## Not touched
+
+No confidence threshold, margin floor, or plausibility guard was changed.
+`ENTRY_MIN_MOVE_COST_MULT` defaults to 1.0, which makes the bar the measured
+cost floor itself and nothing more.
+
+## Known gap, named rather than widened
+
+The directive-driven entry path (`directive.action == "enter"`) is an `elif`
+**above** this branch, so a strategy-emitted entry never reaches the model
+conjunction and this conjunct does not bind on it. That is the path
+`atf_static` actually trades. Filed separately.
