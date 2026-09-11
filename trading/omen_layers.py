@@ -44,6 +44,8 @@ __all__ = [
     "cooccurrence_motif",
     "relative_bands",
     "sticky_motifs",
+    "l1_change_rate",
+    "solve_hysteresis_margin",
     "sequence_motif",
     "transition_motif",
     "churn_band",
@@ -53,6 +55,8 @@ __all__ = [
     "L2_TRANSITION_STEPS",
     "L2_CHURN_CUTS",
     "L1_HYSTERESIS_MARGIN",
+    "L1_TARGET_CHANGE_RATE",
+    "L1_MARGIN_SEARCH_CEILING",
     "IDENTIFIER_CEILING",
 ]
 
@@ -190,6 +194,39 @@ L2_CHURN_CUTS = (0.15,)
 #: is the smallest margin measured to clear the ceiling in BOTH windows, so it
 #: is the least L1 coarsening that buys a usable L2.
 L1_HYSTERESIS_MARGIN = 0.5
+
+#: What the margin is actually FOR, expressed in the units that matter.
+#:
+#: ``L1_HYSTERESIS_MARGIN`` is a fraction of each band's own WIDTH, and the band
+#: widths are terciles fitted per stream per corpus -- so the same fraction buys
+#: a different amount of stickiness on every pair. Measured pass 116 by Cove
+#: ([41ca68dc], 536037e), node-free, at a fixed margin of 0.50:
+#:
+#:     pair        L1 change rate DOWN/UP   L2_transitions DOWN/UP   verdict
+#:     AERO-USDC   37.6% / 38.2%            0.2800 / 0.2267          PASSES
+#:     ARB-WETH    62.3% / 62.4%            0.4700 / 0.4533          FAILS
+#:
+#: L1 itself abstracts on both (0.1950/0.1150 on ARB-WETH), so the co-occurrence
+#: layer is not what fails to travel -- the STICKINESS is. A constant band
+#: fraction cannot control turnover because turnover is a property of how the
+#: stream's scores sit relative to its own terciles, which is fitted per corpus.
+#:
+#: So the controlled quantity is the CHANGE RATE and the margin is solved for it
+#: (``solve_hysteresis_margin``). This default is the rate the shipped 0.50
+#: achieves on AERO-USDC -- the corpus every passing L2 number in this module was
+#: measured on -- so solving to it reproduces those numbers there by
+#: construction and asks every other pair to arrive at L2 with the same alphabet
+#: turnover rather than whatever its terciles happen to give.
+L1_TARGET_CHANGE_RATE = 0.375
+
+#: How far the margin search may go before it reports the target unreachable.
+#:
+#: A margin of 1.0 already means "a slot must cross the whole band to leave it",
+#: and beyond about 2 the bands overlap so hard that a slot which starts in
+#: ``mid`` can never leave it. 4.0 is deliberately past anything usable: the
+#: search is meant to report HONESTLY that a corpus cannot reach the target
+#: rather than to silently clamp at a boundary that looks like a solution.
+L1_MARGIN_SEARCH_CEILING = 4.0
 
 #: Bands an L0 stream is bucketed into for the co-occurrence pattern. Three,
 #: not more: the motif's job is to say WHICH streams are extreme together, and
@@ -466,6 +503,99 @@ def sticky_motifs(frame_sets: Sequence[Mapping[str, str]],
     return ["co1 " + " ".join("%s=%s" % (name[:3], columns[name][i])
                               for name in L1_STREAMS)
             for i in range(len(frame_sets))]
+
+
+def l1_change_rate(motifs: Sequence[str]) -> float:
+    """Share of ADJACENCIES on which the L1 motif changed.
+
+    The quantity the margin exists to control, defined once here so the solver,
+    the probes and any live path cannot disagree about it by an off-by-one in
+    the denominator -- which is easy to do, because there are ``n-1``
+    adjacencies in ``n`` bars and the obvious ``/n`` reads 1/600th low.
+
+    Empty strings are HOLES (a bar whose L0 frames could not be built) and are
+    dropped before the adjacencies are counted, exactly as ``churn_band`` does
+    it, so no change is claimed across a gap the corpus does not have.
+    """
+    kept = [m for m in motifs if m]
+    if len(kept) < 2:
+        return 0.0
+    return sum(1 for a, b in zip(kept, kept[1:]) if a != b) / (len(kept) - 1)
+
+
+def solve_hysteresis_margin(frame_sets: Sequence[Mapping[str, str]],
+                            bands: Optional[Mapping[str, Tuple[float, float]]],
+                            target_rate: float = L1_TARGET_CHANGE_RATE,
+                            ceiling: float = L1_MARGIN_SEARCH_CEILING,
+                            iterations: int = 24) -> Dict[str, Any]:
+    """Solve for the margin that lands this corpus ON a target change rate.
+
+    THE DEFECT THIS EXISTS FOR. ``L1_HYSTERESIS_MARGIN`` is a fraction of each
+    band's own width, and the widths are terciles fitted per stream per corpus,
+    so a constant fraction buys a different amount of stickiness on every pair:
+    0.50 measured 37.6% turnover on AERO-USDC and 62.3% on ARB-WETH, and L2
+    cleared the 0.30 identifier ceiling on the first and failed it on the second
+    for exactly that reason. What has to be equal across pairs is the TURNOVER
+    the layer above sees, not the knob underneath it.
+
+    WHY A SEARCH RATHER THAN A FORMULA. The map from margin to change rate runs
+    through the joint distribution of five streams' scores against their own
+    terciles plus the held-band state machine in ``sticky_motifs``; there is no
+    closed form, and any approximation would be a second definition of L1 that
+    could drift from the first. A bisection calls the real encoder, so what is
+    solved is what ships.
+
+    It is a bisection rather than anything cleverer because the rate is
+    monotone NON-INCREASING in the margin -- widening every slot's hold band can
+    only remove crossings, never add one -- but it is a STEP function, not a
+    continuous one: the rate can only take values k/(n-1), so many targets are
+    not attainable exactly. The contract is therefore "the smallest margin whose
+    rate is at or below the target", and the ACHIEVED rate is returned beside it
+    so a caller can see how far off it landed rather than assuming it hit.
+
+    Returns ``{margin, achieved, target, reached, iterations, vocab}``.
+    ``reached`` is False when even ``ceiling`` leaves the rate above the target,
+    and in that case ``margin`` is ``ceiling`` and ``achieved`` is the best the
+    corpus can do -- a corpus that cannot be made sticky enough must SAY so, not
+    be silently handed back a boundary that looks like a solution.
+
+    ``bands`` must be the TRAIN window's cut points and the solve must be run on
+    the TRAIN frames, for the same reason ``relative_bands`` is fitted there:
+    solving the margin on a held-out window fits a hyperparameter to the test
+    distribution, which is the identical error as refitting the bands on it.
+    """
+    def rate_at(margin: float) -> Tuple[float, int]:
+        motifs = sticky_motifs(frame_sets, bands, margin)
+        return l1_change_rate(motifs), len(set(motifs))
+
+    low_rate, low_vocab = rate_at(0.0)
+    if low_rate <= target_rate:
+        # Plain relative banding is already at or under the target. Stickiness
+        # is not free -- it coarsens L1 itself -- so buying any is wrong here.
+        return {"margin": 0.0, "achieved": low_rate, "target": target_rate,
+                "reached": True, "iterations": 0, "vocab": low_vocab}
+
+    high_rate, high_vocab = rate_at(ceiling)
+    if high_rate > target_rate:
+        return {"margin": ceiling, "achieved": high_rate,
+                "target": target_rate, "reached": False,
+                "iterations": 1, "vocab": high_vocab}
+
+    lo, hi = 0.0, ceiling
+    best_rate, best_vocab = high_rate, high_vocab
+    for step in range(iterations):
+        mid = (lo + hi) / 2
+        rate, vocab = rate_at(mid)
+        if rate <= target_rate:
+            hi, best_rate, best_vocab = mid, rate, vocab
+        else:
+            lo = mid
+        if hi - lo < 1e-4:
+            return {"margin": hi, "achieved": best_rate,
+                    "target": target_rate, "reached": True,
+                    "iterations": step + 1, "vocab": best_vocab}
+    return {"margin": hi, "achieved": best_rate, "target": target_rate,
+            "reached": True, "iterations": iterations, "vocab": best_vocab}
 
 
 def _compact_motif(motif: str) -> str:
