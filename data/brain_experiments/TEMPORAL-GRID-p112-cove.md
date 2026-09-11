@@ -81,6 +81,11 @@ buckets — correct for price integrity ("a forward-filled bar is a price that
 never traded"), and it means the list it returns is indexed by **bar count**
 while the gap between consecutive indices is whatever the tape did.
 
+**The live census reads `ts` and `symbol` only — no prices.** Iris measured a
+`+26,784%` mean forward return out of `market_stream` at 20:13; that
+contamination is in the price column and cannot touch a tick-spacing count.
+Saying so here so nobody spends a pass re-checking it.
+
 `market_stream`, last 6 h, bucketed at 60 s:
 
 | symbol | ticks | bars | possible | filled | adjacent | max gap | median index step |
