@@ -65,8 +65,56 @@ class StrategyContext:
 def sample_arrays(
     state: Any,
     lookback_sec: Optional[float] = None,
+    *,
+    sanitize: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """(timestamps, prices, volumes) from RouteState.samples, oldest first."""
+    """(timestamps, prices, volumes) from RouteState.samples, oldest first.
+
+    THE WINDOW IS REPAIRED HERE, ONCE, BECAUSE SEVENTEEN CONSUMERS READ IT.
+    Measured over the 7 days to 2026-09-11 (data/feed_regime_contamination_census.md):
+    22 of 198 streamed symbols carry a second price regime, 323 of 43,920 ticks
+    (0.74%) sit in it -- and because a 60-bar window is 60 chances to include
+    one, 1,497 of 3,894 windows (38.4%) hold at least one foreign bar.
+
+    CLANKER-USDC published the identical price 13.01897021 three times inside
+    17 minutes on 2026-09-07, seven and a half decades above its other 492
+    ticks. `obv_accumulation`'s `(recent_high - last_price) / last_price` turned
+    that into `expected_return = 12551318.65`, and it entered.
+
+    The loud failure is bounded in `make_candidate` below. The QUIET ones are
+    not, and there are more of them: `donchian_breakout`'s hi/lo ARE the
+    breakout band, so a foreign high makes it unreachable and the strategy
+    silently stops entering; `stochastic_reversal`'s lo/hi are the %K
+    denominator, so a seven-decade range reads permanently oversold. Seventeen
+    call sites want seventeen different bounds, which is seventeen chances to
+    pick the wrong one -- so the repair belongs at the one place every strategy
+    in this package obtains its window, which is here.
+
+    `sanitize_model_price_window` is REUSED rather than reimplemented: it was
+    written for the same defect on the model's window (one foreign row in sixty
+    was the saturated `price_mu` of -1.2), it anchors on the window's median in
+    log space, and it carries the last good price forward rather than dropping
+    the row, so the window keeps its length and no caller has to handle a short
+    buffer. Measured on the same 3,894 windows it fully repairs 1,410 of the
+    1,497 poisoned ones (94.2%). The 87 residual are the symbols where the
+    foreign regime is the MAJORITY inside the window -- BOB-USDC, DOGE-USDC,
+    PEPE-USDC -- and a median-anchored repairer cannot help there, correctly:
+    a window that is half another asset has no anchor, and the honest reading
+    is that the symbol is two symbols.
+
+    On a clean window this is a no-op; `repaired` is 0 and the array is the
+    same numbers. It is recorded on the state so a serving path that repairs
+    every tick is visible as a count rather than as a quietly better number --
+    a feed that needs constant repair is an upstream bug, and the count is how
+    anyone finds out.
+
+    `sanitize=False` exists for ONE caller and must stay rare. `money_button`
+    REFUSES a mixed-denomination window rather than filtering it, deliberately
+    and with its reason written down: "dropping the odd tick quietly would let
+    the lane keep trading a symbol whose feed is broken, and the breakage would
+    never appear in the census". Repairing its window for it would delete a
+    guard that is correctly refusing, so it reads the raw one.
+    """
     samples = list(getattr(state, "samples", []) or [])
     if lookback_sec and samples:
         cutoff = samples[-1][0] - float(lookback_sec)
@@ -75,7 +123,18 @@ def sample_arrays(
         empty = np.empty(0, dtype=np.float64)
         return empty, empty, empty
     arr = np.asarray(samples, dtype=np.float64)
-    return arr[:, 0], arr[:, 1], arr[:, 2]
+    prices = arr[:, 1]
+    if sanitize and env_flag("STRATEGY_SANITIZE_WINDOW", "1"):
+        from trading.data_loader import sanitize_model_price_window
+
+        repaired_prices, repaired = sanitize_model_price_window(prices.tolist())
+        if repaired:
+            prices = np.asarray(repaired_prices, dtype=np.float64)
+            try:
+                state.window_rows_repaired = int(repaired)
+            except Exception:  # noqa: BLE001 - a read-only state must not break the tick
+                pass
+    return arr[:, 0], prices, arr[:, 2]
 
 
 def ema(values: np.ndarray, span: int) -> np.ndarray:

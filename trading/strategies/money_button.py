@@ -105,7 +105,12 @@ class MoneyButtonStrategy(Strategy):
         if ctx.last_price <= 0:
             return self._decline("no_price")
 
-        ts, prices, volumes = sample_arrays(state, self.LOOKBACK_SEC)
+        # sanitize=False: this lane REFUSES a mixed-denomination window (below)
+        # rather than filtering it, so it must see the raw one. See
+        # trading/strategies/base.py:sample_arrays.
+        ts, prices, volumes = sample_arrays(
+            state, self.LOOKBACK_SEC, sanitize=False
+        )
         if prices.size < self.min_samples:
             return self._decline("too_few_samples")
 
