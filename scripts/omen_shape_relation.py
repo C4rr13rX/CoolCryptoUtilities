@@ -173,9 +173,20 @@ def _closes(window: Sequence[Mapping[str, Any]]) -> List[float]:
 
 
 def _load(path: Path) -> List[Dict[str, Any]]:
+    """Bars from one corpus file, or a named refusal.
+
+    Some files under ``data/historical_ohlcv/`` are placeholders holding
+    ``["none", []]`` -- a corpus that exists and carries no bars. They are
+    refused BY NAME here rather than as a dict-update TypeError three frames
+    down, because "unreadable" in a census table hides an empty corpus behind
+    what looks like a parser problem.
+    """
     raw = json.loads(path.read_text(encoding="utf-8"))
     bars = raw["bars"] if isinstance(raw, dict) else raw
-    return [dict(b) for b in bars]
+    rows = [dict(b) for b in bars if isinstance(b, Mapping)]
+    if not rows:
+        raise ValueError("placeholder corpus -- no bar objects in the file")
+    return rows
 
 
 def _anchor_window(bars: Sequence[Mapping[str, Any]], index: int,
@@ -346,21 +357,294 @@ def score(lookup: Mapping[str, str],
     }
 
 
+def plan_windows(bars: Sequence[Mapping[str, Any]], *, horizon: int,
+                 test_bars: int, train_bars: int,
+                 candidates: int) -> Dict[str, Any] | None:
+    """Pick an UP and a DOWN held-out window from one corpus, and a train
+    window that precedes both with a full horizon gap.
+
+    The windows are chosen by MEAN FORWARD RETURN BEFORE COST -- the criterion
+    the item's acceptance names -- over the last ``candidates`` disjoint
+    blocks of the corpus: the most positive block is the UP window and the
+    most negative is the DOWN window. This is deliberately the HARDEST honest
+    pair, not a random pair: a rule that only works in one direction is
+    exposed by the two extremes, which is the whole point of running both.
+
+    Returns ``None`` when the corpus is too short, or when its most positive
+    block is not actually positive (or its most negative not negative) -- a
+    corpus that cannot supply both window classes cannot answer the question
+    and is skipped rather than counted.
+    """
+    last = len(bars) - horizon - 1
+    first = LOOKBACK_BARS
+    blocks: List[Tuple[int, int, float]] = []
+    stop = last
+    for _ in range(candidates):
+        start = stop - test_bars
+        if start < first + train_bars + horizon:
+            break
+        forwards = []
+        for i in range(start, stop):
+            entry = float(bars[i]["close"])
+            if entry <= 0:
+                continue
+            forwards.append((float(bars[i + horizon]["close"]) - entry) / entry)
+        if forwards:
+            blocks.append((start, stop, statistics.fmean(forwards)))
+        stop = start
+    if len(blocks) < 2:
+        return None
+    up = max(blocks, key=lambda b: b[2])
+    down = min(blocks, key=lambda b: b[2])
+    if up[2] <= 0.0 or down[2] >= 0.0 or up[0] == down[0]:
+        return None
+    train_end = min(up[0], down[0]) - horizon
+    train_start = train_end - train_bars
+    if train_start < first:
+        return None
+    return {
+        "train": (train_start, train_end),
+        "up": (up[0], up[1]),
+        "down": (down[0], down[1]),
+        "up_forward": up[2],
+        "down_forward": down[2],
+    }
+
+
+#: Non-degeneracy bar for the granularity sweep: a scheme whose most common
+#: descriptor holds more than this share of the train window is a constant
+#: wearing a costume, and its invariance means nothing.
+MAX_TOP = 0.50
+
+
+def parse_grid(spec: str) -> List[Tuple[int, int]]:
+    grid: List[Tuple[int, int]] = []
+    for token in spec.split(","):
+        seg, _, nb = token.strip().partition("x")
+        grid.append((int(seg), int(nb)))
+    return grid
+
+
+def choose_granularity(train_raw: Sequence[Mapping[str, Any]],
+                       grid: Sequence[Tuple[int, int]], *,
+                       min_support: int) -> Tuple[List[Dict[str, Any]],
+                                                  Dict[str, Any]]:
+    """Pick the descriptor granularity on the TRAIN half, and only there.
+
+    The rule is fixed before any number is read: among schemes that are not
+    degenerate (at least four descriptors, most common at most ``MAX_TOP``),
+    take the one covering the most of the train window at ``min_support``;
+    break ties toward MORE descriptors, i.e. the finest scheme that still has
+    support. Reading a held-out window to choose granularity would be fitting
+    on the thing being measured -- the error that inverted three of four
+    horizons in [c6196eb2].
+    """
+    rows: List[Dict[str, Any]] = []
+    for seg, nb in grid:
+        s = support(with_descriptors(train_raw, segments=seg, nbands=nb),
+                    min_support=min_support)
+        s.update({"segments": seg, "bands": nb,
+                  "eligible": s["distinct"] >= 4 and s["top_share"] <= MAX_TOP})
+        rows.append(s)
+    eligible = [s for s in rows if s["eligible"]]
+    chosen = (max(eligible, key=lambda s: (s["covered_share"], s["distinct"]))
+              if eligible
+              else max(rows, key=lambda s: s["covered_share"]))
+    return rows, chosen
+
+
 def _fmt(value: float, digits: int = 4) -> str:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return "n/a"
     return f"{value:.{digits}f}"
 
 
+def run_multi(args) -> int:
+    """The same protocol over MANY corpora, so the verdict is not one tape.
+
+    Windows are planned per corpus by ``plan_windows`` -- the most positive
+    and the most negative disjoint blocks at the end of the corpus, with a
+    train window preceding both by a full horizon gap. Granularity is chosen
+    on each corpus's OWN train half. A corpus that cannot supply both window
+    classes is skipped and counted as skipped, never folded in.
+    """
+    paths = sorted(Path().glob(args.corpora))[: args.max_corpora]
+    if not paths:
+        print(f"NO CORPORA matched {args.corpora}")
+        return 2
+    grid = parse_grid(args.sweep)
+    rows: List[Dict[str, Any]] = []
+    skipped: List[Tuple[str, str]] = []
+    print(f"corpora  : {len(paths)} matching {args.corpora}")
+    print(f"protocol : train {args.train_bars} bars, {args.test_bars}-bar UP "
+          f"and DOWN windows chosen by mean forward return before cost, "
+          f"granularity chosen on each corpus's own train half")
+    for path in paths:
+        try:
+            bars = _load(path)
+            cadence = measure_bar_seconds(bars[:512])
+        except Exception as exc:  # corpus files vary; a bad one is not a result
+            skipped.append((path.name, f"unreadable: {exc}"))
+            continue
+        horizon = max(1, round(args.horizon_minutes * 60 / cadence))
+        plan = plan_windows(bars, horizon=horizon, test_bars=args.test_bars,
+                            train_bars=args.train_bars,
+                            candidates=args.candidates)
+        if plan is None:
+            skipped.append((path.name,
+                            f"no UP/DOWN pair in {len(bars)} bars"))
+            continue
+        train_raw = labelled_anchors(bars, *plan["train"], horizon=horizon)
+        up_raw = labelled_anchors(bars, *plan["up"], horizon=horizon)
+        down_raw = labelled_anchors(bars, *plan["down"], horizon=horizon)
+        if not train_raw or not up_raw or not down_raw:
+            skipped.append((path.name, "no labelable anchors"))
+            continue
+        _sweep, chosen = choose_granularity(train_raw, grid,
+                                            min_support=args.min_support)
+        seg, nb = chosen["segments"], chosen["bands"]
+        lookup = fit_lookup(with_descriptors(train_raw, segments=seg,
+                                             nbands=nb),
+                            min_support=args.min_support)
+        up = score(lookup, with_descriptors(up_raw, segments=seg, nbands=nb))
+        down = score(lookup, with_descriptors(down_raw, segments=seg,
+                                              nbands=nb))
+        rows.append({
+            "corpus": path.name, "cadence": cadence, "horizon": horizon,
+            "scheme": f"{seg}x{nb}", "train_n": len(train_raw),
+            "covered": chosen["covered_share"], "up": up, "down": down,
+        })
+        print(f"  {path.name:<28} {seg}x{nb}  train {len(train_raw):<5} "
+              f"UP lift {_fmt(up['lift_pp'], 2):>7}pp (abst "
+              f"{_fmt(up['abstention'], 2)})  DOWN lift "
+              f"{_fmt(down['lift_pp'], 2):>7}pp (abst "
+              f"{_fmt(down['abstention'], 2)})")
+
+    scored = [r for r in rows
+              if not math.isnan(r["up"]["lift_pp"])
+              and not math.isnan(r["down"]["lift_pp"])]
+    both = [r for r in scored
+            if r["up"]["lift_pp"] > 0 and r["down"]["lift_pp"] > 0]
+    one = [r for r in scored
+           if (r["up"]["lift_pp"] > 0) != (r["down"]["lift_pp"] > 0)]
+    print(f"\nCORPORA SCORED  : {len(scored)}  (skipped {len(skipped)})")
+    for name, why in skipped:
+        print(f"  skipped {name}: {why}")
+    if scored:
+        up_mean = statistics.fmean(r["up"]["lift_pp"] for r in scored)
+        down_mean = statistics.fmean(r["down"]["lift_pp"] for r in scored)
+        print(f"MEAN LIFT       : UP {up_mean:+.2f}pp   DOWN "
+              f"{down_mean:+.2f}pp")
+        print(f"POSITIVE IN BOTH: {len(both)} of {len(scored)}   "
+              f"(one window only: {len(one)})")
+        verdict = (
+            f"NEGATIVE ACROSS THE POPULATION -- {len(both)} of {len(scored)} "
+            f"corpora positive in both window classes, mean lift "
+            f"{up_mean:+.2f}pp UP and {down_mean:+.2f}pp DOWN"
+            if len(both) * 2 <= len(scored) else
+            f"POSITIVE IN BOTH WINDOWS ON {len(both)} of {len(scored)} "
+            f"corpora -- worth a node arm, still an offline upper bound")
+    else:
+        up_mean = down_mean = float("nan")
+        verdict = "NOT MEASURABLE -- no corpus supplied both window classes"
+    print(f"\nVERDICT: {verdict}")
+    if args.report:
+        _write_multi_report(Path(args.report), args=args, rows=rows,
+                            skipped=skipped, scored=len(scored),
+                            both=len(both), one=len(one), up_mean=up_mean,
+                            down_mean=down_mean, verdict=verdict)
+        print(f"report   : {args.report}")
+    return 0
+
+
+def _write_multi_report(dest: Path, *, args, rows, skipped, scored, both,
+                        one, up_mean, down_mean, verdict) -> None:
+    lines: List[str] = []
+    a = lines.append
+    a("# SHAPE RELATION ACROSS THE CORPUS POPULATION")
+    a("")
+    a("Pass 120, Cove. Cove's part of item `[5c3b2189]` (owner Jet). This")
+    a("widens the single-corpus result in `SHAPE-RELATION-pass120-cove.md`")
+    a("from one tape to many. Still node-free, still an OFFLINE UPPER BOUND:")
+    a("a descriptor -> majority-label lookup is the best a substrate could do")
+    a("with this stream alone, so a stream that fails here fails on a fabric.")
+    a("")
+    a("## 1. Protocol")
+    a("")
+    a("| | |")
+    a("|---|---|")
+    a(f"| corpora | `{args.corpora}`, first {args.max_corpora} by name |")
+    a(f"| horizon | {args.horizon_minutes} min, converted per corpus cadence |")
+    a(f"| train | {args.train_bars} bars, ending a full horizon before the "
+      "earlier test window |")
+    a(f"| held-out | {args.test_bars} bars per window class |")
+    a(f"| window classes | the most positive and most negative of the last "
+      f"{args.candidates} disjoint blocks, by mean forward return BEFORE "
+      "cost |")
+    a(f"| granularity | chosen on each corpus's OWN train half, sweep "
+      f"`{args.sweep}` |")
+    a(f"| min_support | {args.min_support} |")
+    a("")
+    a("Choosing the extreme blocks is deliberate: it is the hardest honest")
+    a("pair, and a rule that works in only one direction cannot hide in it.")
+    a("")
+    a("## 2. Per corpus")
+    a("")
+    a("| corpus | scheme | train n | UP exact | UP baseline | UP lift | "
+      "DOWN exact | DOWN baseline | DOWN lift |")
+    a("|---|---|---|---|---|---|---|---|---|")
+    for r in rows:
+        u, d = r["up"], r["down"]
+        a(f"| `{r['corpus']}` | {r['scheme']} | {r['train_n']} | "
+          f"{_fmt(u['accuracy'])} | {_fmt(u['baseline_answered'])} | "
+          f"**{_fmt(u['lift_pp'], 2)}pp** | {_fmt(d['accuracy'])} | "
+          f"{_fmt(d['baseline_answered'])} | "
+          f"**{_fmt(d['lift_pp'], 2)}pp** |")
+    a("")
+    if skipped:
+        a("Skipped, and why -- a corpus that cannot supply both window")
+        a("classes is not folded in:")
+        a("")
+        for name, why in skipped:
+            a(f"* `{name}` -- {why}")
+        a("")
+    a("## 3. Population result")
+    a("")
+    a(f"* corpora scored: **{scored}**")
+    a(f"* positive in BOTH window classes: **{both}**")
+    a(f"* positive in one window class only (a FAIL): {one}")
+    a(f"* mean lift: **{up_mean:+.2f}pp** UP, **{down_mean:+.2f}pp** DOWN")
+    a("")
+    a(f"**{verdict}**")
+    a("")
+    a("## 4. What this does NOT establish")
+    a("")
+    a("* Nothing was trained. The node was not touched; production on")
+    a("  `:8090` was not involved.")
+    a("* A lookup is an upper bound for THIS STREAM ALONE. It does not")
+    a("  predict what a fabric does with the stream beside ten other pools.")
+    a("* The window classes are the extremes of each corpus's own tail, so")
+    a("  they are harder than average windows, not representative ones.")
+    a("")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text("\n".join(lines), encoding="utf-8")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--corpus", required=True)
+    ap.add_argument("--corpus")
+    ap.add_argument("--corpora", help="glob for the multi-corpus census, "
+                                      "e.g. 'data/historical_ohlcv/base/*.json'")
+    ap.add_argument("--max-corpora", type=int, default=12)
+    ap.add_argument("--test-bars", type=int, default=400)
+    ap.add_argument("--train-bars", type=int, default=1200)
+    ap.add_argument("--candidates", type=int, default=10)
     ap.add_argument("--horizon-minutes", type=int, default=720)
-    ap.add_argument("--train-start", type=int, required=True)
-    ap.add_argument("--train-end", type=int, required=True)
-    ap.add_argument("--up-test", type=int, nargs=2, required=True,
+    ap.add_argument("--train-start", type=int)
+    ap.add_argument("--train-end", type=int)
+    ap.add_argument("--up-test", type=int, nargs=2,
                     metavar=("START", "STOP"))
-    ap.add_argument("--down-test", type=int, nargs=2, required=True,
+    ap.add_argument("--down-test", type=int, nargs=2,
                     metavar=("START", "STOP"))
     ap.add_argument("--segments", type=int, default=8)
     ap.add_argument("--sweep", default="2x2,3x2,4x2,2x3,3x3,4x3,6x3,4x5,8x5",
@@ -371,6 +655,16 @@ def main() -> int:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--report", default=None)
     args = ap.parse_args()
+
+    if args.corpora:
+        return run_multi(args)
+    missing = [name for name, value in (
+        ("--corpus", args.corpus), ("--train-start", args.train_start),
+        ("--train-end", args.train_end), ("--up-test", args.up_test),
+        ("--down-test", args.down_test)) if value is None]
+    if missing:
+        ap.error("single-corpus mode needs " + ", ".join(missing)
+                 + " (or pass --corpora for the population census)")
 
     path = Path(args.corpus)
     bars = _load(path)
@@ -394,45 +688,19 @@ def main() -> int:
               f"down {len(down_raw)}).")
         return 2
 
-    # THE GRANULARITY SWEEP, AND WHY IT CANNOT SEE A HELD-OUT BAR. Every grid
-    # point is scored on the TRAIN half alone and the winner is picked by a
-    # rule stated before the numbers were read: among schemes that are not
-    # degenerate (the most common descriptor holds at most MAX_TOP of the
-    # window, and at least 4 descriptors exist), take the one covering the
-    # most of the train window at min_support; break ties toward MORE
-    # descriptors, i.e. the finest scheme that still has support. Reading the
-    # held-out window to choose granularity would be fitting on the thing
-    # being measured -- the exact error that inverted three of four horizons
-    # in [c6196eb2].
-    MAX_TOP = 0.50
-    grid: List[Tuple[int, int]] = []
-    for token in args.sweep.split(","):
-        seg, _, nb = token.strip().partition("x")
-        grid.append((int(seg), int(nb)))
-    sweep_rows: List[Dict[str, Any]] = []
-    print("\nGRANULARITY SWEEP -- TRAIN HALF ONLY, the held-out windows are "
-          "not read here")
-    for seg, nb in grid:
-        rows = with_descriptors(train_raw, segments=seg, nbands=nb)
-        s = support(rows, min_support=args.min_support)
-        eligible = s["distinct"] >= 4 and s["top_share"] <= MAX_TOP
-        s.update({"segments": seg, "bands": nb, "eligible": eligible})
-        sweep_rows.append(s)
-        print(f"  {seg}x{nb:<3} distinct {s['distinct']:<5} median/desc "
-              f"{s['median_per_descriptor']:<6.1f} top share "
-              f"{s['top_share']:.4f}  supported {s['supported_descriptors']:<4} "
-              f"covering {s['covered_share']:.4f}"
-              f"{'' if eligible else '   [degenerate, not eligible]'}")
-
-    eligible_rows = [s for s in sweep_rows if s["eligible"]]
-    if not eligible_rows:
-        print("\nNO ELIGIBLE GRANULARITY: every scheme is degenerate or "
-              "unsupported. That is the result; the stream is not usable at "
-              "any granularity on this grid.")
-        chosen = max(sweep_rows, key=lambda s: s["covered_share"])
-    else:
-        chosen = max(eligible_rows,
-                     key=lambda s: (s["covered_share"], s["distinct"]))
+    grid = parse_grid(args.sweep)
+    sweep_rows, chosen = choose_granularity(train_raw, grid,
+                                            min_support=args.min_support)
+    print("\nGRANULARITY SWEEP -- TRAIN HALF ONLY, the held-out "
+          "windows are not read here")
+    for s_ in sweep_rows:
+        print(f"  {s_['segments']}x{s_['bands']:<3} distinct "
+              f"{s_['distinct']:<5} median/desc "
+              f"{s_['median_per_descriptor']:<6.1f} top share "
+              f"{s_['top_share']:.4f}  supported "
+              f"{s_['supported_descriptors']:<4} covering "
+              f"{s_['covered_share']:.4f}"
+              f"{'' if s_['eligible'] else '   [degenerate, not eligible]'}")
     segments, nbands = chosen["segments"], chosen["bands"]
     print(f"\nCHOSEN ON TRAIN: {segments}x{nbands} -- covers "
           f"{chosen['covered_share']:.4f} of the train window with "
