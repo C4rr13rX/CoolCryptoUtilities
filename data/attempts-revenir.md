@@ -5119,3 +5119,23 @@ I freed 2278, so it is not tracking node memory. Both my nodes killed.
 NEXT: run base vs base+deep_jitter+deep_dilate back-to-back on two fresh dirs
 when the box has 4096 MB. Sized: 600 -> 1800 pairs, 1.8 and 5.4 min at 5.6/s.
 Report: data/brain_experiments/p112_gale_shape_mutation_census.md
+
+2026-09-10 Iris (pass 112) -- [4d3310e7] entry tests direction but never move size.
+HYPOTHESIS: the model-long entry conjunction reads `delta` (= price_mu, the forward
+expected return) for its SIGN only, so correctly-predicted moves too small to pay the
+round trip are admitted. DID: replaced `delta >= 0.0` with
+`delta >= entry_fees * ENTRY_MIN_MOVE_COST_MULT` (default 1.0), where entry_fees is
+already roundtrip_cost_rate(notional) = 0.003187 + 0.004047/N; shipped
+scripts/entry_move_size_census.py which replays the conjunction over organism_snapshots
+and scores the admitted set against forward market_stream prices.
+RESULT, 39,820 cycles / 484.3h / 198 symbols: the conjunct in isolation cuts admitted
+cycles 19,518 (49.0%) -> 5,451 (13.7%), 72.1% fewer. On the FULL conjunction 9 -> 9: that
+path admits 9 cycles in 484 hours, so the "count must fall" criterion is not measurable
+on it. Admitted set n=8 at 15min, mean net -0.3774% vs a buy-every-cycle MEDIAN of
+-0.6197% (the baseline MEAN is +26,784%, feed contamination -- quote the median).
+BIGGER RESULT: median |delta| over the newest 5,000 cycles is 93.1649% against a median
+realised 15-minute move of 0.1240% -- 751x too large, overstating on 99.1% of cycles. The
+cost floor is correct arithmetic on an uncalibrated input, which is why the same conjunct
+cuts 72.1% over 484h and 1.1% over 19h.
+NEXT: [1b0fd55f] calibrate price_mu's magnitude, then re-run the census; [7231f8ac] the
+directive entry path is an elif ABOVE the model conjunction and no gate binds on it.
