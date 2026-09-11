@@ -5152,3 +5152,17 @@ arithmetic. Not fragile: poisoned_dropped 0 across all four cells, 600 mutated
 pairs, none moved its label.
 NEXT: power it -- same arm at train 2000+ and a 400-bar test window, which is
 affordable now that the node measured 24 pairs/s not 5.6.
+
+2026-09-10 | Gale | pass 112 control | hypothesis: the mutated arm's gain is
+pair volume (300 -> 900), not invariance.
+WHAT I DID: third fresh fabric (neurons=0, :8094), SAME 300 base pairs taught
+three times -- matched pair count, no new information. --repeat in
+scripts/omen_shape_mutations.py.
+RESULT: FALSIFIED, the gain is not volume. Held-out exact, AERO-USDC h12, same
+windows. UP (majority 0.2667): base 0.2083, repeat3 0.2167, base+2mut 0.2333.
+DOWN (majority 0.6500): base 0.1500, repeat3 0.1500, base+2mut 0.1833.
+Repetition bought ZERO bars in DOWN and ONE in UP; the mutated arm beat the
+control in both windows. Still below majority in both, still 3-4 bars of 120,
+so the control makes the DIRECTION believable and not the SIZE.
+NEXT: [f4c0975a] -- 400-bar test windows so a 2.5pp move is 10 bars, plus
+deep_flatten. Cheap: the node measured 24 pairs/s, not 5.6.
