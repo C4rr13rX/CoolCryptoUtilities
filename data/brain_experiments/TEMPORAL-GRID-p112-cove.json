@@ -1,0 +1,320 @@
+{
+  "symbol": "AERO-USDC",
+  "horizon_bars": 12,
+  "corpora": [
+    {
+      "corpus": "p108_aero_up.json",
+      "grid": {
+        "bars": 900,
+        "modal_gap_sec": 3600,
+        "median_gap_sec": 3600,
+        "max_gap_sec": 3600,
+        "uniform_share": 1.0,
+        "span_hours": 899.0
+      },
+      "horizon_frame": "hzn h=12",
+      "horizon_minutes": 720.0
+    },
+    {
+      "corpus": "p108_aero_down.json",
+      "grid": {
+        "bars": 900,
+        "modal_gap_sec": 3600,
+        "median_gap_sec": 3600,
+        "max_gap_sec": 3600,
+        "uniform_share": 1.0,
+        "span_hours": 899.0
+      },
+      "horizon_frame": "hzn h=12",
+      "horizon_minutes": 720.0
+    }
+  ],
+  "live": {
+    "hours": 6.0,
+    "bar_seconds": 60,
+    "symbols": [
+      {
+        "symbol": "ETH-USDT",
+        "ticks": 90,
+        "closed_bars": 82,
+        "possible_bars": 352,
+        "filled_share": 0.23295454545454544,
+        "adjacent_share": 0.20987654320987653,
+        "max_gap_bars": 66,
+        "median_step_sec": 180,
+        "bars_in_live_window": 39.60227272727273,
+        "bars_required": 169
+      },
+      {
+        "symbol": "TIBBIR-USDC",
+        "ticks": 87,
+        "closed_bars": 78,
+        "possible_bars": 356,
+        "filled_share": 0.21910112359550563,
+        "adjacent_share": 0.14285714285714285,
+        "max_gap_bars": 60,
+        "median_step_sec": 180,
+        "bars_in_live_window": 37.247191011235955,
+        "bars_required": 169
+      },
+      {
+        "symbol": "VIRTUAL-USDC",
+        "ticks": 87,
+        "closed_bars": 85,
+        "possible_bars": 351,
+        "filled_share": 0.24216524216524216,
+        "adjacent_share": 0.27380952380952384,
+        "max_gap_bars": 58,
+        "median_step_sec": 180.0,
+        "bars_in_live_window": 41.168091168091166,
+        "bars_required": 169
+      },
+      {
+        "symbol": "DRB-USDC",
+        "ticks": 86,
+        "closed_bars": 76,
+        "possible_bars": 351,
+        "filled_share": 0.21652421652421652,
+        "adjacent_share": 0.21333333333333335,
+        "max_gap_bars": 60,
+        "median_step_sec": 180,
+        "bars_in_live_window": 36.80911680911681,
+        "bars_required": 169
+      },
+      {
+        "symbol": "ETH-USDC",
+        "ticks": 85,
+        "closed_bars": 76,
+        "possible_bars": 346,
+        "filled_share": 0.21965317919075145,
+        "adjacent_share": 0.24,
+        "max_gap_bars": 60,
+        "median_step_sec": 180,
+        "bars_in_live_window": 37.34104046242775,
+        "bars_required": 169
+      },
+      {
+        "symbol": "SOL-USDC",
+        "ticks": 84,
+        "closed_bars": 78,
+        "possible_bars": 353,
+        "filled_share": 0.22096317280453256,
+        "adjacent_share": 0.24675324675324675,
+        "max_gap_bars": 61,
+        "median_step_sec": 180,
+        "bars_in_live_window": 37.563739376770535,
+        "bars_required": 169
+      },
+      {
+        "symbol": "WETH-USDT",
+        "ticks": 83,
+        "closed_bars": 76,
+        "possible_bars": 354,
+        "filled_share": 0.21468926553672316,
+        "adjacent_share": 0.22666666666666666,
+        "max_gap_bars": 94,
+        "median_step_sec": 180,
+        "bars_in_live_window": 36.497175141242934,
+        "bars_required": 169
+      },
+      {
+        "symbol": "AERO-USDC",
+        "ticks": 82,
+        "closed_bars": 77,
+        "possible_bars": 352,
+        "filled_share": 0.21875,
+        "adjacent_share": 0.15789473684210525,
+        "max_gap_bars": 60,
+        "median_step_sec": 180.0,
+        "bars_in_live_window": 37.1875,
+        "bars_required": 169
+      }
+    ],
+    "total_ticks": 1696
+  },
+  "crossed": true,
+  "collections": {
+    "p108_aero_up.json": {
+      "samples": 600,
+      "distinctness": {
+        "geometry": 0.9783333333333334,
+        "temporal": 1.0,
+        "flow": 0.23333333333333334,
+        "volatility": 0.16,
+        "cross": 0.41833333333333333,
+        "horizon": 0.0016666666666666668,
+        "instrument": 0.0016666666666666668
+      },
+      "temporal_slots": [
+        {
+          "slot": "r1",
+          "distinct": 31,
+          "distinctness": 0.051666666666666666,
+          "top_value": "u9",
+          "top_share": 0.10833333333333334
+        },
+        {
+          "slot": "r2",
+          "distinct": 29,
+          "distinctness": 0.04833333333333333,
+          "top_value": "u10",
+          "top_share": 0.105
+        },
+        {
+          "slot": "r3",
+          "distinct": 29,
+          "distinctness": 0.04833333333333333,
+          "top_value": "u11",
+          "top_share": 0.11
+        },
+        {
+          "slot": "r6",
+          "distinct": 30,
+          "distinctness": 0.05,
+          "top_value": "d12",
+          "top_share": 0.10833333333333334
+        },
+        {
+          "slot": "r12",
+          "distinct": 28,
+          "distinctness": 0.04666666666666667,
+          "top_value": "d12",
+          "top_share": 0.10833333333333334
+        },
+        {
+          "slot": "r24",
+          "distinct": 30,
+          "distinctness": 0.05,
+          "top_value": "d13",
+          "top_share": 0.13333333333333333
+        },
+        {
+          "slot": "r48",
+          "distinct": 29,
+          "distinctness": 0.04833333333333333,
+          "top_value": "d14",
+          "top_share": 0.2
+        },
+        {
+          "slot": "r168",
+          "distinct": 28,
+          "distinctness": 0.04666666666666667,
+          "top_value": "d15",
+          "top_share": 0.205
+        },
+        {
+          "slot": "flip",
+          "distinct": 12,
+          "distinctness": 0.02,
+          "top_value": "12",
+          "top_share": 0.18
+        },
+        {
+          "slot": "streak",
+          "distinct": 9,
+          "distinctness": 0.015,
+          "top_value": "1",
+          "top_share": 0.5166666666666667
+        },
+        {
+          "slot": "acc",
+          "distinct": 30,
+          "distinctness": 0.05,
+          "top_value": "u11",
+          "top_share": 0.11166666666666666
+        }
+      ]
+    },
+    "p108_aero_down.json": {
+      "samples": 600,
+      "distinctness": {
+        "geometry": 0.97,
+        "temporal": 1.0,
+        "flow": 0.25666666666666665,
+        "volatility": 0.14166666666666666,
+        "cross": 0.43166666666666664,
+        "horizon": 0.0016666666666666668,
+        "instrument": 0.0016666666666666668
+      },
+      "temporal_slots": [
+        {
+          "slot": "r1",
+          "distinct": 32,
+          "distinctness": 0.05333333333333334,
+          "top_value": "d9",
+          "top_share": 0.12166666666666667
+        },
+        {
+          "slot": "r2",
+          "distinct": 30,
+          "distinctness": 0.05,
+          "top_value": "d11",
+          "top_share": 0.11
+        },
+        {
+          "slot": "r3",
+          "distinct": 33,
+          "distinctness": 0.055,
+          "top_value": "d10",
+          "top_share": 0.14833333333333334
+        },
+        {
+          "slot": "r6",
+          "distinct": 30,
+          "distinctness": 0.05,
+          "top_value": "d11",
+          "top_share": 0.12833333333333333
+        },
+        {
+          "slot": "r12",
+          "distinct": 31,
+          "distinctness": 0.051666666666666666,
+          "top_value": "d12",
+          "top_share": 0.12666666666666668
+        },
+        {
+          "slot": "r24",
+          "distinct": 30,
+          "distinctness": 0.05,
+          "top_value": "d14",
+          "top_share": 0.18166666666666667
+        },
+        {
+          "slot": "r48",
+          "distinct": 30,
+          "distinctness": 0.05,
+          "top_value": "d15",
+          "top_share": 0.195
+        },
+        {
+          "slot": "r168",
+          "distinct": 31,
+          "distinctness": 0.051666666666666666,
+          "top_value": "d17",
+          "top_share": 0.325
+        },
+        {
+          "slot": "flip",
+          "distinct": 14,
+          "distinctness": 0.023333333333333334,
+          "top_value": "12",
+          "top_share": 0.18
+        },
+        {
+          "slot": "streak",
+          "distinct": 11,
+          "distinctness": 0.018333333333333333,
+          "top_value": "1",
+          "top_share": 0.49666666666666665
+        },
+        {
+          "slot": "acc",
+          "distinct": 32,
+          "distinctness": 0.05333333333333334,
+          "top_value": "u12",
+          "top_share": 0.10833333333333334
+        }
+      ]
+    }
+  }
+}
