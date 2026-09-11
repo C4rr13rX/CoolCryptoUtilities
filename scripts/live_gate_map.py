@@ -229,17 +229,26 @@ def print_live():
     # Profit concentration, which trade-count dominance does not see: a book can
     # be spread across symbols and still owe all of its P&L to one of them.
     jk = float(g.get("net_profit_ex_top_symbol", 0.0))
-    row(
-        "net profit ex-%s" % (g.get("top_profit_symbol") or "top")[:14],
-        "%+.4f" % jk,
-        "> 0",
-        not g.get("single_symbol_dependence"),
+    row("single_symbol_dependence", "%+.4f" % jk, "> 0",
+        not g.get("single_symbol_dependence"))
+    # Name the artifact this is guarding against, and say whether the guard was
+    # ARMED -- it needs >=2 symbols and >=min_trades rows, so a PASS can mean
+    # "not armed" rather than "no dependence". And never print a concentration
+    # SHARE on a book whose net is negative: the ratio is defined only for a
+    # positive net, so it comes back 0.0 and reads as "0% from BSTONK" beside a
+    # line that names BSTONK.
+    _net = float(g.get("total_net_profit", 0.0) or 0.0)
+    _top = g.get("top_profit_symbol") or "-"
+    _armed = bool(g.get("single_symbol_dependence")) or (
+        int(g.get("samples", 0) or 0) > 0 and _net > 0.0 and jk <= 0.0
     )
-    print("  %-8s %-30s %.1f%% of net from %s" % (
-        "", "profit concentration",
-        float(g.get("symbol_profit_dominance", 0.0)) * 100.0,
-        g.get("top_profit_symbol") or "-",
-    ))
+    if _net > 0.0:
+        _conc = "%.1f%% of net (%+.4f) from %s" % (
+            float(g.get("symbol_profit_dominance", 0.0)) * 100.0, _net, _top)
+    else:
+        _conc = "net is %+.4f, so the share from %s is UNDEFINED, not 0%%" % (_net, _top)
+    print("  %-8s %-30s %s [guard %s]" % (
+        "", "profit concentration", _conc, "ARMED" if _armed else "not armed"))
 
     print("  %-8s %-30s %s" % ("", "ghost_validation", "%s (%s)" % (g.get("ready"), g.get("reason") or "ok")))
     print("  %-8s %-30s %s (%s) net %+0.4f over %d" % (
@@ -257,6 +266,46 @@ def print_live():
     print("  %-8s %-30s $%.4f" % ("", "recommended_live_usd", float(rf.get("recommended_live_usd", 0.0))))
     print("  %-8s %-30s $%s" % ("", "min_clip_usd", rf.get("min_clip_usd")))
     print("  %-8s %-30s $%s" % ("", "deployable_stable_usd", rf.get("deployable_stable_usd")))
+
+    # ------------------------------------------------------------------
+    # PER STRATEGY. The pooled line above stays; it is simply no longer the
+    # only judgement. See services/live_gate_map._per_strategy_verdicts for why
+    # the subject line reads "(pooled book)" today: _ghost_validation_for_live
+    # judges per strategy only over StrategyLedger().approved_ids(), and that
+    # list is empty, so it falls back to the pool in exactly the state where a
+    # pooled verdict cannot answer the question that matters -- would ANY
+    # strategy qualify on its own book.
+    from services.live_gate_map import _per_strategy_verdicts
+
+    ps = _per_strategy_verdicts(p)
+    print("\n" + "-" * 100)
+    print("PER-STRATEGY VERDICT  --  the pooled line above is no longer the only judgement")
+    print("-" * 100)
+    print("  n      = _tradeable_of population (implausible fills excluded), "
+          "ALL recorded ghost exits -- no lookback")
+    print("  gate_n = what _ghost_validation actually judged, inside "
+          "GHOST_VALIDATION_LOOKBACK_SEC (%.0fh), priced at one clip"
+          % (ps.get("gate_window_sec", 172800.0) / 3600.0))
+    print("  THEY ARE DIFFERENT WINDOWS. Reading n as the evidence behind the "
+          "verdict overstates it (126 vs 11 on atf_static, 2026-09-11).")
+    if ps.get("error"):
+        print("  unavailable: %s" % ps["error"])
+    elif not ps.get("strategies"):
+        print("  no strategy has a recorded ghost exit in the window")
+    else:
+        print("  %-26s %5s %5s %10s %5s %8s %9s %11s  %s" % (
+            "strategy", "n", "wins", "net", "gate_n", "pf", "expect", "ready", "reason"))
+        for r in ps["strategies"]:
+            print("  %-26s %5d %5d %+10.4f %5d %8.3f %+9.5f %11s  %s" % (
+                r["strategy_id"][:26], r["tradeable_trades"], r["tradeable_wins"],
+                r["tradeable_net"], r["gate_samples"], r["profit_factor"],
+                r["net_expectancy"], str(r["ready"]), r["reason"]))
+        qual = ps.get("qualified") or []
+        print("  QUALIFIED ON ITS OWN BOOK: %s" % (", ".join(qual) if qual else "NONE"))
+        if not qual:
+            print("  (measured 2026-09-11 nothing is profitable per strategy either, so "
+                  "this changes no verdict today -- it means a good strategy could now "
+                  "be SEEN inside an aggregate loss)")
 
 
 if __name__ == "__main__":

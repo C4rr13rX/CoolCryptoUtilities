@@ -69,10 +69,120 @@ def _gate(name: str, value: Any, limit: Any, ok: bool, *,
     }
 
 
+def _per_strategy_verdicts(pipeline: Any) -> Dict[str, Any]:
+    """The ghost verdict for EACH strategy, not only for the pool.
+
+    WHY THIS IS NOT DECORATION
+    --------------------------
+    ``_ghost_validation_for_live`` already judges per strategy -- but only over
+    ``_live_gate_candidates()``, which is ``StrategyLedger().approved_ids()``.
+    Measured 2026-09-11 that list is EMPTY (0 live-approved strategies), so the
+    function falls through to ``self._ghost_validation()`` and the map's subject
+    line reads ``(pooled book) [43 trades]``. The gate is pooled in exactly the
+    state where pooling does the most damage: nobody is approved yet, so the one
+    question worth asking is "would ANY strategy qualify on its own book", and a
+    pooled verdict cannot answer it. This is the identical defect already
+    corrected for graduation, which judges ``_tradeable_of(ghost)`` per strategy.
+
+    HONEST CAVEAT, so nobody expects this to open the lane. Measured
+    2026-09-11, nothing is profitable per strategy either: obv_accumulation@5d
+    net -0.0342 on n=8 is the only one with positive GROSS (+0.0294, which fees
+    turn), atf_static -0.9021 on n=34, rsi_reversal -0.6464 on n=10, and 86
+    unattributed trades at -4.6377. This changes no verdict today. It is here
+    because the day one strategy works, a pooled gate would hide it.
+
+    THE POPULATION IS THE ONE GRADUATION USES. ``services.tradeable_evidence``
+    replays recorded ghost exits through the ledger's OWN predicates --
+    ``_live_tradeable``, the evidence horizon, the implausible-outcome cap -- so
+    ``n`` reported here is round trips the live lane could have placed, with
+    implausible fills excluded and counted. The gate's own verdict arithmetic
+    (``_ghost_validation(sid)``) is applied unchanged; nothing here weakens a
+    guardrail, and nothing here promotes anything.
+    """
+    out: Dict[str, Any] = {"strategies": [], "qualified": [], "source": "", "error": None}
+    try:
+        from services.tradeable_evidence import reconstruct
+
+        evidence = reconstruct()
+    except Exception as exc:  # noqa: BLE001 - a diagnostic must never raise
+        out["error"] = f"{type(exc).__name__}: {exc}"
+        return out
+    out["source"] = "services.tradeable_evidence.reconstruct (_tradeable_of population)"
+    # THE TWO n COLUMNS ARE DIFFERENT WINDOWS AND MUST SAY SO.
+    #
+    # ``tradeable_trades`` is the same POPULATION graduation uses -- the ledger's
+    # own ``_live_tradeable``, evidence-horizon and implausible-outcome
+    # predicates -- but over ALL recorded ghost exits: ``reconstruct`` takes no
+    # lookback. ``gate_samples`` is what ``_ghost_validation`` actually judged,
+    # inside ``GHOST_VALIDATION_LOOKBACK_SEC`` (48h by default) and priced at one
+    # clip. Measured 2026-09-11 those differ by an order of magnitude on the
+    # busiest strategy (126 reconstructed against 11 in the gate window), so
+    # reading one as the other would overstate the evidence behind a verdict by
+    # 11x. They are reported side by side, never merged.
+    out["population_window"] = "all recorded ghost exits (reconstruct takes no lookback)"
+    out["gate_window_sec"] = _flt(
+        os.getenv("GHOST_VALIDATION_LOOKBACK_SEC", "172800"), 172800.0)
+
+    rows: List[Dict[str, Any]] = []
+    for sid, ev in sorted(evidence.items()):
+        sid = str(sid or "").strip()
+        # An unattributed trade belongs to no strategy's record. Counting it
+        # toward one is how a pooled loss gets charged to a named strategy.
+        if not sid or sid.lower() in {"unknown", "unclassified"}:
+            continue
+        if int(getattr(ev, "exits", 0) or 0) <= 0:
+            continue
+        try:
+            verdict = pipeline._ghost_validation(sid)
+        except Exception:  # noqa: BLE001
+            continue
+        rows.append({
+            "strategy_id": sid,
+            # n as graduation counts it: the de-contaminated tradeable subset.
+            "tradeable_trades": int(getattr(ev, "trades", 0) or 0),
+            "tradeable_wins": int(getattr(ev, "wins", 0) or 0),
+            "tradeable_net": round(float(getattr(ev, "net", 0.0) or 0.0), 4),
+            "dropped_implausible": int(getattr(ev, "dropped_implausible", 0) or 0),
+            "dropped_untradeable": int(getattr(ev, "dropped_untradeable", 0) or 0),
+            # n as the live gate counts it, and its verdict, unchanged.
+            "gate_samples": int(verdict.get("samples", 0) or 0),
+            "ready": bool(verdict.get("ready")),
+            # RAW, never normalised to "ok". The strongest verdict the strict
+            # path emits is the EMPTY STRING, so displaying it as "ok" and then
+            # testing earnedness on the display value rejects exactly the
+            # strategies that passed on their own merits -- the same inversion
+            # that held live_trading_enabled=False on every bot for two days.
+            "reason": str(verdict.get("reason") or ""),
+            "reason_display": str(verdict.get("reason") or "ok"),
+            "net_profit": round(_flt(verdict.get("total_net_profit")), 4),
+            "profit_factor": round(_flt(verdict.get("profit_factor")), 3),
+            "net_expectancy": round(_flt(verdict.get("net_expectancy")), 5),
+            "loss_rate": round(_flt(verdict.get("loss_rate")), 3),
+            "win_rate": round(_flt(verdict.get("win_rate")), 3),
+        })
+
+    # A strategy QUALIFIES on the same test _ghost_validation_for_live applies
+    # to its own candidates: ready, on an EARNED reason (never the cold-start
+    # allowance, which per-strategy would hand "ready" to everything untried),
+    # and net positive.
+    try:
+        from trading.pipeline import ghost_reason_is_earned
+    except Exception:  # noqa: BLE001
+        ghost_reason_is_earned = lambda _r: False  # noqa: E731
+    out["qualified"] = [
+        r["strategy_id"] for r in rows
+        if r["ready"] and ghost_reason_is_earned(r["reason"]) and r["net_profit"] > 0.0
+    ]
+    rows.sort(key=lambda r: (-r["tradeable_trades"], r["strategy_id"]))
+    out["strategies"] = rows
+    return out
+
+
 def _live_gates(pipeline: Any) -> Dict[str, Any]:
     """Evaluate the gates the live path actually consults."""
     ghost = pipeline._ghost_validation_for_live()
     pooled = pipeline._ghost_validation()
+    per_strategy = _per_strategy_verdicts(pipeline)
     plan = pipeline._build_transition_plan()
     flags = plan.get("risk_flags") or {}
 
@@ -115,19 +225,53 @@ def _live_gates(pipeline: Any) -> Dict[str, Any]:
     gates.append(_gate("loss_rate", round(loss_rate, 3), round(loss_rate_guard, 3),
                        loss_rate <= loss_rate_guard))
 
-    top_symbol = str(ghost.get("top_profit_symbol") or "top")
+    # The single-symbol jackknife, named for what it GUARDS rather than for the
+    # symbol that happens to top the book today.
+    #
+    # The row used to read "net profit excluding BSTONK -1.6600", which invites
+    # two wrong readings. (1) BSTONK is not a constant: it is whichever symbol
+    # currently has the largest summed profit, so the row's own NAME moves with
+    # the book. (2) The guard it reports -- ``single_symbol_dependence`` -- only
+    # fires on a book with at least two symbols AND at least ``min_trades``
+    # rows, so on a short book the row can print a deeply negative value beside
+    # a PASS, and on a book whose net is already negative the dominance ratio is
+    # reported as 0.0 (it is defined only for a positive net) while the symbol is
+    # still named in the condition. A reader sees "0.0% of net from BSTONK-USDC"
+    # under a line about BSTONK and concludes the opposite of what was measured.
+    #
+    # So: state the guard, state whether it was ARMED, and carry the symbol as
+    # data instead of as the row's identity.
+    top_symbol = str(ghost.get("top_profit_symbol") or "")
     ex_top = _flt(ghost.get("net_profit_ex_top_symbol"))
+    net_total = _flt(ghost.get("total_net_profit"))
+    armed = bool(ghost.get("single_symbol_dependence")) or (
+        int(ghost.get("samples", 0) or 0) > 0 and net_total > 0.0 and ex_top <= 0.0
+    )
+    dominance = _flt(ghost.get("symbol_profit_dominance"))
+    dom_detail = (
+        "share of net owed to %s: %.1f%%" % (top_symbol or "top", 100.0 * dominance)
+        if net_total > 0.0
+        else "share of net is undefined on a book whose net is %.4f -- not 0%%"
+        % net_total
+    )
     gates.append(_gate(
-        f"net profit excluding {top_symbol}", round(ex_top, 4), "> 0",
+        "single_symbol_dependence (jackknife on the top-profit symbol)",
+        round(ex_top, 4), "> 0",
         not ghost.get("single_symbol_dependence"),
-        detail="a book can be spread across many symbols and still owe all "
-               "of its profit to one of them",
+        detail="net excluding %s, the symbol with the largest summed profit in "
+               "this book; %s; guard %s (it needs >=2 symbols and >=min_trades "
+               "rows to fire, so a PASS here can mean 'not armed' rather than "
+               "'no dependence')"
+               % (top_symbol or "(none)", dom_detail,
+                  "ARMED" if armed else "not armed"),
     ))
 
     return {
         "subject": ghost.get("strategy_id") or "(pooled book)",
+        "subject_is_pooled": not bool(ghost.get("strategy_id")),
         "samples": int(ghost.get("samples", 0) or 0),
         "gates": gates,
+        "per_strategy": per_strategy,
         "ghost_validation": {
             "ready": bool(ghost.get("ready")),
             "reason": ghost.get("reason") or "ok",
