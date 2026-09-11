@@ -40,8 +40,10 @@ from trading.omen_brain import (  # noqa: E402
     measure_bar_seconds,
 )
 from trading.omen_layers import (  # noqa: E402
-    L1_STREAMS, MOTIF_SEQUENCE_STEPS, cooccurrence_motif, layer_distinctness,
-    relative_bands, sequence_motif, sticky_motifs,
+    IDENTIFIER_CEILING, L1_HYSTERESIS_MARGIN, L1_STREAMS,
+    L2_TRANSITION_STEPS, MOTIF_SEQUENCE_STEPS, cooccurrence_motif,
+    layer_distinctness, relative_bands, sequence_motif, sticky_motifs,
+    transition_motif,
 )
 
 #: The L0 streams a motif is built FROM. ``instrument`` and ``horizon`` are
@@ -49,6 +51,29 @@ from trading.omen_layers import (  # noqa: E402
 #: ahead, and are constant on a single-symbol corpus, so including them in the
 #: comparison baseline would flatter L1 against two streams at 1/n.
 _BASELINE_STREAMS = tuple(L1_STREAMS)
+
+#: The SHIPPED L2 column, and the rejected control kept beside it.
+#:
+#: ``transition_motif`` won [fa75fa1a] (0.2633 DOWN / 0.2000 UP over a sticky
+#: L1) and ``sequence_motif`` lost it (0.5317 / 0.4083 at the same banding).
+#: Both are computed here on purpose: a probe that dropped the loser would make
+#: the winner's margin unreadable, and a probe that computed ONLY the loser --
+#: which is what this file did until [a4ba2028] -- silently scores the rejected
+#: scheme in any arm a reader believes is measuring L2.
+L2_WINNER = "L2_transitions"
+L2_CONTROL = "L2_sequence"
+
+#: How many preceding bars the change-keyed L2 may look back over.
+#:
+#: TWELVE, AND IT IS NOT A FREE PARAMETER HERE. ``omen_layers.L2_CHURN_CUTS``
+#: is measured at a window of 12 and its docstring states plainly that the cut
+#: does not travel: the churn rate can only take values k/(n-1), so at a window
+#: of 8 "one change" lands above the 0.15 cut, the held band collapses and the
+#: frame goes over the ceiling. Changing this without re-sweeping that constant
+#: would score a churn symbol whose bands mean something other than what they
+#: were fitted to mean. Pinned against ``omen_l2_scheme_probe``'s own default by
+#: tests/test_the_l2_probe_scores_the_shipped_scheme_not_the_rejected_one.py.
+L2_TRANSITION_WINDOW = 12
 
 
 def load_bars(path: Path) -> List[Dict[str, Any]]:
@@ -114,10 +139,20 @@ def build_layer_frames(bars: Sequence[Mapping[str, Any]], symbol: str,
         index, frames = built[slot]
         motif = motifs[slot]
         motif_history.append(motif)
-        recent = [m for m in motif_history[-MOTIF_SEQUENCE_STEPS:] if m]
+        fixed = [m for m in motif_history[-MOTIF_SEQUENCE_STEPS:] if m]
+        recent = [m for m in motif_history[-L2_TRANSITION_WINDOW:] if m]
         row = dict(frames)
         row["L1_cooccurrence"] = motif
-        row["L2_sequence"] = sequence_motif(recent)
+        # THE WINNER AND THE REJECTED CONTROL, SIDE BY SIDE IN ONE ROW.
+        # The two read DIFFERENT windows and that is the difference between
+        # them rather than a detail: a fixed-length path can only afford
+        # MOTIF_SEQUENCE_STEPS bars because it samples one symbol per bar,
+        # while a change-keyed scheme can afford L2_TRANSITION_WINDOW because a
+        # regime that holds for forty bars costs it one symbol. Handing them
+        # the same window would hobble the winner to flatter the loser.
+        row["L2_sequence"] = sequence_motif(fixed)
+        row["L2_transitions"] = transition_motif(recent,
+                                                 steps=L2_TRANSITION_STEPS)
         # The true label rides along so the layer can be asked the only
         # question that matters: does the motif carry information ABOUT THE
         # OUTCOME, or is it merely a tidy compression of the inputs?
@@ -187,8 +222,9 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
                  horizon: int, train: int, test: int,
                  min_lift: float, min_support: int,
                  relative: bool = False,
-                 margin: float = 0.0) -> Dict[str, Any]:
-    """Does the L1 motif carry BUY-LOW information out of sample, with no node?
+                 margin: float = 0.0,
+                 key: str = "L1_cooccurrence") -> Dict[str, Any]:
+    """Does the motif in ``key`` carry BUY-LOW information out of sample?
 
     THE REASON THIS EXISTS BEFORE ANY NODE RUN. A fabric cannot extract from a
     stream what the stream does not contain. Fitting the motif -> trough map on
@@ -202,6 +238,18 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
     buy-every-bar first, trough precision second, exact accuracy nowhere --
     a run can raise 5-class accuracy by calling murk better and place zero
     better trades.
+
+    ``key`` names the layer being scored. It defaulted to L1 and was HARD-WIRED
+    to it until [a4ba2028]; any L2 arm run before that was scoring whatever
+    column the caller believed it was scoring while the code read L1. Passing
+    ``L2_WINNER`` here scores the shipped transition scheme and ``L2_CONTROL``
+    the rejected fixed-length one.
+
+    AN ARM OVER A LAYER WITH NO SUPPORTED TRAIN GROUP IS NOT SPENT. A layer
+    whose groups are all below ``min_support`` in the train window has nothing
+    to fit a motif->trough map ON, and scoring it anyway produces an abstention
+    that reads as a negative result. That case returns ``unspent`` with the
+    group census rather than a number.
     """
     train_stop = len(bars) - test - horizon - 1
     train_start = max(LOOKBACK_BARS, train_stop - train)
@@ -240,11 +288,37 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
 
     # FIT ON TRAIN ONLY. Any use of a test-window label here would be the
     # leak that makes every one of these numbers meaningless.
-    fit = label_skew(tr, "L1_cooccurrence", min_support=min_support)
+    fit = label_skew(tr, key, min_support=min_support)
     base = fit.get("base_trough", 0.0)
-    buyable = {g["frame"] for g in fit.get("groups", []) if g["lift"] >= min_lift}
+    supported = fit.get("groups", [])
 
-    called = [r for r in te if r["L1_cooccurrence"] in buyable]
+    # DO NOT SPEND AN ARM ON A LAYER WITH NOTHING TO FIT. With no train group
+    # at or above the support floor, ``buyable`` is empty by construction, the
+    # rule abstains on every test bar, and the printed "edge" is the baseline
+    # with a minus sign -- a fact about the support census reported as a fact
+    # about the market.
+    if not supported:
+        vocabulary = len({r[key] for r in tr})
+        biggest = max(Counter(r[key] for r in tr).values()) if tr else 0
+        return {
+            "key": key, "banding": "relative" if relative else "sign",
+            "margin": margin,
+            "train_window": [train_start, train_stop], "train_n": len(tr),
+            "test_window": [test_start, test_stop], "test_n": len(te),
+            "train_supported_groups": 0,
+            "train_vocabulary": vocabulary,
+            "train_largest_group": biggest,
+            "unspent": True,
+            "unspent_reason": (
+                f"{key} has NO group with n>={min_support} in the train "
+                f"window: {vocabulary} distinct frames over {len(tr)} labelled "
+                f"samples, largest {biggest}. There is nothing to fit a "
+                f"motif->trough map on, so the arm was not spent"),
+        }
+
+    buyable = {g["frame"] for g in supported if g["lift"] >= min_lift}
+
+    called = [r for r in te if r[key] in buyable]
     cost = ROUND_TRIP_COST
 
     def net(rows: Sequence[Mapping[str, Any]]) -> float:
@@ -264,11 +338,11 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
     # A crest that correctly calls a fall is worth money as an EXIT on a held
     # position, so it is scored against FORWARD RETURNS -- not by shorting,
     # which this lane cannot do.
-    crest_fit = label_skew(tr, "L1_cooccurrence", min_support=min_support,
+    crest_fit = label_skew(tr, key, min_support=min_support,
                            target=OMEN_CREST)
     sellable = {g["frame"] for g in crest_fit.get("groups", [])
                 if g["lift"] >= min_lift}
-    crest_called = [r for r in te if r["L1_cooccurrence"] in sellable]
+    crest_called = [r for r in te if r[key] in sellable]
 
     def fall_rate(rows: Sequence[Mapping[str, Any]]) -> float:
         """Share of bars whose forward return is negative.
@@ -292,10 +366,22 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
         # Named on the RESULT, not just in the invocation. Every stale number
         # this item exists to mark was stale because the report did not record
         # which encoder produced it.
+        # WHICH LAYER THIS NUMBER IS ABOUT, on the artifact rather than only in
+        # the invocation. A JSON file holding a held-out edge with no layer name
+        # is exactly how an L2 number and an L1 number get quoted as each other.
+        "key": key,
+        "unspent": False,
+        "train_supported_groups": len(supported),
         "banding": "relative" if relative else "sign",
         "band_streams": sorted(bands) if bands else [],
         "margin": margin,
+        # BOTH, and deliberately: ``l1_vocabulary_train`` keeps meaning the L1
+        # vocabulary whatever layer is being scored, because an existing test
+        # and existing artifacts read it under that name. The scored layer's
+        # own vocabulary is a separate field rather than the same name meaning
+        # two things depending on an argument.
         "l1_vocabulary_train": len({r["L1_cooccurrence"] for r in tr}),
+        "vocabulary_train": len({r[key] for r in tr}),
         "train_window": [train_start, train_stop], "train_n": len(tr),
         "test_window": [test_start, test_stop], "test_n": len(te),
         "train_base_trough": base,
@@ -328,7 +414,14 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
     }
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Split out from ``main`` so the DEFAULTS are testable without running.
+
+    The default is the whole measurement here: an L2 number built over a
+    margin-0 L1 describes an encoder the live path does not ship, and that is
+    exactly the configuration that blocked [fa75fa1a] in pass 111 while every
+    individual number in it was correct.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--horizon", type=int, default=12)
@@ -341,7 +434,8 @@ def main() -> int:
                              "abstracting. 0.75 is a quarter off the "
                              "vocabulary; anything gentler is a rounding "
                              "difference dressed up as a layer.")
-    parser.add_argument("--hysteresis", type=float, default=0.0,
+    parser.add_argument("--hysteresis", type=float,
+                        default=L1_HYSTERESIS_MARGIN,
                         help="L1 band STICKINESS, as a fraction of each "
                              "stream's own band width ([2a53f971]). A slot "
                              "holds its band until the score is pushed this "
@@ -351,7 +445,11 @@ def main() -> int:
                              "37.6%% DOWN / 38.2%% UP against 73.1%% / 74.0%% "
                              "at 0.0. Only meaningful with --relative-bands: "
                              "a stream with no fitted cut points has no band "
-                             "width to be sticky about.")
+                             "width to be sticky about. DEFAULTS TO THE "
+                             "SHIPPED L1_HYSTERESIS_MARGIN: judging a banding "
+                             "the live path does not ship is what produced the "
+                             "pass-111 block, and margin 0 is reachable by "
+                             "asking for it as the control arm.")
     parser.add_argument("--json-out", default=None)
     parser.add_argument("--heldout", action="store_true",
                         help="fit the motif->trough map on a train window and "
@@ -367,7 +465,11 @@ def main() -> int:
                              "still reachable and both can be measured on one "
                              "corpus. Under --heldout the cut points are "
                              "fitted on the TRAIN window only.")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     path = Path(args.corpus)
     symbol = path.stem.split("_", 1)[-1]
@@ -396,10 +498,19 @@ def main() -> int:
     print(f"encoder banding   : "
           f"{'RELATIVE (per-stream terciles)' if args.relative_bands else 'SIGN (absolute token signs)'}"
           f"{'  live slots %d/%d' % (len(corpus_bands), len(_BASELINE_STREAMS)) if corpus_bands else ''}")
+    # THE MARGIN IS PART OF EVERY L2 NUMBER BELOW, so it is printed whether or
+    # not it had an effect. A margin with no relative bands to be sticky about
+    # is inert, and saying "0.50 (INERT ...)" is the honest form of that --
+    # silently printing 0.50 beside sign banding would claim a sticky L1 the
+    # run did not have.
+    print(f"L1 hysteresis     : {args.hysteresis:.2f}"
+          f"{'' if args.relative_bands else '  (INERT: needs --relative-bands; a stream with no fitted cut points has no band width to be sticky about)'}"
+          f"{'  <- shipped L1_HYSTERESIS_MARGIN' if args.hysteresis == L1_HYSTERESIS_MARGIN and args.relative_bands else ''}")
 
     l0 = collection_distinctness([{k: v for k, v in r.items()
                                    if not k.startswith("L")} for r in rows])
-    layers = layer_distinctness(rows, keys=["L1_cooccurrence", "L2_sequence"])
+    layers = layer_distinctness(rows, keys=["L1_cooccurrence", L2_CONTROL,
+                                            L2_WINNER])
 
     print("\nL0 sensory distinctness (distinct frames / samples):")
     for name in sorted(l0, key=lambda k: -l0[k]):
@@ -413,18 +524,25 @@ def main() -> int:
     inputs = [l0[s] for s in _BASELINE_STREAMS if s in l0]
     baseline = sum(inputs) / len(inputs) if inputs else 0.0
     l1 = layers["L1_cooccurrence"]
-    l2 = layers["L2_sequence"]
+    l2_control = layers[L2_CONTROL]
+    l2 = layers[L2_WINNER]
 
     print(f"\nL1 input streams  : {', '.join(_BASELINE_STREAMS)}")
     print(f"L0 mean (inputs)  : {baseline:.4f}")
     print(f"L1 co-occurrence  : {l1:.4f}   "
           f"({l1 / baseline:.2f}x its input)" if baseline else "")
-    print(f"L2 motif sequence : {l2:.4f}   "
-          f"({l2 / l1:.2f}x L1)" if l1 else "")
+    print(f"L2 transitions    : {l2:.4f}   "
+          f"({l2 / l1:.2f}x L1)   <- SHIPPED" if l1 else "")
+    print(f"L2 sequence (CTL) : {l2_control:.4f}   "
+          f"({l2_control / l1:.2f}x L1)   <- REJECTED [fa75fa1a]" if l1 else "")
     print(f"L1 vocabulary     : {len({r['L1_cooccurrence'] for r in rows})} "
           f"distinct motifs over {n} samples")
-    print(f"L2 vocabulary     : {len({r['L2_sequence'] for r in rows})} "
-          f"distinct paths over {n} samples "
+    print(f"L2 vocabulary     : {len({r[L2_WINNER] for r in rows})} "
+          f"distinct transition frames over {n} samples "
+          f"({L2_TRANSITION_STEPS} kept symbols over a "
+          f"{L2_TRANSITION_WINDOW}-bar window)")
+    print(f"L2 control vocab  : {len({r[L2_CONTROL] for r in rows})} "
+          f"distinct fixed paths over {n} samples "
           f"({MOTIF_SEQUENCE_STEPS} steps)")
 
     top = Counter(r["L1_cooccurrence"] for r in rows).most_common(5)
@@ -454,6 +572,23 @@ def main() -> int:
                   f"the outcome, and it would DILUTE a query rather than "
                   f"sharpen it -- which distinctness alone cannot tell you.")
 
+    # THE SUPPORT CENSUS FOR L2, because the held-out arm below is spent or
+    # refused on exactly this number and a refusal nobody can see the reason
+    # for reads as a failure of the layer.
+    l2_skew = label_skew(rows, L2_WINNER)
+    if l2_skew.get("total"):
+        groups = l2_skew.get("groups", [])
+        print(f"\nL2 transition -> label skew (groups with n>=20 cover "
+              f"{l2_skew['covered']:.0%} of samples, {len(groups)} of them):")
+        for g in groups[:8]:
+            print(f"  {g['n']:>5} {g['share']:>6.1%} {g['trough_rate']:>6.1%} "
+                  f"{g['lift']:>5.2f}x {g['top_label']:>7} "
+                  f"{g['purity']:>6.1%}  {g['frame']}")
+        if not groups:
+            print("  NONE. Every L2 frame is below the support floor on this "
+                  "corpus, so there is nothing to fit a motif->trough map on "
+                  "and a held-out L2 arm must NOT be spent.")
+
     verdicts = []
     l1_ok = baseline > 0 and l1 <= baseline * args.margin
     verdicts.append(("L1", l1_ok, l1, baseline))
@@ -461,8 +596,12 @@ def main() -> int:
     # motifs is ALLOWED to be sharper than one motif (order adds information);
     # what it must not be is near-unique, which is the identifier trap that
     # took SEQUENCE_STEPS from 8 to 5 in omen_metacognition.
-    l2_ok = l2 <= 0.30
-    verdicts.append(("L2", l2_ok, l2, 0.30))
+    #
+    # JUDGED ON THE SHIPPED SCHEME. Until [a4ba2028] this exit code read
+    # L2_sequence -- the scheme [fa75fa1a] REJECTED -- so the gate refused the
+    # layer the live path ships on the number of the one it does not.
+    l2_ok = l2 <= IDENTIFIER_CEILING
+    verdicts.append(("L2", l2_ok, l2, IDENTIFIER_CEILING))
 
     print()
     for name, ok, value, against in verdicts:
@@ -474,12 +613,14 @@ def main() -> int:
               "so it has abstracted nothing and would cost a consolidation "
               "and a query per sample to re-say what L0 already says.")
     elif not l2_ok:
-        print(f"\nVERDICT: L1 ABSTRACTS, L2 DOES NOT. An L2 path at "
-              f"{l2:.4f} distinct per sample is approaching an identifier -- "
-              f"the trap that maximises train recall and destroys "
-              f"generalisation. Shorten MOTIF_SEQUENCE_STEPS "
-              f"(currently {MOTIF_SEQUENCE_STEPS}) and re-run before "
-              f"training on it.")
+        print(f"\nVERDICT: L1 ABSTRACTS, L2 DOES NOT. The shipped transition "
+              f"frame at {l2:.4f} distinct per sample is approaching an "
+              f"identifier -- the trap that maximises train recall and "
+              f"destroys generalisation. The lever is NOT the step count: "
+              f"[fa75fa1a] measured that L1's change rate is what decides "
+              f"this, so re-check --hysteresis (ran at "
+              f"{args.hysteresis:.2f}) and --relative-bands before training "
+              f"on it.")
     else:
         print("\nVERDICT: BOTH LAYERS ABSTRACT. Distinctness falls layer over "
               "layer, so each layer's vocabulary is smaller than its input's. "
@@ -487,21 +628,34 @@ def main() -> int:
               "they predict. Held-out edge in an UP and a DOWN window is "
               "still the only scoreboard.")
 
-    if args.heldout:
+    def run_arm(key: str, title: str) -> Dict[str, Any]:
         edge = heldout_edge(bars, symbol, args.chain, args.horizon,
                             args.train, args.test, args.min_lift,
                             args.min_support, relative=args.relative_bands,
-                            margin=args.hysteresis)
+                            margin=args.hysteresis, key=key)
         print("\n" + "=" * 70)
-        print("HELD-OUT EDGE OF THE L1 MOTIF ALONE -- no node, no fabric")
+        print(title)
         print("=" * 70)
         if edge.get("error"):
             print(f"  {edge['error']}")
+        elif edge.get("unspent"):
+            # THE ARM IS REFUSED, NOT FAILED, and the difference is the whole
+            # reason this branch prints a census instead of a number.
+            print(f"  ARM NOT SPENT: {edge['unspent_reason']}.")
+            print(f"  train bars {edge['train_window']} -> {edge['train_n']} "
+                  f"samples   (banding {edge['banding'].upper()}, hysteresis "
+                  f"{edge['margin']:.2f})")
+            print(f"  There is no held-out number here and none should be "
+                  f"quoted. Widen the train window or coarsen the layer; do "
+                  f"NOT lower --min-support to manufacture a group.")
         else:
             print(f"  encoder banding: {edge['banding'].upper()}  "
                   f"({len(edge['band_streams'])}/{len(_BASELINE_STREAMS)} "
-                  f"streams banded, train vocabulary "
-                  f"{edge['l1_vocabulary_train']} motifs)")
+                  f"streams banded, hysteresis {edge['margin']:.2f}, "
+                  f"{edge['key']} train vocabulary "
+                  f"{edge['vocabulary_train']} frames, "
+                  f"{edge['train_supported_groups']} of them with "
+                  f"n>={args.min_support})")
             if edge["unmeasurable"]:
                 print(f"  *** UNMEASURABLE, NOT NEGATIVE: "
                       f"{edge['unmeasurable_reason']}. Any 'edge' printed "
@@ -554,19 +708,45 @@ def main() -> int:
                 print(f"\n  AT OR BELOW BASELINE in this window. That is the "
                       f"normal outcome here and it is a finished measurement, "
                       f"not a failed one.")
+        return edge
+
+    if args.heldout:
+        edge = run_arm("L1_cooccurrence",
+                       "HELD-OUT EDGE OF THE L1 MOTIF ALONE -- no node, no "
+                       "fabric")
+        # THE L2 ARM, AND IT READS THE SHIPPED SCHEME. Run unconditionally at
+        # this level because ``heldout_edge`` itself refuses to spend an arm
+        # with no supported train group -- the decision belongs next to the
+        # census it is made from, not to a caller that would have to
+        # re-measure it.
+        l2_edge = run_arm(L2_WINNER,
+                          f"HELD-OUT EDGE OF THE SHIPPED L2 ({L2_WINNER}) -- "
+                          f"no node, no fabric")
         if args.json_out:
             edge_path = str(args.json_out).replace(".json", "-heldout.json")
             Path(edge_path).write_text(json.dumps(edge, indent=2),
                                        encoding="utf-8")
-            print(f"\nwrote {edge_path}")
+            l2_path = str(args.json_out).replace(".json", "-l2-heldout.json")
+            Path(l2_path).write_text(json.dumps(l2_edge, indent=2),
+                                     encoding="utf-8")
+            print(f"\nwrote {edge_path}\nwrote {l2_path}")
 
     if args.json_out:
         Path(args.json_out).write_text(json.dumps({
             "corpus": path.name, "samples": n, "horizon": args.horizon,
             "l0": l0, "l0_mean_inputs": baseline,
             "l1": l1, "l2": l2,
+            # The rejected control, named as such on the artifact. Until
+            # [a4ba2028] "l2" in this file WAS the rejected scheme under an
+            # unqualified name.
+            "l2_scheme": L2_WINNER,
+            "l2_control_scheme": L2_CONTROL,
+            "l2_control": l2_control,
+            "hysteresis": args.hysteresis,
             "l1_vocabulary": len({r["L1_cooccurrence"] for r in rows}),
-            "l2_vocabulary": len({r["L2_sequence"] for r in rows}),
+            "l2_vocabulary": len({r[L2_WINNER] for r in rows}),
+            "l2_control_vocabulary": len({r[L2_CONTROL] for r in rows}),
+            "l2_supported_groups": len(l2_skew.get("groups", [])),
             "l1_abstracts": l1_ok, "l2_abstracts": l2_ok,
         }, indent=2), encoding="utf-8")
         print(f"\nwrote {args.json_out}")
