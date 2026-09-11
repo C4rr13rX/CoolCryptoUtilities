@@ -366,9 +366,191 @@ def census(bars, *, symbol: str, chain: str, horizon: int, start: int,
     return out
 
 
+def run_arm(args) -> int:
+    """Base pairs, optionally plus admitted mutations, scored held-out.
+
+    ONE WINDOW PER INVOCATION, deliberately. The second window must reuse the
+    SAME fabric via --skip-train: this node gave 89.2% and 93.6% on identical
+    inputs thirty-four minutes apart, so two windows measured on two fabrics
+    are not comparable and the UP/DOWN rule would be decoration.
+    """
+    import time as _time
+
+    from scripts.omen_experiment import (bar_seconds, balance, build_samples,
+                                         fabric_census, fabric_is_empty,
+                                         load_bars, plan_windows,
+                                         window_regime)
+    from trading.omen_brain import ROUND_TRIP_COST, OmenBrain
+
+    path = Path(args.corpus)
+    symbol = path.stem.split("_", 1)[-1]
+    bars = load_bars(path)
+    cadence = bar_seconds(bars)
+    rng = random.Random(args.seed)
+
+    refused = [k for k in args.mutate if not MUTATIONS[k][2]]
+    if refused:
+        for kind in refused:
+            print(f"REFUSING {kind}: {MUTATIONS[kind][3]}")
+        return 2
+    kinds = list(args.mutate)
+
+    plan = plan_windows(len(bars), args.train, args.test, args.horizon,
+                        train_end=args.train_end, test_end=args.test_end)
+    train_samples = build_samples(bars, symbol, args.chain, args.horizon,
+                                  plan["train_start"], plan["train_stop"])
+    test_samples = build_samples(bars, symbol, args.chain, args.horizon,
+                                 plan["test_start"], plan["test_stop"])
+    regime = window_regime(bars, plan["test_start"], plan["test_stop"],
+                           args.horizon)
+    balanced = balance(train_samples, rng)
+
+    pairs = [{"frames": s["frames"], "label": s["label"],
+              "regime": s["regime"], "kind": "base"} for s in balanced]
+    poisoned = 0
+    for kind in kinds:
+        for sample in balanced:
+            mutant = mutated_sample(bars, sample["index"],
+                                    horizon=args.horizon, symbol=symbol,
+                                    chain=args.chain, kind=kind, rng=rng)
+            if mutant is None:
+                continue
+            # Belt and braces. The arithmetic says a deep mutation cannot move
+            # the label; if one ever does, the pair is DROPPED rather than
+            # taught, and the count is reported.
+            if mutant["mutated_label"] != mutant["label"]:
+                poisoned += 1
+                continue
+            pairs.append({"frames": mutant["frames"], "label": mutant["label"],
+                          "regime": mutant["regime"], "kind": kind})
+    rng.shuffle(pairs)
+
+    arm_name = ("base+" + "+".join(kinds)) if kinds else "base"
+    print(f"ARM {arm_name}")
+    print(f"  train [{plan['train_start']}, {plan['train_stop']}) -> "
+          f"{len(balanced)} base samples -> {len(pairs)} pairs "
+          f"({len(kinds)} mutations, {poisoned} poisoned dropped)")
+    print(f"  test  [{plan['test_start']}, {plan['test_stop']}) -> "
+          f"{len(test_samples)} samples, window is {regime['regime']} "
+          f"(up-rate {regime['up_rate']:.1%}, mean forward "
+          f"{regime['mean_forward']:+.4%})")
+    print(f"  train label mix: {dict(Counter(p['label'] for p in pairs))}")
+    if args.dry_run:
+        print("  --dry-run: nothing sent to the node")
+        return 0
+
+    brain = OmenBrain(endpoint=args.endpoint)
+    if not brain.supports_multi():
+        print("FAIL: node has no /brain/predict/multi -- stale binary or port")
+        return 3
+    before = fabric_census(args.endpoint)
+    print(f"  fabric before: neurons={before.get('total_neurons')} "
+          f"concepts={before.get('total_concepts')} @ {before.get('endpoint')}")
+    if not args.skip_train and not fabric_is_empty(before):
+        print("REFUSING TO TRAIN: this fabric is not clean. Whatever it "
+              "learned before is inside every number this run would report. "
+              "Start a node on a FRESH brain dir, or pass --skip-train to "
+              "re-measure the fabric already there.")
+        return 5
+
+    started = _time.time()
+    if args.skip_train:
+        print("  skipping training -- re-measuring the fabric on the node")
+    else:
+        for count, pair in enumerate(pairs, 1):
+            brain.train(pair["frames"], pair["label"], pair["regime"])
+            if count % 200 == 0:
+                print(f"    trained {count}/{len(pairs)} "
+                      f"({count / max(1e-9, _time.time() - started):.1f}/s)")
+        print(f"  trained {brain.trained_pairs} pairs, {brain.failed_pairs} "
+              f"failed, in {(_time.time() - started) / 60:.1f} min")
+
+    def ask(frames, ts, price, regime_name):
+        return brain.predict(frames, symbol=symbol, chain=args.chain,
+                             as_of_ts=ts, price=price,
+                             horizon_bars=args.horizon, bar_seconds=cadence,
+                             regime=regime_name)
+
+    # RECALL over BASE pairs only. Reproducing a mutation is not what we want
+    # and scoring it would inflate the one number the item forbids leading on.
+    base_pairs = [p for p in pairs if p["kind"] == "base"]
+    recall_set = rng.sample(base_pairs, min(args.recall_sample, len(base_pairs)))
+    hits = answered = 0
+    for pair in recall_set:
+        omen = ask(pair["frames"], 0, 1.0, pair["regime"])
+        if omen.verdict == "split":
+            continue
+        answered += 1
+        hits += omen.omen == pair["label"]
+    recall = hits / max(1, answered)
+
+    exact = admitted = 0
+    trades: List[float] = []
+    buy_calls = buy_true_trough = 0
+    sell_calls = sell_paid = 0
+    for sample in test_samples:
+        omen = ask(sample["frames"], sample["ts"], sample["price"],
+                   sample["regime"])
+        if omen.verdict == "admitted":
+            admitted += 1
+            exact += omen.omen == sample["label"]
+        if omen.is_actionable and omen.action == "buy":
+            buy_calls += 1
+            buy_true_trough += sample["label"] == "trough"
+            trades.append(sample["forward"] - ROUND_TRIP_COST)
+        if omen.is_actionable and omen.action == "sell":
+            # The live lane is long-only so a crest is an abstention, not a
+            # short -- but a crest that correctly calls a fall is worth money
+            # as an EXIT, and that half is otherwise measured nowhere.
+            sell_calls += 1
+            sell_paid += sample["forward"] < 0
+    truth = Counter(s["label"] for s in test_samples)
+    majority = max(truth.values()) / max(1, len(test_samples))
+    every_bar = [s["forward"] - ROUND_TRIP_COST for s in test_samples]
+    heldout = exact / max(1, len(test_samples))
+
+    result = {
+        "arm": arm_name, "corpus": str(path), "symbol": symbol,
+        "horizon": args.horizon,
+        "train_window": [plan["train_start"], plan["train_stop"]],
+        "test_window": [plan["test_start"], plan["test_stop"]],
+        "heldout_regime": regime["regime"],
+        "heldout_window_up_rate": regime["up_rate"],
+        "base_samples": len(balanced), "trained_pairs": len(pairs),
+        "mutations": kinds, "poisoned_dropped": poisoned,
+        "train_recall": recall, "recall_answered": answered,
+        "heldout_exact_accuracy": heldout,
+        "heldout_admitted": admitted, "heldout_total": len(test_samples),
+        "majority_baseline": majority,
+        "recall_generalisation_gap": recall - heldout,
+        "buy_omens": buy_calls,
+        "trough_precision": buy_true_trough / max(1, buy_calls),
+        "buy_net_per_trade": (sum(trades) / len(trades)) if trades else None,
+        "every_bar_net_per_trade": sum(every_bar) / max(1, len(every_bar)),
+        "crest_omens": sell_calls,
+        "crest_precision": sell_paid / max(1, sell_calls),
+        "skipped_training": args.skip_train,
+        "fabric_before": before,
+    }
+    print(f"\n  train_recall              {recall:.4f} ({answered} answered)")
+    print(f"  held-out exact            {heldout:.4f} vs majority {majority:.4f}")
+    print(f"  RECALL-GENERALISATION GAP {recall - heldout:+.4f}  "
+          f"<- the number this item moves")
+    print(f"  buy omens {buy_calls}, trough precision "
+          f"{result['trough_precision']:.4f}, net/trade "
+          + (f"{result['buy_net_per_trade']:+.4%}" if trades else "n/a")
+          + f" vs every-bar {result['every_bar_net_per_trade']:+.4%}")
+    print(f"  crest omens {sell_calls}, crest precision "
+          f"{result['crest_precision']:.4f}")
+    if args.report:
+        Path(args.report).write_text(json.dumps(result, indent=2))
+        print(f"  wrote {args.report}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["census"])
+    parser.add_argument("mode", choices=["census", "arm"])
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--horizon", type=int, default=12)
     parser.add_argument("--chain", default="base")
@@ -380,7 +562,21 @@ def main() -> int:
                         metavar="KIND=VALUE",
                         help="override a mutation's strength, repeatable")
     parser.add_argument("--report", default=None,
-                        help="write the census JSON here")
+                        help="write the result JSON here")
+    parser.add_argument("--mutate", action="append", default=[],
+                        choices=list(MUTATIONS),
+                        help="arm mode: add this mutation of every base pair")
+    parser.add_argument("--train", type=int, default=600)
+    parser.add_argument("--test", type=int, default=120)
+    parser.add_argument("--train-end", type=int, default=None)
+    parser.add_argument("--test-end", type=int, default=None)
+    parser.add_argument("--recall-sample", type=int, default=100)
+    parser.add_argument("--endpoint", default=None)
+    parser.add_argument("--skip-train", action="store_true",
+                        help="re-measure the fabric already on the node -- how "
+                             "the second window is made comparable to the first")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="size the arm and send the node nothing")
     args = parser.parse_args()
 
     strengths: Dict[str, float] = {}
@@ -390,6 +586,9 @@ def main() -> int:
             print(f"unknown mutation {kind!r}; known: {list(MUTATIONS)}")
             return 2
         strengths[kind] = float(value)
+
+    if args.mode == "arm":
+        return run_arm(args)
 
     path = Path(args.corpus)
     symbol = path.stem.split("_", 1)[-1]
