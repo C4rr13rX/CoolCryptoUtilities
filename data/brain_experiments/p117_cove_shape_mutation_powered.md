@@ -121,7 +121,7 @@ Two things in the item's description were not delivered:
 ## Commands
 
 ```
-python "<scratchpad>/window_census.py" 2600 2000      # window choice, node-free
+python -X utf8 scripts/omen_regime_window_census.py 2600 2000   # window choice, node-free
 
 python -X utf8 scripts/omen_shape_mutations.py arm \
   --corpus data/historical_ohlcv/base/0004_AERO-USDC.json --horizon 12 \
