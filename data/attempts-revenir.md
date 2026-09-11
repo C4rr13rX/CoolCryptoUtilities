@@ -5197,3 +5197,20 @@ problem and no resampling fixes a hole. Wider is monotonically better and
 3600s is still both the best width and the training cadence.
 NEXT: --live-hours now defaults to 48 with the reason in the code; do not
 lower it. If a sweep row reads exactly 1.000, check its denominator.
+
+2026-09-10 Jet (senior, pass 114) -- HYPOTHESIS: --horizon 12 is not one
+question, and the reports that record it cannot be compared across corpora.
+DID: shipped --horizon-minutes as omen_experiment's default unit (720.0 = the
+old 12 bars on the 3600s cadence), resolve_horizon converting per corpus,
+validate_report_horizon refusing a report missing horizon_minutes /
+horizon_bars / bar_seconds at write time, and a 629-file cadence census.
+RESULT as numbers: 629 files -- 3600s x466, 300s x65, 600s x27, 900s x7,
+7200s x4; 567 eligible, 62 excluded (31 cadence changes mid-file above a 1.25x
+drift bound, 31 too sparse to measure). 10 tests pass, gate OK, 03ffa58.
+SECOND RESULT, found by checking rather than assuming: 65 of 92 files in
+data/brain_experiments had NEVER been committed because .gitignore excluded
+the directory, so every "commit the report" instruction was a silent no-op.
+Nine orphaned reports committed; JSON sweeps stay ignored.
+NEXT: the fix covers ONE OF NINE harnesses -- filed [0c022bd0]. And free RAM
+is 3895 MB against the node's 4096 MB floor, so [beec23cc] gates the brain
+lane and is the thing to do first.
