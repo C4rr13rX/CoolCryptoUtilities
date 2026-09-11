@@ -322,6 +322,40 @@ class Strategy(ABC):
             return None
         if target_price <= 0 or expected_return <= 0:
             return None
+        # A CONTAMINATED WINDOW BUYS THE BIGGEST CLIP. Several strategies price
+        # their edge as a ratio over the recent window -- obv_accumulation uses
+        # `(recent_high - last_price) / last_price` -- so ONE bar from a foreign
+        # price regime under the same ticker does not produce a slightly wrong
+        # forecast, it produces an unbounded one. Measured over the 7 days to
+        # 2026-09-11 on the 123 directive-path entries (the path that placed
+        # every live entry in that window):
+        #
+        #     expected_return       entries
+        #       < 5%                     60
+        #       5% .. 20%                54
+        #       20% .. 50%                7
+        #       50% .. 100%               0
+        #       100% .. 1000%             1   VIRTUAL-USDC, obv_accumulation@1w
+        #       >= 1000%                  1   CLANKER-USDC, obv_accumulation@3d
+        #
+        # That last one is `expected_return = 12551318.65` -- 1.25 BILLION
+        # percent, at an entry price of 1.023e-06 -- and it ENTERED. It clears
+        # every downstream test by construction: `_lattice_refusal`'s
+        # probability layer compares the forecast against the round-trip cost,
+        # so an absurd forecast passes the only cost test on the directive path
+        # trivially, and `_size_enter` below scales the clip with
+        # `expected_return - fee_rate`, so the garbage row also asks for the
+        # LARGEST position the sizer will grant.
+        #
+        # The bound is deliberately far above anything this feed has legitimately
+        # produced (the largest plausible row measured is 110.95%) and far below
+        # the contaminated one. It refuses 1 of 123 entries (0.8%) on that
+        # window, so it cannot become the reason nothing trades -- and it is a
+        # plausibility test, not a cost test: the one cost formula stays in
+        # services/roundtrip_cost.py and nothing here duplicates it.
+        max_expected = env_float("STRATEGY_MAX_EXPECTED_RETURN", 2.0, lo=0.05, hi=100.0)
+        if expected_return > max_expected:
+            return None
         confidence = max(0.01, min(1.0, float(confidence)))
         if action == "enter":
             requested_quote = ctx.available_quote if quote_size is None else float(quote_size)
