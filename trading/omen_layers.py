@@ -149,6 +149,29 @@ L2_TRANSITION_STEPS = 2
 #: property criterion 3 asks for is "did this regime hold or did it churn", and
 #: at the shipped window of 12 bars this says held when at most one change
 #: occurred across all eleven adjacencies.
+#:
+#: THIS CUT IS MEASURED AT A WINDOW OF 12 AND IT DOES NOT TRAVEL. Swept the
+#: same way across window lengths, worst of both corpora:
+#:
+#:     window   changes/adjacency step   (0.10,)   (0.15,) SHIPPED
+#:      8       1/7 = 0.1429             0.2683    0.3100  FAILS
+#:     12       1/11 = 0.0909            0.2800    0.2800  passes
+#:     20       1/19 = 0.0526            0.2667    0.2700  passes
+#:
+#: A RATE DOES NOT MAKE THE CUT WINDOW-FREE, and the reason is quantisation
+#: rather than anything subtle: the rate can only take values k/(n-1), so which
+#: side of the cut "one change" falls on is a function of the window. At 12 and
+#: 20 one change is held; at 8 it is 0.1429 and lands ABOVE 0.15, so the held
+#: band collapses to "no change at all", the buckets split differently and the
+#: frame goes over the ceiling.
+#:
+#: SO DO NOT CHANGE THE WINDOW WITHOUT RE-SWEEPING THIS, and do not read the
+#: window-8 row as a reason to lower the cut to 0.10: at a window of 8 that
+#: puts one change ABOVE the held band and a persistent regime stops being
+#: distinguishable from an alternating one, which is the property the symbol
+#: exists for. The two constraints pull opposite ways and 12 is where both are
+#: satisfied. Pinned by
+#: tests/test_an_l2_scheme_must_keep_the_order_it_exists_to_carry.py.
 L2_CHURN_CUTS = (0.15,)
 
 #: How sticky L1's bands are, as a fraction of each band's own width.

@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from trading.omen_layers import L2_TRANSITION_STEPS, churn_band, relative_bands
+from trading.omen_layers import (
+    L2_CHURN_CUTS, L2_TRANSITION_STEPS, churn_band, relative_bands,
+)
 from scripts.omen_l2_scheme_probe import (
     IDENTIFIER_CEILING, run_length_motif, transition_motif,
 )
@@ -217,3 +219,41 @@ def test_hysteresis_can_only_reduce_the_change_rate():
         return sum(1 for a, b in zip(motifs, motifs[1:]) if a != b)
 
     assert change_rate(1.0) <= change_rate(0.5) <= change_rate(0.0)
+
+
+def test_one_change_is_held_at_the_window_the_cut_was_measured_under():
+    """The churn cut is measured at a window of 12 and it does not travel.
+
+    A rate does not make the cut window-free, and the reason is quantisation
+    rather than anything subtle: the rate can only take the values k/(n-1), so
+    which side of the cut "one change" falls on is a function of the window.
+    At 12 bars one change is 1/11 = 0.0909 and reads HELD; at 8 bars it is
+    1/7 = 0.1429 and lands above the shipped 0.15, so the held band collapses
+    to "no change at all" and the frame's distinctness goes over the ceiling
+    (measured 0.3100 at window 8 against 0.2800 at 12).
+
+    This test fails if anyone moves the cut or the window without re-sweeping,
+    which is the only way that interaction gets noticed -- it is invisible in
+    every synthetic that happens to use a length where the two agree.
+    """
+    window = 12
+    held = [A] * (window - 1) + [B]          # exactly one change in 12 bars
+    assert churn_band(held) == churn_band([A] * window), (
+        "one change over the shipped window no longer reads as HELD, so the "
+        "churn cut and the window have drifted apart and L2_CHURN_CUTS must "
+        "be re-swept")
+    assert churn_band(held) != churn_band([A, B] * (window // 2)), (
+        "a regime that changed once and one that alternated every bar read "
+        "the same churn band; the symbol has stopped carrying dwell")
+
+
+def test_the_churn_cut_is_a_single_cut_because_three_buckets_failed():
+    """Two buckets, not three, and the reason is measured rather than taste.
+
+    Three buckets read 0.3433 worst-of-both against the 0.30 ceiling -- the
+    alphabet cannot afford a second cut. If someone adds one, the guard breaks
+    and this says so before a node arm is spent on it.
+    """
+    assert len(L2_CHURN_CUTS) == 1, (
+        "L2_CHURN_CUTS gained a cut point; three buckets measured 0.3433 "
+        "against the 0.30 ceiling, so re-sweep before shipping this")

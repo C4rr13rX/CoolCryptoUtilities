@@ -31,7 +31,9 @@ alphabet once per position and reads **0.7117 DOWN / 0.5983 UP** against the
 `changes / adjacencies`, banded. The alphabet then grows by a bounded factor of
 at most `len(cuts)+1` however many symbols the path keeps, and in practice by
 far less because churn and path are correlated. A rate rather than a count, so
-the symbol means the same thing at any window length.
+the symbol's MEANING does not shift with the window — though see Result 5,
+which measures that its COST does, and corrects an earlier claim in this report
+that the rate made it window-free.
 
     co2t path=hlmhl|lhlmh chn=lo     persistent
     co2t path=hlmhl|lhlmh chn=mid    alternating
@@ -141,3 +143,44 @@ claimed and none was measured.
     python -X utf8 -m pytest \
         tests/test_an_l2_scheme_must_keep_the_order_it_exists_to_carry.py \
         tests/test_the_l2_gate_must_judge_the_banding_the_live_path_ships.py -q
+
+## Result 5 — the cut does NOT travel across window lengths, and this argues against my own constant
+
+Added after the fact, because the obvious next question about a constant chosen
+on one setting is whether it survives the others. Same sweep, same corpora, same
+process, at three window lengths (worst of both windows):
+
+    window   one change reads   (0.10,)   (0.15,) SHIPPED
+     8       0.1429             0.2683    0.3100  FAILS the ceiling
+    12       0.0909             0.2800    0.2800  passes
+    20       0.0526             0.2667    0.2700  passes
+
+**A rate does not make the cut window-free.** The reason is quantisation, not
+anything subtle: the rate can only take the values `k/(n-1)`, so which side of
+the cut *one change* falls on is a function of the window. At 12 and 20 bars one
+change is held; at 8 bars it is 0.1429, lands above 0.15, the held band
+collapses to "no change at all", the buckets split differently and the frame
+goes over the ceiling.
+
+And the window-8 row is **not** an argument for lowering the cut to 0.10: at a
+window of 8 that puts one change above the held band, so a persistent regime
+stops being distinguishable from an alternating one — the property the symbol
+exists for. The two constraints pull opposite ways, and 12 is where both hold.
+
+So `L2_CHURN_CUTS = (0.15,)` is correct **at the shipped window of 12** and is
+not a free constant. Pinned by
+`test_one_change_is_held_at_the_window_the_cut_was_measured_under`, which fails
+if either the cut or the window moves without a re-sweep. This interaction is
+invisible in any synthetic that happens to use a length where the two agree,
+which is why it is a test and not a comment.
+
+    for W in 8 12 20; do python -X utf8 scripts/omen_l2_scheme_probe.py \
+        --corpus data/brain_experiments/p108_aero_down.json \
+        --corpus data/brain_experiments/p108_aero_up.json --window $W; done
+
+## Still unmeasured, stated so nobody reads this as broader than it is
+
+Every number here is AERO-USDC on base. `p108_aero_up/down` are the only bar
+corpora in `data/brain_experiments/`, so **the churn cut has not been tested on
+a second pair** and could be fitted to this one. That is the first thing to do
+to this encoder, and it is node-free.
