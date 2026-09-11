@@ -115,7 +115,11 @@ The directive-driven entry path (`directive.action == "enter"`) is an `elif`
 conjunction and this conjunct does not bind on it. That is the path
 `atf_static` actually trades. Filed separately.
 
-## Addendum — price_mu is a z-score, not a return ([1b0fd55f])
+## Addendum — price_mu's distribution, and a wrong reading of it I then corrected ([1b0fd55f])
+
+The heading of this section originally read "price_mu is a z-score, not a
+return". That is WRONG and the correction is two subsections below. The
+distribution itself stands.
 
 Measured on the same newest 5,000 cycles, the full distribution of `delta`:
 
