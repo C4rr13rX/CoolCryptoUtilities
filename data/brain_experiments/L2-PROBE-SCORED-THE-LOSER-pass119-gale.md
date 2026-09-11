@@ -114,19 +114,45 @@ UP window calls zero bars, so it is unmeasurable there -- one window is not
 evidence, and a rule that only fires in a falling market has not been shown to
 generalise.
 
+## (5) THE SUPPORT FAMINE IS A CORPUS-LENGTH PROBLEM, AND IT DISSOLVES
+
+Measured after the tables above, on `data/historical_ohlcv/base/0004_AERO-USDC.json`
+(21926 bars, same encoder: horizon 12, relative bands fitted on each window,
+hysteresis 0.50). This is a SUPPORT CENSUS, not an edge measurement -- it makes
+no claim about the market and therefore needs no UP/DOWN split.
+
+| train samples | L1 vocab | L1 groups n>=20 | L2 vocab | L2 largest group | L2 groups n>=20 |
+|---|---|---|---|---|---|
+| 350 | 59 | 3 | 121 | 28 | 1 |
+| 1000 | 104 | 12 | 281 | 24 | 1 |
+| 2000 | 160 | 27 | 486 | 87 | 6 |
+| 4000 | 180 | 57 | 796 | 140 | 23 |
+
+L2's vocabulary grows roughly linearly with samples while its largest group
+grows FASTER -- 28 -> 140 for a 11.4x increase in samples -- so the frame is
+not an identifier that dilutes forever; it is a real grouping that the 900-bar
+p108 corpora simply cannot fill. At 4000 train samples there are 23 supported
+L2 groups, against 0 at the 350-539 the p108 windows allow.
+
+**So the next L2 arm is worth spending, and it should be spent on a long
+corpus rather than on p108.** It still needs an UP window and a DOWN window
+chosen honestly -- this table establishes only that the arm will have something
+to fit, which is the thing that was missing.
+
 ## WHAT TO DO NEXT, AND WHAT NOT TO
 
 * **Do not lower `--min-support`.** Manufacturing a group of 12 to have a
   number is how this repo's fake edges were made. The probe now refuses the arm
   and says so.
-* The lever is **more samples per frame**, which means either a longer corpus
-  (the base OHLCV set has 20k-26k bar corpora sitting in
-  `data/historical_ohlcv/base`) or a coarser L2. A higher hysteresis margin
-  (0.75 took L2 to 0.2267 / 0.1633 in [fa75fa1a]'s table) coarsens L1 and
-  therefore L2, at the cost of L1's own vocabulary.
-* **Do not spend a node arm on L2 yet.** There is nothing for a fabric to find
-  in a frame with no supported group; that is the cheaper answer to have got
-  wrong.
+* The lever is **more samples per frame**, and section (5) shows a longer
+  corpus supplies them: 23 supported L2 groups at 4000 train samples against 0
+  at 539. Coarsening L2 instead (hysteresis 0.75 took it to 0.2267 / 0.1633 in
+  [fa75fa1a]'s table) is the fallback, and it costs L1 vocabulary, so try the
+  corpus first.
+* **A node arm on L2 is now worth spending, but not on p108.** Pick an UP and a
+  DOWN window out of a 20k-bar corpus with at least ~2000 train samples, and
+  run the node-free held-out arm in this probe first -- it costs seconds and a
+  negative there means there is nothing for a fabric to find.
 
 ## COMMANDS THAT PROVE EACH PART
 
