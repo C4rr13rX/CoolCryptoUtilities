@@ -75,12 +75,32 @@ def _b64url_decode(s: str) -> str:
     return base64.urlsafe_b64decode(s + pad).decode("utf-8", errors="replace")
 
 
+def resolve_node_endpoint(target: Optional[str], default_port: int) -> Tuple[str, int]:
+    """Resolve an endpoint string to ``(host, port)`` without guessing.
+
+    ``urlparse("127.0.0.1:8092")`` yields ``hostname=None, port=None`` --
+    a scheme-less authority is parsed as a path, not as a host and port.
+    Every node client here then fell back to its own default port, so a
+    caller that named a port got a DIFFERENT node and was told nothing:
+    an experiment aimed at a fresh fabric on :8092 trained whatever was on
+    :8091, censused :8091 too, and reported a self-consistent set of
+    numbers about the wrong brain. A port that was named is honoured;
+    only a target naming no port at all falls back to ``default_port``.
+    """
+    raw = (target or "").strip()
+    if not raw:
+        return ("127.0.0.1", default_port)
+    if "//" not in raw:
+        # "8092" is a bare port; "127.0.0.1:8092" and ":8092" are authorities.
+        raw = "http://127.0.0.1:" + raw if raw.isdigit() else "http://" + raw
+    parsed = urlparse(raw)
+    return (parsed.hostname or "127.0.0.1", parsed.port or default_port)
+
+
 class BrainBridge:
     def __init__(self, endpoint: Optional[str] = None, timeout: float = 30.0) -> None:
         ep = endpoint or os.getenv("BRAIN_ENDPOINT", "http://127.0.0.1:8090")
-        u = urlparse(ep)
-        self._host = u.hostname or "127.0.0.1"
-        self._port = u.port or 8090
+        self._host, self._port = resolve_node_endpoint(ep, 8090)
         # A loaded brain (3M+ concepts) routinely takes 1-5s per
         # /brain/observe — emergence-check scan over recent_atoms. The
         # default 5s was tripping on every other call; 30s is the safe

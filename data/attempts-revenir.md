@@ -5539,3 +5539,40 @@ Dense(2), strongly via net_margin MSE at loss_weight 1.0. A weight-1.0 MSE
 against a 0.0036 label cannot leave the head at 1.40 if it converged. Compare
 the 2026-09-11 01:57 artifact's training history against the 2026-09-10 one.
 Report: data/brain_experiments/price-mu-calibration-pass117.md
+
+2026-09-11 — Cove, pass 117 — [f4c0975a] Power the shape-mutation arm
+
+HYPOTHESIS: pass 112's "mutations narrow the recall-generalisation gap"
+(+0.0250 UP, +0.0333 DOWN) was three and four bars on 120 test bars. Powered
+to 400 test bars in both directions, the direction should hold if it is real.
+
+DID: base (298 pairs) vs base+deep_jitter+deep_dilate (894 pairs), two FRESH
+fabrics censused neurons=0 (:8092 brain-data-p117b-cove-base, :8093
+brain-data-p117b-cove-mut, pool_count 12), AERO-USDC hourly, horizon 12 bars,
+train [2300,2600), held-out UP [3568,3968) up-rate 63.5% and DOWN [3168,3568)
+up-rate 32.0%, 400 bars each, 400/400 admitted, both windows read off one
+fabric per arm via --skip-train.
+
+RESULT — IT INVERTS. Held-out exact FELL 0.3400 -> 0.2950 in UP and
+0.2825 -> 0.2375 in DOWN: -0.0450 in both, which is EIGHTEEN bars each, same
+sign in an up and a down window. The gap widened +0.6600 -> +0.6950 and
++0.7175 -> +0.7525. Recall 1.0000 -> 0.9900, so the widening is held-out
+falling, not recall rising. Both arms are below their majority baselines
+(0.4225, 0.4300) in both windows. poisoned_dropped 0 in all four cells.
+Crest precision is 0.45-0.54 on 24-53 omens, retiring pass 112's 1.0000 on 9.
+
+ALSO: --endpoint 127.0.0.1:8092 silently meant :8091 (scheme-less urlparse
+gives hostname None, port None). Fixed with one shared resolver in
+trading/brain_bridge.resolve_node_endpoint, used by OmenBrain too; on
+BrainBridge that default port is 8090, production. Test:
+tests/test_a_scheme_less_endpoint_is_not_silently_another_node.py, 8 passed.
+
+MEASURED, CONTRADICTING THE BACKLOG: the node trains at 18.9 pairs/s on an
+EMPTY fabric and decays as it fills — 17.7, 12.6, 9.9, 8.2 at the
+200/400/600/800 marks of an 894-pair arm. The item's "24 pairs/s" sized a
+2000-pair arm at 1.6 min; the real figure is 18-25 min for the mutated arm,
+which is why train 2000 and the deep_flatten arm were killed, not delivered.
+
+NEXT: stop adding pairs. Eleven flat SensoryInput pools cannot represent
+"these two frames are the same shape" — try an Internal pool carrying that
+relation instead.

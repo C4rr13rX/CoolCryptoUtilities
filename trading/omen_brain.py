@@ -84,6 +84,8 @@ from http.client import HTTPConnection, BadStatusLine, RemoteDisconnected
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
+from trading.brain_bridge import resolve_node_endpoint
+
 try:  # the cost bar is the books', not ours
     from services.symbol_edge_gate import ROUND_TRIP_COST
 except Exception:  # pragma: no cover - import-order safety only
@@ -979,6 +981,17 @@ def _b64url_decode(text: str) -> str:
     return base64.urlsafe_b64decode(text + pad).decode("utf-8", errors="replace")
 
 
+def resolve_omen_endpoint(target: Optional[str]) -> Tuple[str, int]:
+    """Resolve an omen endpoint to ``(host, port)``, defaulting to :8091.
+
+    One resolver, shared with :class:`trading.brain_bridge.BrainBridge`,
+    because the bug it fixes was the same code written twice: a
+    scheme-less ``--endpoint 127.0.0.1:8092`` parsed to no host and no
+    port, fell back to :8091, and trained the wrong node in silence.
+    """
+    return resolve_node_endpoint(target, 8091)
+
+
 class OmenBrain:
     """Client for the omen node: chained multi-pool train and predict.
 
@@ -990,9 +1003,7 @@ class OmenBrain:
     def __init__(self, endpoint: Optional[str] = None, timeout: float = 30.0,
                  degenerate_window: int = 32) -> None:
         target = endpoint or os.getenv("OMEN_BRAIN_ENDPOINT", "http://127.0.0.1:8091")
-        parsed = urlparse(target)
-        self._host = parsed.hostname or "127.0.0.1"
-        self._port = parsed.port or 8091
+        self._host, self._port = resolve_omen_endpoint(target)
         self._timeout = timeout
         self._lock = threading.RLock()
         self._conn: Optional[HTTPConnection] = None
