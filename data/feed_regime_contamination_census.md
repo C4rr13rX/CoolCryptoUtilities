@@ -91,3 +91,62 @@ The bound that IS shipped, `STRATEGY_MAX_EXPECTED_RETURN` in
 `trading/strategies/base.py` (commit 0fce105), refuses 1 of 123 directive-path
 entries and passes the other 122; it stops the forecast from sizing a trade and
 leaves everything above untouched.
+
+## Criterion 2: how much of the window is poisoned, and what reads it
+
+**The data half.** A 60-bar window is what the strategies in this package
+evaluate over. Sliding a 60-tick window across each contaminated symbol's 7-day
+series and counting the windows holding at least one foreign-regime tick:
+
+    symbol            windows  poisoned   share
+    AERO-WETH             259        71   27.4%
+    BOB-USDC               76        67   88.2%
+    CBETH-CBBTC           341        72   21.1%
+    CBETH-WETH            314       114   36.3%
+    CLANKER-USDC          436       101   23.2%
+    DOGE-USDC              79        79  100.0%
+    EURC-WETH             230       224   97.4%
+    JITOSOL-CBBTC         440       103   23.4%
+    LAPTOP-USDC            63         5    7.9%
+    MOONBASE-USDC         522       136   26.1%
+    MORPHO-WETH           237        60   25.3%
+    PEPE-USDC             110       110  100.0%
+    PEPKING-USDC           31        25   80.6%
+    SOL-CBBTC             217       131   60.4%
+    SPCX-USDC              65        11   16.9%
+    VIRTUAL-WETH          177        60   33.9%
+    VVV-WETH              298       128   43.0%
+    TOTAL                3895      1497   38.4%
+
+(CHIP, OPENAI, SHIB, TRUMP and the emoji pair have fewer than 60 ticks in the
+week and form no full window.)
+
+**Three foreign ticks poison 101 of CLANKER's 436 windows, 23.2%.** Across the
+22 symbols, 1,497 of 3,895 windows (38.4%) carry at least one. A 0.74% tick
+defect is a 38.4% window defect, because a window is 60 chances to include it.
+
+**The code half.** `expected_return` is one consumer and it is now bounded.
+Sixteen other call sites in seven strategies read the same window extrema, and
+none of them is bounded:
+
+    donchian_breakout.py:32-33   hi/lo ARE the breakout band
+    momentum_breakout.py:33-34   prev_high / prev_low
+    stochastic_reversal.py:33    lo/hi are the %K denominator
+    rsi_reversal.py:51           np.min(prior) is the entry condition
+    macd_momentum.py:69-72       recent_low -> extension
+    obv_accumulation.py:45-79    seg_range, p_range, recent_high, recent_low,
+                                 AND target_price
+    money_button.py:168          np.max(spread) -- the one that already REFUSES
+                                 on scale, rather than trusting the number
+
+The failure mode differs per consumer and is not always a large forecast. A
+foreign HIGH makes donchian's band unreachable, so the strategy silently stops
+entering. A 7.5-decade range makes stochastic's %K approximately zero for every
+bar in the window, so the symbol reads permanently oversold. Those are not
+loud like 1.25 billion percent; they are a strategy that quietly stops working
+or quietly always fires, on 38.4% of windows.
+
+**This strengthens criterion 3 rather than deciding it.** Seventeen consumers,
+each with a different correct bound, is the argument for sanitising the window
+once at the source instead. That decision is still open and needs the one place
+it would live to be named before anything is written.
