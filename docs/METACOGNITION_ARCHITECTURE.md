@@ -45,6 +45,29 @@ A motif is an abstraction over instants. To recognise one you need a layer
 whose vocabulary is *already abstract* — and the only way to get that on this
 substrate is to make one layer's output another layer's input.
 
+## CORRECTION 2026-09-10: `PoolKind::Internal` is cosmetic, and the direction survives
+
+Jet checked the engine rather than the docs and was right; I was wrong in the
+section below and it is corrected here rather than quietly edited.
+
+`grep -rn "PoolKind::Internal" crates/` returns **ZERO matches**. The variant is
+declared at `identity.rs:51` and read nowhere. The only place the engine
+branches on a pool's kind is `brain.rs:7417`, and it tests for `Action` to pick
+the action pool. `pool.rs:683` is prose inside the instruction-intent encoder,
+not about the enum. The `Internal` pools in `coding_debug.identity.toml` are a
+naming convention, not a working example.
+
+**What that does NOT mean.** Because `kind` is cosmetic, every pool is created
+*identically* -- so pools 15-19 are fully FUNCTIONAL, just not privileged.
+Declaring a pool `Internal` buys nothing; it also costs nothing. The hierarchy
+described below is unaffected, because it was never going to be built by
+declaring a kind: **a relation becomes bindable by being SENT as a frame, not
+by being declared.** That is what `omen_metacognition` and `omen_layers`
+already do, and it is the safe side of this repo's oldest trap -- never make
+the substrate guess what the caller can compute.
+
+So: delete "set kind=Internal" from any plan. Keep every layer.
+
 ## The substrate already supports this. Verified, not assumed.
 
 - `crates/brain/src/brain.rs:3531` — `integrate(query_pool, target_pool)`.
@@ -56,7 +79,11 @@ substrate is to make one layer's output another layer's input.
   is a tested property.
 - `crates/brain/src/identity.rs:184` — `FeedbackLoopSpec { source_pool,
   target_pool, signal, gain, delay_ticks }`. Domain-neutral pool-to-pool
-  edges, including a **delay**, which is how a temporal edge is expressed.
+  edges, including a **delay**. CHECKED after the PoolKind correction, because
+  the same doubt applied: this one IS read — 23 matches, and
+  `brain.rs:1191 configure_feedback_loops` builds `RuntimeFeedbackLoop`s from
+  the deployment. Unlike `PoolKind`, it is wired. (It stays OFF: the
+  prediction_error loop took recall from 100% to 30% here.)
 - `trading/omen_brain.py:991` — `_consolidate(streams, outcome_pool,
   outcome_frame)` already trains into an arbitrary pool.
 - `trading/omen_brain.py:1025-1028` — **the two-stage chain already in
