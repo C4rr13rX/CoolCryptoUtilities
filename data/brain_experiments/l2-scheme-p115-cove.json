@@ -1,0 +1,165 @@
+{
+  "ceiling": 0.3,
+  "gate_margin": 0.5,
+  "l2_steps": 2,
+  "control": [
+    {
+      "corpus": "data\\brain_experiments\\p108_aero_down.json",
+      "samples": 600,
+      "window": 12,
+      "steps": 2,
+      "margin": 0.0,
+      "l1_change_rate": 0.7312186978297162,
+      "distinctness": {
+        "L1_cooccurrence": 0.19833333333333333,
+        "L2_sequence": 0.8233333333333334,
+        "L2_transitions": 0.6016666666666667,
+        "L2_runlength": 0.8266666666666667
+      },
+      "vocab": {
+        "L1_cooccurrence": 119,
+        "L2_sequence": 494,
+        "L2_transitions": 361,
+        "L2_runlength": 496
+      },
+      "supported": {
+        "L1_cooccurrence": 6,
+        "L2_sequence": 2,
+        "L2_transitions": 0,
+        "L2_runlength": 0
+      },
+      "covered": {
+        "L1_cooccurrence": 0.3078231292517007,
+        "L2_sequence": 0.09523809523809523,
+        "L2_transitions": 0.0,
+        "L2_runlength": 0.0
+      },
+      "best_lift": {
+        "L1_cooccurrence": 2.8748921484037964,
+        "L2_sequence": 2.5789473684210527,
+        "L2_transitions": 0.0,
+        "L2_runlength": 0.0
+      },
+      "base_trough": 0.09693877551020408
+    },
+    {
+      "corpus": "data\\brain_experiments\\p108_aero_up.json",
+      "samples": 600,
+      "window": 12,
+      "steps": 2,
+      "margin": 0.0,
+      "l1_change_rate": 0.7395659432387313,
+      "distinctness": {
+        "L1_cooccurrence": 0.13833333333333334,
+        "L2_sequence": 0.825,
+        "L2_transitions": 0.49166666666666664,
+        "L2_runlength": 0.7666666666666667
+      },
+      "vocab": {
+        "L1_cooccurrence": 83,
+        "L2_sequence": 495,
+        "L2_transitions": 295,
+        "L2_runlength": 460
+      },
+      "supported": {
+        "L1_cooccurrence": 8,
+        "L2_sequence": 0,
+        "L2_transitions": 0,
+        "L2_runlength": 0
+      },
+      "covered": {
+        "L1_cooccurrence": 0.4370748299319728,
+        "L2_sequence": 0.0,
+        "L2_transitions": 0.0,
+        "L2_runlength": 0.0
+      },
+      "best_lift": {
+        "L1_cooccurrence": 3.418604651162791,
+        "L2_sequence": 0.0,
+        "L2_transitions": 0.0,
+        "L2_runlength": 0.0
+      },
+      "base_trough": 0.14625850340136054
+    }
+  ],
+  "results": [
+    {
+      "corpus": "data\\brain_experiments\\p108_aero_down.json",
+      "samples": 600,
+      "window": 12,
+      "steps": 2,
+      "margin": 0.5,
+      "l1_change_rate": 0.3756260434056761,
+      "distinctness": {
+        "L1_cooccurrence": 0.08166666666666667,
+        "L2_sequence": 0.5316666666666666,
+        "L2_transitions": 0.2633333333333333,
+        "L2_runlength": 0.7116666666666667
+      },
+      "vocab": {
+        "L1_cooccurrence": 49,
+        "L2_sequence": 319,
+        "L2_transitions": 158,
+        "L2_runlength": 427
+      },
+      "supported": {
+        "L1_cooccurrence": 10,
+        "L2_sequence": 3,
+        "L2_transitions": 3,
+        "L2_runlength": 1
+      },
+      "covered": {
+        "L1_cooccurrence": 0.5782312925170068,
+        "L2_sequence": 0.17346938775510204,
+        "L2_transitions": 0.1054421768707483,
+        "L2_runlength": 0.034013605442176874
+      },
+      "best_lift": {
+        "L1_cooccurrence": 2.369843527738265,
+        "L2_sequence": 1.4158926728586172,
+        "L2_transitions": 1.4736842105263157,
+        "L2_runlength": 0.0
+      },
+      "base_trough": 0.09693877551020408
+    },
+    {
+      "corpus": "data\\brain_experiments\\p108_aero_up.json",
+      "samples": 600,
+      "window": 12,
+      "steps": 2,
+      "margin": 0.5,
+      "l1_change_rate": 0.3823038397328882,
+      "distinctness": {
+        "L1_cooccurrence": 0.06833333333333333,
+        "L2_sequence": 0.4083333333333333,
+        "L2_transitions": 0.2,
+        "L2_runlength": 0.5983333333333334
+      },
+      "vocab": {
+        "L1_cooccurrence": 41,
+        "L2_sequence": 245,
+        "L2_transitions": 120,
+        "L2_runlength": 359
+      },
+      "supported": {
+        "L1_cooccurrence": 8,
+        "L2_sequence": 4,
+        "L2_transitions": 5,
+        "L2_runlength": 0
+      },
+      "covered": {
+        "L1_cooccurrence": 0.6802721088435374,
+        "L2_sequence": 0.24319727891156462,
+        "L2_transitions": 0.2193877551020408,
+        "L2_runlength": 0.0
+      },
+      "best_lift": {
+        "L1_cooccurrence": 2.457122093023256,
+        "L2_sequence": 2.734883720930233,
+        "L2_transitions": 4.207513416815742,
+        "L2_runlength": 0.0
+      },
+      "base_trough": 0.14625850340136054
+    }
+  ]
+}

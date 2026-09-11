@@ -45,10 +45,20 @@ __all__ = [
     "relative_bands",
     "sticky_motifs",
     "sequence_motif",
+    "transition_motif",
     "layer_distinctness",
     "L1_STREAMS",
     "MOTIF_SEQUENCE_STEPS",
+    "L2_TRANSITION_STEPS",
+    "L1_HYSTERESIS_MARGIN",
+    "IDENTIFIER_CEILING",
 ]
+
+#: Above this, a layer NAMES samples rather than grouping them, and it is a
+#: lossy copy of its input costing a consolidation and a query per sample.
+#: Stated here so the layer and every probe over it cannot disagree about what
+#: passing means.
+IDENTIFIER_CEILING = 0.30
 
 #: Which L0 collections the co-occurrence layer reads. Deliberately the
 #: market-shape families only: ``instrument`` and ``horizon`` name WHICH symbol
@@ -74,17 +84,54 @@ L1_STREAMS: Tuple[str, ...] = ("geometry", "temporal", "flow", "volatility", "cr
 #: step count under relative banding -- 0.64/0.83 DOWN and 0.51/0.79 UP, still
 #: failing at 0.32 over a deliberately coarse 21-symbol alphabet.
 #:
-#: The value is left at 3 deliberately rather than re-swept: under relative
-#: banding NO step count passes, so there is no number to move it to. L2 is a
-#: DESIGN problem, not a parameter one -- a motif changes on 72.3% of bars, so
-#: a fixed-length path is near-unique by construction. Keying on motif
-#: TRANSITIONS, or run-length encoding a motif until it changes, is the open
-#: question ([fa75fa1a]). Until that lands, 3 is the sign-banded default and
-#: nothing should train on L2 under relative banding at any step count.
+#: THE OPEN QUESTION IT LEFT IS NOW CLOSED AND THE ANSWER IS NOT A STEP COUNT.
+#: [fa75fa1a], pass 115, 600 samples per corpus, both corpora in one process:
+#: `sequence_motif` is the REJECTED scheme. It reads 0.8233 DOWN / 0.8250 UP
+#: under plain relative banding and no step count rescues it, because it
+#: samples one motif per bar over an alphabet that changes on 73% of them.
+#: `transition_motif` replaces it; this constant survives only to keep the
+#: rejected scheme's control arm measurable beside the winner, and nothing in
+#: the live path should key on it.
 #:
 #: The inherited 8-step constraint above still stands and is independent of
 #: all this: longer is always worse here.
 MOTIF_SEQUENCE_STEPS = 3
+
+#: How many CHANGED motifs the L2 transition path carries. Two, and it is a
+#: measured value rather than an inherited one.
+#:
+#: MEASURED 2026-09-11 on p108_aero_down/up, 600 samples each, both corpora and
+#: every cell computed in ONE process (scripts/omen_l2_scheme_probe.py), over a
+#: sticky L1 at ``L1_HYSTERESIS_MARGIN``:
+#:
+#:     steps   L2_transitions DOWN/UP     verdict against the 0.30 ceiling
+#:     2       0.2633 / 0.2000            PASSES BOTH
+#:     3       0.3667 / 0.3167            fails both
+#:     4       0.4133 / 0.3817            fails both
+#:
+#: So the margin here is not thin the way the stale 3 was: 2 clears by 0.04 in
+#: the worse window and the next step count misses by 0.07. Do not raise it to
+#: carry "more history" -- a transition path already spans as many BARS as its
+#: window allows, because a regime that holds for forty bars costs it one
+#: symbol. Length of memory is the window, not the step count.
+L2_TRANSITION_STEPS = 2
+
+#: How sticky L1's bands are, as a fraction of each band's own width.
+#:
+#: THIS IS THE CONSTANT THAT MAKES AN L2 POSSIBLE AT ALL, and it belongs to L1
+#: rather than to L2. Measured in the same process as the table above:
+#:
+#:     margin  L1 change rate DOWN/UP   L2_transitions steps=2 DOWN/UP
+#:     0.00    73.1% / 74.0%            0.6017 / 0.4917   FAIL
+#:     0.50    37.6% / 38.2%            0.2633 / 0.2000   PASS
+#:     0.75    30.4% / 36.1%            0.2267 / 0.1633   PASS
+#:
+#: 0.50 rather than 0.75 because stickiness is not free: it coarsens L1 itself
+#: (vocabulary 119 -> 49 DOWN, 83 -> 41 UP at 0.50, and 0.75 takes UP to 28), and
+#: a layer that abstracts perfectly while predicting nothing is worthless. 0.50
+#: is the smallest margin measured to clear the ceiling in BOTH windows, so it
+#: is the least L1 coarsening that buys a usable L2.
+L1_HYSTERESIS_MARGIN = 0.5
 
 #: Bands an L0 stream is bucketed into for the co-occurrence pattern. Three,
 #: not more: the motif's job is to say WHICH streams are extreme together, and
@@ -363,6 +410,21 @@ def sticky_motifs(frame_sets: Sequence[Mapping[str, str]],
             for i in range(len(frame_sets))]
 
 
+def _compact_motif(motif: str) -> str:
+    """A motif's band pattern, which is all any L2 scheme ever reads of it.
+
+    Shared by every scheme deliberately: the stream names are fixed and
+    identical in every motif, so repeating them lengthens the frame without
+    adding information -- and a scheme that quietly used a finer symbol would
+    win the distinctness comparison on nothing but its symbol set.
+    """
+    bands = []
+    for token in str(motif).split()[1:]:          # skip the "co1" prefix
+        _, _, band = token.partition("=")
+        bands.append({"lo": "l", "mid": "m", "hi": "h"}.get(band, "x"))
+    return "".join(bands) or "x"
+
+
 def sequence_motif(motifs: Sequence[str],
                    steps: int = MOTIF_SEQUENCE_STEPS) -> str:
     """L2: which motifs, in which ORDER, over the last ``steps`` bars.
@@ -379,14 +441,7 @@ def sequence_motif(motifs: Sequence[str],
     if not motifs:
         return "co2 path=na rep=na"
 
-    def _compact(motif: str) -> str:
-        bands = []
-        for token in str(motif).split()[1:]:      # skip the "co1" prefix
-            _, _, band = token.partition("=")
-            bands.append({"lo": "l", "mid": "m", "hi": "h"}.get(band, "x"))
-        return "".join(bands) or "x"
-
-    recent = [_compact(m) for m in motifs[-steps:]]
+    recent = [_compact_motif(m) for m in motifs[-steps:]]
     path = "|".join(recent)
 
     last = recent[-1]
@@ -397,6 +452,52 @@ def sequence_motif(motifs: Sequence[str],
         repeat += 1
 
     return "co2 path=%s rep=%d" % (path, repeat)
+
+
+def transition_motif(motifs: Sequence[str],
+                     steps: int = L2_TRANSITION_STEPS) -> str:
+    """L2: the last ``steps`` motifs that were DIFFERENT from their predecessor.
+
+    THE SCHEME THAT PASSES, and the reason it passes is that it stops sampling
+    one motif per bar. ``sequence_motif`` takes a fixed-length path over an
+    alphabet that changes on most bars, which is near-unique BY CONSTRUCTION
+    however small the alphabet is -- 0.8233 DOWN / 0.8250 UP against a 0.30
+    ceiling, and no step count and no coarser alphabet rescued it. Dropping
+    repeats means a regime that holds for forty bars contributes ONE symbol and
+    all forty of those bars share one frame, which is the persistence the path
+    threw away.
+
+    MEASURED [fa75fa1a] pass 115, 600 samples per corpus, both corpora in one
+    process, over a sticky L1 at ``L1_HYSTERESIS_MARGIN``: 0.2633 DOWN and
+    0.2000 UP at ``L2_TRANSITION_STEPS``. The rejected alternative is
+    run-length (motif plus a bucketed dwell), which reads 0.7117 DOWN / 0.5983
+    UP at the same setting and fails at every margin and step count swept --
+    the dwell bucket is an extra symbol per position, so it widens the alphabet
+    in a layer whose whole problem is that its alphabet is too wide.
+
+    REPEATS ARE DROPPED, ORDER IS NOT. The symbols stay oldest-first, so
+    A->B->C and C->B->A are different frames. That is the one property L2
+    exists to carry, and losing it would make this a bag of motifs -- which is
+    L1 with extra steps. Asserted directly in
+    tests/test_an_l2_scheme_must_keep_the_order_it_exists_to_carry.py.
+
+    ``motifs`` is oldest-first and must END at the bar being decided on. Pass
+    as long a window as the corpus allows: a change-keyed scheme can afford one
+    where a fixed-length path cannot, because a long steady stretch costs it a
+    single symbol.
+
+    Returns a byte-disjoint token: the ``co2t`` prefix cannot appear inside an
+    L1 name (``co1``) or an omen label, which matters on a substrate whose
+    atoms are bytes and where "loss_big" once swallowed "loss".
+    """
+    if not motifs:
+        return "co2t path=na"
+    changed = []
+    for motif in motifs:
+        item = _compact_motif(motif)
+        if not changed or item != changed[-1]:
+            changed.append(item)
+    return "co2t path=%s" % "|".join(changed[-steps:])
 
 
 def layer_distinctness(frame_sets: Sequence[Mapping[str, str]],
