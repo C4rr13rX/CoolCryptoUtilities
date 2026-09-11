@@ -13025,6 +13025,19 @@ class TradingBot:
         with _SYMBOL_LAST_TICK_LOCK:
             seen_ts = dict(_SYMBOL_LAST_TICK_TS)
             seen_px = dict(_SYMBOL_LAST_TICK_PX)
+            # The claim registry is keyed per CLOSED position, so without this it
+            # grows for the life of the process -- one entry per round trip,
+            # forever. A claim only has to outlive the window in which a second
+            # bot could re-propose the same position, and that window is the
+            # clock itself; 4x it is slack, not a guess. This box has already
+            # lost a 20-hour run to a full disk, so an unbounded map in a
+            # long-running process is a defect whatever its per-entry size.
+            stale_claim_before = now - 4.0 * stale_after
+            for claim_key in [
+                k for k, v in _STALE_SWEEP_IN_FLIGHT.items()
+                if float(v or 0.0) < stale_claim_before
+            ]:
+                _STALE_SWEEP_IN_FLIGHT.pop(claim_key, None)
 
         closed = 0
         for symbol, pos in list(self.positions.items()):
