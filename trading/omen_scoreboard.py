@@ -1,0 +1,211 @@
+"""The money scoreboard: per-trade net that CANNOT be quoted without its n.
+
+Why this file exists
+--------------------
+Measured 2026-09-10 from the four pass-111 artifacts in data/brain_experiments
+(omen-AERO-USDC-h12-{UP,DOWN}-...json): ``buy_omens`` across the four arms was
+1, 9, 7 and 2 out of 60 admitted held-out bars. The UP-base cell read
+``buy_net_per_trade`` +0.0031 at ``buy_hit_rate`` 1.0 -- against an every-bar
++0.00034 -- and it was the only positive cell in the table, so it is the one
+that gets quoted. It is ONE TRADE. A per-trade mean on one trade has no
+standard error; it is one number wearing a percentage sign.
+
+The failure is not arithmetic, it is presentation: ``buy_net_per_trade`` and
+``buy_omens`` are two separate keys in a 50-key report, and a reader quoting
+the first never sees the second. So this module makes them ONE object that
+renders as one string, and refuses to render a per-trade net without the n
+that produced it. A cell below the readability floor renders as UNREADABLE
+with its n, never as a percentage.
+
+It also scores the half that is measured nowhere. Every omen report in this
+repo scores BUYING (trough calls). The operator's 2026-09-10 18:35 note is
+that the sell-high half has never been scored at all: a crest call that
+correctly predicts a fall is worth exactly as much as a trough call that
+predicts a rise, and a brain that is good at one and useless at the other is
+a different instrument from one that is mediocre at both. ``crest_precision``
+here is scored against forward returns on the same bars, same cost, same
+horizon, so the two halves are comparable numbers rather than one number and
+an absence.
+
+The readability floor
+---------------------
+``READABLE_TRADES`` is 30 and it is a floor on being QUOTED, not a claim that
+30 is enough to detect a 1pp edge -- at this feed's dispersion (per-trade
+absolute returns run 2-3%) detecting 1.0pp needs ~63 trades per arm at sd=2%
+and ~141 at sd=3%. 30 is the point below which the mean is visibly driven by
+individual trades. Anything under it is reported with its n and the word
+UNREADABLE; anything over it is still reported with its n.
+
+Nothing here queries a node. It takes bars and the calls somebody else made,
+so the same function scores a brain's predictions, a baseline's, or the true
+labels' ceiling.
+"""
+from __future__ import annotations
+
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+
+from trading.omen_brain import (
+    COST_MULTIPLE, OMEN_CREST, OMEN_TROUGH, ROUND_TRIP_COST, omen_threshold,
+)
+
+#: Below this many trades a per-trade mean is driven by individual trades and
+#: must not be quoted as an edge. See the module docstring for why it is a
+#: quoting floor rather than a power calculation.
+READABLE_TRADES = 30
+
+
+def _close(bar: Mapping[str, Any]) -> Optional[float]:
+    try:
+        return float(bar["close"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def forward_return(bars: Sequence[Mapping[str, Any]], index: int,
+                   horizon_bars: int) -> Optional[float]:
+    """Close-to-close forward return, or None when the future is off the end.
+
+    None is NOT zero. A bar whose future is not in the corpus has no outcome
+    and must be dropped by the caller, never scored as a flat trade -- padding
+    the tail with zeros is how a losing tail becomes a break-even one.
+    """
+    future = index + horizon_bars
+    if index < 0 or future >= len(bars):
+        return None
+    entry = _close(bars[index])
+    exit_ = _close(bars[future])
+    if entry is None or exit_ is None or entry == 0:
+        return None
+    return (exit_ - entry) / entry
+
+
+def _cell(nets: Sequence[float], paid: int) -> Dict[str, Any]:
+    """One side of the book: n, total, per-trade, precision, readability."""
+    n = len(nets)
+    return {
+        "n": n,
+        "net_total": sum(nets),
+        # max(1, n) would report 0.0000% on an empty cell, which reads as a
+        # measured break-even rather than as nothing measured. None reads as
+        # what it is.
+        "net_per_trade": (sum(nets) / n) if n else None,
+        "precision_paid": (paid / n) if n else None,
+        "readable": n >= READABLE_TRADES,
+    }
+
+
+def money_scoreboard(
+    bars: Sequence[Mapping[str, Any]],
+    calls: Iterable[Tuple[int, str]],
+    *,
+    horizon_bars: int,
+    cost: float = ROUND_TRIP_COST,
+    multiple: float = COST_MULTIPLE,
+) -> Dict[str, Any]:
+    """Score BOTH halves of the book against forward returns.
+
+    ``calls`` is (bar_index, predicted_omen) pairs -- whatever the caller
+    decided, whether that came from a node, a rule or the true labels. Bars
+    whose future is off the end of the corpus are dropped and counted, because
+    a dropped bar and a flat bar are different things.
+
+    The buy half charges the full round trip to the trade, which is what a
+    long entry actually pays. The sell half is scored as the AVOIDED move:
+    a crest call is right when the forward return is below minus the cost, so
+    it is the mirror of the buy test at the same threshold and the two
+    precisions are directly comparable.
+    """
+    threshold = omen_threshold(cost, multiple)
+    buy_nets: List[float] = []
+    buy_paid = 0
+    sell_nets: List[float] = []
+    sell_paid = 0
+    every_bar: List[float] = []
+    dropped = 0
+    scored_indices: List[int] = []
+
+    for index, label in calls:
+        forward = forward_return(bars, index, horizon_bars)
+        if forward is None:
+            dropped += 1
+            continue
+        scored_indices.append(index)
+        every_bar.append(forward - cost)
+        if label == OMEN_TROUGH:
+            buy_nets.append(forward - cost)
+            if forward > cost:
+                buy_paid += 1
+        elif label == OMEN_CREST:
+            # Selling high pays when the price then falls by more than the
+            # round trip: the holder who exits keeps a move the holder who
+            # stayed gives back. Signed so that positive is money kept.
+            sell_nets.append(-forward - cost)
+            if -forward > cost:
+                sell_paid += 1
+
+    buy = _cell(buy_nets, buy_paid)
+    sell = _cell(sell_nets, sell_paid)
+    return {
+        "horizon_bars": horizon_bars,
+        "round_trip_cost": cost,
+        "omen_threshold": threshold,
+        "readable_trades_floor": READABLE_TRADES,
+        "scored_bars": len(scored_indices),
+        "dropped_no_future": dropped,
+        "buy": buy,
+        "sell": sell,
+        # The honest baseline, on exactly the bars that were scored.
+        "every_bar_n": len(every_bar),
+        "every_bar_net_per_trade": (sum(every_bar) / len(every_bar)) if every_bar else None,
+        # Kept under the old key names so a reader of an existing report finds
+        # the same numbers, but a reader of THIS dict cannot find the net
+        # without walking past the n that sits beside it.
+        "buy_omens": buy["n"],
+        "buy_net_per_trade": buy["net_per_trade"],
+        "trough_precision": buy["precision_paid"],
+        "crest_omens": sell["n"],
+        "crest_net_per_trade": sell["net_per_trade"],
+        "crest_precision": sell["precision_paid"],
+        "readable": buy["readable"] and sell["readable"],
+    }
+
+
+def _side_line(name: str, cell: Mapping[str, Any],
+               baseline: Optional[float]) -> str:
+    n = cell["n"]
+    if n == 0:
+        return f"   {name:<14}: n=0 -- NO CALLS, nothing measured"
+    net = cell["net_per_trade"]
+    prec = cell["precision_paid"]
+    body = (f"   {name:<14}: n={n} {net:+.4%} per trade, "
+            f"precision {prec:.1%}")
+    if not cell["readable"]:
+        return (body + f"  <- UNREADABLE, n={n} is below the "
+                f"{READABLE_TRADES}-trade floor; do not quote this as an edge")
+    if baseline is not None:
+        body += f"  (every-bar {baseline:+.4%})"
+    return body
+
+
+def render_scoreboard(board: Mapping[str, Any], *, title: str = "money") -> str:
+    """One string carrying every per-trade net WITH the n that produced it.
+
+    There is deliberately no code path here that emits a per-trade percentage
+    without an ``n=`` in the same line. The test named for this
+    (tests/test_a_per_trade_net_is_never_printed_without_its_n.py) asserts it
+    line by line, so a future edit that splits the two fails the gate.
+    """
+    baseline = board.get("every_bar_net_per_trade")
+    lines = [
+        f"  {title}: {board['scored_bars']} bars scored, "
+        f"{board['dropped_no_future']} dropped for no future, "
+        f"threshold {board['omen_threshold']:.4%} on a "
+        f"{board['round_trip_cost']:.4%} round trip",
+        _side_line("buy (trough)", board["buy"], baseline),
+        _side_line("sell (crest)", board["sell"],
+                   (-baseline) if baseline is not None else None),
+    ]
+    if baseline is not None:
+        lines.append(f"   every bar     : n={board['every_bar_n']} "
+                     f"{baseline:+.4%} per trade")
+    return "\n".join(lines)
