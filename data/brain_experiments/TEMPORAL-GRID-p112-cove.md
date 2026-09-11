@@ -114,6 +114,35 @@ tape for any symbol**, and that is true independently of
 `OMEN_STRATEGY_ENABLED=0`. To reach 169 closed bars at 0.22 fill it would need
 roughly 12.9 hours of ticks and it asks for 2.8.
 
+### Which bar width would let it answer — and the answer is the training cadence
+
+Same 6 h of tape, rebucketed at each width, mean `filled_share` over the 8
+symbols:
+
+| width | fetch | filled | bars formed | needed | fires? | one bar means |
+|---|---|---|---|---|---|---|
+| 60 s | 170 min | 0.217 | 36.9 | 169 | NO | 0.017 h |
+| 120 s | 340 min | 0.397 | 67.5 | 169 | NO | 0.033 h |
+| 180 s | 510 min | 0.562 | 95.6 | 169 | NO | 0.050 h |
+| 300 s | 850 min | 0.716 | 121.7 | 169 | NO | 0.083 h |
+| 600 s | 1700 min | 0.813 | 138.3 | 169 | NO | 0.167 h |
+| 900 s | 2550 min | 0.841 | 143.0 | 169 | NO | 0.250 h |
+| 1800 s | 5100 min | 0.917 | 155.8 | 169 | NO | 0.500 h |
+| **3600 s** | 10200 min | **1.000** | **170.0** | 169 | **yes** | **1.000 h** |
+
+**The only width at which the live path can answer is 3600 s, and that is
+exactly the cadence the fabric was trained on.** Every hour of the last six had
+at least one tick on all eight symbols (`filled_share` 1.000); no shorter bucket
+does. So the two filed items are not two decisions — widening the live bar to
+one hour makes the strategy able to answer AND removes the horizon crossing at
+the same time, because `hzn h=12` would then mean 720 minutes on both sides.
+
+The price is a **170-hour tick buffer** (`sample_arrays` is asked for
+`(LOOKBACK_BARS + 2) * bar_seconds`), and the strategy stops being a
+minutes-scale trader — which is the same conflict Jet's horizon table named at
+14:45, arriving here from the feed's density instead of from the cost floor.
+That is an operator decision about what the system IS, not a retune.
+
 A third instance of the same crossing, for the record:
 `omen_reversion.py:273` and `:295` set the position's
 `omen_horizon_sec = HORIZON_BARS * BAR_SECONDS` = 720 s = 12 minutes — nominal

@@ -330,6 +330,37 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
               f"minutes of ticks and refuses under "
               f"{LOOKBACK_BARS + 1} closed bars.")
 
+    if live and not live.get("error") and live.get("symbols"):
+        print()
+        print(f"  WHICH BAR WIDTH WOULD LET THE LIVE PATH ANSWER AT ALL. Same 6h of")
+        print(f"  tape, rebucketed. 'fetch' is (LOOKBACK_BARS + 2) x width, which is")
+        print(f"  what the strategy asks the tick buffer for; 'formed' is how many")
+        print(f"  closed bars come out of that fetch at the measured density.")
+        print(f"    {'width_s':>8} {'fetch_min':>10} {'filled':>8} {'formed':>8} "
+              f"{'needed':>7}  fires?  one bar means")
+        sweep = []
+        for width in (60, 120, 180, 300, 600, 900, 1800, 3600):
+            wide = live_tick_profile(args.live_hours, width, limit_symbols=8)
+            if not wide or wide.get("error") or not wide["symbols"]:
+                continue
+            filled = statistics.fmean(r["filled_share"] for r in wide["symbols"])
+            formed = filled * (LOOKBACK_BARS + 2)
+            fetch_min = (LOOKBACK_BARS + 2) * width / 60.0
+            fires = "yes" if formed >= LOOKBACK_BARS + 1 else "NO"
+            print(f"    {width:>8} {fetch_min:>10.0f} {filled:>8.3f} "
+                  f"{formed:>8.1f} {LOOKBACK_BARS + 1:>7}  {fires:>5}   "
+                  f"{width / 3600.0:.3f}h of tape")
+            sweep.append({"bar_seconds": width, "fetch_minutes": fetch_min,
+                          "mean_filled_share": filled, "bars_formed": formed,
+                          "bars_required": LOOKBACK_BARS + 1,
+                          "fires": fires == "yes"})
+        report["bar_width_sweep"] = sweep
+        print("    A WIDER BAR IS NOT A FREE FIX: it changes what one bar MEANS,")
+        print("    and the fabric was trained where one bar is 1.000h of tape. The")
+        print("    row whose last column reads 1.000h is the only width that both")
+        print("    fires and matches the training cadence -- at the price of a")
+        print(f"    {(LOOKBACK_BARS + 2) * 3600 / 3600.0:.0f}-hour tick buffer.")
+
     print()
     print("=" * 74)
     print("SECTION 2 -- WHAT THE EXISTING TEMPORAL COLLECTION CONTAINS")
