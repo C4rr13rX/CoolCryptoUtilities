@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import sys
 from collections import Counter
 from pathlib import Path
@@ -78,7 +79,19 @@ def main() -> int:
                          "end is a fact about that regime, and every brain "
                          "number ever made on this repo scored the SAME "
                          "window and that window is DOWN.")
+    ap.add_argument("--null-trials", type=int, default=2000,
+                    help="shuffles of next_correct used to build the null the "
+                         "spread is marked against; 0 is not allowed, the "
+                         "whole point of this item is that there IS a null")
+    ap.add_argument("--null-seed", type=int, default=1)
+    ap.add_argument("--shuffle-frames", action="store_true",
+                    help="CONTROL. Permute the self frames while keeping the "
+                         "labels where they are, so the frames provably carry "
+                         "nothing. A correct estimator must NOT mark this "
+                         "SEPARATES; the 0.10 literal marked it every time.")
     args = ap.parse_args()
+    null_trials = max(100, int(args.null_trials))
+    null_seed = int(args.null_seed)
 
     path = Path(args.corpus)
     bars = load_bars(path)
@@ -128,6 +141,14 @@ def main() -> int:
         else None
         for bar, call in made_at
     ]
+
+    # THE CONTROL. Permuting the frames while the labels stay put leaves every
+    # bucket count identical and provably destroys any frame-to-correctness
+    # relation. Marked SEPARATES here, an estimator is reporting its own noise.
+    if args.shuffle_frames:
+        random.Random(null_seed + 7).shuffle(frame_rows)
+        print("CONTROL RUN: frames permuted, labels held. Nothing here can "
+              "legitimately be marked SEPARATES.")
 
     total = len(frame_rows)
     print(f"predictions fed  : {len(history)}  "
@@ -186,14 +207,40 @@ def main() -> int:
     # frame that does not leaves them all at the base rate, and the pool is
     # decoration.
     # ------------------------------------------------------------------
+    # THE SPREAD IS MARKED AGAINST ITS OWN NULL, NOT AGAINST A LITERAL.
+    #
+    # [ca4ac5d5]. The estimator here is max-minus-min over buckets, and BOTH
+    # extremes are chosen after seeing the data. The largest of k noisy bucket
+    # rates minus the smallest of them is large by construction -- the more
+    # buckets and the smaller they are, the larger. Measured against a bare
+    # 0.10 literal it fires on pure noise: Jet's pass-110 null put
+    # P(spread >= 0.10 | the frames carry NOTHING) at 96.4%-100.0% for all
+    # three self pools, and every measured spread sat inside its own null's
+    # 95th percentile. So the shipped output said SEPARATES three times on
+    # three flat frames.
+    #
+    # The null is computed here rather than approximated from printed counts:
+    # the frame assignment is held exactly as it is -- same buckets, same
+    # sizes -- and only `next_correct` is shuffled, which destroys any relation
+    # between frame and correctness while preserving everything else the
+    # estimator is sensitive to. A spread is marked only if it beats the 95th
+    # percentile of that null, which is the percentile the literal was
+    # pretending to be.
     print("\n1. DOES THE FRAME KNOW ANYTHING (offline, before any node run):")
+    print(f"   null: {null_trials} shuffles of next_correct per pool, frames "
+          "held fixed; SEPARATES needs the 95th percentile of that null")
+    rng = random.Random(null_seed)
     for key in SELF_KEYS:
         buckets: dict = {}
-        for frame, correct in zip((r[key] for r in frame_rows), next_correct):
+        members: dict = {}
+        for idx, (frame, correct) in enumerate(
+            zip((r[key] for r in frame_rows), next_correct)
+        ):
             if correct is None:
                 continue
             hit, seen = buckets.get(frame, (0, 0))
             buckets[frame] = (hit + (1 if correct else 0), seen + 1)
+            members.setdefault(frame, []).append(idx)
         scored = [(h / s, s, f) for f, (h, s) in buckets.items() if s >= 30]
         if len(scored) < 2:
             print(f"  {key:<16} too few populated frames to separate")
@@ -204,13 +251,42 @@ def main() -> int:
         lo_rate, lo_n, lo_f = scored[0]
         hi_rate, hi_n, hi_f = scored[-1]
         spread = hi_rate - lo_rate
-        mark = "SEPARATES" if spread >= 0.10 else "flat -- carries no self-knowledge"
+
+        # The null. Sizes and membership are fixed; the labels move.
+        groups = [len(members[f]) for _, _, f in scored]
+        labels = [
+            1 if next_correct[i] else 0
+            for _, _, f in scored
+            for i in members[f]
+        ]
+        null: list = []
+        for _ in range(null_trials):
+            rng.shuffle(labels)
+            at = 0
+            rates = []
+            for size in groups:
+                rates.append(sum(labels[at:at + size]) / size)
+                at += size
+            null.append(max(rates) - min(rates))
+        null.sort()
+        p95 = null[int(0.95 * (len(null) - 1))]
+        beat = sum(1 for x in null if x < spread) / len(null)
+        mark = (
+            "SEPARATES"
+            if spread > p95
+            else "flat -- inside its own null, carries no self-knowledge"
+        )
         print(f"  {key:<16} base {base:.1%}  worst {lo_rate:.1%} (n={lo_n})  "
               f"best {hi_rate:.1%} (n={hi_n})  spread {spread:+.1%}  {mark}")
+        print(f"       null over {len(groups)} buckets: median "
+              f"{null[len(null)//2]:+.1%}  95th {p95:+.1%}  -- the measured "
+              f"spread is at the {beat*100:.1f}th percentile")
         print(f"       worst: {lo_f}")
         print(f"       best : {hi_f}")
-    print("  A spread near zero means the pool holds a vocabulary that is "
-          "unrelated to being right, and wiring it to a node buys nothing.")
+    print("  A spread inside its own null means the pool holds a vocabulary "
+          "that is unrelated to being right, and wiring it to a node buys "
+          "nothing. max-minus-min over small buckets is large BY CONSTRUCTION, "
+          "so a spread is only evidence when it beats that.")
     return 0 if verdict_ok else 1
 
 
