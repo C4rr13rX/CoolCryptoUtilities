@@ -293,3 +293,89 @@ h=12). At the with-self fire rate that window places several hundred trades and
 would clear n=60 on its own — the UP side was never the constrained one. Run it
 against a FRESH node on the v4_meta identity, and only then is there a
 both-windows verdict to state.
+
+## THE UP HALF, run in the same pass — and it points the OTHER WAY
+
+The section above said the next pass should run the UP window. It was run in
+this pass instead, so there is now a both-windows result rather than half of
+one. **Both UP cells clear the n=30 floor, so the UP row is RANKABLE** — it is
+the only rankable cell pair this item has produced.
+
+| | |
+|---|---|
+| node | second fresh `:8091`, brain dir `brain-data-p113-gale-up`, pool_count 20, tick 0, concepts 0 at start |
+| corpus | `data/historical_ohlcv/arbitrum/0003_CRV-WETH.json`, h=12 bars = 720 min |
+| train | bars `[4611, 5211)` -> 600 samples, balanced 490, **ONE epoch**, 2 failed, 3.9 min |
+| held-out | bars `[5211, 5823)` — **600 bars**, up-rate **61.8%** -> a real UP window |
+| fabric | ONE; arm B ran `--skip-train` |
+
+| UP window, 600 bars | with self pools | without self pools | buy every bar |
+|---|---|---|---|
+| **per-trade net on buy omens** | **-0.2564%** | **-0.0643%** | **-0.2016%** |
+| **n (trades placed)** | **52** | **48** | 600 |
+| trough precision | 67.3% of 52 | 58.3% of 48 | — |
+| total net over the window | -0.1333 | -0.0309 | — |
+| held-out exact | **46.8%** of 600 | 26.2% of 600 | majority class **35.2%** |
+
+## The both-windows verdict: the two windows DISAGREE, so there is no verdict
+
+| | DOWN (200 bars) | UP (600 bars) |
+|---|---|---|
+| with self, per trade | **+0.3734%** (n=11, unrankable) | **-0.2564%** (n=52) |
+| without self, per trade | -1.7172% (n=54) | -0.0643% (n=48) |
+| buy every bar | -2.2088% (n=200) | -0.2016% (n=600) |
+| **which arm is better** | **WITH self, by 2.09pp** | **WITHOUT self, by 0.19pp** |
+
+**The self pools help in the DOWN window and hurt in the UP window.** That is
+not an edge in either direction, and under the standing both-windows rule it is
+**no result for the pools** — which is exactly what a genuinely null effect
+looks like once the sample stops being three trades.
+
+Two things worth keeping out of it, both stated because they cut against a
+tidy story:
+
+* **On label accuracy the with-self arm is the better one in the UP window** —
+  46.8% exact against a 35.2% majority class, while without-self reads 26.2%,
+  *below* majority. So the same arm that is worse on money is better on labels.
+  Those two are not the same measurement and this pass cannot say which
+  matters, only that they point opposite ways.
+* **Only the without-self UP arm beat its baseline** (-0.0643% against
+  -0.2016%), and by 0.14pp on n=48. That is well inside the dispersion this
+  feed shows (per-trade absolute returns 2-3%), so it is not an edge either.
+
+## The item's four criteria, answered one by one
+
+1. **n per arm.** UP reached **52 and 48**, above the n=30 floor: rankable, and
+   ranked. DOWN reached **11 and 54**; the 11-trade cell is reported
+   **unrankable** and no per-trade verdict is drawn from it. The n=60 floor was
+   not reached on the DOWN side and the reason is measured, not asserted: the
+   200-bar window holds only 17 true troughs.
+2. **self_agreement** is **excluded**, and this arm is reported as testing
+   **two pools, not three** — it measures 0.004 distinct against 0.041 and
+   0.035 for the two that were queried.
+3. **The pass-111 report carries its dated header** (added by Cove, pass 112).
+4. **Does the powered arm still show dilution? NO — and it does not show the
+   opposite either.** Dilution reverses to help in DOWN and reappears in UP.
+   The finished, honest statement is: **on the evidence now in hand the self
+   pools have no measurable directional effect, and the pass-111 negative was
+   noise.** That is a real negative about the *verdict*, not about the pools:
+   the pools remain **NOT MEASURED**, and the pool that carries the only
+   signal with a measurement behind it, `self_agreement`, is still inert and
+   still untested.
+
+## What would actually settle it, in one line
+
+Feed `self_agreement` a node's real per-query-set votes. Every number in this
+item has been measured with that pool contributing 0.004 distinct — a constant
+— so nothing here has yet tested the metacognition idea the operator asked for.
+
+Commands, second node:
+
+    D:\Projects\W1z4rDV1510n\start_node.ps1 -Addr 127.0.0.1:8091 -BrainDir D:\Projects\W1z4rDV1510n\brain-data-p113-gale-up -Identity brains\market_predictor_v4_meta.identity.toml -Deployment brains\market_predictor_v2.deployment.toml -MinSysAvailMb 3000
+
+    OMEN_META_COLLECTIONS=1 OMEN_BRAIN_ENDPOINT=http://127.0.0.1:8091 python -X utf8 scripts/omen_experiment.py --corpus data/historical_ohlcv/arbitrum/0003_CRV-WETH.json --horizon 12 --train 600 --test 600 --train-end 5211 --test-end 5823 --query-collections temporal,geometry,cross,self_outcome,self_error_run
+
+    OMEN_META_COLLECTIONS=1 OMEN_BRAIN_ENDPOINT=http://127.0.0.1:8091 python -X utf8 scripts/omen_experiment.py --corpus data/historical_ohlcv/arbitrum/0003_CRV-WETH.json --horizon 12 --train 600 --test 600 --train-end 5211 --test-end 5823 --skip-train --query-collections temporal,geometry,cross
+
+Node reports: `omen-CRV-WETH-h720m12b-UP-20260910-234208.json` (with self),
+`omen-CRV-WETH-h720m12b-UP-20260910-234236.json` (without).
