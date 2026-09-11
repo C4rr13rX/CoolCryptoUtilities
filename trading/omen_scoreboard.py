@@ -154,6 +154,8 @@ def money_scoreboard(
     horizon_bars: int,
     cost: float = ROUND_TRIP_COST,
     multiple: float = COST_MULTIPLE,
+    horizon_minutes: Optional[float] = None,
+    bar_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Score BOTH halves of the book against forward returns.
 
@@ -201,6 +203,11 @@ def money_scoreboard(
     baseline = (sum(every_bar) / len(every_bar)) if every_bar else None
     return {
         "horizon_bars": horizon_bars,
+        # The wall-clock horizon, taken from the caller and never guessed --
+        # 12 bars is 12 minutes on one corpus and 12 hours on another, so
+        # bars alone cannot say whether two boards asked the same question.
+        "horizon_minutes": horizon_minutes,
+        "bar_seconds": bar_seconds,
         "round_trip_cost": cost,
         "omen_threshold": threshold,
         "readable_trades_floor": READABLE_TRADES,
@@ -256,10 +263,26 @@ def pool_scoreboards(boards: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
         raise ValueError("nothing to pool: pool_scoreboards needs >= 1 board")
     horizons = {b["horizon_bars"] for b in boards}
     costs = {round(float(b["round_trip_cost"]), 12) for b in boards}
-    if len(horizons) != 1 or len(costs) != 1:
+    minutes = {b.get("horizon_minutes") for b in boards}
+    if len(costs) != 1:
         raise ValueError(
-            f"refusing to pool boards scored at different games: "
-            f"horizon_bars {sorted(horizons)}, cost {sorted(costs)}")
+            f"refusing to pool boards priced at different costs: "
+            f"{sorted(costs)}")
+    # Bars are not the question; MINUTES are. A 3600s corpus asks 720 minutes
+    # in 12 bars and a 300s corpus asks the same 720 minutes in 144, and those
+    # two boards ARE poolable. Two boards that disagree in minutes are not,
+    # whatever their bar counts say. Boards with no minutes recorded fall back
+    # to the strict bar test, because an unknown horizon cannot be checked.
+    if None in minutes:
+        if len(horizons) != 1:
+            raise ValueError(
+                f"refusing to pool boards scored at different bar-horizons "
+                f"{sorted(horizons)} with no horizon_minutes to compare them "
+                f"by: pass horizon_minutes to money_scoreboard")
+    elif len(minutes) != 1:
+        raise ValueError(
+            f"refusing to pool boards scored at different wall-clock "
+            f"horizons: horizon_minutes {sorted(minutes)}")
 
     def _sum(side: str, key: str) -> float:
         return sum(b[side][key] for b in boards)
@@ -272,8 +295,15 @@ def pool_scoreboards(boards: Iterable[Mapping[str, Any]]) -> Dict[str, Any]:
     every_total = sum((b["every_bar_net_per_trade"] or 0.0) * int(b["every_bar_n"])
                       for b in boards)
     pooled_baseline = (every_total / every_n) if every_n else None
+    spanned: Dict[int, int] = {}
+    for b in boards:
+        spanned[int(b["horizon_bars"])] = spanned.get(int(b["horizon_bars"]), 0) + 1
     return {
         "horizon_bars": boards[0]["horizon_bars"],
+        # Every bar-horizon this pool spans, with a count, so a pool across
+        # cadences says so rather than wearing the first board's number.
+        "horizon_bars_spanned": dict(sorted(spanned.items())),
+        "horizon_minutes": boards[0].get("horizon_minutes"),
         "round_trip_cost": boards[0]["round_trip_cost"],
         "omen_threshold": boards[0]["omen_threshold"],
         "readable_trades_floor": READABLE_TRADES,

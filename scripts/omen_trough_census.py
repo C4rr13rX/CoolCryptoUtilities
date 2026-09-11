@@ -54,7 +54,7 @@ from trading.omen_brain import (  # noqa: E402
     omen_threshold,
 )
 from trading.omen_scoreboard import (  # noqa: E402
-    READABLE_TRADES, money_scoreboard,
+    READABLE_TRADES, money_scoreboard, pool_scoreboards,
 )
 
 #: The multiples to sweep. 1.5 is the shipped default (OMEN_COST_MULTIPLE);
@@ -162,7 +162,9 @@ def ceiling_window(path: Path, horizon_minutes: float, window_bars: int,
     if not calls:
         return None
 
-    board = money_scoreboard(bars, calls, horizon_bars=hbars)
+    board = money_scoreboard(bars, calls, horizon_bars=hbars,
+                             horizon_minutes=horizon_minutes,
+                             bar_seconds=cadence)
     board["corpus"] = path.name
     board["regime"] = "UP" if drift > 0 else "DOWN"
     board["window_drift"] = drift
@@ -171,36 +173,26 @@ def ceiling_window(path: Path, horizon_minutes: float, window_bars: int,
 
 
 def _pool(boards: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Pool per-corpus cells into one readable cell, summing n not averaging %.
+    """Pool per-corpus cells into one readable cell.
 
-    Averaging per-corpus percentages weights a 2-trade corpus the same as a
-    200-trade one. The totals are summed and divided once, which is the only
-    pooling that means anything here.
+    This used to sum the totals here, by hand. It delegates to
+    ``omen_scoreboard.pool_scoreboards`` now, which does the same summing AND
+    carries what a second implementation cannot know: measured pass 118, the
+    sell half's baseline is ``-baseline - 2*cost``, not ``-baseline``, and a
+    hand-rolled pool is exactly how a 1.30pp arithmetic error survives in one
+    report after being fixed in another. It also pools on MINUTES, so a
+    3600s corpus asking 720 minutes in 12 bars and a 300s corpus asking the
+    same 720 minutes in 144 pool together and the pooled board names both
+    bar-horizons -- which the hand-rolled pool did silently.
+
+    ``corpora`` and the ``*_readable`` flags are kept under their old names
+    because the printer and the report read them.
     """
-    buy_n = sum(b["buy"]["n"] for b in boards)
-    sell_n = sum(b["sell"]["n"] for b in boards)
-    eb_n = sum(b["every_bar_n"] for b in boards)
-    buy_total = sum(b["buy"]["net_total"] for b in boards)
-    sell_total = sum(b["sell"]["net_total"] for b in boards)
-    eb_total = sum((b["every_bar_net_per_trade"] or 0.0) * b["every_bar_n"]
-                   for b in boards)
-    buy_paid = sum((b["buy"]["precision_paid"] or 0.0) * b["buy"]["n"]
-                   for b in boards)
-    sell_paid = sum((b["sell"]["precision_paid"] or 0.0) * b["sell"]["n"]
-                    for b in boards)
-    return {
-        "corpora": len(boards),
-        "buy_omens": buy_n,
-        "buy_net_per_trade": (buy_total / buy_n) if buy_n else None,
-        "trough_precision": (buy_paid / buy_n) if buy_n else None,
-        "buy_readable": buy_n >= READABLE_TRADES,
-        "crest_omens": sell_n,
-        "crest_net_per_trade": (sell_total / sell_n) if sell_n else None,
-        "crest_precision": (sell_paid / sell_n) if sell_n else None,
-        "crest_readable": sell_n >= READABLE_TRADES,
-        "every_bar_n": eb_n,
-        "every_bar_net_per_trade": (eb_total / eb_n) if eb_n else None,
-    }
+    pooled = pool_scoreboards(boards)
+    pooled["corpora"] = len(boards)
+    pooled["buy_readable"] = pooled["buy"]["readable"]
+    pooled["crest_readable"] = pooled["sell"]["readable"]
+    return pooled
 
 
 def bars_needed(rate: float, target: int = READABLE_TRADES) -> float:
