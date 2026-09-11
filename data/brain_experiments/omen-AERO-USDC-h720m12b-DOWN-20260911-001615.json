@@ -1,0 +1,260 @@
+{
+  "node_endpoint": "http://127.0.0.1:8091",
+  "node_health": {
+    "bridge_enabled": false,
+    "data_mesh_active": false,
+    "data_mesh_enabled": false,
+    "ledger_backend": "local",
+    "node_id": "node-cd4c5a9a7225",
+    "status": "OK",
+    "uptime_secs": 513
+  },
+  "fabric_before": {
+    "endpoint": "http://127.0.0.1:8091",
+    "health": {
+      "bridge_enabled": false,
+      "data_mesh_active": false,
+      "data_mesh_enabled": false,
+      "ledger_backend": "local",
+      "node_id": "node-cd4c5a9a7225",
+      "status": "OK",
+      "uptime_secs": 513
+    },
+    "stats": {
+      "binding_pool_id": 0,
+      "binding_posting_generations": 0,
+      "binding_posting_overlay": 529964,
+      "evicted_neurons": 1076,
+      "fingerprint_state_generations": 0,
+      "fingerprint_state_overlay": 4304,
+      "pool_count": 12,
+      "resident_terminals": 8718824,
+      "tick": 2152,
+      "total_binding": 2152,
+      "total_concepts": 35180,
+      "total_neurons": 35347,
+      "total_terminals": 9029934
+    },
+    "total_neurons": 35347,
+    "total_concepts": 35180,
+    "total_binding": 2152,
+    "pool_count": 12,
+    "tick": 2152
+  },
+  "fabric_after": {
+    "endpoint": "http://127.0.0.1:8091",
+    "health": {
+      "bridge_enabled": false,
+      "data_mesh_active": false,
+      "data_mesh_enabled": false,
+      "ledger_backend": "local",
+      "node_id": "node-cd4c5a9a7225",
+      "status": "OK",
+      "uptime_secs": 525
+    },
+    "stats": {
+      "binding_pool_id": 0,
+      "binding_posting_generations": 0,
+      "binding_posting_overlay": 529964,
+      "evicted_neurons": 1076,
+      "fingerprint_state_generations": 0,
+      "fingerprint_state_overlay": 4304,
+      "pool_count": 12,
+      "resident_terminals": 8718824,
+      "tick": 2152,
+      "total_binding": 2152,
+      "total_concepts": 35180,
+      "total_neurons": 35347,
+      "total_terminals": 9029934
+    },
+    "total_neurons": 35347,
+    "total_concepts": 35180,
+    "total_binding": 2152,
+    "pool_count": 12,
+    "tick": 2152
+  },
+  "fabric_was_clean": false,
+  "allow_warm_fabric": false,
+  "corpus": "data\\historical_ohlcv\\base\\0004_AERO-USDC.json",
+  "symbol": "AERO-USDC",
+  "bars": 21926,
+  "bar_seconds": 3600,
+  "horizon_bars": 12,
+  "horizon_minutes": 720.0,
+  "horizon_source": "minutes",
+  "round_trip_cost": 0.0065,
+  "omen_threshold": 0.00975,
+  "train_window": [
+    19301,
+    20501
+  ],
+  "test_window": [
+    21313,
+    21713
+  ],
+  "train_end_pinned": true,
+  "heldout_regime": "DOWN",
+  "heldout_window_up_rate": 0.405,
+  "heldout_window_mean_forward": -0.004169626755313325,
+  "heldout_ts_range": [
+    1784005200,
+    1785441600
+  ],
+  "trained_pairs": 0,
+  "failed_pairs": 0,
+  "train_seconds": 0.0,
+  "skipped_training": true,
+  "collection_distinctness": {
+    "geometry": 0.974907063197026,
+    "temporal": 1.0,
+    "flow": 0.18680297397769516,
+    "volatility": 0.07063197026022305,
+    "cross": 0.38104089219330856,
+    "horizon": 0.0009293680297397769,
+    "instrument": 0.0009293680297397769
+  },
+  "measured_query_collections": [
+    "geometry",
+    "temporal",
+    "cross"
+  ],
+  "query_collections": [
+    "geometry",
+    "temporal",
+    "cross"
+  ],
+  "query_source": "measured",
+  "regime_source": "computed",
+  "conflicting_frame_tuples": 0,
+  "recall_ceiling": 1.0,
+  "consensus": false,
+  "train_recall": 0.99,
+  "recall_sample": 200,
+  "recall_answered": 200,
+  "recall_abstained": 0,
+  "recall_misses": [
+    {
+      "expected": "murk",
+      "got": "slide",
+      "verdict": "admitted"
+    },
+    {
+      "expected": "trough",
+      "got": "slide",
+      "verdict": "admitted"
+    }
+  ],
+  "garbage_distinct": 5,
+  "garbage_total": 40,
+  "garbage_actionable": 6,
+  "garbage_confidence": [
+    0.5767877697944641,
+    0.5852462649345398,
+    0.5865526795387268,
+    0.5922620296478271,
+    0.6023942232131958,
+    0.6029977202415466,
+    0.605141282081604,
+    0.6071226000785828,
+    0.6071840524673462,
+    0.6073178052902222,
+    0.612482488155365,
+    0.6131293177604675,
+    0.6138391494750977,
+    0.615638256072998,
+    0.6174595952033997,
+    0.6177738904953003,
+    0.6179100275039673,
+    0.6197476387023926,
+    0.6211116313934326,
+    0.6256455779075623,
+    0.6270495653152466,
+    0.633224606513977,
+    0.643746554851532,
+    0.6467815637588501,
+    0.6468620300292969,
+    0.6492047309875488,
+    0.6505804061889648,
+    0.6513032913208008,
+    0.6528366804122925,
+    0.6555087566375732,
+    0.6562122702598572,
+    0.6568878293037415,
+    0.6577454209327698,
+    0.659585177898407,
+    0.6629106998443604,
+    0.6629106998443604,
+    0.6629106998443604,
+    0.6660347580909729,
+    0.6662835478782654,
+    0.6807724833488464
+  ],
+  "real_confidence_percentiles": "min 0.892 med 0.971 p90 0.986 max 1.000",
+  "confidence_sweep": [
+    {
+      "floor": 0.0,
+      "trades": 70,
+      "per_trade": -0.009575641980790382,
+      "hit_rate": 0.35714285714285715
+    },
+    {
+      "floor": 0.05,
+      "trades": 70,
+      "per_trade": -0.009575641980790382,
+      "hit_rate": 0.35714285714285715
+    },
+    {
+      "floor": 0.1,
+      "trades": 70,
+      "per_trade": -0.009575641980790382,
+      "hit_rate": 0.35714285714285715
+    },
+    {
+      "floor": 0.2,
+      "trades": 70,
+      "per_trade": -0.009575641980790382,
+      "hit_rate": 0.35714285714285715
+    },
+    {
+      "floor": 0.3,
+      "trades": 70,
+      "per_trade": -0.009575641980790382,
+      "hit_rate": 0.35714285714285715
+    },
+    {
+      "floor": 0.5,
+      "trades": 70,
+      "per_trade": -0.009575641980790382,
+      "hit_rate": 0.35714285714285715
+    }
+  ],
+  "heldout_admitted": 400,
+  "heldout_total": 400,
+  "heldout_exact_accuracy": 0.305,
+  "baseline_majority": 0.2975,
+  "baseline_up_rate": 0.405,
+  "predicted_mix": {
+    "slide": 127,
+    "murk": 106,
+    "climb": 52,
+    "trough": 70,
+    "crest": 45
+  },
+  "true_mix": {
+    "trough": 64,
+    "climb": 48,
+    "crest": 62,
+    "murk": 107,
+    "slide": 119
+  },
+  "buy_omens": 70,
+  "buy_hit_rate": 0.35714285714285715,
+  "buy_net_total": -0.6702949386553267,
+  "buy_net_per_trade": -0.009575641980790382,
+  "every_bar_net_per_trade": -0.010669626755313324,
+  "selection_lift_per_trade": 0.0010939847745229415,
+  "selection_null_se": 0.0029329984029410673,
+  "selection_z": 0.3729919434753006,
+  "selection_p_value": 0.35035,
+  "selection_trials": 20000
+}

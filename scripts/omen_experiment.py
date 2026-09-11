@@ -210,6 +210,45 @@ class WindowError(ValueError):
     """The requested train/test split does not fit the corpus."""
 
 
+def subset_lift_pvalue(all_net: Sequence[float], k: int, observed: float,
+                       trials: int = 20000, seed: int = 1234) -> Dict[str, float]:
+    """Could a random k of these same bars have paid as well as the omens?
+
+    The buy omens are a SUBSET of the held-out bars, not an independent
+    sample, so comparing ``omen mean`` against ``every-bar mean`` as two
+    independent means understates the error and manufactures an edge out of
+    selection noise. The honest null is "these k bars were picked at random",
+    and it is computed by drawing ``trials`` random k-subsets of the actual
+    held-out net returns and asking where the observed mean falls.
+
+    Pure arithmetic and seeded, so it is testable without a node and gives
+    the same answer twice. Measured pass 114 on AERO-USDC: the UP window's
+    buy omens paid +1.4887% against +0.5068% for every bar -- which reads as
+    a 0.98pp edge and is p=0.073, because the per-bar sd is 5.26% and 52
+    trades cannot resolve 1pp.
+    """
+    n = len(all_net)
+    if n == 0 or k <= 0 or k > n:
+        return {"every_bar_mean": 0.0, "null_se": 0.0, "z": 0.0, "p_value": 1.0,
+                "trials": 0}
+    every_bar = sum(all_net) / n
+    rng = random.Random(seed)
+    pool = list(all_net)
+    sims = [sum(rng.sample(pool, k)) / k for _ in range(trials)]
+    mean_sim = sum(sims) / len(sims)
+    var = sum((v - mean_sim) ** 2 for v in sims) / len(sims)
+    se = var ** 0.5
+    at_or_above = sum(1 for v in sims if v >= observed)
+    return {
+        "every_bar_mean": every_bar,
+        "null_se": se,
+        "z": ((observed - every_bar) / se) if se > 0 else 0.0,
+        # One-sided: we only ever claim the omens did BETTER than random.
+        "p_value": at_or_above / len(sims),
+        "trials": len(sims),
+    }
+
+
 def plan_windows(total_bars: int, train: int, test: int, horizon: int,
                  train_end: int | None = None,
                  test_end: int | None = None) -> Dict[str, int]:
@@ -864,6 +903,18 @@ def main() -> int:
           f"total {total:+.4f} ({total / max(1, len(trades)):+.4%} per trade)")
     print(f"   every-bar buy : {len(buy_and_hold)} trades, "
           f"{sum(buy_and_hold) / max(1, len(buy_and_hold)):+.4%} per trade")
+    # The lift over every-bar-buy is the number a reader will quote as an
+    # edge, so it does not get printed without its own noise beside it.
+    lift = subset_lift_pvalue(buy_and_hold, len(trades),
+                              total / max(1, len(trades)))
+    verdict = ("beats a random subset of the same bars"
+               if lift["p_value"] < 0.05
+               else "INSIDE the noise -- not an edge")
+    print(f"   selection test: lift "
+          f"{total / max(1, len(trades)) - lift['every_bar_mean']:+.4%} per trade, "
+          f"null SE {lift['null_se']:.4%}, z {lift['z']:+.2f}, "
+          f"p {lift['p_value']:.4f} over {lift['trials']} random {len(trades)}-subsets "
+          f"-> {verdict}")
     print(f"   real conf     : {_pct(real_conf)}")
 
     # Confidence sweep -- what a floor would have done. Reported, never
@@ -936,6 +987,12 @@ def main() -> int:
         "buy_net_total": total,
         "buy_net_per_trade": total / max(1, len(trades)),
         "every_bar_net_per_trade": (sum(buy_and_hold) / max(1, len(buy_and_hold))),
+        "selection_lift_per_trade": (total / max(1, len(trades))
+                                     - lift["every_bar_mean"]),
+        "selection_null_se": lift["null_se"],
+        "selection_z": lift["z"],
+        "selection_p_value": lift["p_value"],
+        "selection_trials": lift["trials"],
     }
     # Refuse to WRITE an uncomparable report rather than discover six passes
     # later that a number cannot be placed against another corpus.
