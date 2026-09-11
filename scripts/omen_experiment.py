@@ -95,6 +95,117 @@ def bar_seconds(bars: Sequence[Mapping[str, Any]]) -> int:
     return int(sorted(gaps)[len(gaps) // 2]) if gaps else 3600
 
 
+# --- horizon: a wall-clock promise, not a bar count ------------------------
+#
+# Measured pass 113 over ALL 629 files in data/historical_ohlcv: the cadence
+# runs 60s to 345600s. ``--horizon 12`` therefore asked about 12 minutes on one
+# file and 48 DAYS on another, and every report wrote the same string "h12" for
+# both. Whether a prediction target can pay for itself is a function of the
+# horizon in MINUTES -- the live cost floor is 0.3592% of notional and the
+# share of ticks whose realised move outruns it is 17.8% at 5 min against 80.3%
+# at 240 min -- so minutes is the unit the experiment must take.
+
+#: A corpus file whose median gap is coarser than this is a sparse or broken
+#: download, not a timeframe anybody chose: a 12-bar horizon on the 345600s
+#: file is a 48-day forecast, and the two 86400s files are daily candles that
+#: cannot answer an intraday question. Anything at or below 4 hours is a real
+#: timeframe somebody downloaded on purpose (3600s dominates, 7200s and 14400s
+#: exist). SELECTION over the corpus excludes coarser files; an explicit
+#: ``--corpus`` still runs, loudly, because naming one file is a decision.
+MAX_CORPUS_BAR_SECONDS = 14400
+
+#: The second half of the same bound. A file's HEAD cadence (the first 400
+#: gaps, which is what ``bar_seconds`` returns and therefore what every horizon
+#: is converted with) can disagree with its full-file cadence. A real feed
+#: jitters -- 3648s head against 3624s full-file is one hourly instrument with
+#: gaps -- but a 2.00x disagreement means the file holds TWO timeframes and the
+#: horizon is wrong by that factor somewhere inside it. Measured pass 113: 31
+#: of 629 files exceed this, and every one of them sits at or near an exact 2x,
+#: 3x or 4x. Selection excludes them; scripts/omen_corpus_cadence_census.py
+#: names each one.
+MAX_CADENCE_DRIFT_RATIO = 1.25
+
+#: 720 minutes is exactly the old 12-bar default on the 3600s cadence that most
+#: of this corpus carries, so every hourly run ever recorded reproduces
+#: bit-for-bit under the new unit. It is NOT a claim that 12 hours is the right
+#: question to ask -- [15cc71d4] measured that a perfect direction call loses
+#: money at 5 and 10 minutes on this feed, and the horizon that pays is an open
+#: decision. Changing this number changes what the brain is trained to predict.
+DEFAULT_HORIZON_MINUTES = 720.0
+
+
+def horizon_bars(minutes: float, cadence_seconds: int) -> int:
+    """A wall-clock horizon in this corpus's own bars, never fewer than one.
+
+    Rounds to nearest so a 10-minute horizon on 600s bars is 1 bar rather than
+    0; a zero-bar horizon would compare a bar's close against itself and report
+    a flawless, free, entirely fictional edge.
+    """
+    if cadence_seconds <= 0:
+        raise ValueError("cadence must be positive")
+    return max(1, int(round(float(minutes) * 60.0 / cadence_seconds)))
+
+
+def resolve_horizon(cadence_seconds: int, minutes: float | None = None,
+                    bars: int | None = None) -> Dict[str, Any]:
+    """The one place bars and minutes are reconciled, for every caller.
+
+    Returns both units and which one the caller ASKED in, because a report
+    that records only the bars cannot be compared with another corpus and a
+    report that records only the minutes cannot be reproduced. Exactly one of
+    ``minutes`` and ``bars`` may be given; giving both is a contradiction the
+    caller has to resolve rather than have silently picked for them.
+    """
+    if minutes is not None and bars is not None:
+        raise ValueError(
+            "--horizon-minutes and --horizon are the same quantity in two "
+            "units: pass one. Bars are corpus-specific; minutes are not.")
+    if bars is not None:
+        if int(bars) < 1:
+            raise ValueError("horizon must be at least 1 bar")
+        n_bars = int(bars)
+        return {"horizon_bars": n_bars,
+                "horizon_minutes": round(n_bars * cadence_seconds / 60.0, 4),
+                "horizon_source": "bars"}
+    if minutes is None:
+        raise ValueError("no horizon given")
+    if float(minutes) <= 0:
+        raise ValueError("horizon minutes must be positive")
+    n_bars = horizon_bars(minutes, cadence_seconds)
+    return {"horizon_bars": n_bars, "horizon_minutes": float(minutes),
+            "horizon_source": "minutes"}
+
+
+#: Every report under data/brain_experiments/ must carry all three, because
+#: any two of them determine the third and a reader with only one cannot tell
+#: what question was asked. Checked at WRITE time so a report that would be
+#: uncomparable never reaches the directory.
+REPORT_HORIZON_FIELDS = ("horizon_bars", "horizon_minutes", "bar_seconds")
+
+
+def validate_report_horizon(report: Mapping[str, Any]) -> None:
+    """Reject a report that does not say what horizon it measured."""
+    missing = [f for f in REPORT_HORIZON_FIELDS if report.get(f) is None]
+    if missing:
+        raise ValueError(
+            f"report is missing {missing}: a report carrying only some of "
+            f"{list(REPORT_HORIZON_FIELDS)} cannot be compared with a run on "
+            f"another corpus, which is the whole failure this check exists for")
+    bars_ = report["horizon_bars"]
+    minutes_ = report["horizon_minutes"]
+    cadence = report["bar_seconds"]
+    if bars_ < 1 or minutes_ <= 0 or cadence <= 0:
+        raise ValueError(
+            f"report horizon is not positive: bars={bars_} minutes={minutes_} "
+            f"bar_seconds={cadence}")
+    implied = bars_ * cadence / 60.0
+    # Rounding to whole bars moves the minutes by at most half a bar.
+    if abs(implied - minutes_) > (cadence / 60.0) / 2 + 1e-6:
+        raise ValueError(
+            f"report horizon disagrees with itself: {bars_} bars of "
+            f"{cadence}s is {implied:.2f} min, not {minutes_:.2f} min")
+
+
 class WindowError(ValueError):
     """The requested train/test split does not fit the corpus."""
 
@@ -390,8 +501,24 @@ def main() -> int:
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--train", type=int, default=2000)
     parser.add_argument("--test", type=int, default=400)
-    parser.add_argument("--horizon", type=int, default=12,
-                        help="bars ahead the omen is about")
+    parser.add_argument("--horizon-minutes", type=float, default=None,
+                        help=f"MINUTES of wall clock the omen is about, "
+                             f"converted to bars using this corpus's own "
+                             f"measured cadence (default "
+                             f"{DEFAULT_HORIZON_MINUTES:.0f}, which is exactly "
+                             f"the old 12-bar default on the 3600s cadence "
+                             f"most of this corpus carries). Minutes is the "
+                             f"default unit because bars are not comparable "
+                             f"across a corpus spanning 60s to 345600s: the "
+                             f"same '--horizon 12' asked about 12 minutes on "
+                             f"one file and 48 DAYS on another, and both "
+                             f"reports wrote 'h12'")
+    parser.add_argument("--horizon", type=int, default=None,
+                        help="bars ahead the omen is about -- an EXPLICIT "
+                             "override of --horizon-minutes, kept so an old "
+                             "run can be reproduced bar-for-bar. It asks a "
+                             "different question of every cadence, so the "
+                             "report records the minutes it worked out to")
     parser.add_argument("--recall-sample", type=int, default=200)
     parser.add_argument("--garbage", type=int, default=40)
     parser.add_argument("--seed", type=int, default=7)
@@ -445,11 +572,35 @@ def main() -> int:
     cadence = bar_seconds(bars)
     threshold = omen_threshold()
 
+    # The horizon is settled HERE, once, in both units -- every later use of
+    # args.horizon is bars, and horizon_minutes is what the report and the
+    # filename say, because that is the only unit two corpora share.
+    try:
+        resolved = resolve_horizon(
+            cadence,
+            minutes=(DEFAULT_HORIZON_MINUTES
+                     if args.horizon is None and args.horizon_minutes is None
+                     else args.horizon_minutes),
+            bars=args.horizon)
+    except ValueError as exc:
+        print(f"cannot resolve horizon: {exc}")
+        return 2
+    args.horizon = resolved["horizon_bars"]
+    horizon_minutes = resolved["horizon_minutes"]
+
     print(f"corpus {path.name}: {len(bars)} bars, {cadence}s cadence, "
           f"symbol {symbol}")
-    print(f"horizon {args.horizon} bars = {args.horizon * cadence / 60:.0f} min; "
+    print(f"horizon {horizon_minutes:.0f} min = {args.horizon} bars of "
+          f"{cadence}s (asked in {resolved['horizon_source']}); "
           f"omen threshold {threshold:.4%} "
           f"(round trip {ROUND_TRIP_COST:.4%})")
+    if cadence > MAX_CORPUS_BAR_SECONDS:
+        # Not fatal: naming one file is a decision. But a run on a 4-day gap
+        # is a multi-week forecast and has to say so before it starts.
+        print(f"WARNING: {cadence}s cadence is coarser than the "
+              f"{MAX_CORPUS_BAR_SECONDS}s selection bound -- this file is "
+              f"excluded from any census-driven selection, and this run is "
+              f"forecasting {horizon_minutes / 1440:.1f} DAYS ahead")
 
     # A census of where the UP and DOWN windows actually ARE, so the two
     # windows the standing rule demands are picked from measurement.
@@ -741,7 +892,11 @@ def main() -> int:
         "fabric_was_clean": fabric_is_empty(fabric_before),
         "allow_warm_fabric": bool(args.allow_warm_fabric),
         "corpus": str(path), "symbol": symbol, "bars": len(bars),
+        # All three, always: any two determine the third, and a reader with
+        # only the bars cannot compare this run with one on another cadence.
         "bar_seconds": cadence, "horizon_bars": args.horizon,
+        "horizon_minutes": horizon_minutes,
+        "horizon_source": resolved["horizon_source"],
         "round_trip_cost": ROUND_TRIP_COST, "omen_threshold": threshold,
         "train_window": [train_start, train_stop],
         "test_window": [test_start, test_stop],
@@ -782,14 +937,19 @@ def main() -> int:
         "buy_net_per_trade": total / max(1, len(trades)),
         "every_bar_net_per_trade": (sum(buy_and_hold) / max(1, len(buy_and_hold))),
     }
+    # Refuse to WRITE an uncomparable report rather than discover six passes
+    # later that a number cannot be placed against another corpus.
+    validate_report_horizon(report)
     report_dir = ROOT / args.report_dir
     report_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     # The regime goes in the FILENAME: two windows measured on one fabric
     # produce two reports, and a reader must not have to open them to see
-    # which is the UP one.
+    # which is the UP one. The MINUTES go in it too -- "h12" was the same
+    # string for a 12-minute and a 48-day forecast.
     out = (report_dir /
-           f"omen-{symbol}-h{args.horizon}-{heldout_regime['regime']}-{stamp}.json")
+           f"omen-{symbol}-h{horizon_minutes:.0f}m{args.horizon}b"
+           f"-{heldout_regime['regime']}-{stamp}.json")
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(f"\nreport -> {out}")
     return 0
