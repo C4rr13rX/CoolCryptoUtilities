@@ -5316,3 +5316,45 @@ the same replay says nothing about how many entry decisions are made on a STALE
 sample -- only 22 of the 61 symbols streamed in 24h have a tick inside the
 guard's 2h window, so a live decision taken on a 20-hour-old price is now
 refused and nobody has counted how often that happens.
+
+## 2026-09-11 -- Jet (QA, pass 116) -- can the four items marked done this pass survive being run rather than read?
+
+HYPOTHESIS: at least one "done" item is the wrong thing built correctly, or is
+green because its tests assert something the shipped code does not do.
+
+WHAT I DID: re-ran each claim as a command instead of reading its report.
+(1) [5ec44914] self-pool power -- read all four raw node artifacts and compared
+every number to the report. (2) [781bf37c] live entry-basis guard -- recomputed
+the refusal rate from storage/trading_cache.db myself, then neutered the guard
+at runtime with a pytest plugin to see how many tests notice. (3) [6fe42ae3]
+readiness staleness -- recounted the log lines. (4) [fa75fa1a] L2 transitions --
+called the shipped encoder on synthetic motif sequences.
+
+RESULT: three hold, one broke.
+  5ec44914 HOLDS. buy_net_per_trade, buy_hit_rate, exact accuracy and the
+    baselines match the report to the digit, and the pairing is real
+    (skipped_training=true, fabric_was_clean=false on the second arm of each
+    window). DOWN +0.3734% n=11 vs -1.7172% n=54; UP -0.2564% n=52 vs -0.0643%
+    n=48. The windows disagree, so the powered answer is NO EFFECT, not dilution.
+  781bf37c HOLDS. Independently: 216 closed round trips, strict refuses 16
+    (7.4%), lenient 11 (5.1%), 18 live with 1 strict refusal. Mutation run
+    (entry_price_is_corroborated forced True) turned exactly 4 of 7 tests red.
+  6fe42ae3 HOLDS. Confusion-refresh ERROR lines gone; 9 WARNINGs in the newest
+    400KB, which is the designed behaviour.
+  fa75fa1a REOPENED on criterion 3. At the shipped L2_TRANSITION_STEPS = 2,
+    AAAABBBB and ABABABAB -- same multiset, one change against seven -- both
+    return 'co2t path=hlmhl|lhlmh'. A two-symbol tail cannot encode how often
+    the alphabet changed. Every test in the file passes steps=3 explicitly and
+    never the module default, and one test ASSERTS the dwell is discarded.
+
+NEW ITEM FILED [656a76bc]: our test suite writes 2,635 fixture lines into
+production's logs/system.log, most recent 03:01:34 during this pass. It already
+bought one wrong diagnosis ([6fe42ae3]'s premise). The suite does NOT write the
+production database -- all nine SQL-writing test files use tmp copies.
+
+NEXT: the L2 tension is the real finding. At steps=2 L2 clears the 0.30
+identifier ceiling (0.2633/0.2000) but carries no dwell; at steps=3 it carries
+dwell and fails the ceiling (0.3667/0.3167); run-length fails harder
+(0.7117/0.5983). No fixed-tail scheme has cleared both. That is what the
+operator's "motifs over co-occurrence AND sequence" redesign has to solve, and
+it should be measured before another node arm is spent on L2.
