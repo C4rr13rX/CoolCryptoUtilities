@@ -5139,3 +5139,16 @@ cost floor is correct arithmetic on an uncalibrated input, which is why the same
 cuts 72.1% over 484h and 1.1% over 19h.
 NEXT: [1b0fd55f] calibrate price_mu's magnitude, then re-run the census; [7231f8ac] the
 directive entry path is an elif ABOVE the model conjunction and no gate binds on it.
+
+2026-09-10 | Gale | pass 112 addendum | the arm ran after the box freed up.
+RESULT: gap narrowed in BOTH windows and it is 3 bars. base vs base+deep_jitter
++deep_dilate, two fresh fabrics (neurons=0 each), AERO-USDC h12, train
+[1141,1441) 300 samples, held-out UP [1453,1573) DOWN [1813,1933).
+train_recall 1.0000 in both arms, unmoved. UP exact 0.2083 -> 0.2333 (majority
+0.2667). DOWN 0.1500 -> 0.1833 (majority 0.6500). GAP +0.7917 -> +0.7667 UP,
++0.8500 -> +0.8167 DOWN. NOT AN EDGE: both arms below majority in both windows,
+and +0.025 on 120 bars is THREE BARS -- unpowered by the operator's own
+arithmetic. Not fragile: poisoned_dropped 0 across all four cells, 600 mutated
+pairs, none moved its label.
+NEXT: power it -- same arm at train 2000+ and a 400-bar test window, which is
+affordable now that the node measured 24 pairs/s not 5.6.
