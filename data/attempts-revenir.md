@@ -5576,3 +5576,38 @@ which is why train 2000 and the deep_flatten arm were killed, not delivered.
 NEXT: stop adding pairs. Eleven flat SensoryInput pools cannot represent
 "these two frames are the same shape" — try an Internal pool carrying that
 relation instead.
+
+---
+
+2026-09-11 | Gale | pass 117 | hypothesis: the four cost fields in the books are constants or absent, so 'reduce the cost' has no number behind it -- and the reason a round trip cannot be split into legs is mechanical, not analytical.
+
+DID: censused all 1394 trade_fills rows; wrote services/fill_cost.py (per-field measured/configured/derived/unmeasurable schema with the reason); routed all four record_fill writers in trading/bot.py through a new _leg_cost_fields helper; renamed gas_price_usd -> native_token_price_usd and added native_token_price_source provenance; renamed slippage_bps -> slippage_tolerance_bps; wrote scripts/roundtrip_cost_census.py and data/roundtrip_cost_per_leg_census.md.
+
+RESULT, and the leg split is the number: the BUY LEG carries 54.0% of gas ($0.002536 vs $0.002157) and 3.6x the sell leg's realised slippage (+21.73 bps vs +6.04 bps) over 12 live round trips, 10 fully measured on both legs. The cost lever is the ENTRY FILL, not the exit. Over the 183 ghost round trips the split is 0%/100% BY CONSTRUCTION -- the ghost writer books one round-trip scalar against the exit and charges the entry nothing, ghost slippage is +0.00 bps on 183 of 183, and no gas is recorded on either ghost leg.
+
+THE CONSTANT MOVED: fixed $0.004047 -> $0.004570 (+12.9%, understated, the losing direction); rate 0.003187 -> 0.002777 (-12.9%, overstated). NEITHER CHANGED -- lowering the rate loosens the entry bar on 12 round trips at a $0.75 median clip, and raising the fixed part moves min_viable_notional_usd $2.23 -> $2.52. Filed as its own item.
+
+TWO DEFECTS FOUND: (1) trade_fills was NEVER repaired by scripts/reprice_gas_in_native_token.py -- all five rows that priced ETH gas at the traded pair's price are still there (AERO $0.4877/$0.5018, cbETH $2836.06/$2840.46, cbBTC $80884.98 vs a real ETH $2498.78); the census quarantines them and never averages them into a constant. (2) Two round trips entered LIVE and exited GHOST (CBBTC-USDC, BSTONK-USDC, both 2026-09-03) -- pre-fix artifacts, the guard passes today, excluded from both lanes.
+
+WHY TWO GUARDS: the plausibility band catches 3 of the 5 mispriced rows; $2836.06 is a perfectly plausible ETH price and is cbETH's, so only the provenance field catches it. A band tight enough to refuse $2836 would refuse real ETH prices.
+
+NEXT: more live round trips, not more analysis of these twelve. 183 ghost round trips cannot answer where cost falls because the ghost lane measures nothing per leg -- recording simulated per-leg gas on ghost fills would make the ghost book splittable and is the cheapest next step.
+
+2026-09-11 Iris — why the model head regressed 1800x overnight [2a503d95]
+HYPOTHESIS: a commit between 2026-09-10 and 2026-09-11 changed the model or
+the loader and caused the LEVEL probe to move -0.000620 -> -1.160425.
+DID: git log --since=2026-09-09 over model_definition.py, trading/pipeline.py
+and trading/data_loader.py; listed models/; queried model_versions.
+RESULT: FALSIFIED, and the replacement finding is worse. No code changed —
+the only commit touching those files is my own docstring fix. models/ holds
+exactly ONE file, active_model.keras built 2026-09-11 01:57, with no backup,
+so the 2026-09-10 artifact cannot be diffed. db.register_model_version
+(db.py:1474) writes version/created/metrics/path/is_active and has ZERO
+callers outside android/app/build; model_versions holds 0 rows. Every model
+this system has ever deployed is unrecorded, so a head regression of three
+orders of magnitude is both undetectable and unattributable after the fact.
+NEXT: not archaeology — a deploy-time calibration guard. Probe a candidate
+artifact on N clean data/historical_ohlcv windows and refuse promotion when
+median |predicted price_mu| exceeds 10x the median |label|; today's artifact
+is 489.8x, so the guard must be shown rejecting it. Wire
+register_model_version at the same seam so the next regression has a row.
