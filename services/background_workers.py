@@ -677,6 +677,12 @@ class TokenDownloadSupervisor:
     def __init__(self, db: Optional[TradingDatabase] = None) -> None:
         chains_env = os.getenv("DOWNLOAD_WORKER_CHAINS", "base,ethereum,arbitrum,optimism,polygon")
         chains = [c.strip().lower() for c in chains_env.split(",") if c.strip()]
+        #: Which worker run_cycle is currently inside, and when it started.
+        #: Set before the call and cleared after, so a stall is attributable
+        #: while it is still happening rather than only in hindsight.
+        self.in_flight: Optional[tuple] = None
+        self.last_worker_sec: Dict[str, float] = {}
+        self.last_cycle_sec: float = 0.0
         self.static_workers: list[DownloadWorker] = []
         for chain in chains:
             index_path = DATA_ROOT / f"pair_index_{chain}.json"
@@ -723,21 +729,57 @@ class TokenDownloadSupervisor:
         self.market_worker.stop()
         self.discovery_worker.stop()
 
+    #: Seconds one worker may take before run_cycle says so by name.
+    #: Not a kill: nothing here can interrupt a synchronous call. It is the
+    #: difference between "data_ingest has been stuck for 6879 seconds" and
+    #: knowing WHICH of the seven calls inside it is stuck.
+    SLOW_WORKER_SEC = float(os.getenv("DOWNLOAD_SUPERVISOR_SLOW_WORKER_SEC", "60"))
+
+    def _run_worker(self, label: str, fn) -> float:
+        """Run one worker, naming it before and timing it after.
+
+        Measured 2026-09-11 (pass 120): `data_ingest`, the scheduler's feed
+        task, was abandoned for up to 6879 seconds -- 114 minutes with the feed
+        task not running at all -- and the wedged worker could not be named,
+        because run_cycle called seven workers in a row and recorded nothing
+        about which one it was inside. `in_flight` is that record.
+        """
+        started = time.time()
+        self.in_flight = (label, started)
+        try:
+            fn()
+        except Exception as exc:
+            log_message("download-supervisor", f"{label} cycle error: {exc}", severity="error")
+        finally:
+            elapsed = time.time() - started
+            self.in_flight = None
+            self.last_worker_sec[label] = elapsed
+            if elapsed >= self.SLOW_WORKER_SEC:
+                log_message(
+                    "download-supervisor",
+                    "slow worker: %s took %.1fs (budget %.0fs) -- the whole "
+                    "data_ingest task waits on this" % (label, elapsed, self.SLOW_WORKER_SEC),
+                    severity="warning",
+                )
+        return elapsed
+
+    def wedged(self) -> Optional[Dict[str, Any]]:
+        """Which worker is run_cycle inside right now, and for how long?
+
+        None when no cycle is running. This is what turns an unattributable
+        6879-second stall into a named one.
+        """
+        flight = self.in_flight
+        if not flight:
+            return None
+        label, started = flight
+        return {"worker": label, "running_for_sec": round(time.time() - started, 1)}
+
     def run_cycle(self) -> None:
+        cycle_started = time.time()
         for worker in self.static_workers:
-            try:
-                worker.run_once()
-            except Exception as exc:
-                log_message("download-supervisor", f"{worker.chain} cycle error: {exc}", severity="error")
-        try:
-            self.dynamic_worker.run_once()
-        except Exception as exc:
-            log_message("download-supervisor", f"dynamic cycle error: {exc}", severity="error")
-        try:
-            self.market_worker.run_once()
-        except Exception as exc:
-            log_message("download-supervisor", f"market cycle error: {exc}", severity="error")
-        try:
-            self.discovery_worker.run_once()
-        except Exception as exc:
-            log_message("download-supervisor", f"discovery cycle error: {exc}", severity="error")
+            self._run_worker(f"static:{worker.chain}", worker.run_once)
+        self._run_worker("dynamic", self.dynamic_worker.run_once)
+        self._run_worker("market", self.market_worker.run_once)
+        self._run_worker("discovery", self.discovery_worker.run_once)
+        self.last_cycle_sec = time.time() - cycle_started
