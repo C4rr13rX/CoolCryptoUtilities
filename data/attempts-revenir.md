@@ -5216,3 +5216,37 @@ is 3895 MB against the node's 4096 MB floor, so [beec23cc] gates the brain
 lane and is the thing to do first.
 
 2026-09-10 Cove pass 113 -- HYPOTHESIS: L1 hysteresis banding (margin 0.50) makes the L1 motif carry held-out buy-low edge, by cutting the 73% bar-to-bar change rate that makes every motif near-unique. DID: moved sticky_motifs from scripts/omen_l2_scheme_probe.py into trading/omen_layers.py with a test pinning margin=0 byte-identical to plain banding including the collapsed-tercile fallback (proven to fail against the wrong encoder); added --hysteresis to scripts/omen_layer_probe.py; then scored the motif->trough rule directly on 102 base corpora filtered to a 3600s median bar spacing so --horizon 12 means 12 hours everywhere. RESULT: NEGATIVE, and better powered than any previous arm here. Encoder side works -- UP motifs at n>=20 lift>=1.3 go 1 -> 3, change rate 68.2 -> 31.5% UP and 75.4 -> 32.1% DOWN. Edge side does not: over 102 windows, DOWN -1.5575% vs -1.6617% buy-every-bar (+0.10pp over 194 trades, under one standard error of zero at 2% dispersion) and UP -1.3176% vs +0.6541% (-1.97pp on 6 trades). 83 of 102 windows call ZERO trades -- an 81% abstention rate is what the rule DOES, not a property of the AERO corpus. The pass-110 negative is RE-ESTABLISHED under the fixed encoder. NEXT: stop asking L1-alone for an edge at a 12-hour horizon on 1h bars; the untested things are L1 as a POOL beside L0 (needs a corpus whose UP window calls trades), L2 over transitions at margin 0.50 where Gale measured 0.2633/0.2000 distinctness, and the metacognition pools. Commits 67542cc and the follow-up.
+
+2026-09-10 Gale pass 113 -- [5ec44914] the self-pool dilution verdict, powered.
+
+HYPOTHESIS: pass 111 concluded "the self pools DILUTE the query" from 19 trades
+
+on 60-bar windows; if that verdict is noise, it will not survive a longer
+
+held-out window. DID: ran the arm on BOTH windows, two fresh :8091 nodes on
+
+market_predictor_v4_meta.identity.toml, one fabric each, both arms back-to-back
+
+with --skip-train on the second. RESULT: the verdict REVERSED in DOWN and
+
+reappeared in UP, so there is no effect. DOWN LINK-WETH 200 bars up-rate 15.0%:
+
+with self +0.3734%/trade n=11, without -1.7172% n=54, every-bar -2.2088% n=200.
+
+UP CRV-WETH 600 bars up-rate 61.8%: with self -0.2564% n=52, without -0.0643%
+
+n=48, every-bar -0.2016% n=600. Pass 111 had DOWN with self -3.2611% (n=2) vs
+
+without -1.9445% (n=9) -- both cells flipped sign. Under the both-windows rule:
+
+NO EDGE either way. NO edge claimed; the n=11 cell is reported unrankable.
+
+self_agreement excluded at 0.004 distinct, arm reported as TWO pools not three.
+
+NEXT: do NOT re-run this arm. The only untested thing left in this area is
+
+self_agreement fed a node s real per-query-set votes -- every number so far was
+
+measured with that pool a constant, so deep metacognition is NOT MEASURED.
+
+2026-09-10 Iris pass 113 -- HYPOTHESIS: 709c505's entry size conjunct failed criterion 3 (admitted 9 before, 9 after) because of its THRESHOLD. WRONG -- it was the QUANTITY's units. DID: measured delta (=price_mu) against the realised 15-minute tape over 9,667 decision cycles, and measured brain.volatility_rel the same way. RESULT: median |delta| 90.4323% vs a 0.1136% realised move = 796x, so a 0.3861% cost floor is vacuous; volatility_rel is 0.1137% = ratio 0.96. Added vol_rel >= the same entry_fees floor as a second conjunct: admitted 9 -> 1 (88.9% fewer) over one 12,000-cycle/100.5h window, and vol_rel alone still admits 13.2% of all cycles so it is not a block-everything gate. NO EDGE CLAIMED: the admitted subset is n=1. Commit b4bbd1c, report data/entry_move_size_units.md. SECOND ITEM [ca4ac5d5]: replaced the bare 0.10 SEPARATES literal in omen_self_distinctness with an in-script 2000-shuffle null. RESULT: self_agreement 99.3rd percentile and self_error_run 97.9th SURVIVE, self_outcome 80.0th is flat -- two of three, not none, correcting an approximated pass-110 null whose own caveat predicted this; the --shuffle-frames control goes flat on all three where the literal marked two. Commit aac9aca, gate 721/0. NEXT: price_mu being 796x the tape ([1b0fd55f]) is now measured, not asserted -- it is the blocker on every number that reads delta as a return.
