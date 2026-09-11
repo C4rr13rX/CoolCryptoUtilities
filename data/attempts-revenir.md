@@ -5250,3 +5250,24 @@ self_agreement fed a node s real per-query-set votes -- every number so far was
 measured with that pool a constant, so deep metacognition is NOT MEASURED.
 
 2026-09-10 Iris pass 113 -- HYPOTHESIS: 709c505's entry size conjunct failed criterion 3 (admitted 9 before, 9 after) because of its THRESHOLD. WRONG -- it was the QUANTITY's units. DID: measured delta (=price_mu) against the realised 15-minute tape over 9,667 decision cycles, and measured brain.volatility_rel the same way. RESULT: median |delta| 90.4323% vs a 0.1136% realised move = 796x, so a 0.3861% cost floor is vacuous; volatility_rel is 0.1137% = ratio 0.96. Added vol_rel >= the same entry_fees floor as a second conjunct: admitted 9 -> 1 (88.9% fewer) over one 12,000-cycle/100.5h window, and vol_rel alone still admits 13.2% of all cycles so it is not a block-everything gate. NO EDGE CLAIMED: the admitted subset is n=1. Commit b4bbd1c, report data/entry_move_size_units.md. SECOND ITEM [ca4ac5d5]: replaced the bare 0.10 SEPARATES literal in omen_self_distinctness with an in-script 2000-shuffle null. RESULT: self_agreement 99.3rd percentile and self_error_run 97.9th SURVIVE, self_outcome 80.0th is flat -- two of three, not none, correcting an approximated pass-110 null whose own caveat predicted this; the --shuffle-frames control goes flat on all three where the literal marked two. Commit aac9aca, gate 721/0. NEXT: price_mu being 796x the tape ([1b0fd55f]) is now measured, not asserted -- it is the blocker on every number that reads delta as a return.
+
+2026-09-11 Iris pass 114 -- [1fc31b2a] pool 18 temporal_scale resolution.
+HYPOTHESIS: pool 18's frame is too coarse (0.045 distinct/sample) to clear the
+0.20 dilution bar, so the one pool aimed at regime never fires in a query.
+DID: found the fix already committed as 303ff4c; reproduced BOTH sides
+back-to-back in one process on p108_aero_down/up by reverting the magnitude
+digit in temporal_frames. Then asked the question the item did not: does the
+now-queryable frame carry the LABEL? Modal label fit on the first 70% of the
+window, applied unchanged to the last 30%.
+RESULT: distinctness 0.0417 -> 0.2932 (DOWN) and 0.0402 -> 0.3006 (UP),
+selected into a six-stream query on merit. Held-out edge against the held-out
+window's OWN majority class: -0.0097 DOWN, -0.3382 UP. In-sample the same
+frame reads +0.2114/+0.3378 on 190-202 groups over 648-672 samples (3.4 per
+group -- noise). Scored against the TRAIN majority, UP reads a fake +0.0821
+because the prior shifts murk .270 -> climb .517 across the split.
+QUERYABILITY IS NOT INFORMATION: clearing the dilution bar was necessary and
+is done, and it moved no held-out number on its own.
+NEXT: criteria 3 and 4 need a node (:8091 held by Gale this pass). Do NOT
+re-run the distinctness arm -- it is settled. The open question is whether
+pool 18 contributes IN CONJUNCTION with the other five streams, which one
+stream in isolation cannot answer.
