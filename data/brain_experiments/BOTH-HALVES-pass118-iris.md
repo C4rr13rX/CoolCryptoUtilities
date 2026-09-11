@@ -59,34 +59,56 @@ divided once, never a mean of per-corpus means. All four cells clear the
 quotable. The baseline is every bar in the same window, mirrored for the sell
 half (selling every bar).
 
-| window | half | n | net per trade | precision | baseline | edge |
+| window | half | n | net per trade | precision | matched baseline | edge |
 |---|---|---|---|---|---|---|
-| UP | buy (trough) | 4641 | **+1.1258%** | 62.9% | +1.2206% | **−0.0948pp** |
-| UP | sell (crest) | 16662 | **−2.6211%** | 19.5% | −1.2206% | **−1.4005pp** |
-| DOWN | buy (trough) | 15680 | **−2.5629%** | 17.0% | −2.4246% | **−0.1382pp** |
-| DOWN | sell (crest) | 4799 | **+1.2379%** | 62.5% | +2.4246% | **−1.1867pp** |
+| UP | buy (trough) | 4641 | **+1.1258%** | 62.9% | buy every bar +1.2206% | **−0.0948pp** |
+| UP | sell (crest) | 16662 | **−2.6211%** | 19.5% | sell every bar −2.5206% | **−0.1005pp** |
+| DOWN | buy (trough) | 15680 | **−2.5629%** | 17.0% | buy every bar −2.4246% | **−0.1382pp** |
+| DOWN | sell (crest) | 4799 | **+1.2379%** | 62.5% | sell every bar **+1.1246%** | **+0.1133pp** |
 
 Every-bar n = 34736 per window (167 × 208).
 
 ## What it means
 
 **The sell half is not free headroom, and pass 114's ceiling must not be
-sized as if it were.** Held out, the crest half loses to its own baseline by
-1.40pp in the UP window and 1.19pp in the DOWN window — the two worst cells
-in the table. The buy half is roughly flat: −0.09pp and −0.14pp, which is a
-weak rule reproducing the drift it sits in.
+sized as if it were.** Held out, three of the four cells are below the
+baseline they compete with, and the one positive cell is +0.1133pp on
+n=4799 — an eleventh of the +1.2379% level it is computed from, and a
+sixteenth of the +1.8884% the ceiling reported. Nothing here is an edge a
+strategy could be sized on.
 
 The reason the DOWN crest number looked big in pass 114 is now visible: in a
-down window *everything* falls, so selling pays +2.4246% per trade with no
-skill at all. A crest label picks a subset of those bars, and the subset is
-worse than the whole. The same shape runs the other way in the UP window,
-where the buy half's +1.1258% is below a +1.2206% you get for holding.
-**A raw per-trade percentage in a directional window is mostly the window.**
-Only the edge column is a statement about the caller.
+down window *everything* falls, so selling every bar pays +1.1246% per trade
+with no skill at all. A crest label picks a subset of those bars, and the
+subset is barely better than the whole. The same shape runs the other way in
+the UP window, where the buy half's +1.1258% is BELOW a +1.2206% you get for
+holding. **A raw per-trade percentage in a directional window is mostly the
+window.** Only the edge column is a statement about the caller.
 
 The two high-precision cells (62.9% and 62.5%) are the same effect a third
 time: precision against a cost threshold in a window that moves that way is
 cheap, and it is not correlated with beating the baseline.
+
+### The baseline itself was wrong, by two round trips
+
+The first version of this measurement mirrored the sell baseline as
+`-every_bar_net_per_trade`, and `render_scoreboard` had shipped that mirror
+since it was written. It is wrong: `every_bar` is `mean(forward) - cost`, so
+selling every bar is `-mean(forward) - cost`, which is `-baseline - 2*cost`.
+Negating the buy baseline CREDITS the round trip to the seller instead of
+charging it and flatters every sell cell by 2x the cost — **1.30pp** at the
+shipped 0.6500%. It was caught by a synthetic window where every bar falls
+by exactly 1%, on which the true crest edge is zero and the code reported
+exactly −2×cost. The corrected mirror is
+`omen_scoreboard.sell_every_bar`, the edge is now a field
+(`buy_edge_vs_baseline`, `crest_edge_vs_baseline`) rather than something each
+caller re-derives, and
+`tests/test_a_directional_window_is_not_an_edge.py` holds it.
+
+The sign of the headline changed with the fix: the DOWN sell edge read
+−1.1867pp under the wrong mirror and reads **+0.1133pp** under the right
+one. It is still not an edge worth sizing — but it is not the disaster the
+wrong mirror made it look like, and the difference was entirely arithmetic.
 
 ## What this does NOT say
 
@@ -101,8 +123,8 @@ often as it picks a real extreme, which is what a feature with no signal in
 it looks like when you fit a threshold to it.
 
 **The next question this raises**: the honest baseline for a half-book in a
-directional window is not "every bar", it is "every bar, in a window of the
-same regime". Both are reported above and the edge column already uses the
-matched one. Any future sell-side arm must be scored against the mirrored
-baseline the same way, or a down window will hand it a fake +2.4% and this
-repo will pay for it a fourth time.
+directional window is not "every bar", it is "SELL every bar, in a window of
+the same regime, paying the same round trip". That is a field now
+(`sell_every_bar_net_per_trade`) and the edge column uses it. Any future
+sell-side arm must be scored against it, or a down window will hand it a fake
++1.24% and this repo will pay for it a fourth time.

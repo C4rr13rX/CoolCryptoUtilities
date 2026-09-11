@@ -360,14 +360,19 @@ def _verdict(pooled: Mapping[str, Any]) -> str:
                              f"below the {READABLE_TRADES}-trade floor -- "
                              f"not an edge, not quotable")
                 continue
-            baseline = board["every_bar_net_per_trade"]
-            ref = baseline if key == "buy" else (
-                -baseline if baseline is not None else None)
-            delta = (cell["net_per_trade"] - ref) if ref is not None else None
+            # Read the edge off the board rather than re-deriving it. The
+            # first version of this function re-derived the sell baseline as
+            # -every_bar and was wrong by two round trips (1.30pp), which is
+            # the whole reason sell_every_bar exists.
+            ref = (board["every_bar_net_per_trade"] if key == "buy"
+                   else board["sell_every_bar_net_per_trade"])
+            delta = board["buy_edge_vs_baseline" if key == "buy"
+                          else "crest_edge_vs_baseline"]
             lines.append(
                 f"  {want} {half}: n={cell['n']} "
-                f"{cell['net_per_trade']:+.4%} per trade against an every-bar "
-                f"{ref:+.4%}" + (f" -- {delta:+.4%} edge" if delta is not None else ""))
+                f"{cell['net_per_trade']:+.4%} per trade against a "
+                f"{'buy' if key == 'buy' else 'sell'}-every-bar {ref:+.4%}"
+                + (f" -- {delta:+.4%} edge" if delta is not None else ""))
     return "\n".join(lines)
 
 
