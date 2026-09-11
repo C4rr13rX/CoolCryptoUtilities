@@ -221,6 +221,44 @@ META_ENABLED: bool = os.getenv(
     "OMEN_META_COLLECTIONS", "0") not in ("0", "", "false", "False", "no")
 if META_ENABLED:
     COLLECTIONS = COLLECTIONS + META_COLLECTIONS
+
+#: The SHAPE-CLASS collection -- pool 7 of the ALREADY-SHIPPED
+#: ``market_predictor_v2.identity.toml``. It needs no new identity file and no
+#: new node build, because pool 7 (``news_entities``) is declared, fully
+#: knobbed (recent_atoms_window 65536, max_concept_member_count 24,
+#: decay_rate 0.00002, prune_floor 0.001) and has never been fed by any
+#: client. docs/BRAIN_POOL_TOPOLOGY.md counted it as dead; this spends it.
+#:
+#: WHY IT EXISTS, and why it is NOT a PoolKind::Internal pool. The engine
+#: matches ``PoolKind::Internal`` NOWHERE -- ``grep -rn 'PoolKind::Internal'``
+#: over the W1z4rDV1510n crates returns zero, and the only behavioural match
+#: on a pool kind anywhere is ``brain.rs:7425 matches!(ps.kind,
+#: PoolKind::Action)``. Declaring a pool Internal is a naming convention. A
+#: relation becomes a first-class bindable thing by being SENT, not by being
+#: declared, so this is a SensoryInput pool carrying a CLIENT-COMPUTED
+#: relation -- the safe side of the trap "never make the substrate guess what
+#: the caller can compute".
+#:
+#: WHAT IT CARRIES. A canonical shape key over the DEEP PREFIX, built to be
+#: byte-IDENTICAL for a base frame and for its label-safe mutations. The
+#: shape-mutation arm inverted in pass 117 (held-out 0.3400->0.2950 UP,
+#: 0.2825->0.2375 DOWN) because a mutation lands as another near-unique key,
+#: so more pairs is more memorisation. A key that COLLIDES across a base and
+#: its mutants is the one thing that turns those extra pairs into evidence
+#: for a shape instead of evidence for an instant.
+#:
+#: OFF BY DEFAULT for the same load-bearing reason as the others, inverted: a
+#: node whose identity does NOT declare pool 7 would report the whole sample
+#: as a MISS. v2, v3_assoc and v4_meta all declare it, but the default stays
+#: 0 so production's frames do not change underneath it.
+#:   OMEN_SHAPE_COLLECTION=1
+SHAPE_COLLECTIONS: Tuple[Collection, ...] = (
+    Collection("shape_class", "shp", _pool("OMEN_POOL_SHAPE_CLASS", 7)),
+)
+SHAPE_ENABLED: bool = os.getenv(
+    "OMEN_SHAPE_COLLECTION", "0") not in ("0", "", "false", "False", "no")
+if SHAPE_ENABLED:
+    COLLECTIONS = COLLECTIONS + SHAPE_COLLECTIONS
 COLLECTIONS_BY_NAME: Dict[str, Collection] = {c.name: c for c in COLLECTIONS}
 
 #: The chained stage-1 target. It is an input pool at stage 2 and the
@@ -530,6 +568,118 @@ def horizon_frame(horizon_bars: int, bar_seconds: int) -> str:
             f"w={minutes:0{_WALLCLOCK_DIGITS}d}")
 
 
+#: How many anchor points the deep prefix is resampled onto, and how many
+#: bands each point is quantised into. Both are deliberately COARSE. The key
+#: has to collide across a base frame and its mutants or it buys nothing, and
+#: it has to separate genuinely different shapes or it is a constant -- the
+#: census in ``omen_shape_mutations.py shapekey`` reports both numbers and is
+#: the thing that decides whether these values are right.
+SHAPE_POINTS_FINE: int = 8
+SHAPE_BANDS_FINE: int = 5
+SHAPE_POINTS_COARSE: int = 4
+SHAPE_BANDS_COARSE: int = 3
+
+#: Which resolutions the frame carries. DEFAULT IS THE COARSE KEY ALONE, and
+#: that default is a measurement rather than a taste. Censused on
+#: 0004_AERO-USDC over 400 anchors (data/brain_experiments/
+#: p120-jet-shapekey-census.json):
+#:
+#:   resolution  distinct  distinctness  supported  anchors in them
+#:         k8         307        76.8%         64            39.2%
+#:         k4          44        11.0%         42            99.5%
+#:
+#: The fine key is unique-per-instant for three anchors in four, which is
+#: EXACTLY the failure the shape-mutation arm measured in pass 117 -- a key
+#: nothing else shares teaches nothing, so carrying it re-imports the
+#: memorisation this pool exists to break. The coarse key puts 99.5% of
+#: anchors into a class some other anchor also lands in, and holds 92.8% of
+#: ``deep_jitter`` mutants on their base's key. Set OMEN_SHAPE_RESOLUTION to
+#: "k8" or "both" to carry the fine key anyway; the census above is the
+#: argument against it.
+SHAPE_RESOLUTION: str = os.getenv("OMEN_SHAPE_RESOLUTION", "k4").lower()
+
+
+def _resample_mean(values: Sequence[float], points: int) -> List[float]:
+    """Average ``values`` down onto ``points`` equal segments.
+
+    The MEAN is what makes the key survive ``deep_jitter``: gaussian noise
+    scaled to the prefix's own step size averages towards zero over a segment
+    of ~18 bars, while the shape the segment describes does not. Equal
+    SEGMENTS, rather than a fixed stride, is what makes it survive
+    ``deep_dilate``: a time stretch changes how many source bars land in a
+    segment and not which part of the shape the segment covers.
+    """
+    n = len(values)
+    if n == 0 or points <= 0:
+        return []
+    out: List[float] = []
+    for k in range(points):
+        lo = (k * n) // points
+        hi = max(lo + 1, ((k + 1) * n) // points)
+        chunk = values[lo:hi]
+        out.append(sum(chunk) / len(chunk))
+    return out
+
+
+def _quantise(values: Sequence[float], bands: int, alphabet: str) -> str:
+    """Min-max normalise then band, so the key is SCALE-free by construction.
+
+    A flat run has no range to normalise against; it gets the middle band
+    rather than an arbitrary one, because "flat" is a shape and a divide-by-
+    zero is not.
+    """
+    if not values:
+        return ""
+    low, high = min(values), max(values)
+    span = high - low
+    mid = alphabet[bands // 2]
+    if span <= 0.0:
+        return mid * len(values)
+    letters = []
+    for v in values:
+        idx = int(((v - low) / span) * bands)
+        letters.append(alphabet[min(bands - 1, max(0, idx))])
+    return "".join(letters)
+
+
+def shape_class_frame(closes: Sequence[float]) -> str:
+    """The canonical SHAPE of the deep prefix, at two resolutions.
+
+    THE POINT OF THIS FUNCTION, in one line: a base frame and every label-safe
+    mutation of it must produce the SAME BYTES here, while two genuinely
+    different chart shapes must not.
+
+    WHICH BARS. Exactly the bars the mutations are allowed to touch -- the
+    deep prefix, everything older than ``RANGE_WINDOW`` back from the anchor.
+    That span is derived from the labeller, not hard-coded: ``label_omen``
+    reads the entry close, the future close and position-in-range over the
+    last ``RANGE_WINDOW`` bars, so a bar older than that cannot move the
+    label. Reading only those bars is what makes the key invariant to the
+    mutations; reading only those bars is ALSO why the key adds something the
+    other frames do not, since geometry/temporal/volatility are all dominated
+    by the recent tail.
+
+    THE TWO RESOLUTIONS are not decoration. The fine key discriminates and the
+    coarse key gives support: a key nothing else shares teaches nothing, which
+    is precisely the failure the shape-mutation arm measured. Their alphabets
+    are byte-DISJOINT ('abcde' against 'pqr') so a decode can never confuse a
+    fine band for a coarse one -- the same rule that governs the labels.
+    """
+    want_fine = SHAPE_RESOLUTION in ("k8", "both")
+    want_coarse = SHAPE_RESOLUTION in ("k4", "both")
+    deep = list(closes[:-RANGE_WINDOW]) if len(closes) > RANGE_WINDOW else []
+    parts = ["shp"]
+    if want_fine:
+        parts.append("k8=" + (_quantise(
+            _resample_mean(deep, SHAPE_POINTS_FINE),
+            SHAPE_BANDS_FINE, "abcde") if deep else "na"))
+    if want_coarse:
+        parts.append("k4=" + (_quantise(
+            _resample_mean(deep, SHAPE_POINTS_COARSE),
+            SHAPE_BANDS_COARSE, "pqr") if deep else "na"))
+    return " ".join(parts)
+
+
 def build_collections(
     bars: Sequence[Mapping[str, Any]],
     index: int,
@@ -708,6 +858,8 @@ def build_collections(
         Imported here rather than at module scope so a caller with the flag
         off never pays for the module.
         """
+        if SHAPE_ENABLED:
+            frames["shape_class"] = shape_class_frame(closes)
         if not META_ENABLED:
             return frames
         from trading.omen_metacognition import metacognition_frames

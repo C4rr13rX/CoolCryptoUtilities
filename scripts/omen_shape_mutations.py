@@ -583,9 +583,103 @@ def run_arm(args) -> int:
     return 0
 
 
+def shapekey_census(bars, *, symbol: str, chain: str, horizon: int,
+                    start: int, stop: int, samples: int, rng,
+                    kinds: Sequence[str]) -> Dict[str, Any]:
+    """Decide, WITHOUT spending a second of node time, whether the shape key works.
+
+    Two numbers settle it and they pull in opposite directions:
+
+      * COLLISION RATE -- the share of mutants whose shape key equals their
+        base's. This is the entire point. Pass 117 measured the mutated arm
+        going BACKWARDS (held-out 0.3400->0.2950 UP, 0.2825->0.2375 DOWN)
+        because every mutant landed as another near-unique key; if the key
+        does not collide, the shape pool changes nothing and the arm is not
+        worth running.
+      * DISTINCTNESS -- distinct keys over anchors. A key that collides with
+        EVERYTHING is a constant: it adds a bound, uninformative pool and a
+        little dilution, and it cannot discriminate one shape from another.
+
+    PURITY is reported alongside and is NOT a gate: it is the share of anchors
+    whose key maps to a single label, and on a 3-label problem a high purity
+    at high distinctness just means the key is still nearly unique. It is here
+    so a collapse to one key is visible as purity falling to the majority rate
+    rather than being read as a win.
+    """
+    from trading.omen_brain import shape_class_frame
+
+    anchors = [i for i in range(max(start, LOOKBACK_BARS),
+                                min(stop, len(bars) - horizon))]
+    if samples and len(anchors) > samples:
+        anchors = sorted(rng.sample(anchors, samples))
+
+    def _parts(frame: str) -> Dict[str, str]:
+        """The whole frame and each resolution alone.
+
+        Reported SEPARATELY because the two resolutions can fail in opposite
+        directions -- the fine key can be so discriminating it is unique per
+        instant while the coarse key is so blunt it is a constant -- and a
+        single number over the concatenation hides both.
+        """
+        fine, _, coarse = frame.partition(" k4=")
+        return {"full": frame, "k8": fine, "k4": "k4=" + coarse}
+
+    resolutions = ("full", "k8", "k4")
+    keys: Dict[str, List[str]] = {r: [] for r in resolutions}
+    labels: List[str] = []
+    collisions: Dict[str, Dict[str, Dict[str, int]]] = {
+        k: {r: {"hit": 0, "n": 0} for r in resolutions} for k in kinds}
+    for index in anchors:
+        window = list(bars[index - LOOKBACK_BARS: index + 1])
+        omen = label_omen(bars, index, horizon_bars=horizon)
+        if omen is None:
+            continue
+        base = _parts(shape_class_frame(_closes(window)))
+        for r in resolutions:
+            keys[r].append(base[r])
+        labels.append(omen if isinstance(omen, str) else omen[0])
+        for kind in kinds:
+            mutate = MUTATIONS[kind][0]
+            mutated = mutate(list(window), len(window) - 1, rng,
+                             MUTATIONS[kind][1])
+            mut = _parts(shape_class_frame(_closes(mutated)))
+            for r in resolutions:
+                collisions[kind][r]["n"] += 1
+                if mut[r] == base[r]:
+                    collisions[kind][r]["hit"] += 1
+
+    majority = Counter(labels).most_common(1)
+    out: Dict[str, Any] = {
+        "anchors": len(labels),
+        "majority_label_rate": (majority[0][1] / len(labels)) if labels else 0.0,
+        "label_mix": dict(Counter(labels)),
+        "resolutions": {},
+        "collision": {k: {r: {"rate": (v["hit"] / v["n"]) if v["n"] else 0.0,
+                              **v} for r, v in per.items()}
+                      for k, per in collisions.items()},
+    }
+    for r in resolutions:
+        by_key: Dict[str, Counter] = {}
+        for key, label in zip(keys[r], labels):
+            by_key.setdefault(key, Counter())[label] += 1
+        pure = sum(1 for c in by_key.values() if len(c) == 1)
+        out["resolutions"][r] = {
+            "distinct_keys": len(by_key),
+            "distinctness": (len(by_key) / len(labels)) if labels else 0.0,
+            "keys_with_support": sum(1 for c in by_key.values()
+                                     if sum(c.values()) >= 2),
+            "share_of_anchors_in_supported_keys": (
+                sum(sum(c.values()) for c in by_key.values()
+                    if sum(c.values()) >= 2) / len(labels)) if labels else 0.0,
+            "pure_key_share": (pure / len(by_key)) if by_key else 0.0,
+            "examples": list(by_key)[:4],
+        }
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["census", "arm"])
+    parser.add_argument("mode", choices=["census", "arm", "shapekey"])
     parser.add_argument("--corpus", required=True)
     add_horizon_args(parser)
     parser.add_argument("--chain", default="base")
@@ -628,6 +722,45 @@ def main() -> int:
 
     if args.mode == "arm":
         return run_arm(args)
+
+    if args.mode == "shapekey":
+        path = Path(args.corpus)
+        symbol = path.stem.split("_", 1)[-1]
+        bars = json.loads(path.read_text())
+        if isinstance(bars, dict):
+            bars = bars.get("bars", bars.get("data", []))
+        try:
+            settle_horizon(args, measure_bar_seconds(bars, default=3600))
+        except ValueError as exc:
+            print(f"cannot resolve horizon: {exc}")
+            return 2
+        kinds = args.mutate or ["deep_jitter", "deep_dilate"]
+        out = shapekey_census(bars, symbol=symbol, chain=args.chain,
+                              horizon=args.horizon, start=args.start,
+                              stop=args.stop, samples=args.samples,
+                              rng=random.Random(args.seed), kinds=kinds)
+        print(f"corpus {path.name}: {out['anchors']} anchors, "
+              f"horizon {args.horizon}")
+        print(f"  majority label rate {out['majority_label_rate']:.1%}")
+        print(f"{'resolution':>11} {'distinct':>9} {'distinctness':>13} "
+              f"{'supported':>10} {'anchors in them':>16} {'pure':>7}")
+        for r, row in out["resolutions"].items():
+            print(f"{r:>11} {row['distinct_keys']:>9} "
+                  f"{row['distinctness']:>12.1%} "
+                  f"{row['keys_with_support']:>10} "
+                  f"{row['share_of_anchors_in_supported_keys']:>15.1%} "
+                  f"{row['pure_key_share']:>6.1%}")
+        print("  distinctness 100% means the key is STILL unique per instant "
+              "and teaches nothing; near 0% means it is a constant")
+        for kind, per in out["collision"].items():
+            cells = "  ".join(f"{r}={v['rate']:.1%}" for r, v in per.items())
+            print(f"  collides under {kind:>12}: {cells} "
+                  f"-- the mutant must land on its base's key")
+        print(f"  label mix {out['label_mix']}")
+        if args.report:
+            Path(args.report).write_text(json.dumps(out, indent=2))
+            print(f"wrote {args.report}")
+        return 0
 
     path = Path(args.corpus)
     symbol = path.stem.split("_", 1)[-1]
