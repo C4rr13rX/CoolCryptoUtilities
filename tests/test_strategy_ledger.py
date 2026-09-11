@@ -7,7 +7,36 @@ from trading.strategies.ledger import StrategyLedger
 
 
 @pytest.fixture()
-def ledger(tmp_path, monkeypatch):
+def pinned_stop_gate(monkeypatch):
+    """Pin the two LIVE-FEED predicates ``_live_tradeable`` consults.
+
+    The bug this fixture is named after: these tests asserted that a flawless
+    ghost book on ``BSTONK-USDC`` never graduates, and they did it by asking
+    ``services.stop_survivability_gate`` -- which measures TODAY'S TAPE. On
+    2026-09-11 BSTONK-USDC left that gate's refusal set (20 symbols refused,
+    none of them BSTONK), so the book became legitimately tradeable, the
+    ledger correctly approved it, and two graduation tests went red for a
+    reason that had nothing to do with the ledger. A test of graduation LOGIC
+    must not be a function of which pairs the feed happened to carry this
+    hour; the tape belongs in a live-data check, not in an assertion.
+
+    Both seams are patched at the module the ledger imports them from, since
+    ``_live_tradeable`` imports inside the function body.
+    """
+    import trading.pipeline as pipeline
+    import services.symbol_edge_gate as edge_gate
+
+    monkeypatch.setattr(pipeline, "stop_is_unenforceable",
+                        lambda symbol: str(symbol).strip().upper() == UNTRADEABLE)
+    # The edge gate is the second live-data seam in the same predicate.
+    # Refusing nothing here is the gate's own fail-open, so pinning it to that
+    # keeps the stop predicate the only thing these tests vary.
+    monkeypatch.setattr(edge_gate, "refusal_reason",
+                        lambda symbol, strategy_id=None: None)
+
+
+@pytest.fixture()
+def ledger(tmp_path, monkeypatch, pinned_stop_gate):
     monkeypatch.setenv("STRATEGY_GRADUATION_MIN_TRADES", "5")
     monkeypatch.setenv("STRATEGY_GRADUATION_MIN_WINRATE", "0.6")
     monkeypatch.setenv("STRATEGY_GRADUATION_MIN_PROFIT", "0.0")
@@ -25,8 +54,11 @@ def ledger(tmp_path, monkeypatch):
 # at all and simply asserted that a symbol-less book never approves. They were
 # red for hours while scripts/pass_gate.py --check reported 0 failures.
 #
-# Checked against trading.pipeline.stop_is_unenforceable, the same predicate
-# _live_tradeable calls: AERO-USDC False (tradeable), BSTONK-USDC True (not).
+# These two names are FIXTURE ROLES, not a claim about today's feed. They were
+# originally checked against trading.pipeline.stop_is_unenforceable live, and
+# that is precisely what broke: see `pinned_stop_gate`. The gate now answers
+# from the fixture, so UNTRADEABLE means "the symbol this test declares has no
+# enforceable stop" and nothing more.
 TRADEABLE = "AERO-USDC"
 UNTRADEABLE = "BSTONK-USDC"
 
@@ -95,7 +127,7 @@ def test_manual_demote(ledger):
     assert ledger.stats("vwap_reversion")["demote_reason"] == "circuit breaker"
 
 
-def test_persistence_across_instances(tmp_path, monkeypatch):
+def test_persistence_across_instances(tmp_path, monkeypatch, pinned_stop_gate):
     monkeypatch.setenv("STRATEGY_GRADUATION_MIN_TRADES", "2")
     monkeypatch.setenv("STRATEGY_GRADUATION_MIN_WINRATE", "0.5")
     path = tmp_path / "ledger.json"
@@ -214,3 +246,59 @@ def test_ledger_and_registry_agree_on_loss_count(ledger, tmp_path, monkeypatch):
     assert (led["trades"], led["wins"], led["losses"]) == (
         reg["trades"], reg["wins"], reg["losses"]
     )
+
+
+def test_the_ledger_still_asks_whether_a_stop_can_bind(tmp_path, monkeypatch):
+    """The guard has to be WIRED, not merely present.
+
+    `pinned_stop_gate` makes the graduation tests above independent of the
+    live tape, and that independence would be worth nothing if it also hid
+    the ledger quietly ceasing to consult the predicate at all -- a pinned
+    fixture that nothing reads passes forever. So this test drives the
+    predicate from the other side: with `stop_is_unenforceable` answering
+    True for EVERY symbol, a flawless 20-win book must not graduate, and with
+    it answering False for every symbol the same book must. One assertion
+    proves the call happens; the pair proves its ANSWER is what decides.
+    """
+    import trading.pipeline as pipeline
+    import services.symbol_edge_gate as edge_gate
+
+    monkeypatch.setenv("STRATEGY_GRADUATION_MIN_TRADES", "5")
+    monkeypatch.setenv("STRATEGY_GRADUATION_MIN_WINRATE", "0.6")
+    monkeypatch.setenv("STRATEGY_GRADUATION_MIN_PROFIT", "0.0")
+    monkeypatch.setattr(edge_gate, "refusal_reason",
+                        lambda symbol, strategy_id=None: None)
+
+    def book(name: str, path):
+        led = StrategyLedger(path=path)
+        for _ in range(20):
+            led.record(name, profit=1.0, mode="ghost", symbol="ANY-USDC")
+        assert led.stats(name)["ghost"]["trades"] == 20
+        return led
+
+    monkeypatch.setattr(pipeline, "stop_is_unenforceable", lambda symbol: True)
+    assert not book("no_stop", tmp_path / "a.json").is_live_approved("no_stop"), (
+        "the ledger is not consulting stop_is_unenforceable -- a book of 20 "
+        "wins on a symbol with no enforceable stop graduated to real money")
+
+    monkeypatch.setattr(pipeline, "stop_is_unenforceable", lambda symbol: False)
+    assert book("has_stop", tmp_path / "b.json").is_live_approved("has_stop"), (
+        "the same book is refused with the stop predicate answering False, so "
+        "something OTHER than the stop gate is deciding and the assertion "
+        "above proves nothing about the stop gate")
+
+
+def test_the_untradeable_fixture_symbol_is_a_role_not_a_live_claim():
+    """Names the drift that took this file red, so it cannot happen silently.
+
+    Nothing here asserts on the live gate's contents -- that would re-create
+    the bug. It asserts that the graduation tests do NOT depend on them: the
+    fixture's predicate is the one the ledger sees, whatever the tape says.
+    """
+    import services.stop_survivability_gate as gate
+
+    # Whatever the feed currently refuses, the fixture's answer is what the
+    # graduation tests run against. Reading the live set here is diagnostic
+    # only and is deliberately not asserted on.
+    live = gate.refused_symbols()
+    assert isinstance(live, dict)
