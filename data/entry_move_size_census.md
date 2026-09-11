@@ -169,3 +169,28 @@ measurement says the contaminated signature is **still present in the newest
 1%). Either the sanitiser is not wired into the path that builds the served
 window, or it is not catching these rows. That is a seam to verify, not a model
 to retrain.
+
+### What price_mu's target actually is — proven by reading
+
+`trading/data_loader.py` builds the label as
+
+    next_idx      = end                      # line 1008
+    current_price = price_slice[-1]          # = closes[end - 1]
+    future_price  = closes[next_idx]         # line 1110
+    ret = log(future_price) - log(current_price);  mu = ret
+
+So `price_mu`'s target is the **one-bar forward log return of the training
+corpus**, and `net_margin = mu_arr - (gas_arr + tax_arr)` (line 1179) is that
+same label minus 0.0065 — which is exactly why the two heads track each other
+to 0.0065 in every served row, and is not a second defect.
+
+The units are therefore right and the horizon is the open question: a clean
+window's `price_mu` of -0.2065 is an ordinary one-bar log return over a long
+bar and an absurd one over a 30-second tick. The entry conjunct compares
+`price_mu` to a **per-round-trip** cost, so if one bar is not the holding
+period, that comparison is a units error at a boundary.
+
+**Dead end recorded so it is not repeated:** `ohlcv_datasets` has 0 rows and
+`ohlcv_bars` has 0 rows in `storage/trading_cache.db`, so
+`granularity_seconds` cannot be read there — the corpus moved to the
+Parquet/S3 market store.
