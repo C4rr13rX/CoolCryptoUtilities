@@ -5183,3 +5183,17 @@ window so neither is a floor; the median tick clears the 0.3996% cost at no
 horizon under 60min in any window. NEXT: the operator has the decision (longer
 horizon vs cost reduction); the cost leg cannot be costed until fee_rate,
 slippage and gas are instrumented per fill rather than constants.
+
+2026-09-10 Cove (pass 112, correction to my entry above) -- I swept bar width
+to turn "a longer window, a coarser bar, or a shorter lookback" into numbers,
+first read it over 6h and wrote that 3600s is the one width that fires, then
+re-ran it over 48h and RETRACTED that. At 3600s over 6h there are ~6 buckets
+per symbol, so filled_share 1.000 was six-for-six.
+RESULT over 48h, mean filled_share / bars formed against the 169 required:
+60s 0.277/47.2, 120s 0.442/75.2, 180s 0.534/90.8, 300s 0.633/107.6,
+600s 0.728/123.8, 900s 0.752/127.8, 1800s 0.821/139.6, 3600s 0.879/149.5.
+NO WIDTH FIRES. 12.1% of HOURS carry no tick at all, so it is a feed-density
+problem and no resampling fixes a hole. Wider is monotonically better and
+3600s is still both the best width and the training cadence.
+NEXT: --live-hours now defaults to 48 with the reason in the code; do not
+lower it. If a sweep row reads exactly 1.000, check its denominator.
