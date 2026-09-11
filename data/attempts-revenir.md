@@ -5426,3 +5426,42 @@ an operator decision. Watch D:, which is 97% full with 34 GB free while each
 successful checkpoint adds ~1.9 GB.
 
 2026-09-11 Cove -- [fa75fa1a] L2 churn symbol. HYPOTHESIS: L2 can carry dwell without buying an alphabet per position, by banding the window's change RATE into ONE token for the whole frame rather than one bucket per kept symbol (which is what made run-length fail at 0.7117/0.5983). DID: added churn_band() to trading/omen_layers.py; transition_motif now emits "co2t path=... chn=..."; swept 8 cut candidates off ONE build per corpus in scripts/omen_l2_scheme_probe.py; fixed two tests that pinned the OLD behaviour. RESULT: criterion 3 now holds at the SHIPPED L2_TRANSITION_STEPS=2 -- a persistent regime and an alternating one with the identical multiset are different frames (chn=lo vs chn=mid) where before they were byte-identical. Distinctness 0.2800 DOWN / 0.2267 UP against the 0.30 ceiling, so dwell cost 0.0167. BUT IT COST SUPPORTED MASS: DOWN 3 groups covering 10.5% -> 1 covering 3.4%; UP 5 covering 21.9% at 4.21x best lift -> 4 covering 15.5% at 1.71x, so my own pass-115 4.21x was measured on a frame that conflated held and churning regimes. ALSO MEASURED: the cut does not travel -- (0.15,) fails at window 8 (0.3100) and passes at 12 (0.2800) and 20 (0.2700), because the rate is quantised by adjacency count. NEXT: the cut has only ever been measured on AERO-USDC; build a second-pair bar corpus and re-sweep before any node arm, and decide from the probe whether an arm should query the path or path+churn -- this pass does NOT settle that.
+
+## 2026-09-11 — Gale (pass 116) — the horizon atom carries no cadence, and a graduation guard was asking the tape
+
+**Hypothesis.** Two seams, neither an edge claim. (1) `hzn h=12` is the same
+four bytes for 720 minutes trained and 12 minutes asked, so a fabric trained on
+a 3600s corpus and queried off a 60s resample answers the wrong question.
+(2) The two red gate tests are not a regression from tonight's work.
+
+**What I did.** (1) `build_collections` gained a required `bar_seconds`; the
+horizon collection is now built by a new `horizon_frame(horizon_bars,
+bar_seconds)` emitting `hzn h=12 c=003600 w=0000720` — fixed-width zero-padded
+so no cadence token is a byte prefix of another, and an unmeasurable cadence
+gets its own `c=xxxxxx`. The cadence written in is MEASURED off the window by a
+new `measure_bar_seconds` (modal gap), not taken from the caller's nominal —
+which also closes the third instance, `omen_reversion`'s `omen_horizon_sec`
+filed at a nominal 12 min while the measured index step ran at 180s.
+(2) Traced the gate failures to `ledger._live_tradeable` →
+`stop_is_unenforceable` → the live stop-survivability gate, and pinned both
+live-data seams in a fixture.
+
+**RESULT, as numbers.** `scripts/omen_temporal_census.py` exits **0** where it
+exited **2** — and the same corpora with `horizon_frame` monkeypatched back to
+`f"hzn h={n}"` still exit **2**, so the exit code moved because of the change.
+44 `build_collections` call sites across 12 files, 0 missing `bar_seconds`
+(AST walk). Gate **719 passed / 2 failed → 723 passed / 0 failed**. The stop
+gate refuses **20** symbols today and BSTONK-USDC is not one of them, so the
+fixture symbol left the refusal set. **No held-out number moved and none is
+claimed:** every experiment in `data/brain_experiments/` trains and tests at
+one cadence, so the crossed atom cancels across the split. Every fabric
+trained before `f3d0a8d` carries a dead horizon atom and must be retrained,
+not re-queried — 15 reports named in `HORIZON-CADENCE-pass116-cove.md`.
+
+**Next.** The horizon frame now says which clock it counts in; nothing yet says
+the corpus and the live path should use the SAME one. At the measured live tick
+density (filled_share ~0.24 at 60s buckets) the only bar width that both fires
+and matches the 3600s training cadence costs a ~170-hour tick buffer. The
+question is not "which width is right" but **train the fabric at the cadence
+the live path can actually form**, measured in an up window and a down window.
+Commits `f3d0a8d`, `7b9b1c4`.
