@@ -519,8 +519,30 @@ def test_a_live_entry_faces_a_floor_that_scales_with_its_own_cost() -> None:
 #
 # The ban is CORRECT and stays: services.symbol_edge_gate.refusal_reason
 # still returns it, and the gate's own coverage lives with the gate.
+#
+# THE STRATEGY GATE IS THE SAME STORY, ONE LAYER UP, AND IT IS WHY THIS FILE
+# STOOD RED FOR EIGHT COMMITS. `test_a_simulated_entry_is_not_held_to_the_dollar
+# _floor` asserted `action == "enter"` and read `hold`; the operator bisected it
+# to b9d823b 879ea6e 5b86639 da32265 0aa5ba5 9c8715b 0894789 5880e3a and found it
+# failing at every one, so it was nobody's regression. With only the symbol gate
+# pinned the refusal moved to `entry-refused-strategy-edge`:
+#
+#   strategy_edge: rsi_reversal, 10 closed round trips at mean return -0.625%
+#                  vs 0.587% cost (t=-1.76 on excess return)
+#
+# `rsi_reversal` is the strategy this test names, and it crossed the strategy
+# ban threshold the same way BASECAT-USDC crossed the symbol one -- by trading.
+# (Pass 100 re-priced that gate at c9ffb5c and recorded rsi_reversal lifting at
+# t=-1.44; it has since gone back under.) Exactly like the symbol gate, the ban
+# is CORRECT and is NOT weakened here: services.strategy_edge_gate.refusal_reason
+# still returns it, the gate's own tests still assert it, and this file is about
+# the CLIP -- it cannot measure which size an entry takes if an upstream gate
+# refuses the entry on evidence that arrived after the assertion was written.
 @pytest.fixture(autouse=True)
 def _entry_reaches_the_clip(monkeypatch):
     monkeypatch.setattr(
         "trading.bot.symbol_edge_refusal", lambda _symbol, _strategy_id=None: None
+    )
+    monkeypatch.setattr(
+        "trading.bot.strategy_edge_refusal", lambda _strategy_id: None
     )
