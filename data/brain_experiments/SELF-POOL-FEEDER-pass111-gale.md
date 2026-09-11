@@ -38,6 +38,40 @@ Pass 111, Gale. Item [c2f12cb0].
 >
 > **Do not re-run the identical arm expecting a different answer — run a
 > powered one.** Criteria and the power arithmetic are on [5ec44914].
+>
+> ## 2026-09-11, pass 116 — THE POWERED ARM WAS RUN. Do not stop reading here.
+>
+> Added by Gale after the operator flagged that a negative recorded from this
+> file "will stop anyone looking again". The block above ends by asking for a
+> powered arm; **that arm exists**, and a reader who stops at this file lands
+> on a verdict that has since been measured and did not survive. It is in
+> `data/brain_experiments/SELF-POOL-POWERED-pass113-cove.md`, commits
+> `5c789ca` (DOWN) and `de68f7d` (UP), both windows, one fabric back-to-back.
+>
+> | powered arm | with self | without self | buy every bar |
+> |---|---|---|---|
+> | DOWN, LINK-WETH arbitrum, 200 bars, up-rate 15.0% | **+0.3734%** on n=11 | **−1.7172%** on n=54 | −2.2088% on n=200 |
+> | UP, CRV-WETH arbitrum, 600 bars, up-rate 61.8% | **−0.2564%** on n=52 | **−0.0643%** on n=48 | −0.2016% on n=600 |
+>
+> **The sign in DOWN is the opposite of this report's verdict, and it reverses
+> again in UP.** The DOWN cell's n=11 is under the item's own n=30 floor and
+> that report declines to give it a per-trade verdict, exactly as this file
+> should have declined on its 1-trade cell.
+>
+> **The settled statement, which is a negative about the VERDICT and not about
+> the pools:** on the evidence now in hand the self pools have **no measurable
+> directional effect**, and this file's dilution finding was **noise**. The
+> pools themselves remain **NOT MEASURED** — `self_agreement`, the one pool
+> carrying a signal with a measurement behind it (99.4% unanimous vs 73.3%
+> split), measured **0.004 distinct** in every arm above, so it was a constant
+> in all of them and the powered run reports itself as testing **two pools,
+> not three**. Nothing yet has tested the metacognition idea the operator
+> asked for. What would settle it is one thing: feed `self_agreement` a real
+> node's per-query-set votes.
+>
+> **What still STANDS from this file is only what it is named after** — the
+> self frames were trained as constants, proven by an A-vs-A control
+> (0/60 → 45/60). That is a code fact and nothing above touches it.
 
 
 ## The finding, in one sentence
