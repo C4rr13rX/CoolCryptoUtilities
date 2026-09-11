@@ -77,8 +77,21 @@ def _env(monkeypatch):
     monkeypatch.delenv("ENTRY_MIN_MOVE_COST_MULT", raising=False)
 
 
-def _decide(bot: TradingBot, *, delta: float) -> dict:
-    """One entry cycle on an empty book carrying a predicted move of `delta`."""
+# The symbol's own recent relative volatility, the second size estimate. Held
+# far above any plausible round trip in the tests that are about `delta`, so
+# that conjunct cannot be what answers them. 5% is ~44x this feed's median.
+LOOSE_VOL = 0.05
+
+_UNSET = object()
+
+
+def _decide(bot: TradingBot, *, delta: float, vol_rel=_UNSET) -> dict:
+    """One entry cycle on an empty book carrying a predicted move of `delta`.
+
+    ``vol_rel`` is the ``volatility_rel`` the brain state publishes for this
+    symbol on this cycle; ``None`` means the symbol had too little history for
+    it to be computed at all.
+    """
     sample = {
         "symbol": SYMBOL,
         "price": PRICE,
@@ -98,6 +111,12 @@ def _decide(bot: TradingBot, *, delta: float) -> dict:
     async def _no_sync(self, *args, **kwargs):
         return None
 
+    brain: dict = {}
+    if vol_rel is _UNSET:
+        brain["volatility_rel"] = LOOSE_VOL
+    elif vol_rel is not None:
+        brain["volatility_rel"] = float(vol_rel)
+
     with mock.patch.object(
         TradingBot,
         "_resolve_live_trade_asset",
@@ -105,7 +124,7 @@ def _decide(bot: TradingBot, *, delta: float) -> dict:
     ), mock.patch.object(TradingBot, "_run_wallet_sync", _no_sync):
         return asyncio.run(
             bot._interpret_predictions(
-                None, sample, None, pred_summary=summary, brain_summary={},
+                None, sample, None, pred_summary=summary, brain_summary=brain,
             )
         )
 
@@ -174,6 +193,86 @@ def test_the_move_floor_is_the_size_aware_cost_and_not_a_flat_percentage() -> No
             "the floor must be the measured round trip for THIS trade's size, "
             f"not a constant: notional ${notional:.4f}"
         )
+
+
+# --------------------------------------------------------------------------
+# The SECOND bug: the conjunct above tests the right SHAPE in the wrong UNITS.
+#
+# `delta` is `price_mu`, and `price_mu` is not on the tape's scale. Measured
+# 2026-09-10 over 9,667 decision cycles carrying both a prediction and a
+# forward tick 15 minutes later:
+#
+#     median |delta|                     90.4323%
+#     median realised |15-minute move|    0.1181%   -> delta is 751x the tape
+#     median volatility_rel               0.1137%   -> ratio 0.96
+#
+# A floor of 0.3862%..0.8583% cannot refuse a quantity whose median magnitude
+# is 90%, so the delta conjunct is algebraically stricter and empirically
+# inert: over 484 hours the admitted count was 9 before it and 9 after it.
+# These two tests fail against the delta-only conjunction and pass once the
+# branch also requires a size estimate that is on the tape's scale.
+# --------------------------------------------------------------------------
+
+def test_an_entry_is_refused_when_the_only_size_estimate_is_751x_the_tape() -> None:
+    """The real shape of a live cycle: delta huge, the tape flat.
+
+    delta=90% clears any cost-derived floor by two orders of magnitude while
+    the symbol's own measured volatility says the price will not move far
+    enough to pay the round trip. Under the delta-only conjunction this cycle
+    ENTERS; it must not.
+    """
+    bot = _ghost_bot()
+    floor = float(decision_floor(bot))
+    decision = _decide(bot, delta=0.904323, vol_rel=floor * 0.5)
+
+    assert decision.get("expected_move_clears_cost") is True, (
+        "fixture is wrong: delta must clear the cost floor, or this test is "
+        "not measuring the units bug"
+    )
+    assert decision.get("expected_abs_move_clears_cost") is False, decision
+    assert decision["action"] != "enter", (
+        "entry admitted a cycle on a 751x-inflated model output while the "
+        "symbol's own volatility put the expected move at half the round trip"
+    )
+    assert SYMBOL not in bot.positions, bot.positions
+
+
+def test_an_entry_is_refused_when_the_symbol_has_no_measurable_volatility() -> None:
+    """An unmeasurable move size must refuse, never default to big enough."""
+    bot = _ghost_bot()
+    decision = _decide(bot, delta=0.904323, vol_rel=None)
+
+    assert decision.get("expected_abs_move") is None, decision
+    assert decision.get("expected_abs_move_clears_cost") is False, decision
+    assert decision["action"] != "enter", decision
+
+
+def test_both_size_estimates_clearing_the_round_trip_still_enters() -> None:
+    """Two floors are still not a gate that refuses everything."""
+    bot = _ghost_bot()
+    floor = float(decision_floor(bot))
+    decision = _decide(bot, delta=floor * 2.0, vol_rel=floor * 2.0)
+
+    assert decision.get("expected_move_clears_cost") is True, decision
+    assert decision.get("expected_abs_move_clears_cost") is True, decision
+    assert decision["action"] == "enter", decision
+
+
+def test_the_volatility_floor_is_the_same_size_aware_cost_as_the_delta_floor() -> None:
+    """One floor, read once. A second constant is a second thing to get wrong."""
+    bot = _ghost_bot()
+    decision = _decide(bot, delta=0.0, vol_rel=0.0)
+
+    floor = float(decision["min_expected_move"])
+    assert floor == pytest.approx(float(decision["entry_fee_rate"]), rel=1e-12), decision
+    # The volatility conjunct is measured against that same floor: at exactly
+    # the floor it clears, a hair under it does not.
+    assert _decide(_ghost_bot(), delta=0.0, vol_rel=floor).get(
+        "expected_abs_move_clears_cost"
+    ) is True
+    assert _decide(_ghost_bot(), delta=0.0, vol_rel=floor * 0.999).get(
+        "expected_abs_move_clears_cost"
+    ) is False
 
 
 def decision_floor(bot: TradingBot) -> float:

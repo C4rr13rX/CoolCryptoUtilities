@@ -7360,6 +7360,52 @@ class TradingBot:
             min_expected_move = max(0.0, entry_fees) * max(0.0, _move_mult)
             decision["min_expected_move"] = float(min_expected_move)
             decision["expected_move_clears_cost"] = bool(delta >= min_expected_move)
+
+            # ...AND THE SAME FLOOR AGAIN ON A QUANTITY THAT IS ACTUALLY ON THE
+            # TAPE'S SCALE, BECAUSE `delta` IS NOT.
+            #
+            # The conjunct above compares `delta` to c(N). That is the right
+            # SHAPE and the wrong UNITS, and the units were never checked before
+            # it shipped. Measured 2026-09-10 over 9,667 decision cycles that
+            # carry both a prediction and a forward tick 15 minutes later:
+            #
+            #     median |delta|                    90.4323%
+            #     median realised |15-minute move|   0.1181%     -> delta is 751x
+            #     median volatility_rel              0.1137%     -> ratio 0.96
+            #
+            # A floor of 0.3862%..0.8583% cannot refuse a quantity whose median
+            # magnitude is 90%. So the delta conjunct is VACUOUS on this feed --
+            # it is algebraically stricter and empirically inert, which is
+            # exactly what the before/after count showed (9 and 9 over 484h).
+            # The fix is a different QUANTITY, not a different threshold; the
+            # threshold is the measured cost floor and stays untouched.
+            #
+            # `volatility_rel` is computed above at the top of this cycle as the
+            # standard deviation of the per-tick FRACTIONAL change over this
+            # symbol's last <=20 ticks. It is therefore dimensionless like c(N),
+            # it is built only from data available AT ENTRY, and it estimates a
+            # move that has not happened -- it is a forward-looking estimate of
+            # SIZE, not the realised move, which is unknowable here. Its 0.96
+            # calibration is measured on this feed, not assumed from a
+            # random-walk argument: 15 minutes is ~22.8 ticks at this feed's
+            # 39.5s median cadence, so a sqrt-of-time argument would predict
+            # ~4.8x and would be wrong. Measure, then use the number.
+            #
+            # A missing volatility_rel REFUSES the entry. A symbol with under
+            # four ticks of history has not been shown to move far enough to pay
+            # its round trip, and defaulting an unmeasurable size to "big
+            # enough" is precisely the loosening this conjunct exists to stop.
+            _vol_rel = brain.get("volatility_rel")
+            try:
+                expected_abs_move = float(_vol_rel) if _vol_rel is not None else None
+            except (TypeError, ValueError):
+                expected_abs_move = None
+            if expected_abs_move is not None and not math.isfinite(expected_abs_move):
+                expected_abs_move = None
+            decision["expected_abs_move"] = expected_abs_move
+            decision["expected_abs_move_clears_cost"] = bool(
+                expected_abs_move is not None and expected_abs_move >= min_expected_move
+            )
             if (
                 direction_prob >= enter_threshold
                 and exit_conf_val >= enter_threshold
@@ -7367,6 +7413,8 @@ class TradingBot:
                 and net_margin_after_fees >= MIN_NET_MARGIN
                 and expected_profit_units >= SMALL_PROFIT_FLOOR
                 and delta >= min_expected_move
+                and expected_abs_move is not None
+                and expected_abs_move >= min_expected_move
             ):
                 should_enter = True
                 reason = "model-long"
