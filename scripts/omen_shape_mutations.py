@@ -542,6 +542,18 @@ def run_arm(args) -> int:
           + f" vs every-bar {result['every_bar_net_per_trade']:+.4%}")
     print(f"  crest omens {sell_calls}, crest precision "
           f"{result['crest_precision']:.4f}")
+    # POWER, stated beside the money number rather than left for a reader to
+    # notice. Per-trade absolute returns on this feed run 2-3%, so detecting
+    # 1.0pp needs roughly 63 trades per arm at sd=2% and ~141 at sd=3%. A
+    # per-trade mean on a handful of trades is one number wearing a percent
+    # sign, and recording it as a verdict stops anyone looking again.
+    if buy_calls < 28:
+        print(f"  POWER: {buy_calls} buy omens is below the most generous "
+              f"detectable-effect floor (~28 trades for 1.5pp at sd=2%). The "
+              f"per-trade net above licenses NO verdict either way -- the "
+              f"powered comparison in this arm is the held-out accuracy over "
+              f"{len(test_samples)} bars, not the money line.")
+    result["buy_power_sufficient"] = buy_calls >= 28
     if args.report:
         Path(args.report).write_text(json.dumps(result, indent=2))
         print(f"  wrote {args.report}")
