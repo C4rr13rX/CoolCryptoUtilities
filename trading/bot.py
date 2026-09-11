@@ -224,7 +224,25 @@ WRAPPED_NATIVE_SYMBOL: Dict[str, str] = {
 #: here: no bot is running exit rules on it, so nothing can ever close a
 #: position on it, which is exactly what the sweep exists to reap.
 _SYMBOL_LAST_TICK_TS: Dict[str, float] = {}
-#: The map is written from the stream callback and read from the sweep on the
+#: The last PRICE each symbol was seen at, pool-wide, beside the timestamp
+#: above. The wall-clock stale sweep needs a mark to close a position against,
+#: and it must be a mark somebody actually observed rather than one read back
+#: out of the position that is being closed -- marking a position out against
+#: its own entry price books a guaranteed zero-gross round trip.
+#:
+#: Carried here rather than in the positions book because the sweep walks the
+#: MERGED book of every bot while each bot streams one symbol, so the bot that
+#: notices a stale position is usually not the bot that can see its price. The
+#: freshness of this price is checked at the sweep, not here: an old price is
+#: still the truth about when it was observed.
+_SYMBOL_LAST_TICK_PX: Dict[str, float] = {}
+#: Positions the wall-clock stale sweep is already closing, keyed
+#: ``symbol:trade_id``. Every bot in the pool runs the sweep over the MERGED
+#: book, so without this two bots book two outcomes for one round trip -- and a
+#: double-booked outcome is worse than a missed one, because graduation counts
+#: it twice. Guarded by ``_SYMBOL_LAST_TICK_LOCK``.
+_STALE_SWEEP_IN_FLIGHT: Dict[str, float] = {}
+#: The maps are written from the stream callback and read from the sweep on the
 #: same loop, but bots also cross threads via ``asyncio.to_thread``; the lock
 #: keeps a snapshot read from tearing.
 _SYMBOL_LAST_TICK_LOCK = threading.Lock()
@@ -2117,6 +2135,55 @@ class TradingBot:
         except (TypeError, ValueError):
             return 3600.0
         return value if math.isfinite(value) and value >= 0.0 else 3600.0
+
+    def _stale_exit_secs(self) -> float:
+        """Rule 4's clock: how long a position may fail to cover its round trip.
+
+        ``GHOST_NEG_EXIT_SECONDS`` is the name it had while it only covered
+        strict losers; it still wins when set so an existing deployment keeps the
+        timing it was tuned to. Default 900s.
+
+        This is a METHOD because two different places have to agree on it: the
+        exit chain in ``_interpret_predictions`` that produces ``timed-exit``,
+        and ``_close_stale_positions_on_the_clock``, which decides which
+        positions to run that chain against on a wall clock. A sweep using a
+        shorter clock than the chain would propose positions the chain refuses,
+        on every tick, forever.
+        """
+        raw = os.getenv(
+            "GHOST_NEG_EXIT_SECONDS", os.getenv("GHOST_STALE_EXIT_SECONDS", "900")
+        )
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 900.0
+        return value if math.isfinite(value) and value > 0.0 else 900.0
+
+    def _stale_sweep_price_max_age_sec(self) -> float:
+        """How stale a mark the wall-clock stale sweep will close a position at.
+
+        The sweep's whole job is to close a position whose symbol is not ticking
+        often enough to reach the exit chain, so by construction the only price
+        it has is an old one. That is the same hazard
+        ``_abandon_dark_feed_positions`` refuses to take: marking a position out
+        against a price from an hour or eleven days ago fabricates an outcome,
+        and ``StrategyLedger._is_implausible`` exists because AERO-USDC once
+        booked +161% exactly that way.
+
+        So the sweep is bounded rather than unbounded. Default 900s, which is the
+        p90 inter-tick gap (406s) with room to spare and well under the 3600s
+        p99 at which the dark sweep abandons the position instead -- so the two
+        rules tile the space: fresh enough to mark out, close it and book the
+        outcome; too dark to mark out, abandon it and book nothing.
+
+        Set GHOST_STALE_SWEEP_PRICE_MAX_AGE_SEC=0 to disable the sweep.
+        """
+        raw = os.getenv("GHOST_STALE_SWEEP_PRICE_MAX_AGE_SEC", "900")
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return 900.0
+        return value if math.isfinite(value) and value >= 0.0 else 900.0
 
     def _exit_dust_sweep_usd(self) -> float:
         """Residual value below which an exit sells the whole balance instead.
@@ -5796,7 +5863,9 @@ class TradingBot:
             # A tick arriving IS the symbol being alive. Whether this bot can
             # yet form a prediction from it is a separate question, and the
             # window gate below still answers that one.
-            self._note_symbol_tick(sample.get("symbol", ""), now)
+            self._note_symbol_tick(
+                sample.get("symbol", ""), now, price=sample.get("price")
+            )
 
             # THE SWEEP RUNS HERE, ABOVE EVERY EARLY RETURN, FOR THE SAME
             # REASON THE TICK NOTE ABOVE DOES -- AND IT USED TO SIT BELOW BOTH.
@@ -5831,6 +5900,18 @@ class TradingBot:
             #
             # Ordering note: this is above `_check_sim_restart` too, which is
             # safe because the sweep neither reads nor writes the sim bankroll.
+            #
+            # THE STALE CLOCK RUNS FIRST, AND BEFORE THE DARKNESS RULES, because
+            # the two tile the same space and the order decides which one gets a
+            # position: a position whose mark is still fresh enough to book
+            # honestly should be CLOSED with its outcome recorded, and only one
+            # too dark to mark out should be abandoned with nothing recorded.
+            # Running the abandon sweep first would throw away the observation
+            # graduation is starved of.
+            try:
+                await self._close_stale_positions_on_the_clock(now)
+            except Exception as exc:      # never let the sweep stop a tick
+                print(f"[stale-clock-sweep] failed: {exc}")
             try:
                 self._abandon_dark_feed_positions(now)
                 self._exit_dark_live_positions(now)
@@ -7592,12 +7673,13 @@ class TradingBot:
             # Rule 4's clock. GHOST_NEG_EXIT_SECONDS is the name it had while
             # it only covered strict losers; it still wins when set so an
             # existing deployment keeps the timing it was tuned to.
-            stale_exit_secs = float(
-                os.getenv(
-                    "GHOST_NEG_EXIT_SECONDS",
-                    os.getenv("GHOST_STALE_EXIT_SECONDS", "900"),
-                )
-            )
+            # ONE reader of this clock, not two. The wall-clock sweep
+            # (`_close_stale_positions_on_the_clock`) decides which positions are
+            # past the clock and this chain decides what to do about them; when
+            # they were two separate env reads the sweep could offer a position
+            # the chain then refused, which is the "two copies of one rule that
+            # drifted" shape four separate defects in this repo have had.
+            stale_exit_secs = self._stale_exit_secs()
             model_neutral = abs(direction_prob - 0.5) < 0.02 and abs(exit_conf_val - 0.5) < 0.02
             exit_threshold = max(0.05, min(enter_threshold * 0.95, exit_threshold + float(adjustments.get("exit_offset", 0.0))))
             # An exit on "the model isn't excited" only makes sense when the
@@ -12501,12 +12583,22 @@ class TradingBot:
 
     @staticmethod
     def reset_symbol_tick_registry() -> None:
-        """Empty the shared tick map. For tests, which must not leak into each other."""
+        """Empty the shared tick maps. For tests, which must not leak into each other."""
         with _SYMBOL_LAST_TICK_LOCK:
             _SYMBOL_LAST_TICK_TS.clear()
+            _SYMBOL_LAST_TICK_PX.clear()
 
-    def _note_symbol_tick(self, symbol: str, ts: float) -> None:
-        """Record that ``symbol`` was priced at ``ts``. Cheap; runs every tick."""
+    def _note_symbol_tick(
+        self, symbol: str, ts: float, price: Optional[float] = None
+    ) -> None:
+        """Record that ``symbol`` was priced at ``ts``. Cheap; runs every tick.
+
+        ``price`` is stored beside the timestamp so the wall-clock stale sweep
+        has a mark it can close a position against. It is only accepted when the
+        timestamp advances, so the two maps always describe the SAME tick -- a
+        price paired with a stale timestamp is what the sweep's freshness bound
+        exists to refuse, and it cannot refuse a mismatch it cannot see.
+        """
         sym = str(symbol or "").strip()
         if not sym:
             return
@@ -12516,9 +12608,19 @@ class TradingBot:
             return
         if not math.isfinite(when) or when <= 0.0:
             return
+        px: Optional[float] = None
+        if price is not None:
+            try:
+                candidate = float(price)
+            except (TypeError, ValueError):
+                candidate = 0.0
+            if math.isfinite(candidate) and candidate > 0.0:
+                px = candidate
         with _SYMBOL_LAST_TICK_LOCK:
             if when > _SYMBOL_LAST_TICK_TS.get(sym, 0.0):
                 _SYMBOL_LAST_TICK_TS[sym] = when
+                if px is not None:
+                    _SYMBOL_LAST_TICK_PX[sym] = px
 
     def _exit_dark_live_positions(self, now: float) -> int:
         """Sell a LIVE position whose feed has gone dark.
@@ -12851,6 +12953,208 @@ class TradingBot:
             )
         except Exception:  # noqa: BLE001
             pass
+
+    async def _close_stale_positions_on_the_clock(self, now: float) -> int:
+        """Run the exit chain on a WALL CLOCK for positions past ``stale_exit_secs``.
+
+        ``stale_exit_secs`` is a wall-clock promise -- 900 seconds -- enforced on
+        a TICK-DRIVEN schedule. ``_handle_sample`` is the only caller of
+        ``_interpret_predictions`` and it passes ONE sample for ONE symbol, so
+        rule 4 is reachable only on a tick for the held symbol, and only after
+        two further gates that have nothing to do with exits:
+
+          * the model-window gate (``len(self._buffer) < self.window_size``),
+            which a bot added by ``reconcile_pairs`` for a HELD symbol -- added
+            precisely so the position can be closed -- must fill before any exit
+            rule runs at all. At CBBTC-USDC's measured 50 ticks/h against a
+            60-step window that is over an hour;
+          * the duplicate-signature return, which drops a repeated
+            ``(symbol, ts)``, so a symbol whose publisher restamps the same
+            timestamp never evaluates an exit however long it ticks for.
+
+        Measured over the 14 days to 2026-09-11 by ``scripts/hold_time_edge.py``
+        on the 78 round trips the live lane could have placed: 86% outlive the
+        900s clock, and ticks/min falls monotonically with hold time -- 0.71
+        under 5 minutes, 0.27 at 1-4 hours, 0.14 past four hours. The trips that
+        overstay are the ones the feed stopped watching, so the positions that
+        most need rule 4 are the ones least able to reach it.
+
+        The 1-4 hour bucket is where the loss lives (-0.2107 over 30 trips) while
+        trips held under 15 minutes are +0.4588% of notional over 10, which is
+        why this is a correctness fix and not a tuning knob. It is NOT a claim
+        that the fast trips are good: this is a split of REALISED trips, so a
+        trip may have closed fast BECAUSE it hit its target. Closing more trips
+        on time moves the population so the question can be asked at n>=30; the
+        post-fix measurement is the test, not this docstring.
+
+        WHAT THIS DOES NOT DO. It does not add an exit rule, lower a bar or
+        shorten a clock. It runs the EXISTING chain, with a NEUTRAL model read,
+        against a price somebody actually observed. Neutral is the point: with
+        ``model_neutral`` true the two opinion rules cannot fire, so the only
+        things that can close a position here are its own facts -- its target,
+        its stop, and the clock it has already outlived. A position inside the
+        clock is never touched.
+
+        It is bounded by ``_stale_sweep_price_max_age_sec`` for the reason the
+        dark-feed sweep abandons rather than closes: a mark from an hour ago is a
+        fabricated outcome. Past that bound this does nothing and the dark sweep
+        owns the position.
+
+        LIVE positions are not touched. The live lane already has its own
+        wall-clock treatment in ``_exit_dark_live_positions``, which asks the
+        chain for a price instead of trusting the feed, and a live exit must go
+        through the real swap rather than a marked-out book entry. This is the
+        ghost lane getting the equivalent.
+
+        Returns the number of positions closed.
+        """
+        max_price_age = self._stale_sweep_price_max_age_sec()
+        if max_price_age <= 0.0:
+            return 0
+        stale_after = self._stale_exit_secs()
+
+        # Throttled like the dark sweep beside it: this walks the whole book on a
+        # path that runs per tick. 30s is an order finer than the 900s it
+        # measures, so the clock it enforces is still accurate to well inside a
+        # minute.
+        next_sweep = self.__dict__.get("_stale_clock_next_sweep", 0.0)
+        if now < float(next_sweep or 0.0):
+            return 0
+        self.__dict__["_stale_clock_next_sweep"] = now + 30.0
+
+        with _SYMBOL_LAST_TICK_LOCK:
+            seen_ts = dict(_SYMBOL_LAST_TICK_TS)
+            seen_px = dict(_SYMBOL_LAST_TICK_PX)
+
+        closed = 0
+        for symbol, pos in list(self.positions.items()):
+            if not isinstance(pos, dict):
+                continue
+            if str(pos.get("mode") or "") == "live":
+                continue
+            entry_ts = float(pos.get("entry_ts", pos.get("ts", 0.0)) or 0.0)
+            if entry_ts <= 0.0:
+                # No entry time is no clock. The max-hold eviction owns it, the
+                # same choice rule 4 makes for an unknown cost basis.
+                continue
+            held_secs = now - entry_ts
+            if held_secs <= stale_after:
+                continue
+
+            price = float(seen_px.get(symbol, 0.0) or 0.0)
+            price_ts = float(seen_ts.get(symbol, 0.0) or 0.0)
+            if price <= 0.0 or price_ts <= 0.0:
+                continue
+            if now - price_ts > max_price_age:
+                continue
+
+            # ONE bot closes one position. `self.positions` is the merged book of
+            # every bot in the pool and every bot runs this sweep, so without
+            # this claim two bots would book two outcomes for one round trip --
+            # and a double-booked outcome is worse than a missed one, because
+            # graduation counts it twice.
+            key = f"{symbol}:{pos.get('trade_id') or entry_ts}"
+            with _SYMBOL_LAST_TICK_LOCK:
+                claimed_at = float(_STALE_SWEEP_IN_FLIGHT.get(key, 0.0) or 0.0)
+                if now - claimed_at < stale_after:
+                    continue
+                _STALE_SWEEP_IN_FLIGHT[key] = now
+
+            sample = {
+                "symbol": symbol,
+                "price": price,
+                # The sample is stamped with the price's OWN timestamp, not
+                # `now`. `_interpret_predictions` books the outcome at
+                # `sample_ts`, and stamping a close with a time the price was
+                # never observed at is the contamination the plausibility guard
+                # was written to catch.
+                "ts": price_ts,
+                "chain": str(pos.get("chain") or getattr(self, "primary_chain", PRIMARY_CHAIN)),
+                "stale_clock_sweep": True,
+            }
+            try:
+                decision = await self._interpret_predictions(
+                    None,
+                    sample,
+                    None,
+                    self._neutral_pred_summary(current_price=price),
+                    {},
+                )
+            except Exception as exc:  # noqa: BLE001
+                log_message(
+                    "position-stale-clock",
+                    "%s: wall-clock stale exit raised %s: %s -- the position is "
+                    "left open and the next sweep will retry it"
+                    % (symbol, type(exc).__name__, exc),
+                    severity="error",
+                )
+                with _SYMBOL_LAST_TICK_LOCK:
+                    _STALE_SWEEP_IN_FLIGHT.pop(key, None)
+                continue
+
+            if not decision or decision.get("action") == "hold":
+                # The chain declined, which is information: the position is past
+                # the clock and still not closable. Logged as a hold so the
+                # reason is countable -- a silent decline is how rule 4 managed
+                # to fire zero times in 7 days without anybody noticing.
+                with _SYMBOL_LAST_TICK_LOCK:
+                    _STALE_SWEEP_IN_FLIGHT.pop(key, None)
+                try:
+                    self.db.log_trade(
+                        wallet="ghost",
+                        chain=sample["chain"],
+                        symbol=symbol,
+                        action="hold",
+                        status="stale-clock-sweep-declined",
+                        details={
+                            "symbol": symbol,
+                            "held_sec": round(held_secs, 1),
+                            "stale_exit_secs": stale_after,
+                            "price_age_sec": round(now - price_ts, 1),
+                            "chain_status": str((decision or {}).get("status") or ""),
+                            "chain_reason": str((decision or {}).get("reason") or ""),
+                        },
+                    )
+                except Exception:
+                    pass
+                continue
+
+            closed += 1
+            self.queue.append(decision)
+            log_message(
+                "position-stale-clock",
+                "%s: closed on the WALL CLOCK after %.1f min (clock %.0fs) as "
+                "%s -- its feed had not ticked for %.1f min, so the exit chain "
+                "was unreachable from its own symbol"
+                % (
+                    symbol,
+                    held_secs / 60.0,
+                    stale_after,
+                    str(decision.get("exit_reason") or decision.get("reason") or "?"),
+                    (now - price_ts) / 60.0,
+                ),
+                severity="warning",
+            )
+            try:
+                self.db.log_trade(
+                    wallet=decision.get("wallet", "ghost"),
+                    chain=decision.get("chain", sample["chain"]),
+                    symbol=decision.get("symbol", symbol),
+                    action=decision.get("action", "queue"),
+                    status=decision.get("status", "ghost"),
+                    details={
+                        **decision,
+                        "stale_clock_sweep": True,
+                        "held_sec": round(held_secs, 1),
+                        "price_age_sec": round(now - price_ts, 1),
+                    },
+                )
+            except Exception:
+                pass
+
+        if closed:
+            self._save_state()
+        return closed
 
     def _abandon_dark_feed_positions(self, now: float) -> int:
         """Drop ghost positions whose symbol has stopped being priced.

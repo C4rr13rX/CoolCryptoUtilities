@@ -5747,3 +5747,37 @@ establish whether `stale_ghost_book` is caused by the tick-driven exit schedule
 ([3f7a0677]). Do not widen GHOST_MAX_STALE_SEC; that buys a verdict by
 loosening a guard.
 Commit 5b86639 on origin/main. 9 new tests, 3 proven red against the old module.
+
+## 2026-09-11 — Iris (pass 119) — stale_exit_secs now runs on a wall clock
+
+**Hypothesis:** `stale_exit_secs` (900s) is a wall-clock promise enforced on a
+tick-driven schedule, so the positions that most need rule 4 are the ones least
+able to reach it. Pass 102 fixed the elif ORDER (1cc2a6a) and rule 4 can now
+fire, but it still needs a tick on the held symbol — and `_handle_sample` gates
+that tick behind the model-window check and the duplicate-signature return.
+
+**RESULT: CONFIRMED and fixed.** `TradingBot._close_stale_positions_on_the_clock`
+runs the EXISTING exit chain with a NEUTRAL model read (so only the position's
+own target, stop and clock can close it) on ANY symbol's tick, beside the
+dark-feed sweeps and ABOVE them — a mark fresh enough to book honestly should
+close and record an outcome; only one too dark to mark out should be abandoned
+recording nothing. Bounded: marks older than 900s refused (the +161% stale
+repricing), live positions untouched (they have `_exit_dark_live_positions`), one
+in-flight claim per `symbol:trade_id` so two bots cannot double-book one round
+trip, and one `_stale_exit_secs()` read shared with the chain.
+
+**THE NUMBER, `scripts/hold_time_edge.py --days 14`, n=74 timed trips:** median
+hold 58.8 → 15.5 min; share outliving clock+30s 86% → 4%; 62 of 74 swept. That
+is a labelled REPLAY counterfactual against the ticks each trip actually
+received, not a post-fix book — production must be restarted for the real one.
+The threshold carries the sweep's 30s period on both columns: against a bare 900s
+every swept trip still reads as outliving the clock and the share printed 86%
+before and 86% after while the median fell by 43 minutes.
+
+**NOT CLAIMED:** the ≤15 min bucket is still n=10, under this loop's n≥30 floor,
+so it is not ranked and no edge is claimed. The split is over REALISED trips, so
+a trip may have closed fast BECAUSE it hit its target; this moves the population
+so the question can be asked at n≥30. **NEXT:** restart production, then price
+the post-fix ≤15 min bucket per-trade against buy-every-bar in an UP and a DOWN
+window. Report: docs/STALE_EXIT_WALL_CLOCK.md. 8 new tests, 37 green in the
+related exit-chain files.

@@ -201,6 +201,99 @@ def abandoned_positions(
     return out
 
 
+def wall_clock_replay(
+    rows: Sequence[Dict[str, Any]],
+    *,
+    stale_secs: float = STALE_EXIT_MINS * 60.0,
+    price_max_age_secs: float = 900.0,
+    sweep_period_secs: float = 30.0,
+) -> Dict[str, Any]:
+    """What the wall-clock stale sweep WOULD have done to these hold times.
+
+    This is a REPLAY of ``TradingBot._close_stale_positions_on_the_clock``
+    against the ticks each trip actually received, and it is a counterfactual,
+    not a post-fix measurement. It is labelled as one everywhere it is printed.
+    A real post-fix number needs production to run the new code over a fresh
+    window; nothing here can substitute for that.
+
+    The rule being replayed, in the same order the sweep applies it:
+
+      * a position is eligible once its AGE passes ``stale_secs``;
+      * it can only be closed against a mark no older than
+        ``price_max_age_secs`` -- an older mark is the +161% stale-repricing
+        artifact and the sweep refuses it, leaving the dark-feed sweep to
+        abandon the position instead;
+      * the sweep itself runs every ``sweep_period_secs`` on ANY symbol's tick,
+        so the grid it fires on is treated as continuous in this replay. That is
+        the one optimistic assumption here and it is worth about 30 seconds per
+        trip; the binding constraint is the mark, not the grid.
+
+    A trip whose actual exit came BEFORE the rule could fire is unchanged --
+    the sweep never pre-empts an exit the tick path already produced.
+    """
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        held_mins = float(r.get("held_mins", 0.0) or 0.0)
+        ticks = [t for t in (r.get("tick_ts") or []) if t > 0.0]
+        r = dict(r)
+        r["new_held_mins"] = held_mins
+        r["swept"] = False
+        if held_mins <= 0.0 or not ticks:
+            out.append(r)
+            continue
+        entry_ts = min(ticks)
+        exit_ts = float(r.get("ts") or 0.0)
+        eligible_at = entry_ts + stale_secs
+        # The earliest instant at which BOTH hold: the clock has run out, and a
+        # mark exists that is fresh enough to book against.
+        fire_at: Optional[float] = None
+        for tick in sorted(ticks):
+            moment = max(eligible_at, tick) + sweep_period_secs
+            if moment - tick <= price_max_age_secs:
+                fire_at = moment
+                break
+        if fire_at is None or fire_at >= exit_ts:
+            out.append(r)
+            continue
+        r["new_held_mins"] = (fire_at - entry_ts) / 60.0
+        r["swept"] = True
+        out.append(r)
+
+    def _median(vals: List[float]) -> float:
+        if not vals:
+            return 0.0
+        s = sorted(vals)
+        mid = len(s) // 2
+        return s[mid] if len(s) % 2 else 0.5 * (s[mid - 1] + s[mid])
+
+    timed = [r for r in out if float(r.get("held_mins", 0.0)) > 0]
+    before = [float(r["held_mins"]) for r in timed]
+    after = [float(r["new_held_mins"]) for r in timed]
+    # THE THRESHOLD CARRIES THE SWEEP PERIOD, and without it this number lies by
+    # omission in the OPTIMISTIC direction for the old behaviour. The sweep fires
+    # on a 30s grid, so a position it catches closes at 930s, not 900s -- tested
+    # against a bare 900s every swept trip still reads as "outlived the clock"
+    # and the share printed 86% before and 86% after while the median fell from
+    # 58.8 to 15.5 minutes. 30 seconds of grid is not a position outliving its
+    # clock, and the same threshold is applied to both columns.
+    limit = (stale_secs + sweep_period_secs) / 60.0
+    return {
+        "n": len(timed),
+        "swept": sum(1 for r in timed if r["swept"]),
+        "median_hold_mins_before": _median(before),
+        "median_hold_mins_after": _median(after),
+        "outlived_pct_before": 100.0 * sum(1 for v in before if v > limit) / len(timed)
+        if timed else 0.0,
+        "outlived_pct_after": 100.0 * sum(1 for v in after if v > limit) / len(timed)
+        if timed else 0.0,
+        "within_after": sum(1 for v in after if v <= limit),
+        "stale_mins": limit,
+        "sweep_period_secs": sweep_period_secs,
+        "price_max_age_secs": price_max_age_secs,
+        "rows": out,
+    }
+
+
 def hold_time_edge(
     *,
     days: float = 7.0,
@@ -245,6 +338,10 @@ def hold_time_edge(
                     continue
                 r["held_mins"] = (r["ts"] - p[0]["ts"]) / 60.0 if p else 0.0
                 r["ticks"] = len(p)
+                # Kept for the wall-clock replay below: WHEN each tick arrived is
+                # the whole question, because the mark the sweep closes against
+                # has to be one somebody actually observed.
+                r["tick_ts"] = [float(t.get("ts") or 0.0) for t in p]
                 placed.append(r)
         finally:
             con.close()
@@ -286,6 +383,7 @@ def hold_time_edge(
                      "held_mins": longest["held_mins"],
                      "ticks": longest["ticks"]} if longest else None),
         "abandoned": abandoned_positions(db, now - days * 86400.0, now=now),
+        "replay": wall_clock_replay(rows),
     }
 
 
@@ -325,6 +423,30 @@ def render(rep: Dict[str, Any]) -> str:
             "  Exits are evaluated only when a tick arrives, so stale_exit_secs is a",
             "  WALL-CLOCK promise on a TICK-DRIVEN schedule. See the module docstring",
             "  for the selection effect this table does and does not survive."]
+
+    rp = rep.get("replay") or {}
+    if rp.get("n"):
+        out += ["",
+                "  WALL-CLOCK SWEEP REPLAY -- a COUNTERFACTUAL, not a post-fix number.",
+                "  TradingBot._close_stale_positions_on_the_clock re-run against the ticks",
+                f"  these trips actually received, marks capped at "
+                f"{rp['price_max_age_secs']:.0f}s old.",
+                "",
+                f"  {'':22s} {'before':>9s} {'after':>9s}",
+                f"  {'median hold (min)':22s} {rp['median_hold_mins_before']:9.1f} "
+                f"{rp['median_hold_mins_after']:9.1f}",
+                f"  {'outlive clock+' + format(rp['sweep_period_secs'], '.0f') + 's':22s} "
+                f"{rp['outlived_pct_before']:8.0f}% "
+                f"{rp['outlived_pct_after']:8.0f}%",
+                f"  {'n within that':22s} "
+                f"{rp['n'] - round(rp['outlived_pct_before'] * rp['n'] / 100.0):9d} "
+                f"{rp['within_after']:9d}",
+                "",
+                f"  {rp['swept']} of {rp['n']} trips would have been closed by the sweep.",
+                "  CLOSING MORE TRIPS FAST DOES NOT PROVE THE FAST ONES WERE GOOD. The",
+                "  <=15 min bucket above is a split of REALISED trips, so a trip may have",
+                "  closed fast BECAUSE it hit its target. This replay moves the population",
+                "  so the question can be asked at n>=30; the post-fix book is the test."]
 
     ab = rep.get("abandoned") or {}
     if ab.get("positions"):
