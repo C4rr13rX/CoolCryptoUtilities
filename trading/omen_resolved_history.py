@@ -40,7 +40,7 @@ from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
 from trading.omen_metacognition import Resolved
 
-__all__ = ["Prediction", "ResolvedHistory"]
+__all__ = ["Prediction", "ResolvedHistory", "build_samples_with_history"]
 
 
 @dataclass
@@ -210,3 +210,78 @@ def walk_forward(bar_indices: Sequence[int],
             history.record(bar, predictions[position],
                            agreed=pair[0], asked=pair[1])
     return out
+
+
+def build_samples_with_history(bars, symbol: str, chain: str,
+                               horizon_bars: int, start: int, stop: int,
+                               predictor=None):
+    """Frames + label per bar, with the self pools FED rather than sentinelled.
+
+    THE SEAM THIS CLOSES, measured pass 110 on a real 19-pool node. The probe
+    reported ``QUERY PATH DEAD`` for a query set differing only by pools
+    15/16/19 -- control 0/60, treatment 0/60 -- while the B arm fired SIX
+    streams per prediction. The pools were sent and read. They moved nothing
+    because every sample-building loop in this repo calls ``build_collections``
+    without ``history=``, so every self frame in a training set is the ``na``
+    sentinel and the three pools train as CONSTANTS. A constant stream cannot
+    move a query however good the pool is.
+
+    So this is the sample builder that hands the history in. It is the same
+    loop as ``omen_experiment.build_samples`` with two additions: a
+    ``ResolvedHistory`` walked alongside the bars, and ``history=`` passed
+    through.
+
+    ``predictor(bar_index, visible_history)`` returns the label to record as
+    the prediction made at that bar. The default is the majority label among
+    the rows the bar is allowed to see -- causal, non-oracle, and the same
+    rule the scoreboard baselines against. A caller measuring the NODE's edge
+    should pass the node's own prediction instead; that is the difference
+    between sizing the vocabulary and measuring skill.
+
+    Causality is inherited from ``ResolvedHistory`` rather than re-implemented:
+    the frame for bar ``i`` reads ``as_of(i)``, which cannot return a row whose
+    horizon has not landed. Settling happens BEFORE the frame is built, so a
+    prediction whose horizon lands exactly on this bar is a fact here -- the
+    guard is against reading the OPEN call, not against reading a settled one.
+    """
+    from collections import Counter
+
+    from trading.omen_brain import (
+        LOOKBACK_BARS, build_collections, label_omen, measure_bar_seconds)
+
+    def _majority(_bar, visible):
+        actuals = [r.actual for r in visible if r.actual]
+        return Counter(actuals).most_common(1)[0][0] if actuals else "murk"
+
+    predictor = predictor or _majority
+    history = ResolvedHistory(horizon_bars)
+    samples = []
+    cadence = measure_bar_seconds(bars)
+    for index in range(max(start, LOOKBACK_BARS), stop):
+        label = label_omen(bars, index, horizon_bars=horizon_bars)
+        if label is not None:
+            try:
+                history.settle(index, label)
+            except ValueError:
+                pass
+        visible = history.as_of(index)
+        if label is None:
+            continue
+        try:
+            frames = build_collections(bars, index, horizon_bars=horizon_bars,
+                                       bar_seconds=cadence,
+                                       symbol=symbol, chain=chain,
+                                       history=visible)
+        except (ValueError, IndexError):
+            continue
+        samples.append({
+            "index": index,
+            "frames": frames,
+            "label": label,
+            "ts": int(bars[index]["timestamp"]),
+            "price": float(bars[index]["close"]),
+            "forward": (float(bars[index + horizon_bars]["close"])
+                        - float(bars[index]["close"])) / float(bars[index]["close"]),
+        })
+        history.record(index, predictor(index, visible))
+    return samples

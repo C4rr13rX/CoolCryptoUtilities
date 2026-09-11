@@ -140,3 +140,75 @@ def test_self_frames_move_off_their_na_sentinels_once_the_feeder_runs():
         "window where 14.2% of bars rose")
     assert "run=m" in frames["self_error_run"]
     assert frames["self_agreement"] != empty["self_agreement"]
+
+
+def test_the_sample_builder_actually_feeds_the_self_pools():
+    """The seam that made a real node report QUERY PATH DEAD.
+
+    Measured pass 110 on a 19-pool node: a query set differing only by pools
+    15/16/19 moved 0 of 60 held-out predictions while the arm fired six streams
+    per prediction. The pools were sent and read; they moved nothing because
+    every sample-building loop called ``build_collections`` without
+    ``history=``, so every self frame in the training set was the ``na``
+    sentinel and the pools trained as CONSTANTS.
+
+    This test fails against that loop: without the history, all three self
+    frames are one value across every sample.
+    """
+    import importlib
+    import json
+    import os
+    from pathlib import Path
+
+    import trading.omen_brain as omen_brain
+    from trading.omen_resolved_history import build_samples_with_history
+
+    # The self_* collections are OFF by default and the gate is read at
+    # IMPORT time (omen_brain.META_ENABLED), so without this reload
+    # build_collections never emits the keys this test asserts on and it dies
+    # with KeyError 'self_outcome' -- a test that cannot see the pools it is
+    # named after. `build_samples_with_history` imports build_collections
+    # inside its body, so reloading the module is enough to rebind it.
+    os.environ["OMEN_META_COLLECTIONS"] = "1"
+    try:
+        importlib.reload(omen_brain)
+        assert omen_brain.META_ENABLED, "the meta gate did not take"
+
+        corpus = Path("data/historical_ohlcv/base/0004_AERO-USDC.json")
+        if not corpus.exists():
+            import pytest as _pytest
+            _pytest.skip("corpus not present")
+
+        bars = [b for b in json.loads(corpus.read_text(encoding="utf-8"))
+                if b.get("close")]
+        bars.sort(key=lambda b: int(b["timestamp"]))
+        stop = len(bars) - 13
+        samples = build_samples_with_history(bars, "AERO-USDC", "base", 12,
+                                             stop - 400, stop)
+        assert len(samples) > 200
+
+        for key in ("self_outcome", "self_agreement", "self_error_run"):
+            values = {s["frames"][key] for s in samples}
+            assert len(values) > 1, (
+                f"{key} is ONE value across {len(samples)} samples -- the history "
+                f"is not reaching build_collections, and a constant stream cannot "
+                f"move a query however good the pool is")
+        # self_outcome and self_error_run are computable from the outcomes alone,
+        # so they must be saying something concrete. self_agreement is NOT: it
+        # needs how many query sets voted together, which a single-rule driver
+        # does not have, so its rate field stays `na` until the node's own
+        # predictions drive the walk. That is a real limit of this builder and it
+        # is asserted rather than glossed.
+        for key in ("self_outcome", "self_error_run"):
+            values = {s["frames"][key] for s in samples}
+            assert not all(v.endswith("na") for v in values), (
+                f"{key} is computable from settled outcomes alone and must carry "
+                f"a concrete value, not a sentinel")
+        rates = {s["frames"]["self_agreement"] for s in samples}
+        assert all("rate=na" in v for v in rates), (
+            "self_agreement's rate needs multi-query-set votes; a single-rule "
+            "driver cannot supply them, and pretending otherwise would fake the "
+            "one signal measured to beat confidence")
+    finally:
+        os.environ.pop("OMEN_META_COLLECTIONS", None)
+        importlib.reload(omen_brain)
