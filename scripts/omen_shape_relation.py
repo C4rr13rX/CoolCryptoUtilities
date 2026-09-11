@@ -89,7 +89,8 @@ from typing import Any, Dict, List, Mapping, Sequence, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from trading.omen_brain import (  # noqa: E402
-    LOOKBACK_BARS, RANGE_WINDOW, label_omen, measure_bar_seconds,
+    LOOKBACK_BARS, RANGE_WINDOW, label_omen, label_regime,
+    measure_bar_seconds,
 )
 from scripts.omen_shape_mutations import (  # noqa: E402
     ADMITTED, MUTATIONS,
@@ -221,14 +222,30 @@ def labelled_anchors(bars: Sequence[Mapping[str, Any]], start: int,
             "label": label,
             "forward": forward,
             "path": _closes(window[: anchor + 1]),
+            # The TRAILING regime -- a summary of the past, strictly causal
+            # (omen_brain.label_regime's own contract). Carried so the lookup
+            # can be keyed CONDITIONALLY on regime without a second pass over
+            # the corpus; it never enters the descriptor itself.
+            "regime": label_regime(window, anchor),
         })
     return out
 
 
 def with_descriptors(rows: Sequence[Mapping[str, Any]], *, segments: int,
-                     nbands: int) -> List[Dict[str, Any]]:
-    return [dict(r, descriptor=_desc(r["path"], segments, nbands))
-            for r in rows]
+                     nbands: int,
+                     condition: str = "none") -> List[Dict[str, Any]]:
+    """Attach the lookup key. ``condition='regime'`` makes the key
+    (shape, trailing regime) rather than shape alone -- the question the
+    unconditional negative leaves open, at the price of splitting support."""
+    if condition not in ("none", "regime"):
+        raise ValueError(f"unknown condition {condition!r}")
+    out = []
+    for r in rows:
+        key = _desc(r["path"], segments, nbands)
+        if condition == "regime":
+            key = f"{key}|{r['regime']}"
+        out.append(dict(r, descriptor=key))
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -427,8 +444,9 @@ def parse_grid(spec: str) -> List[Tuple[int, int]]:
 
 def choose_granularity(train_raw: Sequence[Mapping[str, Any]],
                        grid: Sequence[Tuple[int, int]], *,
-                       min_support: int) -> Tuple[List[Dict[str, Any]],
-                                                  Dict[str, Any]]:
+                       min_support: int,
+                       condition: str = "none") -> Tuple[List[Dict[str, Any]],
+                                                         Dict[str, Any]]:
     """Pick the descriptor granularity on the TRAIN half, and only there.
 
     The rule is fixed before any number is read: among schemes that are not
@@ -441,7 +459,8 @@ def choose_granularity(train_raw: Sequence[Mapping[str, Any]],
     """
     rows: List[Dict[str, Any]] = []
     for seg, nb in grid:
-        s = support(with_descriptors(train_raw, segments=seg, nbands=nb),
+        s = support(with_descriptors(train_raw, segments=seg, nbands=nb,
+                                     condition=condition),
                     min_support=min_support)
         s.update({"segments": seg, "bands": nb,
                   "eligible": s["distinct"] >= 4 and s["top_share"] <= MAX_TOP})
@@ -501,14 +520,18 @@ def run_multi(args) -> int:
             skipped.append((path.name, "no labelable anchors"))
             continue
         _sweep, chosen = choose_granularity(train_raw, grid,
-                                            min_support=args.min_support)
+                                            min_support=args.min_support,
+                                            condition=args.condition)
         seg, nb = chosen["segments"], chosen["bands"]
         lookup = fit_lookup(with_descriptors(train_raw, segments=seg,
-                                             nbands=nb),
+                                             nbands=nb,
+                                             condition=args.condition),
                             min_support=args.min_support)
-        up = score(lookup, with_descriptors(up_raw, segments=seg, nbands=nb))
+        up = score(lookup, with_descriptors(up_raw, segments=seg, nbands=nb,
+                                            condition=args.condition))
         down = score(lookup, with_descriptors(down_raw, segments=seg,
-                                              nbands=nb))
+                                              nbands=nb,
+                                              condition=args.condition))
         rows.append({
             "corpus": path.name, "cadence": cadence, "horizon": horizon,
             "scheme": f"{seg}x{nb}", "train_n": len(train_raw),
@@ -584,6 +607,9 @@ def _write_multi_report(dest: Path, *, args, rows, skipped, scored, both,
     a(f"| granularity | chosen on each corpus's OWN train half, sweep "
       f"`{args.sweep}` |")
     a(f"| min_support | {args.min_support} |")
+    a("| lookup key | " + ("(shape, trailing regime)"
+      if args.condition == "regime" else "shape alone") + " |")
+    a(f"| lookup key | {'(shape, trailing regime)' if args.condition == 'regime' else 'shape alone'} |")
     a("")
     a("Choosing the extreme blocks is deliberate: it is the hardest honest")
     a("pair, and a rule that works in only one direction cannot hide in it.")
@@ -650,6 +676,10 @@ def main() -> int:
     ap.add_argument("--sweep", default="2x2,3x2,4x2,2x3,3x3,4x3,6x3,4x5,8x5",
                     help="granularity grid as SEGMENTSxBANDS, comma separated. "
                          "The winner is chosen on the TRAIN half only.")
+    ap.add_argument("--condition", choices=("none", "regime"),
+                    default="none",
+                    help="key the lookup on shape alone, or on (shape, "
+                         "trailing regime) -- the conditional arm")
     ap.add_argument("--min-support", type=int, default=20)
     ap.add_argument("--invariance-sample", type=int, default=150)
     ap.add_argument("--seed", type=int, default=0)
@@ -690,7 +720,8 @@ def main() -> int:
 
     grid = parse_grid(args.sweep)
     sweep_rows, chosen = choose_granularity(train_raw, grid,
-                                            min_support=args.min_support)
+                                            min_support=args.min_support,
+                                            condition=args.condition)
     print("\nGRANULARITY SWEEP -- TRAIN HALF ONLY, the held-out "
           "windows are not read here")
     for s_ in sweep_rows:
@@ -706,9 +737,12 @@ def main() -> int:
           f"{chosen['covered_share']:.4f} of the train window with "
           f"{chosen['supported_descriptors']} supported descriptors")
 
-    train = with_descriptors(train_raw, segments=segments, nbands=nbands)
-    up = with_descriptors(up_raw, segments=segments, nbands=nbands)
-    down = with_descriptors(down_raw, segments=segments, nbands=nbands)
+    train = with_descriptors(train_raw, segments=segments, nbands=nbands,
+                             condition=args.condition)
+    up = with_descriptors(up_raw, segments=segments, nbands=nbands,
+                          condition=args.condition)
+    down = with_descriptors(down_raw, segments=segments, nbands=nbands,
+                            condition=args.condition)
 
     rng = random.Random(args.seed)
     sample = [r["index"] for r in train]
@@ -799,6 +833,9 @@ def _write_report(dest: Path, *, args, corpus: Path, bars: int, cadence: int,
     a(f"| descriptor | {chosen['segments']} segments x {chosen['bands']} "
       f"bands, chosen on the TRAIN half (sweep in §2) |")
     a(f"| min_support | {args.min_support} |")
+    a("| lookup key | " + ("(shape, trailing regime)"
+      if args.condition == "regime" else "shape alone") + " |")
+    a(f"| lookup key | {'(shape, trailing regime)' if args.condition == 'regime' else 'shape alone'} |")
     a("")
     a("Windows are the pass-114 two-window protocol so these numbers sit")
     a("beside a measured fabric baseline on the same corpus and the same bars.")
