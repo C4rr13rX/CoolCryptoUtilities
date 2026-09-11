@@ -1,7 +1,9 @@
 # 22 of 198 streamed symbols carry a second price regime, and three CLANKER ticks are the 1.25-billion-percent forecast
 
-Iris, pass 116, item [2ac8532c]. Criterion 1 only; criteria 2, 3 and 4 are not
-met and are named at the end. Corpus: `storage/trading_cache.db`, table
+Iris, pass 116, item [2ac8532c]. Criteria 1 and 2 are met — criterion 2 is the
+section appended at the end, written after the "What this does NOT settle"
+section below, which therefore reads as stale on that point and is left in place
+rather than rewritten. Criteria 3 and 4 are NOT met. Corpus: `storage/trading_cache.db`, table
 `market_stream`, the 7 days to 2026-09-11 04:50 UTC, 43,920 ticks over 198
 symbols.
 
