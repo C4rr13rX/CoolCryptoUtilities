@@ -134,8 +134,38 @@ the same scale (median -0.3488, max +1.5320), which also explains the
 separately filed "net_margin is a saturated negative on every symbol": a
 z-scored target is negative more often than not.
 
-So the hypothesis for [1b0fd55f] is specific and cheap to test: the price_mu
-target was normalised during training and the prediction is never inverse
-transformed. That is a units bug at a boundary, not a model-quality problem,
-and it would make every cost-derived comparison in the entry path meaningless
-at once -- which is what is observed.
+### Correction, same pass: it is not a units bug, and the cause is already on file
+
+I wrote "the target was normalised and never inverse transformed" above and
+then read `trading/data_loader.py:68-110`, which already diagnoses this range
+from direct probes of the deployed model. The z-score reading is **wrong** and
+is kept here only so nobody re-derives it:
+
+> ONE FOREIGN ROW IN SIXTY SATURATES THE MODEL, AND THAT IS THE -1.2.
+
+`PriceVolScaleNorm` makes the price channel scale-free relative to the window's
+anchor, and it works — the same model returned `price_mu -0.000620` on clean
+windows at price levels 1e-4 and 1.2e4, identical to six decimals across eight
+orders of magnitude. What it cannot absorb is a window whose 60 rows are not
+all the same asset. Probed against the deployed model on one live ETH-USDT
+window:
+
+| served window | price_mu | net_margin |
+|---|---|---|
+| clean | -0.2065 | -0.2130 |
+| one row 100x | -1.5111 | -1.5176 |
+| one foreign row at t=30 | -1.8395 | -1.8460 |
+| two assets interleaved | +1.3012 | +1.2947 |
+
+That reproduces exactly the distribution measured above, including `net_margin`
+tracking `price_mu` to within ~0.007 — which is the 0.0065 fee input, not a
+second independent defect. So the two heads are not two bugs, and they are not
+a missing transform: they are **one contaminated served window**.
+
+So the real question for [1b0fd55f] is narrower and sharper than the one I
+filed: `sanitize_model_price_window` already exists as the repair, and my
+measurement says the contaminated signature is **still present in the newest
+5,000 cycles** (median `delta` -0.342, range -2.78..+1.54, only 0.68% inside
+1%). Either the sanitiser is not wired into the path that builds the served
+window, or it is not catching these rows. That is a seam to verify, not a model
+to retrain.
