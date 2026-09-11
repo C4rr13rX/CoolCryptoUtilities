@@ -5500,3 +5500,18 @@ testable claim and the starved-population item wants it.
 **Commits.** f617518, f0ebf5c, 1fe7cea, 7f804bd.
 
 2026-09-11 Cove -- L2 identifier guard on a SECOND pair. HYPOTHESIS: the L2/L1 encoder constants (L1_HYSTERESIS_MARGIN=0.50, L2_CHURN_CUTS, L2_TRANSITION_STEPS=2) are fitted to AERO-USDC, because p108_aero_up/down were the only bar corpora anyone had used. DID: found 559 files in data/historical_ohlcv/ with >=900 bars in the exact corpus shape across five chains; built p116_arbweth_up/down from 0039_ARB-WETH.json by sliding a 900-bar block and taking the most-up (+13.49%) and most-down (-11.22%) block; ran the same probe, same shipped banding, both corpora in one process. RESULT, A NEGATIVE: L2 reads 0.4700 DOWN / 0.4533 UP on ARB-WETH against the 0.30 ceiling and FAILS BOTH, where AERO reads 0.2800 / 0.2267 and passes. It fails with or without the churn symbol (path alone 0.4650 / 0.4467) so it is not a churn finding. CAUSE: the same margin 0.50 gives AERO an L1 change rate of 37.6%/38.2% and ARB-WETH 62.3%/62.4%, and a change-order path over an alphabet changing on two bars in three is near-unique by construction. L1 itself still abstracts on the new pair (0.1950/0.1150), so it is the STICKINESS that does not travel. So L2 clearing the guard is a property of AERO, not of the encoder, and no node arm on L2 is worth spending yet. CAVEAT: the ARB-WETH DOWN window has a 0.0% trough base rate so its group/lift numbers are meaningless; distinctness does not use the label. NEXT: [746c2ece] -- stop shipping a fixed band fraction and SOLVE the margin per corpus for a target change rate, checked on 4-6 pairs; and select windows on label incidence as well as direction.
+
+**Addendum, same pass (Iris).** I tested the "quiet failure" story against its
+own claim and it did NOT survive. Driving `evaluate()` offline over every
+60-bar window of the contaminated symbols, with `STRATEGY_SANITIZE_WINDOW=0`
+then `=1`: donchian_breakout on CLANKER-USDC 0 candidates raw / 0 repaired over
+436 windows; stochastic_reversal 0/0 on MOONBASE-USDC (559), SOL-CBBTC (222),
+JITOSOL-CBBTC (586) and CLANKER-USDC (436). Not one window produces a candidate
+only after the repair. The story that a foreign bar was silently stopping these
+strategies entering is unsupported on every symbol tested and I am retiring it.
+What remains measured is a fact about the WINDOW — 1,410 of 1,497 poisoned
+windows now clean — not about candidates. Caveat: zero-everywhere is as
+consistent with a broken harness as with a true negative, because I synthesised
+the StrategyContext (fee_rate 0.0065, quote 100, base 0, volume defaulted).
+The proper measurement is the ghost lane's own candidate stream before and
+after 7f804bd, and it needs the lane running.
