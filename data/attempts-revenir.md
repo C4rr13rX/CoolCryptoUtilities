@@ -5358,3 +5358,37 @@ dwell and fails the ceiling (0.3667/0.3167); run-length fails harder
 (0.7117/0.5983). No fixed-tail scheme has cleared both. That is what the
 operator's "motifs over co-occurrence AND sequence" redesign has to solve, and
 it should be measured before another node arm is spent on L2.
+
+## 2026-09-11 — Iris (pass 116): the only cost test on the live path could not read seven strategies' default horizon
+
+**Hypothesis.** [7231f8ac]: a strategy-emitted `enter` short-circuits the model
+conjunction because the directive branch is an `elif` ABOVE it, so the only cost
+test left on that path is `_lattice_refusal` — and it fails open six ways.
+
+**What I did.** Re-derived Gale's 03:10 census (left uncommitted when the session
+limit ended that pass) over the 7 days to 04:30 UTC, verified the regression test
+was red against the old behaviour, and shipped both. Then measured the
+distribution of `expected_return` on the same population and fixed what it showed.
+
+**Result, as numbers.** 125 deduped entries on bot.py's chain: 123 directive
+(98.4%), 2 model-long (1.6%), and ALL 10 live entries directive. 74 of 123 (60%)
+would be refused by the move-size conjunct. `_lattice_refusal` failed open on 52
+of 123 (42%) because `_HORIZON_SECONDS` listed 5m/10m/15m/30m then jumped to 1h,
+and "45m"/"20m" are the `default_horizon` of seven strategies; parsing the label
+moves 18 entries (14.6%) from unpriced to priced against `roundtrip_cost_rate`.
+The residual 34 are "atf", which names no duration, still fail open, and now
+record `lattice_exit=unreadable_horizon:atf`. Separately, `expected_return` on
+those 123 entries: 60 under 5%, 54 at 5-20%, 7 at 20-50%, one at 110.95% and one
+at **12551318.65** — CLANKER-USDC at an entry price of 1.023e-06, which ENTERED
+and, with the bound removed, asks for 11,730,205 tokens because `_size_enter`
+scales the clip with the forecast.
+
+**What I would try next.** The `elif` ordering itself: 98.4% of entries still
+bypass seven model conjuncts, and moving the model conjunction above the
+directive branch is a live-path behaviour change that needs its own before/after.
+And [2ac8532c]: the contaminated window that produced the 1.25e6 ratio is still
+feeding every other statistic those strategies compute.
+
+**Commits.** fc5b8d4 (horizon parser + lattice exit recording + census),
+0fce105 (plausibility bound in `make_candidate`). Gate 719/2, both failures
+`tests/test_strategy_ledger.py` and reproduced with my changes stashed.
