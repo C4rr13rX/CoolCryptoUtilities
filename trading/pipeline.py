@@ -755,6 +755,10 @@ class TrainingPipeline:
         self._confusion_refresh_thread: Optional[threading.Thread] = None
         self._confusion_refresh_last_dispatch = 0.0
         self._confusion_refresh_min_gap = float(os.getenv("CONFUSION_REFRESH_MIN_GAP", "30"))
+        # Spacing and the count of verdicts decided on a stale report between
+        # two warnings. See _announce_stale_confusion_judgment.
+        self._confusion_stale_warn_last = 0.0
+        self._confusion_stale_judgments = 0
 
         self.min_ghost_trades = int(os.getenv("MIN_GHOST_TRADES_FOR_PROMOTION", os.getenv("MIN_GHOST_TRADES_OVERRIDE", "25")))
         self.max_false_positive_rate = float(
@@ -3987,6 +3991,92 @@ class TrainingPipeline:
             self._last_confusion_refresh = time.time()
         return refreshed
 
+    def confusion_freshness(self) -> Dict[str, Any]:
+        """How old the confusion report is, and whether that breaches its own rule.
+
+        ``getattr`` throughout: this is telemetry for a gate that decides
+        whether live trading is allowed, and a telemetry field must never be
+        able to veto the money path with an AttributeError.
+        """
+        try:
+            max_age = float(os.getenv("CONFUSION_REFRESH_MAX_AGE", "900") or 900.0)
+        except ValueError:
+            max_age = 900.0
+        age_sec = max(
+            0.0, time.time() - float(getattr(self, "_last_confusion_refresh", 0.0) or 0.0)
+        )
+        return {
+            "confusion_age_sec": round(age_sec, 1),
+            "confusion_max_age_sec": max_age,
+            "confusion_stale": bool(max_age > 0 and age_sec > max_age),
+        }
+
+    def _announce_stale_confusion_judgment(self, *, refreshed: bool, refresh_error: str) -> Dict[str, Any]:
+        """Say out loud when live readiness is about to judge on an old report.
+
+        THE FAILURE THIS CLOSES, WHICH IS NOT THE ATTRIBUTEERROR.
+
+        ``live_readiness_report`` called ``ensure_confusion_fresh()`` and threw
+        the return value away. That return is False on every path where the
+        refresh did NOT happen and nothing raised:
+
+          * ``_offload_confusion_refresh`` handed the work to a worker because
+            the caller is on the asyncio loop -- the NORMAL case in production,
+            since _handle_sample reaches the gate from the event loop;
+          * single-flight suppressed it (a refresh thread is already alive);
+          * the CONFUSION_REFRESH_MIN_GAP spacing suppressed it;
+          * the GuardianLease or the train lock was held by a trainer;
+          * the evaluation split was under min_samples.
+
+        In all five the gate went on to judge live readiness on
+        ``self._last_confusion_report`` and logged NOTHING. The one case that
+        did speak -- an exception -- was the test-suite AttributeError, so the
+        only voice on staleness was the one instance of it that was not real.
+
+        Measured 2026-09-11 00:06: data/reports/confusion_matrices.json carried
+        updated_at 1789093649, an age of 5968 seconds against the 900-second
+        CONFUSION_REFRESH_MAX_AGE the same code enforces -- 6.6x its own rule,
+        with no log line at any severity.
+
+        Rate-limited rather than per-call, because production issues several
+        readiness verdicts per second and 30 identical lines per 400KB of log
+        is how the last one got ignored. The suppressed verdicts are COUNTED
+        and reported in the next line, so nothing is lost by spacing them.
+        """
+        freshness = self.confusion_freshness()
+        if refreshed and not refresh_error:
+            self._confusion_stale_judgments = 0
+            return freshness
+        if not freshness["confusion_stale"] and not refresh_error:
+            # The refresh did not run, but the cached report is still inside
+            # its own max age. Judging on it is correct, not a compromise.
+            self._confusion_stale_judgments = 0
+            return freshness
+        judgments = int(getattr(self, "_confusion_stale_judgments", 0) or 0) + 1
+        self._confusion_stale_judgments = judgments
+        now = time.time()
+        try:
+            gap = float(os.getenv("CONFUSION_STALE_WARN_GAP", "300") or 300.0)
+        except ValueError:
+            gap = 300.0
+        last = float(getattr(self, "_confusion_stale_warn_last", 0.0) or 0.0)
+        if now - last < gap:
+            return freshness
+        self._confusion_stale_warn_last = now
+        self._confusion_stale_judgments = 0
+        cause = f"the refresh raised {refresh_error}" if refresh_error else "the refresh did not run"
+        log_message(
+            "training",
+            "live readiness is judging on a confusion report "
+            f"{freshness['confusion_age_sec']:.0f}s old against a "
+            f"{freshness['confusion_max_age_sec']:.0f}s max age -- {cause}. "
+            f"{judgments} readiness verdict(s) since the last such line were decided "
+            "on this report; a stale metric is a claim about the present made from the past",
+            severity="warning",
+            details=freshness,
+        )
+        return freshness
+
     def _cap_false_positive_rate(self, report: Dict[str, Dict[str, Any]]) -> Optional[float]:
         if not report:
             return None
@@ -5182,9 +5272,12 @@ class TrainingPipeline:
         # emptying it: the lock is deliberately non-blocking, so "another
         # thread is training right now" is a normal outcome, not an error, and
         # it must not flip the gate to the no_confusion_data path.
+        confusion_refreshed = False
+        confusion_refresh_error = ""
         try:
-            self.ensure_confusion_fresh()
+            confusion_refreshed = bool(self.ensure_confusion_fresh())
         except Exception as exc:  # noqa: BLE001 - the gate must not crash the tick
+            confusion_refresh_error = repr(exc)
             # THE TRACEBACK, NOT JUST THE MESSAGE.
             #
             # This handler logged `{exc!r}` alone, and that is not enough to
@@ -5209,6 +5302,19 @@ class TrainingPipeline:
                 severity="error",
                 details={"traceback": _tb.format_exc()},
             )
+
+        # SAY SO BEFORE JUDGING, NOT AFTER, AND ON EVERY RETURN PATH.
+        #
+        # This sits above `report = ...` deliberately: the two fallback returns
+        # below (no confusion data, no anchor) also decide live readiness, and
+        # until now they returned without any staleness field at all. The
+        # warning is emitted once here, and `freshness` is merged into whichever
+        # verdict is returned, so no caller can read a verdict that does not
+        # carry the age of the evidence behind it.
+        freshness = self._announce_stale_confusion_judgment(
+            refreshed=confusion_refreshed,
+            refresh_error=confusion_refresh_error,
+        )
 
         report = self._last_confusion_report or {}
         if report and (not isinstance(self._last_confusion_summary, dict) or not self._last_confusion_summary.get("horizons")):
@@ -5292,23 +5398,12 @@ class TrainingPipeline:
                     "focus_chain": wallet_state.get("focus_chain"),
                 }
             )
+            report_fb.update(freshness)
             return report_fb
-        # How old the evidence is, published with the verdict. A gate that
-        # refuses on a ten-hour-old measurement should say so in the same
-        # breath, so staleness is readable without diffing 16-digit floats.
-        #
-        # getattr, not attribute access: this line decides nothing, it only
-        # publishes how old the evidence is -- but it sits AFTER the gate's
-        # early-return fallbacks and before the verdict, so an AttributeError
-        # here takes the whole live-readiness report down and no strategy can
-        # arm. A telemetry field must never be able to veto the money path.
-        confusion_age_sec = max(
-            0.0, time.time() - float(getattr(self, "_last_confusion_refresh", 0.0) or 0.0)
-        )
 
         anchor_label, anchor = self._select_confusion_anchor(report)
         if anchor is None:
-            return {"ready": False, "reason": "no_confusion_data"}
+            return {"ready": False, "reason": "no_confusion_data", **freshness}
         precision = float(anchor.get("precision", 0.0))
         recall = float(anchor.get("recall", 0.0))
         samples = int(anchor.get("samples", 0))
@@ -5346,9 +5441,10 @@ class TrainingPipeline:
             "false_positive_rate": false_positive_rate,
             "lift": lift,
             "dominant": self._last_confusion_summary.get("dominant"),
-            "confusion_age_sec": round(confusion_age_sec, 1),
-            "confusion_stale": confusion_age_sec > float(
-                os.getenv("CONFUSION_REFRESH_MAX_AGE", "900") or 900.0),
+            # How old the evidence is, published with the verdict. A gate that
+            # refuses on a ten-hour-old measurement should say so in the same
+            # breath, so staleness is readable without diffing 16-digit floats.
+            **freshness,
             "mini_ready": mini_ready,
             "mini_reason": mini_reason,
             "mini_precision": mini_precision,
@@ -6191,12 +6287,58 @@ class TrainingPipeline:
         return True
 
     def _prime_confusion_windows_blocking(self, *, min_samples: int = 128, force: bool = False) -> bool:
+        # A PIPELINE BUILT WITHOUT __init__ HAS NO LOCK, AND THAT IS THE
+        # CALLER'S BUG, NOT A STALE-REPORT RISK.
+        #
+        # Measured 2026-09-10 over the last 50MB of logs/system.log: 145 ERROR
+        # lines reading AttributeError("'TrainingPipeline' object has no
+        # attribute '_train_lock'") raised from this line and caught by
+        # live_readiness_report, which re-labelled every one of them "judging
+        # on the cached report, which may be stale".
+        #
+        # The cause is candidate (2) of the three on the item -- a caller that
+        # bypasses __init__ -- and specifically the TEST SUITE writing into the
+        # production log. The evidence that distinguishes it from candidate (1)
+        # (an __init__ that raised between model_dir.mkdir() and the assignment
+        # at line 753):
+        #   * every non-test construction site calls TrainingPipeline(...), so
+        #     __init__ runs -- production.py, trading/bot.py:342,
+        #     trading/selector.py, services/internal_cron.py,
+        #     services/model_lab.py, services/pipeline_prewarm.py,
+        #     web/lab/views.py, scripts/readiness_probe.py,
+        #     scripts/live_path_check.py, services/live_gate_map.py -- and none
+        #     of them catches a constructor failure and retains the half-built
+        #     object, so candidate (1) yields no object to call this on at all;
+        #   * TrainingPipeline.__new__(TrainingPipeline) appears ONLY under
+        #     tests/ (candidate (3), a second class of the same name, does not
+        #     exist: one `class TrainingPipeline` in the importable tree);
+        #   * the arrival pattern is bursts of EXACTLY THREE within one second
+        #     -- 09:21-09:58, 13:50, 18:29-19:53 -- clustered in agent-pass
+        #     windows, not production's continuous tick cadence;
+        #   * the log lines interleaved at those same seconds are fixtures:
+        #     AAA-USDC, BBB-USDC, SPARE-USDC, a strategy named "s",
+        #     RuntimeError('rpc exploded').
+        #
+        # So this particular error cannot touch a live trade. It still must not
+        # be silent, and it must not keep masquerading as a staleness warning:
+        # name the real defect at WARNING and refuse the refresh, because a
+        # half-constructed pipeline has no training state worth evaluating.
+        train_lock = getattr(self, "_train_lock", None)
+        if train_lock is None:
+            log_message(
+                "training",
+                "confusion refresh skipped: this TrainingPipeline was constructed "
+                "without __init__ (no _train_lock), so it holds no training state "
+                "to evaluate; the caller, not the report, is what is wrong",
+                severity="warning",
+            )
+            return False
         lease = None
         if GuardianLease is not None:
             lease = GuardianLease("training-pipeline", timeout=0.5, poll_interval=0.1)
             if not lease.acquire():
                 return False
-        if not self._train_lock.acquire(blocking=False):
+        if not train_lock.acquire(blocking=False):
             if lease:
                 lease.release()
             return False
@@ -6249,7 +6391,7 @@ class TrainingPipeline:
                 return True
             return False
         finally:
-            self._train_lock.release()
+            train_lock.release()
             if lease:
                 lease.release()
 
