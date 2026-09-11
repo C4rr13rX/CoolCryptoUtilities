@@ -38,6 +38,7 @@ and its test is tests/test_a_foreign_priced_row_cannot_saturate_the_model_window
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sqlite3
 import sys
@@ -57,6 +58,52 @@ DEFAULT_MODEL = os.path.join("models", "active_model.keras")
 HEADS = ["exit_conf", "price_mu", "price_log_var", "direction_prob", "net_margin", "net_pnl"]
 
 
+#: Where trading/data_loader.py draws its training bars from.
+CORPUS_DIR = os.path.join("data", "historical_ohlcv")
+
+
+def _train_windows(width: int, count: int):
+    """Draw ``count`` (prices, volumes, mu_true) triples from the training corpus.
+
+    ``mu_true`` is built exactly as trading/data_loader.py builds it: the
+    natural-log return from the LAST bar of the window to the bar immediately
+    after it. The window itself is the same raw (close, net_volume) pair the
+    loader stacks -- the scale-free transform lives in the graph, so raw is
+    what both paths feed.
+    """
+    import glob
+    import json
+    import random
+
+    files = sorted(glob.glob(os.path.join(CORPUS_DIR, "**", "*.json"), recursive=True))
+    if not files:
+        return []
+    rng = random.Random(20260911)
+    rng.shuffle(files)
+    out = []
+    for path in files:
+        if len(out) >= count:
+            break
+        try:
+            rows = json.load(open(path, encoding="utf8"))
+        except Exception:
+            continue
+        if not isinstance(rows, list) or len(rows) < width + 8 or not isinstance(rows[0], dict):
+            continue
+        for _ in range(3):
+            if len(out) >= count:
+                break
+            end = rng.randrange(width, len(rows) - 1)
+            sl = rows[end - width:end]
+            closes = [float(r.get("close") or 0.0) for r in sl]
+            vols = [float(r.get("net_volume") or 0.0) for r in sl]
+            nxt = float(rows[end].get("close") or 0.0)
+            if min(closes) <= 0.0 or nxt <= 0.0:
+                continue
+            out.append((closes, vols, math.log(nxt) - math.log(closes[-1])))
+    return out
+
+
 def _load(model_path: str):
     import tensorflow as tf
     import model_definition  # noqa: F401  registers the custom layers
@@ -70,6 +117,8 @@ def main() -> int:
     ap.add_argument("--db", default=DEFAULT_DB)
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--symbols", type=int, default=6)
+    ap.add_argument("--train-samples", type=int, default=40,
+                    help="windows drawn from data/historical_ohlcv for the TRAIN section")
     args = ap.parse_args()
 
     try:
@@ -118,6 +167,40 @@ def main() -> int:
     for level in (1e-4, 1e-2, 1.0, 21.0, 2469.0, 1.2e4):
         ramp = [level * (1.002 ** i) for i in range(width)]
         row(f"level {level:g}", run(ramp, [0.0] * width))
+
+    # TRAIN: the one arm that can say whether the head is calibrated AT ALL.
+    #
+    # LEVEL and LIVE both show price_mu around -0.2 without a yardstick to
+    # judge it by. The yardstick is the label the head was fitted on:
+    # trading/data_loader.py builds ``mu = log(close[end]) - log(close[end-1])``
+    # -- a ONE-BAR log return over data/historical_ohlcv, whose bars are 3600s
+    # on 95 of 120 sampled files. Median |mu| over 2,277,175 labels is
+    # 0.003617 and p99 is 0.034602, so an honest head answers in hundredths.
+    #
+    # Every auxiliary input here is the SAME stub the LIVE section feeds, so a
+    # difference between the two sections is the price/volume window and
+    # nothing else. That is deliberate: this is not a training-fidelity replay
+    # (tech_input and the news text are zeroed in both), it is a controlled
+    # comparison of an in-corpus window against a live one.
+    print(f"\n=== TRAIN: {args.train_samples} windows from the corpus the head was fitted on ===")
+    corpus = _train_windows(width, args.train_samples)
+    if not corpus:
+        print("   no usable corpus files under data/historical_ohlcv")
+    else:
+        preds, truths = [], []
+        for prices, vols, mu_true in corpus:
+            preds.append(run(prices, vols, "corpus")["price_mu"])
+            truths.append(mu_true)
+        preds = np.asarray(preds, np.float64)
+        truths = np.asarray(truths, np.float64)
+        print(f"   label  mu = log(next close / this close), one bar ahead")
+        print(f"   TRUE  : median |mu|   {np.median(np.abs(truths)):.6f}   p99 {np.percentile(np.abs(truths), 99):.6f}"
+              f"   max {np.abs(truths).max():.6f}")
+        print(f"   PRED  : median |mu|   {np.median(np.abs(preds)):.6f}   p99 {np.percentile(np.abs(preds), 99):.6f}"
+              f"   max {np.abs(preds).max():.6f}")
+        ratio = np.median(np.abs(preds)) / max(np.median(np.abs(truths)), 1e-12)
+        print(f"   RATIO : predicted magnitude is {ratio:.1f}x the label it was fitted on")
+        print(f"   SIGN  : head and label agree on direction {float((np.sign(preds) == np.sign(truths)).mean()) * 100:.1f}% of {preds.size}")
 
     conn = sqlite3.connect(args.db)
     now = time.time()

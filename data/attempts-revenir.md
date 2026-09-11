@@ -5515,3 +5515,27 @@ consistent with a broken harness as with a true negative, because I synthesised
 the StrategyContext (fee_rate 0.0065, quote 100, base 0, volume defaulted).
 The proper measurement is the ghost lane's own candidate stream before and
 after 7f804bd, and it needs the lane running.
+
+2026-09-11 Iris — price_mu's magnitude: horizon story vs calibration story [1b0fd55f]
+HYPOTHESIS: the head's 93% median forecast against a 0.12% tape is a horizon
+mismatch — it forecasts much longer than the 15 minutes it was judged over.
+DID: read the label construction (trading/data_loader.py:1008 next_idx=end,
+:1118 mu=ret); measured corpus cadence and label distribution over 120 files;
+added a TRAIN arm to scripts/model_window_probe.py that feeds the deployed
+model 40 windows out of its own training corpus with the LIVE arm's auxiliary
+inputs held identical; re-ran the entry census back-to-back at 900s and 3600s.
+RESULT: FALSIFIED. The label is a ONE-BAR log return and the bar is 3600s on
+95 of 120 files, so the horizon is one hour. Over 2,277,175 labels median |mu|
+0.003617, p99 0.034602, max 0.9078. On clean in-corpus windows the deployed
+head predicts median |price_mu| 1.399697 against a true 0.002858 — 489.8x. The
+census at the true horizon is 27.05% vs 0.2896% (93.4x) against 28.33% vs
+0.1158% (244.6x) at 15 min. The cost conjunct removes 0.9% of the newest 20.2h
+(3211 -> 3182) against 72.1% over 484h, marginal denominator 2 of 5000.
+Contamination moves price_mu the wrong way as often as not. The fixed LEVEL
+ramp read -0.000620 on 2026-09-10 and -1.160425 today: the artifact regressed.
+NEXT: the training run, not the serving path. price_mu is supervised twice —
+weakly via price_gaussian/gaussian_nll_loss with a free log_var from the same
+Dense(2), strongly via net_margin MSE at loss_weight 1.0. A weight-1.0 MSE
+against a 0.0036 label cannot leave the head at 1.40 if it converged. Compare
+the 2026-09-11 01:57 artifact's training history against the 2026-09-10 one.
+Report: data/brain_experiments/price-mu-calibration-pass117.md

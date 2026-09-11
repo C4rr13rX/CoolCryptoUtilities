@@ -80,8 +80,22 @@ def sanitize_model_price_window(
     ``models/active_model.keras``, a clean 60-bar window at price level 1e-4
     and at 1.2e4 produced ``price_mu`` -0.000620 both times -- identical to six
     decimals across EIGHT orders of magnitude. On real live windows the same
-    model returns ``price_mu`` -0.1655 to -0.2428, comfortably inside the band
-    the head was trained on.
+    model returns ``price_mu`` -0.1655 to -0.2428.
+
+    THAT IS NOT "INSIDE THE BAND THE HEAD WAS TRAINED ON", WHICH THIS DOCSTRING
+    CLAIMED UNTIL 2026-09-11. The band is the label built below at ``mu = ret``:
+    a ONE-BAR natural-log return, over a corpus whose bar is 3600s on 95 of 120
+    sampled files. Over 2,277,175 labels drawn from ``data/historical_ohlcv``
+    the median |mu| is 0.003617, p99 is 0.034602 and the maximum is 0.9078, so
+    |mu| >= 0.2065 happens on 83 of them -- the 99.9964th percentile -- and the
+    p50 of -1.2076 below is beyond the largest label the corpus can produce.
+    Re-probed 2026-09-11 with ``scripts/model_window_probe.py --train-samples``,
+    which feeds the deployed model 40 windows out of that very corpus: median
+    |price_mu| predicted 1.3997 against a median true label of 0.002858, 489.8x.
+    The head is uncalibrated on its own clean training bars, so a served -0.2
+    needs no contamination to explain it and no longer horizon either.
+    tests/test_price_mu_is_a_one_bar_log_return_not_a_long_horizon_forecast.py
+    pins the horizon and the band against this file.
 
     What the transform cannot absorb is a window whose rows are not all the
     same asset. Being scale-free is defined relative to the window's ANCHOR, so
