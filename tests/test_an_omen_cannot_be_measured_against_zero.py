@@ -188,7 +188,7 @@ def test_expected_move_matches_the_direction_the_label_claims():
 def test_short_history_is_refused_rather_than_padded():
     bars = _bars([100.0] * (LOOKBACK_BARS + 2))
     with pytest.raises(ValueError):
-        build_collections(bars, LOOKBACK_BARS - 1, horizon_bars=12,
+        build_collections(bars, LOOKBACK_BARS - 1, horizon_bars=12, bar_seconds=3600,
                           symbol="X-USDC")
 
 
@@ -201,8 +201,8 @@ def test_collections_never_read_a_future_bar():
     closes = [100.0 + math.sin(i / 7.0) for i in range(LOOKBACK_BARS + 60)]
     bars = _bars(closes)
     index = LOOKBACK_BARS + 20
-    full = build_collections(bars, index, horizon_bars=12, symbol="X-USDC")
-    truncated = build_collections(bars[: index + 1], index, horizon_bars=12,
+    full = build_collections(bars, index, horizon_bars=12, bar_seconds=3600, symbol="X-USDC")
+    truncated = build_collections(bars[: index + 1], index, horizon_bars=12, bar_seconds=3600,
                                   symbol="X-USDC")
     assert full == truncated
 
@@ -210,7 +210,7 @@ def test_collections_never_read_a_future_bar():
 def test_every_collection_has_its_own_byte_prefix():
     closes = [100.0 + math.sin(i / 5.0) for i in range(LOOKBACK_BARS + 10)]
     frames = build_collections(_bars(closes), LOOKBACK_BARS + 5,
-                               horizon_bars=12, symbol="X-USDC")
+                               horizon_bars=12, bar_seconds=3600, symbol="X-USDC")
     assert set(frames) == {c.name for c in COLLECTIONS}
     for collection in COLLECTIONS:
         assert frames[collection.name].startswith(collection.prefix + " ")
@@ -227,9 +227,9 @@ def test_the_horizon_is_a_feature_not_a_hidden_constant():
     """
     closes = [100.0 + math.sin(i / 5.0) for i in range(LOOKBACK_BARS + 10)]
     bars = _bars(closes)
-    short = build_collections(bars, LOOKBACK_BARS + 5, horizon_bars=6,
+    short = build_collections(bars, LOOKBACK_BARS + 5, horizon_bars=6, bar_seconds=3600,
                               symbol="X-USDC")
-    long = build_collections(bars, LOOKBACK_BARS + 5, horizon_bars=48,
+    long = build_collections(bars, LOOKBACK_BARS + 5, horizon_bars=48, bar_seconds=3600,
                              symbol="X-USDC")
     assert short["horizon"] != long["horizon"]
     assert short["geometry"] == long["geometry"], (
@@ -239,8 +239,8 @@ def test_the_horizon_is_a_feature_not_a_hidden_constant():
 def test_different_symbols_produce_different_instrument_frames():
     closes = [100.0 + math.sin(i / 5.0) for i in range(LOOKBACK_BARS + 10)]
     bars = _bars(closes)
-    a = build_collections(bars, LOOKBACK_BARS + 5, horizon_bars=12, symbol="AERO-USDC")
-    b = build_collections(bars, LOOKBACK_BARS + 5, horizon_bars=12, symbol="VVV-WETH")
+    a = build_collections(bars, LOOKBACK_BARS + 5, horizon_bars=12, bar_seconds=3600, symbol="AERO-USDC")
+    b = build_collections(bars, LOOKBACK_BARS + 5, horizon_bars=12, bar_seconds=3600, symbol="VVV-WETH")
     assert a["instrument"] != b["instrument"]
 
 

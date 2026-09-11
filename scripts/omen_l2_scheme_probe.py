@@ -47,7 +47,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from trading.omen_brain import (  # noqa: E402
-    LOOKBACK_BARS, build_collections, label_omen,
+    LOOKBACK_BARS, build_collections, label_omen, measure_bar_seconds,
 )
 # THE canonical support floor and lift arithmetic, imported rather than
 # recopied: two probes that disagree about what "supported" means produce two
@@ -56,8 +56,8 @@ from scripts.omen_layer_probe import label_skew  # noqa: E402
 from trading.omen_layers import (  # noqa: E402
     IDENTIFIER_CEILING, L1_HYSTERESIS_MARGIN, L1_STREAMS, L2_TRANSITION_STEPS,
     MOTIF_SEQUENCE_STEPS, _band_of, _compact_motif, _numeric_of,
-    cooccurrence_motif, layer_distinctness, relative_bands, sequence_motif,
-    sticky_motifs, transition_motif,
+    _band_of_rate, cooccurrence_motif, layer_distinctness, relative_bands,
+    sequence_motif, sticky_motifs, transition_motif,
 )
 
 # ``sticky_motifs`` was measured here first and now LIVES in
@@ -78,11 +78,41 @@ from trading.omen_layers import (  # noqa: E402
 #: "just changed", "a couple of bars", "a stretch", "entrenched".
 _DWELL_BUCKETS = ((1, "d1"), (2, "d2"), (4, "d4"), (8, "d8"))
 
+#: Candidate cut points for the L2 churn symbol, priced together off one build.
+#: Single-value entries are TWO buckets (held / churning); the pairs are three.
+CHURN_CANDIDATES = ((0.10,), (0.15,), (0.20,), (0.30,), (0.40,), (0.50,),
+                    (0.20, 0.55), (0.25, 0.55))
+
 
 #: The one reduction every scheme reads a motif through, so the comparison is
 #: over an IDENTICAL alphabet. Imported rather than redefined: it moved into
 #: trading/omen_layers with the winner.
 _compact = _compact_motif
+
+
+def _path_only(frame: str) -> str:
+    """The shipped L2 frame with its churn symbol removed.
+
+    THE CONTROL FOR THE CHURN SYMBOL, and it is derived from the shipped frame
+    rather than reimplemented so the two cannot drift apart. What this measures
+    is exactly the pass-115 encoder -- a change-order path and nothing else --
+    which is what criterion 3 was reopened against, so its distinctness is the
+    price of carrying dwell rather than a number from another run.
+    """
+    return frame.split(" chn=")[0]
+
+
+def _churn_rate(motifs: Sequence[str]) -> float:
+    """``changes / adjacencies`` over the window, before any banding.
+
+    The same arithmetic ``churn_band`` bands, kept unbanded so the cut-point
+    sweep can price every candidate from ONE build of the corpus.
+    """
+    compact = [_compact(m) for m in motifs if m]
+    if len(compact) < 2:
+        return -1.0
+    return sum(1 for a, b in zip(compact, compact[1:])
+               if a != b) / (len(compact) - 1)
 
 
 def _dwell_bucket(count: int) -> str:
@@ -144,9 +174,11 @@ def build_rows(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
     """
     built: List[Any] = []              # (index, frames) for every buildable bar
     order: List[Optional[int]] = []    # position in `built`, or None for a hole
+    cadence = measure_bar_seconds(bars)
     for index in range(LOOKBACK_BARS, len(bars)):
         try:
             frames = build_collections(bars, index, horizon_bars=horizon,
+                                       bar_seconds=cadence,
                                        symbol=symbol, chain=chain)
         except (ValueError, IndexError):
             order.append(None)
@@ -175,7 +207,13 @@ def build_rows(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
             "L1_cooccurrence": motif,
             "L2_sequence": sequence_motif(fixed),
             "L2_transitions": transition_motif(recent, steps=steps),
+            "L2_trans_nochurn": _path_only(transition_motif(recent,
+                                                            steps=steps)),
             "L2_runlength": run_length_motif(recent, steps=steps),
+            # The churn RATE, unbanded, so one build can price every candidate
+            # cut set. Banding here would force a rebuild per candidate and a
+            # rebuild is how two cut sets end up measured on two corpora.
+            "_churn_rate": "%.6f" % _churn_rate(recent),
             "_label": label_omen(bars, index, horizon_bars=horizon) or "",
         })
     return rows
@@ -203,10 +241,12 @@ def measure(path: Path, symbol: str, chain: str, horizon: int,
     # held-out arm must reuse the train cut points, and refitting on test
     # would leak the test distribution into the frame.
     frame_sets: List[Dict[str, str]] = []
+    cadence = measure_bar_seconds(bars)
     for index in range(LOOKBACK_BARS, len(bars)):
         try:
             frame_sets.append(build_collections(bars, index,
                                                 horizon_bars=horizon,
+                                                bar_seconds=cadence,
                                                 symbol=symbol, chain=chain))
         except (ValueError, IndexError):
             continue
@@ -214,7 +254,8 @@ def measure(path: Path, symbol: str, chain: str, horizon: int,
 
     rows = build_rows(bars, symbol, chain, horizon, bands, window, margin,
                       steps=steps)
-    keys = ["L1_cooccurrence", "L2_sequence", "L2_transitions", "L2_runlength"]
+    keys = ["L1_cooccurrence", "L2_sequence", "L2_trans_nochurn",
+            "L2_transitions", "L2_runlength"]
     dist = layer_distinctness(rows, keys=keys)
 
     changed = sum(1 for a, b in zip(rows, rows[1:])
@@ -229,7 +270,27 @@ def measure(path: Path, symbol: str, chain: str, horizon: int,
     # measured nothing. So the supported-group count rides in the same table.
     skew = {k: label_skew(rows, k, min_support=min_support)
             for k in keys}
+
+    # WHAT THE CHURN SYMBOL COSTS, priced for every candidate cut set off the
+    # SAME rows. Criterion 3 needs dwell in the frame and criterion 1 caps what
+    # dwell may cost, so the cut point is not a taste question -- it is the
+    # cheapest banding that still separates a held regime from an alternating
+    # one. A two-bucket symbol can at most double the alphabet; a three-bucket
+    # one can treble it, and DOWN has no room for that.
+    churn_sweep: Dict[str, Dict[str, float]] = {}
+    for cuts in CHURN_CANDIDATES:
+        frames = set()
+        for row in rows:
+            rate = float(row["_churn_rate"])
+            frames.add("%s chn=%s" % (row["L2_trans_nochurn"],
+                                      _band_of_rate(rate, cuts)))
+        churn_sweep[repr(tuple(cuts))] = {
+            "distinct": len(frames) / max(1, len(rows)),
+            "vocab": float(len(frames)),
+        }
+
     return {
+        "churn_sweep": churn_sweep,
         "corpus": str(path), "samples": len(rows),
         "window": window, "steps": steps, "margin": margin,
         "l1_change_rate": changed / max(1, len(rows) - 1),
@@ -285,7 +346,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
 
-    keys = ["L1_cooccurrence", "L2_sequence", "L2_transitions", "L2_runlength"]
+    keys = ["L1_cooccurrence", "L2_sequence", "L2_trans_nochurn",
+            "L2_transitions", "L2_runlength"]
 
     # THE CONTROL AND THE TREATMENT, in one process on one corpus each. The
     # control is plain relative banding; the treatment is the banding the live
@@ -325,13 +387,31 @@ def main() -> int:
           % (args.gate_margin, args.window, args.l2_steps,
              IDENTIFIER_CEILING), results)
 
+    # WHAT DWELL COSTS, per candidate cut set, off the same rows as the tables
+    # above. Criterion 3 needs the churn symbol in the frame and criterion 1
+    # caps what it may cost, so this is the table that picks the cut point.
+    print("CHURN CUT SWEEP -- worst-of-both distinctness for path+churn, "
+          "shipped banding, ceiling %.2f" % IDENTIFIER_CEILING)
+    bare = max(r["distinctness"].get("L2_trans_nochurn", 1.0) for r in results)
+    print("%-14s %s  (no dwell -- the frame criterion 3 was reopened against)"
+          % ("(none)", "%.4f" % bare))
+    for cuts in CHURN_CANDIDATES:
+        key = repr(tuple(cuts))
+        worst = max(r["churn_sweep"][key]["distinct"] for r in results)
+        print("%-14s %.4f  %s  (%d buckets)"
+              % (key, worst,
+                 "PASS" if worst <= IDENTIFIER_CEILING else "FAIL",
+                 len(cuts) + 1))
+    print("")
+
     def clears(key: str) -> bool:
         return all(r["distinctness"].get(key, 1.0) <= IDENTIFIER_CEILING
                    for r in results)
 
     winners = [k for k in ("L2_transitions", "L2_runlength") if clears(k)]
     print("VERDICT TABLE -- worst of both corpora, at the SHIPPED banding")
-    for key in ("L2_sequence", "L2_transitions", "L2_runlength"):
+    for key in ("L2_sequence", "L2_trans_nochurn", "L2_transitions",
+                        "L2_runlength"):
         worst = max(r["distinctness"].get(key, 1.0) for r in results)
         worst_ctl = max(r["distinctness"].get(key, 1.0) for r in control)
         print("%-16s margin 0.00 %.4f -> margin %.2f %.4f   %s"
@@ -366,6 +446,7 @@ def main() -> int:
                 try:
                     frame_sets.append(build_collections(
                         bars, index, horizon_bars=args.horizon,
+                        bar_seconds=measure_bar_seconds(bars),
                         symbol=args.symbol, chain=args.chain))
                 except (ValueError, IndexError):
                     continue

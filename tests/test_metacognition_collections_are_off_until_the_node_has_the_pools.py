@@ -93,7 +93,7 @@ def test_the_metacognition_pools_are_off_by_default():
     names = {c.name for c in mod.COLLECTIONS}
     for name in META_NAMES:
         assert name not in names
-    frames = mod.build_collections(_bars(), 250, horizon_bars=6, symbol="TEST")
+    frames = mod.build_collections(_bars(), 250, horizon_bars=6, bar_seconds=3600, symbol="TEST")
     for name in META_NAMES:
         assert name not in frames, (
             f"{name} was computed for a pool this build will never stream")
@@ -107,7 +107,7 @@ def test_enabling_metacognition_streams_pools_fifteen_to_nineteen(monkeypatch):
         assert name in by_name, f"{name} missing from COLLECTIONS"
         assert by_name[name].pool_id == pool
 
-    frames = mod.build_collections(_bars(), 250, horizon_bars=6, symbol="TEST")
+    frames = mod.build_collections(_bars(), 250, horizon_bars=6, bar_seconds=3600, symbol="TEST")
     brain = mod.OmenBrain.__new__(mod.OmenBrain)
     streamed = {s["pool_id"] for s in brain._streams(frames)}
     for pool in META_POOLS:
@@ -121,7 +121,7 @@ def test_the_frame_keys_and_the_collections_agree_in_every_combination(
     """Two independent flags, one invariant. If they can disagree, a pool gets
     nothing or work is done for a pool that will never receive it."""
     mod = _reload(monkeypatch, meta=meta, relations=relations)
-    frames = mod.build_collections(_bars(), 250, horizon_bars=6, symbol="TEST")
+    frames = mod.build_collections(_bars(), 250, horizon_bars=6, bar_seconds=3600, symbol="TEST")
     assert set(frames) == {c.name for c in mod.COLLECTIONS}
 
 
@@ -135,7 +135,7 @@ def test_every_metacognition_prefix_is_byte_disjoint_from_the_others(monkeypatch
         for b in prefixes:
             if a is not b and a != b:
                 assert not a.startswith(b), f"{a!r} starts with {b!r}"
-    frames = mod.build_collections(_bars(), 250, horizon_bars=6, symbol="TEST")
+    frames = mod.build_collections(_bars(), 250, horizon_bars=6, bar_seconds=3600, symbol="TEST")
     for collection in mod.COLLECTIONS:
         assert frames[collection.name].startswith(collection.prefix + " ")
 
@@ -152,9 +152,9 @@ def test_an_unresolved_prediction_cannot_reach_a_frame(monkeypatch):
     open_row = Resolved(predicted="fall", actual=None, agreed=1, asked=3,
                         resolved=False)
 
-    without = mod.build_collections(bars, 250, horizon_bars=6, symbol="TEST",
+    without = mod.build_collections(bars, 250, horizon_bars=6, bar_seconds=3600, symbol="TEST",
                                     history=settled)
-    with_open = mod.build_collections(bars, 250, horizon_bars=6, symbol="TEST",
+    with_open = mod.build_collections(bars, 250, horizon_bars=6, bar_seconds=3600, symbol="TEST",
                                       history=settled + [open_row])
     for name in ("self_outcome", "self_agreement", "self_error_run"):
         assert without[name] == with_open[name], (
@@ -168,15 +168,15 @@ def test_a_settled_history_actually_moves_the_self_frames(monkeypatch):
     mod = _reload(monkeypatch, meta="1")
     bars = _bars()
 
-    empty = mod.build_collections(bars, 250, horizon_bars=6, symbol="TEST")
+    empty = mod.build_collections(bars, 250, horizon_bars=6, bar_seconds=3600, symbol="TEST")
     hits = [Resolved(predicted="rise", actual="rise", agreed=3, asked=3,
                      resolved=True) for _ in range(8)]
     misses = [Resolved(predicted="rise", actual="fall", agreed=1, asked=3,
                        resolved=True) for _ in range(8)]
 
-    winning = mod.build_collections(bars, 250, horizon_bars=6, symbol="TEST",
+    winning = mod.build_collections(bars, 250, horizon_bars=6, bar_seconds=3600, symbol="TEST",
                                     history=hits)
-    losing = mod.build_collections(bars, 250, horizon_bars=6, symbol="TEST",
+    losing = mod.build_collections(bars, 250, horizon_bars=6, bar_seconds=3600, symbol="TEST",
                                    history=misses)
 
     assert empty["self_outcome"] != winning["self_outcome"], (
@@ -216,9 +216,9 @@ def test_the_temporal_frames_read_order_not_just_magnitude(monkeypatch):
     flat = [100.0] * (index + 1 - len(steps))
 
     up = mod.build_collections(_series(flat + forward), index,
-                               horizon_bars=6, symbol="TEST")
+                               horizon_bars=6, bar_seconds=3600, symbol="TEST")
     down = mod.build_collections(_series(flat + backward), index,
-                                 horizon_bars=6, symbol="TEST")
+                                 horizon_bars=6, bar_seconds=3600, symbol="TEST")
     assert up["temporal_sequence"] != down["temporal_sequence"], (
         "reversing the order of the recent moves did not change the sequence "
         "frame -- pool 17 is not carrying order")
@@ -241,7 +241,7 @@ def test_the_scale_frame_is_sharp_enough_to_survive_the_dilution_filter(monkeypa
     """
     mod = _reload(monkeypatch, meta="1")
     bars = _bars(700, vol=0.006, seed=29)
-    frames = [mod.build_collections(bars, i, horizon_bars=6, symbol="TEST")
+    frames = [mod.build_collections(bars, i, horizon_bars=6, bar_seconds=3600, symbol="TEST")
               for i in range(260, 700)]
 
     scale = {f["temporal_scale"] for f in frames}
@@ -275,7 +275,7 @@ def test_pool_18_is_selected_into_the_query_on_its_own_merit(monkeypatch):
     """
     mod = _reload(monkeypatch, meta="1")
     bars = _bars(700, vol=0.006, seed=29)
-    frame_sets = [mod.build_collections(bars, i, horizon_bars=6, symbol="TEST")
+    frame_sets = [mod.build_collections(bars, i, horizon_bars=6, bar_seconds=3600, symbol="TEST")
                   for i in range(260, 700)]
 
     picked = mod.discriminating_collections(frame_sets)

@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from trading.omen_brain import (  # noqa: E402
     COLLECTIONS, LOOKBACK_BARS, OMEN_CREST, OMEN_TROUGH, ROUND_TRIP_COST,
     build_collections, collection_distinctness, label_omen,
+    measure_bar_seconds,
 )
 from trading.omen_layers import (  # noqa: E402
     L1_STREAMS, MOTIF_SEQUENCE_STEPS, cooccurrence_motif, layer_distinctness,
@@ -92,9 +93,11 @@ def build_layer_frames(bars: Sequence[Mapping[str, Any]], symbol: str,
     # no adjacency is claimed that the corpus does not have.
     built: List[Any] = []              # (index, frames) for every buildable bar
     order: List[Optional[int]] = []    # position in `built`, or None for a hole
+    cadence = measure_bar_seconds(bars)
     for index in range(max(start, LOOKBACK_BARS), stop):
         try:
             frames = build_collections(bars, index, horizon_bars=horizon,
+                                       bar_seconds=cadence,
                                        symbol=symbol, chain=chain)
         except (ValueError, IndexError):
             order.append(None)

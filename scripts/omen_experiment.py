@@ -50,6 +50,7 @@ from trading.omen_brain import (  # noqa: E402
     COLLECTIONS, LOOKBACK_BARS, OMEN_ACTIONS, OMEN_CREST, OMEN_LABELS,
     OMEN_MURK, OMEN_TROUGH, PREDICT_COLLECTIONS, ROUND_TRIP_COST, OmenBrain,
     build_collections, collection_distinctness, discriminating_collections,
+    measure_bar_seconds,
     label_omen, label_regime, omen_threshold,
 )
 from trading.omen_metacognition import self_frames  # noqa: E402
@@ -520,6 +521,9 @@ def build_samples(bars, symbol, chain, horizon, start, stop):
     """
     history = ResolvedHistory(horizon)
     samples = []
+    # Measured once: the corpus cadence does not change bar to bar, and
+    # re-measuring inside the loop would make sample building quadratic.
+    cadence = measure_bar_seconds(bars)
     for index in range(max(start, LOOKBACK_BARS), stop):
         label = label_omen(bars, index, horizon_bars=horizon)
         # Settle FIRST: a prediction whose horizon lands exactly here is a
@@ -535,6 +539,7 @@ def build_samples(bars, symbol, chain, horizon, start, stop):
             continue
         try:
             frames = build_collections(bars, index, horizon_bars=horizon,
+                                       bar_seconds=cadence,
                                        symbol=symbol, chain=chain,
                                        history=visible)
         except (ValueError, IndexError):

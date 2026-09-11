@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from trading.omen_brain import (  # noqa: E402
     COLLECTIONS, LOOKBACK_BARS, RETURN_SPANS, build_collections,
+    horizon_frame, measure_bar_seconds,
     collection_distinctness,
 )
 
@@ -102,6 +103,7 @@ def horizon_frames(bars: Sequence[Mapping[str, Any]], horizon: int,
     """The horizon frame the fabric is actually handed, for this horizon."""
     index = max(LOOKBACK_BARS, len(bars) - horizon - 1)
     frames = build_collections(bars, index, horizon_bars=horizon,
+                               bar_seconds=measure_bar_seconds(bars),
                                symbol=symbol, chain="base")
     return frames["horizon"]
 
@@ -219,9 +221,11 @@ def build_frame_sets(bars: Sequence[Mapping[str, Any]], symbol: str,
                      horizon: int, start: int, stop: int
                      ) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
+    cadence = measure_bar_seconds(bars)
     for index in range(max(start, LOOKBACK_BARS), min(stop, len(bars) - horizon)):
         try:
             out.append(build_collections(bars, index, horizon_bars=horizon,
+                                         bar_seconds=cadence,
                                          symbol=symbol, chain="base"))
         except (ValueError, IndexError):
             continue
@@ -282,7 +286,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             len(bars) - args.horizon)
 
     live_minutes = LIVE_HORIZON_BARS * LIVE_BAR_SECONDS / 60.0
-    live_frame = f"hzn h={int(LIVE_HORIZON_BARS)}"
+    # Built by the SAME function the fabric is handed, not re-spelled here.
+    # Re-spelling it is how the crossing hid: two literals that happened to
+    # agree told nobody they were answering different questions.
+    live_frame = horizon_frame(LIVE_HORIZON_BARS, LIVE_BAR_SECONDS)
     print()
     print(f"  live frame the SAME code emits: {live_frame!r} "
           f"= {live_minutes:.0f} min ahead")

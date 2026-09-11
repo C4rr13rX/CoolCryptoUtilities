@@ -96,7 +96,7 @@ def test_an_unfed_build_emits_the_sentinel_so_the_test_above_can_fail(meta_on):
     from trading.omen_brain import build_collections
 
     bars = _bars()
-    frames = [build_collections(bars, i, horizon_bars=12,
+    frames = [build_collections(bars, i, horizon_bars=12, bar_seconds=3600,
                                 symbol="TEST", chain="base")
               for i in range(300, 500)]
     for name in SELF_NAMES:

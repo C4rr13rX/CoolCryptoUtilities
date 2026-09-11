@@ -237,7 +237,12 @@ def test_status_names_why_it_is_silent():
     status = strategy.status()
     assert status["strategy_id"] == "omen_reversion"
     assert status["threshold_fraction"] > 0.0
-    assert status["horizon_sec"] == HORIZON_BARS * BAR_SECONDS
+    # NOMINAL, and the key says so since pass 116: a candidate's real
+    # horizon is measured off its own bars because the resampler drops
+    # empty buckets, so HORIZON_BARS * BAR_SECONDS is a config echo and
+    # must not be read as the wall clock the omen was asked about.
+    assert status["horizon_sec_nominal"] == HORIZON_BARS * BAR_SECONDS
+    assert "horizon_sec" not in status
     assert "last_reason" in status
 
 

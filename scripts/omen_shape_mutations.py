@@ -68,6 +68,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from trading.omen_brain import (  # noqa: E402
     COLLECTIONS, LOOKBACK_BARS, RANGE_WINDOW, build_collections, label_omen,
+    measure_bar_seconds,
     label_regime,
 )
 
@@ -265,9 +266,12 @@ def mutated_sample(bars: Sequence[Mapping[str, Any]], index: int, *,
         return None
     moved = fn(window, anchor, rng, strength)
     try:
+        cadence = measure_bar_seconds(window)
         frames = build_collections(moved, anchor, horizon_bars=horizon,
+                                   bar_seconds=cadence,
                                    symbol=symbol, chain=chain)
         base_frames = build_collections(window, anchor, horizon_bars=horizon,
+                                        bar_seconds=cadence,
                                         symbol=symbol, chain=chain)
     except (ValueError, IndexError):
         return None

@@ -35,7 +35,7 @@ import numpy as np
 
 from trading.omen_brain import (
     LOOKBACK_BARS, OMEN_CREST, OMEN_TROUGH, Omen, OmenBrain, build_collections,
-    label_regime, omen_threshold,
+    label_regime, measure_bar_seconds, omen_threshold,
 )
 from trading.strategies.base import Strategy, StrategyContext, env_float, sample_arrays
 
@@ -180,6 +180,11 @@ class OmenReversionStrategy(Strategy):
                 index = len(bars) - 1
                 frames = build_collections(
                     bars, index, horizon_bars=HORIZON_BARS,
+                    # DECLARED nominal. build_collections measures the real
+                    # step off these bars and uses that instead, which is the
+                    # point: the live resampler drops empty buckets, so the
+                    # nominal 60s and the measured index step disagree.
+                    bar_seconds=BAR_SECONDS,
                     symbol=symbol, chain=chain)
                 omen = self._get_brain().predict(
                     frames, symbol=symbol, chain=chain,
@@ -245,6 +250,15 @@ class OmenReversionStrategy(Strategy):
             return None
 
         expected = abs(omen.expected_move_fraction)
+        # THE THIRD INSTANCE of the bar-count/wall-clock crossing, and the
+        # only one that reaches a recorded number: HORIZON_BARS * BAR_SECONDS
+        # is the NOMINAL 12 minutes, while bars_from_samples drops empty
+        # buckets so the measured index step has run at 180s -- the same
+        # omen was being filed as a 12-minute call and acted on as a
+        # 36-minute one. Measured off the bars the omen was built from.
+        step_sec = measure_bar_seconds(bars, default=BAR_SECONDS)
+        horizon_sec = int(HORIZON_BARS * step_sec)
+        horizon_min = horizon_sec / 60.0
         if expected - ctx.fee_rate < min_net:
             self.last_reason = (
                 f"expected {expected:.4%} does not clear fee "
@@ -262,7 +276,7 @@ class OmenReversionStrategy(Strategy):
                 direction_prob=min(1.0, 0.5 + 0.5 * omen.confidence),
                 horizon=self.default_horizon,
                 reason=(f"omen trough: brain expects >= {expected:.2%} over "
-                        f"{HORIZON_BARS * BAR_SECONDS / 60:.0f}m "
+                        f"{horizon_min:.0f}m "
                         f"(regime {omen.regime}, conf {omen.confidence:.3f})"),
                 extra_meta={
                     "omen": omen.omen,
@@ -270,7 +284,7 @@ class OmenReversionStrategy(Strategy):
                     "omen_regime": omen.regime,
                     "omen_confidence": omen.confidence,
                     "omen_threshold": omen.threshold_fraction,
-                    "omen_horizon_sec": HORIZON_BARS * BAR_SECONDS,
+                    "omen_horizon_sec": horizon_sec,
                     "omen_schema": omen.schema_version,
                 },
             )
@@ -286,13 +300,13 @@ class OmenReversionStrategy(Strategy):
                 direction_prob=min(1.0, 0.5 + 0.5 * omen.confidence),
                 horizon=self.default_horizon,
                 reason=(f"omen crest: brain expects <= -{expected:.2%} over "
-                        f"{HORIZON_BARS * BAR_SECONDS / 60:.0f}m "
+                        f"{horizon_min:.0f}m "
                         f"(regime {omen.regime}, conf {omen.confidence:.3f})"),
                 extra_meta={
                     "omen": omen.omen,
                     "omen_verdict": omen.verdict,
                     "omen_confidence": omen.confidence,
-                    "omen_horizon_sec": HORIZON_BARS * BAR_SECONDS,
+                    "omen_horizon_sec": horizon_sec,
                     "omen_schema": omen.schema_version,
                 },
             )
@@ -315,7 +329,10 @@ class OmenReversionStrategy(Strategy):
             "endpoint": os.getenv("OMEN_BRAIN_ENDPOINT", "http://127.0.0.1:8091"),
             "bar_seconds": BAR_SECONDS,
             "horizon_bars": HORIZON_BARS,
-            "horizon_sec": HORIZON_BARS * BAR_SECONDS,
+            # NOMINAL, and named so. The horizon a candidate actually
+            # carries is measured off its own bars (see `horizon_sec` in
+            # evaluate) because the resampler drops empty buckets.
+            "horizon_sec_nominal": HORIZON_BARS * BAR_SECONDS,
             "threshold_fraction": omen_threshold(),
             "confidence_floor": CONFIDENCE_FLOOR,
             "last_reason": self.last_reason,

@@ -78,7 +78,7 @@ import os
 import statistics
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass, field, asdict
 from http.client import HTTPConnection, BadStatusLine, RemoteDisconnected
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -466,11 +466,74 @@ def _returns(bars: Sequence[Mapping[str, Any]], index: int,
 RETURN_SPANS: Tuple[int, ...] = (1, 2, 3, 6, 12, 24, 48, 168)
 
 
+def measure_bar_seconds(bars: Sequence[Mapping[str, Any]],
+                        default: int = 0) -> int:
+    """The MODAL gap between consecutive bar timestamps, in seconds.
+
+    A bar index is not a clock. The training corpora here are stored OHLCV at
+    3600s; the live path buckets ticks at a nominal 60s and DROPS empty
+    buckets, so its measured index step has run at 180s. Both call one step
+    "one bar", so anything that wants wall clock must measure it rather than
+    take the nominal.
+
+    Returns ``default`` when the series carries no usable timestamps -- which
+    is the case for the synthetic bars tests build.
+    """
+    stamps: List[int] = []
+    for bar in bars:
+        raw = bar.get("timestamp")
+        if raw is None:
+            continue
+        try:
+            stamps.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    gaps = [b - a for a, b in zip(stamps, stamps[1:]) if b > a]
+    if not gaps:
+        return int(default)
+    return int(Counter(gaps).most_common(1)[0][0])
+
+
+#: Widths of the two cadence slots in the horizon frame. FIXED WIDTH is not
+#: cosmetic: atoms here are bytes, so a variable-width ``c=60`` is a byte
+#: prefix of ``c=600`` and the substrate would see one token inside the
+#: other. Zero-padding to a constant width makes every cadence token
+#: byte-disjoint from every other by construction -- the same rule that
+#: "loss_big contains loss" taught this repo the expensive way.
+_CADENCE_DIGITS = 6   # up to 999999s, ~11.6 days per bar
+_WALLCLOCK_DIGITS = 7  # up to 9999999 minutes ahead, ~19 years
+
+
+def horizon_frame(horizon_bars: int, bar_seconds: int) -> str:
+    """The horizon collection's frame: bar count AND the cadence it counts.
+
+    ``hzn h=12`` alone was the same atom for two questions 60x apart -- 12
+    bars of a 3600s corpus is 720 minutes trained, 12 bars of a 60s resample
+    is 12 minutes asked. ``c`` is the seconds per bar and ``w`` is the
+    wall-clock horizon in minutes, which is the question actually being put.
+    ``w`` is redundant with ``h * c`` on purpose: the substrate should never
+    be asked to multiply something the caller can compute.
+
+    ``bar_seconds`` of 0 means the cadence could not be measured, and that is
+    encoded as its own token rather than silently defaulted -- an unknown
+    cadence is a different situation from a known one, and must be a
+    different atom.
+    """
+    seconds = max(0, int(bar_seconds))
+    if seconds <= 0:
+        return f"hzn h={int(horizon_bars)} c={'x' * _CADENCE_DIGITS} w={'x' * _WALLCLOCK_DIGITS}"
+    minutes = int(round(int(horizon_bars) * seconds / 60.0))
+    return (f"hzn h={int(horizon_bars)} "
+            f"c={seconds:0{_CADENCE_DIGITS}d} "
+            f"w={minutes:0{_WALLCLOCK_DIGITS}d}")
+
+
 def build_collections(
     bars: Sequence[Mapping[str, Any]],
     index: int,
     *,
     horizon_bars: int,
+    bar_seconds: int,
     symbol: str,
     chain: str = "base",
     history: Optional[Sequence[Any]] = None,
@@ -481,6 +544,15 @@ def build_collections(
     when there is not enough history, rather than emitting a short frame --
     a short frame is a *different byte string*, so padding would quietly
     create a second atom for the same situation.
+
+    ``bar_seconds`` is the DECLARED seconds per bar and is required, because
+    a bar count without a cadence is not a horizon. It is used only when the
+    window carries no usable timestamps; when it does, the cadence written
+    into the frame is the one MEASURED off those timestamps, because the
+    atom must describe the data and not the caller's nominal. The live path
+    declares 60s while its measured index step has run at 180s, and taking
+    the declared value there is the very crossing this parameter exists to
+    close.
 
     ``history`` is the brain's own SETTLED predictions, oldest-first, as
     ``omen_metacognition.Resolved`` rows. It feeds pools 15/16/19 and is read
@@ -595,7 +667,11 @@ def build_collections(
     )
 
     # -- horizon: how far ahead the question is being asked -----------------
-    horizon = f"hzn h={int(horizon_bars)}"
+    # Measured off the window that was actually read, falling back to the
+    # caller's declared cadence only when the bars carry no timestamps. See
+    # ``horizon_frame`` for why the cadence has to be in here at all.
+    cadence = measure_bar_seconds(window, default=int(bar_seconds))
+    horizon = horizon_frame(horizon_bars, cadence)
 
     # -- instrument: which market -------------------------------------------
     instrument = f"ins {symbol.strip().lower()} {chain.strip().lower()}"

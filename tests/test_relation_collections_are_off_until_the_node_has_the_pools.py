@@ -93,7 +93,7 @@ def test_a_disabled_relation_is_never_streamed_to_the_node(monkeypatch):
     """The seam that would actually break training: _streams must not emit a
     pool the node does not have."""
     mod = _reload(monkeypatch, None)
-    frames = mod.build_collections(_bars(), 250, horizon_bars=6, symbol="TEST")
+    frames = mod.build_collections(_bars(), 250, horizon_bars=6, bar_seconds=3600, symbol="TEST")
     brain = mod.OmenBrain.__new__(mod.OmenBrain)
     streams = mod.OmenBrain._streams(brain, frames)
     pool_ids = {s["pool_id"] for s in streams}
@@ -108,13 +108,13 @@ def test_what_is_built_is_exactly_what_is_streamed(monkeypatch, enabled):
     COLLECTIONS entries together: if they can disagree, either a pool gets
     nothing or work is done for a pool that will never receive it."""
     mod = _reload(monkeypatch, enabled)
-    frames = mod.build_collections(_bars(), 250, horizon_bars=6, symbol="TEST")
+    frames = mod.build_collections(_bars(), 250, horizon_bars=6, bar_seconds=3600, symbol="TEST")
     assert set(frames) == {c.name for c in mod.COLLECTIONS}
 
 
 def test_enabling_relations_streams_the_new_pools(monkeypatch):
     mod = _reload(monkeypatch, "1")
-    frames = mod.build_collections(_bars(), 250, horizon_bars=6, symbol="TEST")
+    frames = mod.build_collections(_bars(), 250, horizon_bars=6, bar_seconds=3600, symbol="TEST")
     brain = mod.OmenBrain.__new__(mod.OmenBrain)
     streams = mod.OmenBrain._streams(brain, frames)
     assert {12, 13, 14} <= {s["pool_id"] for s in streams}
@@ -126,7 +126,7 @@ def test_every_relation_frame_carries_its_own_byte_prefix(monkeypatch):
     """Atoms are bytes, so the streams must not share a prefix or they bind
     into each other -- the same reason labels must be byte-disjoint."""
     mod = _reload(monkeypatch, "1")
-    frames = mod.build_collections(_bars(), 250, horizon_bars=6, symbol="TEST")
+    frames = mod.build_collections(_bars(), 250, horizon_bars=6, bar_seconds=3600, symbol="TEST")
     assert frames["rel_move_vol"].startswith("rmv ")
     assert frames["rel_shape_flow"].startswith("rsf ")
     assert frames["rel_trend_noise"].startswith("rtn ")
@@ -145,7 +145,7 @@ def test_relation_frames_vary_across_market_states(monkeypatch):
                              (-0.003, 0.010, 7)):
         bars = _bars(trend=trend, vol=vol, seed=seed)
         for index in range(200, 260, 6):
-            frames = mod.build_collections(bars, index, horizon_bars=6,
+            frames = mod.build_collections(bars, index, horizon_bars=6, bar_seconds=3600,
                                            symbol="TEST")
             samples += 1
             for key in seen:
@@ -169,9 +169,9 @@ def test_relations_are_dimensionless_not_raw_returns(monkeypatch):
     """
     mod = _reload(monkeypatch, "1")
     quiet = mod.build_collections(_bars(trend=0.002, vol=0.001, seed=3),
-                                  250, horizon_bars=6, symbol="TEST")
+                                  250, horizon_bars=6, bar_seconds=3600, symbol="TEST")
     noisy = mod.build_collections(_bars(trend=0.002, vol=0.020, seed=3),
-                                  250, horizon_bars=6, symbol="TEST")
+                                  250, horizon_bars=6, bar_seconds=3600, symbol="TEST")
     assert quiet["rel_move_vol"] != noisy["rel_move_vol"], (
         "identical drift at 20x the volatility produced the same relation "
         "frame -- the normalisation is not happening")
