@@ -1,0 +1,3094 @@
+{
+  "chain": "base",
+  "cadence": 300.0,
+  "train": 350,
+  "test": 60,
+  "hysteresis": 0.5,
+  "min_lift": 1.3,
+  "min_support": 20,
+  "round_trip_cost": 0.0065,
+  "corpora": 27,
+  "unreadable": 62,
+  "horizons": [
+    {
+      "asked_minutes": 30.0,
+      "horizon_bars": 6,
+      "horizon_minutes": 30.0,
+      "bar_seconds": 300,
+      "sub_bar": false,
+      "corpora_scored": 27,
+      "corpora_failed": 0,
+      "abstained": 27,
+      "UP": {
+        "corpora": 16,
+        "fired": 0,
+        "trades": 0,
+        "net": null,
+        "baseline": null,
+        "edge_pp": null,
+        "se_pp": null,
+        "z": null
+      },
+      "DOWN": {
+        "corpora": 11,
+        "fired": 0,
+        "trades": 0,
+        "net": null,
+        "baseline": null,
+        "edge_pp": null,
+        "se_pp": null,
+        "z": null
+      },
+      "BOTH": {
+        "corpora": 27,
+        "fired": 0,
+        "trades": 0,
+        "net": null,
+        "baseline": null,
+        "edge_pp": null,
+        "se_pp": null,
+        "z": null
+      },
+      "rows": [
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.012920068091489777,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0029103288387887904,
+            "up_rate": 0.4791666666666667,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0021593576702407602,
+            "train_drift": -0.041065950920245425
+          },
+          "corpus": "0063_TAO-USDC.json",
+          "symbol": "TAO-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.005893355908344841,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002924083381251439,
+            "up_rate": 0.4666666666666667,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0019802886731660773,
+            "train_drift": 0.026827171109200326
+          },
+          "corpus": "9999_AERO-DAI.json",
+          "symbol": "AERO-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.005893355908344841,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002924083381251439,
+            "up_rate": 0.4666666666666667,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0019802886731660773,
+            "train_drift": 0.026827171109200326
+          },
+          "corpus": "9999_AERO-USDT.json",
+          "symbol": "AERO-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.003947109194021079,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.006770102524834949,
+            "up_rate": 0.4708333333333333,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.004914130240634913,
+            "train_drift": -0.010604757810260686
+          },
+          "corpus": "9999_CAP-USDC.json",
+          "symbol": "CAP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.006117809397873763,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0020721586749088356,
+            "up_rate": 0.45,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0014789612800509707,
+            "train_drift": -0.01949367452352387
+          },
+          "corpus": "9999_CBETH-DAI.json",
+          "symbol": "CBETH-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.006126390747115201,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.001854398082512582,
+            "up_rate": 0.55,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.001336011501897397,
+            "train_drift": 0.027414172590887274
+          },
+          "corpus": "9999_CBETH-USDC.json",
+          "symbol": "CBETH-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.006117809397873763,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0020721586749088356,
+            "up_rate": 0.45,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0014789612800509707,
+            "train_drift": -0.01949367452352387
+          },
+          "corpus": "9999_CBETH-USDT.json",
+          "symbol": "CBETH-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0019641306880767823,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.003262096784870024,
+            "up_rate": 0.5125,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0025142199102859723,
+            "train_drift": -0.006572461386789313
+          },
+          "corpus": "9999_CHIP-USDC.json",
+          "symbol": "CHIP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.005499168525763596,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.001878989036943695,
+            "up_rate": 0.5,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0014641706712412695,
+            "train_drift": 0.03176542455711671
+          },
+          "corpus": "9999_DOT-USDC.json",
+          "symbol": "DOT-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.010815843883661714,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.011859296841397565,
+            "up_rate": 0.4,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.00833917228161133,
+            "train_drift": -0.1880208333333334
+          },
+          "corpus": "9999_DRB-USDC.json",
+          "symbol": "DRB-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.004923675980164553,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002476681125425379,
+            "up_rate": 0.5333333333333333,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0017170224813084479,
+            "train_drift": 0.01808840660723977
+          },
+          "corpus": "9999_ETH-USDT.json",
+          "symbol": "ETH-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=hi vol=hi cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.006570236200632162,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0038277421968346743,
+            "up_rate": 0.49583333333333335,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0028598125630341876,
+            "train_drift": -0.0041411390968912
+          },
+          "corpus": "9999_FARTCOIN-USDC.json",
+          "symbol": "FARTCOIN-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.01004617141296755,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.014223045445089354,
+            "up_rate": 0.4625,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.009984124908631807,
+            "train_drift": -0.06734907326440685
+          },
+          "corpus": "9999_FLOCK-USDC.json",
+          "symbol": "FLOCK-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0019482444692601629,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.01039479682336414,
+            "up_rate": 0.5041666666666667,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.007780612223628584,
+            "train_drift": 0.037718491260349644
+          },
+          "corpus": "9999_HIGH-USDC.json",
+          "symbol": "HIGH-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.003164519324088757,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.003898012165707035,
+            "up_rate": 0.6041666666666666,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0030934994367308737,
+            "train_drift": 0.16697799916977993
+          },
+          "corpus": "9999_KITE-USDC.json",
+          "symbol": "KITE-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.008654533193753552,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0023256813150008613,
+            "up_rate": 0.5,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0017107046575499394,
+            "train_drift": -0.018299085045747697
+          },
+          "corpus": "9999_LTC-USDC.json",
+          "symbol": "LTC-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.005231891720430298,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.01854835800927348,
+            "up_rate": 0.43333333333333335,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.012266307156015926,
+            "train_drift": -0.11514018691588779
+          },
+          "corpus": "9999_META-USDC.json",
+          "symbol": "META-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.0028211832511255476,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002613340090175051,
+            "up_rate": 0.4875,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0016593111073797148,
+            "train_drift": 0.02447935696017535
+          },
+          "corpus": "9999_POL-USDC.json",
+          "symbol": "POL-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0068202656198711985,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0032574283052045276,
+            "up_rate": 0.4791666666666667,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.002366493594665048,
+            "train_drift": -0.03297751533045658
+          },
+          "corpus": "9999_PRL-USDC.json",
+          "symbol": "PRL-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0039037601841464755,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0072038914051840595,
+            "up_rate": 0.5541666666666667,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0053080427459033415,
+            "train_drift": 0.06435643564356443
+          },
+          "corpus": "9999_PUMP-USDC.json",
+          "symbol": "PUMP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.006804174120248404,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0014325713496940206,
+            "up_rate": 0.4125,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.001064649111746028,
+            "train_drift": -0.035085165235114235
+          },
+          "corpus": "9999_QNT-USDC.json",
+          "symbol": "QNT-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.009628409915878653,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.00885349223331393,
+            "up_rate": 0.5583333333333333,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0063821047756255946,
+            "train_drift": 0.36711059640995936
+          },
+          "corpus": "9999_SPK-USDC.json",
+          "symbol": "SPK-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.010726470910595682,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002621321258896152,
+            "up_rate": 0.42083333333333334,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0017462922309114054,
+            "train_drift": -0.00916905444126069
+          },
+          "corpus": "9999_STX-USDC.json",
+          "symbol": "STX-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.00664101998280982,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0010423190132510056,
+            "up_rate": 0.5333333333333333,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0007819070369358771,
+            "train_drift": 0.003634008965005214
+          },
+          "corpus": "9999_WETH-DAI.json",
+          "symbol": "WETH-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.006212743901766666,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0017934711093988646,
+            "up_rate": 0.4666666666666667,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.001312394597550123,
+            "train_drift": -0.017030598544272496
+          },
+          "corpus": "9999_XRP-USDC.json",
+          "symbol": "XRP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.007698583520124434,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.003504514681459788,
+            "up_rate": 0.5041666666666667,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.0027686204881926897,
+            "train_drift": 0.0032306592024464284
+          },
+          "corpus": "9999_ZEC-USDC.json",
+          "symbol": "ZEC-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            415,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 54,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.004891761463508704,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.01322069205841213,
+            "up_rate": 0.43333333333333335,
+            "bar_count": 476.0,
+            "mean_abs_return": 0.009752579116038053,
+            "train_drift": -0.21821050677557086
+          },
+          "corpus": "9999_ZORA-USDC.json",
+          "symbol": "ZORA-USDC"
+        }
+      ],
+      "separation": {
+        "fired": 0,
+        "abstained": 27,
+        "auc": {
+          "realised_vol": null,
+          "up_rate": null,
+          "bar_count": null,
+          "mean_abs_return": null,
+          "train_drift": null
+        },
+        "discovery_n": 14,
+        "heldout_n": 13,
+        "selector": null,
+        "heldout_check": null
+      }
+    },
+    {
+      "asked_minutes": 60.0,
+      "horizon_bars": 12,
+      "horizon_minutes": 60.0,
+      "bar_seconds": 300,
+      "sub_bar": false,
+      "corpora_scored": 27,
+      "corpora_failed": 0,
+      "abstained": 27,
+      "UP": {
+        "corpora": 16,
+        "fired": 0,
+        "trades": 0,
+        "net": null,
+        "baseline": null,
+        "edge_pp": null,
+        "se_pp": null,
+        "z": null
+      },
+      "DOWN": {
+        "corpora": 11,
+        "fired": 0,
+        "trades": 0,
+        "net": null,
+        "baseline": null,
+        "edge_pp": null,
+        "se_pp": null,
+        "z": null
+      },
+      "BOTH": {
+        "corpora": 27,
+        "fired": 0,
+        "trades": 0,
+        "net": null,
+        "baseline": null,
+        "edge_pp": null,
+        "se_pp": null,
+        "z": null
+      },
+      "rows": [
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.018471245740414435,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0029371570794785133,
+            "up_rate": 0.4708333333333333,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0021870754664537473,
+            "train_drift": -0.048847087378640755
+          },
+          "corpus": "0063_TAO-USDC.json",
+          "symbol": "TAO-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=hi vol=hi cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.005558453667687372,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002903267475170286,
+            "up_rate": 0.4708333333333333,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.001959239533706598,
+            "train_drift": 0.0311963611397185
+          },
+          "corpus": "9999_AERO-DAI.json",
+          "symbol": "AERO-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=hi vol=hi cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.005558453667687372,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002903267475170286,
+            "up_rate": 0.4708333333333333,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.001959239533706598,
+            "train_drift": 0.0311963611397185
+          },
+          "corpus": "9999_AERO-USDT.json",
+          "symbol": "AERO-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.00027410641469438737,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.006788685011315187,
+            "up_rate": 0.48333333333333334,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.004939895911060252,
+            "train_drift": 0.007070707070707133
+          },
+          "corpus": "9999_CAP-USDC.json",
+          "symbol": "CAP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.005724010107383507,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0021029929417062682,
+            "up_rate": 0.45,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0014904786322278334,
+            "train_drift": -0.025285840717477116
+          },
+          "corpus": "9999_CBETH-DAI.json",
+          "symbol": "CBETH-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0055620707527822034,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0018582979262148568,
+            "up_rate": 0.5541666666666667,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.001346925815906774,
+            "train_drift": 0.03191894181934409
+          },
+          "corpus": "9999_CBETH-USDC.json",
+          "symbol": "CBETH-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.005724010107383507,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0021029929417062682,
+            "up_rate": 0.45,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0014904786322278334,
+            "train_drift": -0.025285840717477116
+          },
+          "corpus": "9999_CBETH-USDT.json",
+          "symbol": "CBETH-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.0030475164600351125,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0033060689536196573,
+            "up_rate": 0.5166666666666667,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0025596434028156674,
+            "train_drift": -0.010474631751227523
+          },
+          "corpus": "9999_CHIP-USDC.json",
+          "symbol": "CHIP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.005145041235977358,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.001861772655724641,
+            "up_rate": 0.4875,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0014504723817824372,
+            "train_drift": 0.020554609584042708
+          },
+          "corpus": "9999_DOT-USDC.json",
+          "symbol": "DOT-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.022280496594819756,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.012016877896933325,
+            "up_rate": 0.4041666666666667,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.008454621891956164,
+            "train_drift": -0.16702241195304163
+          },
+          "corpus": "9999_DRB-USDC.json",
+          "symbol": "DRB-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.002810758219297717,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0024787552532379827,
+            "up_rate": 0.5333333333333333,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0017215107392410767,
+            "train_drift": 0.01888676475608497
+          },
+          "corpus": "9999_ETH-USDT.json",
+          "symbol": "ETH-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=hi vol=hi cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.005639106690487171,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.003816538414150967,
+            "up_rate": 0.5,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0028475068317327006,
+            "train_drift": -0.0007297221442604054
+          },
+          "corpus": "9999_FARTCOIN-USDC.json",
+          "symbol": "FARTCOIN-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.011230803329225372,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.014678569335592098,
+            "up_rate": 0.4666666666666667,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.01028237169857039,
+            "train_drift": -0.01917213673374225
+          },
+          "corpus": "9999_FLOCK-USDC.json",
+          "symbol": "FLOCK-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.0020386204773423138,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.010327674300850435,
+            "up_rate": 0.5,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.007717403122532557,
+            "train_drift": 0.03978052126200271
+          },
+          "corpus": "9999_HIGH-USDC.json",
+          "symbol": "HIGH-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.002316542970091033,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0038836920785146676,
+            "up_rate": 0.6083333333333333,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0030775897933505935,
+            "train_drift": 0.17869057547956618
+          },
+          "corpus": "9999_KITE-USDC.json",
+          "symbol": "KITE-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.009920155588720352,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002415318007441856,
+            "up_rate": 0.5041666666666667,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0017788889764570465,
+            "train_drift": -0.017665273839725333
+          },
+          "corpus": "9999_LTC-USDC.json",
+          "symbol": "LTC-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.027328179816541443,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.018407591376207757,
+            "up_rate": 0.425,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.01207577861634233,
+            "train_drift": -0.1208103130755064
+          },
+          "corpus": "9999_META-USDC.json",
+          "symbol": "META-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.009187585696590412,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002581755660945157,
+            "up_rate": 0.49166666666666664,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0016274857030213815,
+            "train_drift": 0.034486975663446294
+          },
+          "corpus": "9999_POL-USDC.json",
+          "symbol": "POL-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.009247861618115616,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0035985287120698616,
+            "up_rate": 0.48333333333333334,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.002458062363499494,
+            "train_drift": -0.04859620886981398
+          },
+          "corpus": "9999_PRL-USDC.json",
+          "symbol": "PRL-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=mid"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0006058333208942033,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.007528946365671051,
+            "up_rate": 0.5708333333333333,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0055493499359114025,
+            "train_drift": 0.1472663139329805
+          },
+          "corpus": "9999_PUMP-USDC.json",
+          "symbol": "PUMP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.007216009551366591,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0014516722136425726,
+            "up_rate": 0.4166666666666667,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0010806656241002558,
+            "train_drift": -0.033022985161477975
+          },
+          "corpus": "9999_QNT-USDC.json",
+          "symbol": "QNT-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.01273674609131401,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.008719943170250747,
+            "up_rate": 0.5458333333333333,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.006287841154041399,
+            "train_drift": 0.3122171945701356
+          },
+          "corpus": "9999_SPK-USDC.json",
+          "symbol": "SPK-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=hi vol=hi cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.014617575243213233,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002621301725683547,
+            "up_rate": 0.425,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.001736452545736354,
+            "train_drift": -0.005753739930955125
+          },
+          "corpus": "9999_STX-USDC.json",
+          "symbol": "STX-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.006806129521653195,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0010443122082544152,
+            "up_rate": 0.5416666666666666,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0007827341766462366,
+            "train_drift": 0.005908419497784312
+          },
+          "corpus": "9999_WETH-DAI.json",
+          "symbol": "WETH-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.006242045466272096,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.001742722662196261,
+            "up_rate": 0.4583333333333333,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0012796672761111684,
+            "train_drift": -0.01813179060251168
+          },
+          "corpus": "9999_XRP-USDC.json",
+          "symbol": "XRP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.00827753629921822,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0036458711546882034,
+            "up_rate": 0.5125,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.0028473525035754717,
+            "train_drift": 0.019331940493870686
+          },
+          "corpus": "9999_ZEC-USDC.json",
+          "symbol": "ZEC-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            421,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 48,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.006650521287942339,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.013493971684854304,
+            "up_rate": 0.44166666666666665,
+            "bar_count": 482.0,
+            "mean_abs_return": 0.010027728068106355,
+            "train_drift": -0.16960784313725497
+          },
+          "corpus": "9999_ZORA-USDC.json",
+          "symbol": "ZORA-USDC"
+        }
+      ],
+      "separation": {
+        "fired": 0,
+        "abstained": 27,
+        "auc": {
+          "realised_vol": null,
+          "up_rate": null,
+          "bar_count": null,
+          "mean_abs_return": null,
+          "train_drift": null
+        },
+        "discovery_n": 14,
+        "heldout_n": 13,
+        "selector": null,
+        "heldout_check": null
+      }
+    },
+    {
+      "asked_minutes": 120.0,
+      "horizon_bars": 24,
+      "horizon_minutes": 120.0,
+      "bar_seconds": 300,
+      "sub_bar": false,
+      "corpora_scored": 27,
+      "corpora_failed": 0,
+      "abstained": 26,
+      "UP": {
+        "corpora": 15,
+        "fired": 0,
+        "trades": 0,
+        "net": null,
+        "baseline": null,
+        "edge_pp": null,
+        "se_pp": null,
+        "z": null
+      },
+      "DOWN": {
+        "corpora": 12,
+        "fired": 1,
+        "trades": 2,
+        "baseline_bars": 36,
+        "net": -0.011985288032211988,
+        "baseline": -0.013118475198624498,
+        "edge_pp": 0.11331871664125096,
+        "se_pp": 0.1438875938551959,
+        "z": 0.7875502925936163
+      },
+      "BOTH": {
+        "corpora": 27,
+        "fired": 1,
+        "trades": 2,
+        "baseline_bars": 36,
+        "net": -0.011985288032211988,
+        "baseline": -0.013118475198624498,
+        "edge_pp": 0.11331871664125096,
+        "se_pp": 0.1438875938551959,
+        "z": 0.7875502925936163
+      },
+      "rows": [
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.026021543206127772,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.00316627410960597,
+            "up_rate": 0.4666666666666667,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.0023539891553366263,
+            "train_drift": -0.05576083305340946
+          },
+          "corpus": "0063_TAO-USDC.json",
+          "symbol": "TAO-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0043291112522568,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002935713791374906,
+            "up_rate": 0.4666666666666667,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.002003014119790874,
+            "train_drift": 0.022120712261557384
+          },
+          "corpus": "9999_AERO-DAI.json",
+          "symbol": "AERO-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0043291112522568,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002935713791374906,
+            "up_rate": 0.4666666666666667,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.002003014119790874,
+            "train_drift": 0.022120712261557384
+          },
+          "corpus": "9999_AERO-USDT.json",
+          "symbol": "AERO-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.007516607960908483,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.006728301746858923,
+            "up_rate": 0.49583333333333335,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.004870208222051473,
+            "train_drift": 0.04572098475967192
+          },
+          "corpus": "9999_CAP-USDC.json",
+          "symbol": "CAP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.005501730572465093,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0021618094242460686,
+            "up_rate": 0.44583333333333336,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.0015393098997091403,
+            "train_drift": -0.026761140294774974
+          },
+          "corpus": "9999_CBETH-DAI.json",
+          "symbol": "CBETH-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.004467718674354775,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.001859722569921148,
+            "up_rate": 0.5541666666666667,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.001344253922508952,
+            "train_drift": 0.03362959648551897
+          },
+          "corpus": "9999_CBETH-USDC.json",
+          "symbol": "CBETH-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.005501730572465093,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0021618094242460686,
+            "up_rate": 0.44583333333333336,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.0015393098997091403,
+            "train_drift": -0.026761140294774974
+          },
+          "corpus": "9999_CBETH-USDT.json",
+          "symbol": "CBETH-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.01637078817207362,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0033165917794671014,
+            "up_rate": 0.525,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.0025579496334464744,
+            "train_drift": 0.014735432016074997
+          },
+          "corpus": "9999_CHIP-USDC.json",
+          "symbol": "CHIP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0025214649786868947,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0018466500231491389,
+            "up_rate": 0.5041666666666667,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.0014348890894161294,
+            "train_drift": 0.02914770630918699
+          },
+          "corpus": "9999_DOT-USDC.json",
+          "symbol": "DOT-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.05595699377537627,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.012097552100128516,
+            "up_rate": 0.4,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.008631705511037192,
+            "train_drift": -0.2098377812663527
+          },
+          "corpus": "9999_DRB-USDC.json",
+          "symbol": "DRB-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.0009424586394489322,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0025362813559303486,
+            "up_rate": 0.5291666666666667,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.0017709880227623606,
+            "train_drift": 0.01929032258064512
+          },
+          "corpus": "9999_ETH-USDT.json",
+          "symbol": "ETH-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=hi vol=hi cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.00740857339330361,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0037036152836204786,
+            "up_rate": 0.49583333333333335,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.002737890170761824,
+            "train_drift": -0.01831644583008582
+          },
+          "corpus": "9999_FARTCOIN-USDC.json",
+          "symbol": "FARTCOIN-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.013460025696259578,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.01639680754734024,
+            "up_rate": 0.4875,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.011121092450808286,
+            "train_drift": 0.2799736340309328
+          },
+          "corpus": "9999_FLOCK-USDC.json",
+          "symbol": "FLOCK-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.013893925472174495,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.010404584609649116,
+            "up_rate": 0.5083333333333333,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.007795357968585472,
+            "train_drift": 0.06184586108468121
+          },
+          "corpus": "9999_HIGH-USDC.json",
+          "symbol": "HIGH-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0057395202097176795,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.003911808955875802,
+            "up_rate": 0.6,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.003089353245730112,
+            "train_drift": 0.17019714765100666
+          },
+          "corpus": "9999_KITE-USDC.json",
+          "symbol": "KITE-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=lo"
+          ],
+          "called_n": 2,
+          "called_net": -0.011985288032211988,
+          "baseline_net": -0.013118475198624498,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0027077877716502837,
+            "up_rate": 0.5041666666666667,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.001955130003489357,
+            "train_drift": 0.007181569220751863
+          },
+          "corpus": "9999_LTC-USDC.json",
+          "symbol": "LTC-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.056253844215145093,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.01860205825873691,
+            "up_rate": 0.42083333333333334,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.012233336711998433,
+            "train_drift": -0.10752067705327951
+          },
+          "corpus": "9999_META-USDC.json",
+          "symbol": "META-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.01904245002973551,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0025277941009184198,
+            "up_rate": 0.4791666666666667,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.0015866845899500982,
+            "train_drift": 0.015687705217074056
+          },
+          "corpus": "9999_POL-USDC.json",
+          "symbol": "POL-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.008207334702860641,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.003616850475645404,
+            "up_rate": 0.48333333333333334,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.0025073943235286505,
+            "train_drift": -0.0560501006486244
+          },
+          "corpus": "9999_PRL-USDC.json",
+          "symbol": "PRL-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=mid"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.006952933516729449,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0075069579648721395,
+            "up_rate": 0.5541666666666667,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.005529696945147081,
+            "train_drift": 0.14059289697681251
+          },
+          "corpus": "9999_PUMP-USDC.json",
+          "symbol": "PUMP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.007082390011537911,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0014627911019638668,
+            "up_rate": 0.42916666666666664,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.001091131644023924,
+            "train_drift": -0.025741710296684265
+          },
+          "corpus": "9999_QNT-USDC.json",
+          "symbol": "QNT-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.00938687442196177,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.00860909805904247,
+            "up_rate": 0.5416666666666666,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.006174867026962858,
+            "train_drift": 0.3002270147559591
+          },
+          "corpus": "9999_SPK-USDC.json",
+          "symbol": "SPK-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.020398134972420028,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0026348969675124507,
+            "up_rate": 0.42916666666666664,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.001745776618859497,
+            "train_drift": 0.0011547344110854835
+          },
+          "corpus": "9999_STX-USDC.json",
+          "symbol": "STX-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.007490410308902618,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0010549424339408105,
+            "up_rate": 0.5416666666666666,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.00079304603748672,
+            "train_drift": 0.005917159763313579
+          },
+          "corpus": "9999_WETH-DAI.json",
+          "symbol": "WETH-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.008245463966658843,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0017466769944524424,
+            "up_rate": 0.4583333333333333,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.0012722490348487845,
+            "train_drift": -0.016121084125308088
+          },
+          "corpus": "9999_XRP-USDC.json",
+          "symbol": "XRP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.010631375275282882,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.003524688136849149,
+            "up_rate": 0.5291666666666667,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.0027864426827790005,
+            "train_drift": 0.047432538976067494
+          },
+          "corpus": "9999_ZEC-USDC.json",
+          "symbol": "ZEC-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            433,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 36,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.0026901780398843433,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.013839242352988652,
+            "up_rate": 0.45416666666666666,
+            "bar_count": 494.0,
+            "mean_abs_return": 0.01044196603100248,
+            "train_drift": -0.15886939571150094
+          },
+          "corpus": "9999_ZORA-USDC.json",
+          "symbol": "ZORA-USDC"
+        }
+      ],
+      "separation": {
+        "fired": 1,
+        "abstained": 26,
+        "auc": {
+          "realised_vol": 0.38461538461538464,
+          "up_rate": 0.6346153846153846,
+          "bar_count": 0.5,
+          "mean_abs_return": 0.38461538461538464,
+          "train_drift": 0.46153846153846156
+        },
+        "discovery_n": 14,
+        "heldout_n": 13,
+        "selector": null,
+        "heldout_check": null
+      }
+    },
+    {
+      "asked_minutes": 240.0,
+      "horizon_bars": 48,
+      "horizon_minutes": 240.0,
+      "bar_seconds": 300,
+      "sub_bar": false,
+      "corpora_scored": 27,
+      "corpora_failed": 0,
+      "abstained": 27,
+      "UP": {
+        "corpora": 16,
+        "fired": 0,
+        "trades": 0,
+        "net": null,
+        "baseline": null,
+        "edge_pp": null,
+        "se_pp": null,
+        "z": null
+      },
+      "DOWN": {
+        "corpora": 11,
+        "fired": 0,
+        "trades": 0,
+        "net": null,
+        "baseline": null,
+        "edge_pp": null,
+        "se_pp": null,
+        "z": null
+      },
+      "BOTH": {
+        "corpora": 27,
+        "fired": 0,
+        "trades": 0,
+        "net": null,
+        "baseline": null,
+        "edge_pp": null,
+        "se_pp": null,
+        "z": null
+      },
+      "rows": [
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.05381551249113154,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0034138153866611633,
+            "up_rate": 0.4708333333333333,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.002583721767863262,
+            "train_drift": -0.0447054366357264
+          },
+          "corpus": "0063_TAO-USDC.json",
+          "symbol": "TAO-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=hi vol=hi cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0027782044837935133,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0023744336003957665,
+            "up_rate": 0.4666666666666667,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0017619988077088023,
+            "train_drift": -0.019881681808578015
+          },
+          "corpus": "9999_AERO-DAI.json",
+          "symbol": "AERO-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=hi vol=hi cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0027782044837935133,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0023744336003957665,
+            "up_rate": 0.4666666666666667,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0017619988077088023,
+            "train_drift": -0.019881681808578015
+          },
+          "corpus": "9999_AERO-USDT.json",
+          "symbol": "AERO-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.018323817360959397,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.006749205084700587,
+            "up_rate": 0.5041666666666667,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.004879598455860454,
+            "train_drift": 0.03196147110332746
+          },
+          "corpus": "9999_CAP-USDC.json",
+          "symbol": "CAP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.003430541065209199,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0022422172353091982,
+            "up_rate": 0.45,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0016156287605225532,
+            "train_drift": -0.03394465437395246
+          },
+          "corpus": "9999_CBETH-DAI.json",
+          "symbol": "CBETH-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.002748263684506683,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0018525030841722034,
+            "up_rate": 0.55,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0013414102948330535,
+            "train_drift": 0.04088509491182744
+          },
+          "corpus": "9999_CBETH-USDC.json",
+          "symbol": "CBETH-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.003430541065209199,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0022422172353091982,
+            "up_rate": 0.45,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0016156287605225532,
+            "train_drift": -0.03394465437395246
+          },
+          "corpus": "9999_CBETH-USDT.json",
+          "symbol": "CBETH-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.031983321962538315,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0035246502428881057,
+            "up_rate": 0.5083333333333333,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0027453030883968655,
+            "train_drift": 0.0072583305839657355
+          },
+          "corpus": "9999_CHIP-USDC.json",
+          "symbol": "CHIP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=hi vol=hi cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0011224149137244153,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0019153588610412858,
+            "up_rate": 0.49166666666666664,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0014963837793474666,
+            "train_drift": 0.012366634335596493
+          },
+          "corpus": "9999_DOT-USDC.json",
+          "symbol": "DOT-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.07123582063326069,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.012430154363228398,
+            "up_rate": 0.4,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.009007154683656687,
+            "train_drift": -0.2760910815939279
+          },
+          "corpus": "9999_DRB-USDC.json",
+          "symbol": "DRB-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.00829728817174051,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002522069930492767,
+            "up_rate": 0.5458333333333333,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.001786207047453825,
+            "train_drift": 0.05643459915611819
+          },
+          "corpus": "9999_ETH-USDT.json",
+          "symbol": "ETH-USDT"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.0032004686068074855,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0037546492269631584,
+            "up_rate": 0.48333333333333334,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0027510319877074815,
+            "train_drift": -0.037165178571428564
+          },
+          "corpus": "9999_FARTCOIN-USDC.json",
+          "symbol": "FARTCOIN-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.02638086746130192,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.01864971879430849,
+            "up_rate": 0.4625,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.011515004078581886,
+            "train_drift": 0.2587875197472354
+          },
+          "corpus": "9999_FLOCK-USDC.json",
+          "symbol": "FLOCK-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.02624884175006996,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.010237683230339474,
+            "up_rate": 0.5125,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.00764239147650111,
+            "train_drift": 0.11924381968007758
+          },
+          "corpus": "9999_HIGH-USDC.json",
+          "symbol": "HIGH-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.009602454586911958,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.003815992995139983,
+            "up_rate": 0.5875,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0030292124925770185,
+            "train_drift": 0.1331246739697443
+          },
+          "corpus": "9999_KITE-USDC.json",
+          "symbol": "KITE-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.020125453957612522,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002710637546068062,
+            "up_rate": 0.48333333333333334,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0019605794228967593,
+            "train_drift": 0.007036328871892966
+          },
+          "corpus": "9999_LTC-USDC.json",
+          "symbol": "LTC-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.13014935376166514,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.018225387679148816,
+            "up_rate": 0.4125,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.011870151428262416,
+            "train_drift": -0.11564625850340145
+          },
+          "corpus": "9999_META-USDC.json",
+          "symbol": "META-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.057144289888776977,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0023816425677266988,
+            "up_rate": 0.475,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0014843704332489168,
+            "train_drift": -0.004175365344467726
+          },
+          "corpus": "9999_POL-USDC.json",
+          "symbol": "POL-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.017729579330885835,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.003618038082419132,
+            "up_rate": 0.4875,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.002515089112701029,
+            "train_drift": -0.050737883989477914
+          },
+          "corpus": "9999_PRL-USDC.json",
+          "symbol": "PRL-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": 0.0167676561122937,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.007359332370520106,
+            "up_rate": 0.5583333333333333,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0053599589669071504,
+            "train_drift": 0.16601385959626402
+          },
+          "corpus": "9999_PUMP-USDC.json",
+          "symbol": "PUMP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.009429736993133256,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0015928698569060453,
+            "up_rate": 0.43333333333333335,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0011666889743909773,
+            "train_drift": -0.027533684827182124
+          },
+          "corpus": "9999_QNT-USDC.json",
+          "symbol": "QNT-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [
+            "co1 geo=lo tem=lo flo=lo vol=lo cro=lo"
+          ],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.033761016721882135,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.008451226627688222,
+            "up_rate": 0.525,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0059729473599960635,
+            "train_drift": 0.22653175941540185
+          },
+          "corpus": "9999_SPK-USDC.json",
+          "symbol": "SPK-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.038672703070331986,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.002394126524099741,
+            "up_rate": 0.425,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0016279654499673718,
+            "train_drift": 0.010362694300518113
+          },
+          "corpus": "9999_STX-USDC.json",
+          "symbol": "STX-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.007726886553868789,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0011202123684412484,
+            "up_rate": 0.5416666666666666,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.000832246713910354,
+            "train_drift": 0.011862778342941114
+          },
+          "corpus": "9999_WETH-DAI.json",
+          "symbol": "WETH-DAI"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.00552213348848313,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.0016928066511168766,
+            "up_rate": 0.475,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.001213540143522067,
+            "train_drift": 0.0023267291828245654
+          },
+          "corpus": "9999_XRP-USDC.json",
+          "symbol": "XRP-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.013645011635786533,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.003313841291151599,
+            "up_rate": 0.5208333333333334,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.0025528764556196227,
+            "train_drift": 0.02149960375284395
+          },
+          "corpus": "9999_ZEC-USDC.json",
+          "symbol": "ZEC-USDC"
+        },
+        {
+          "train_window": [
+            168,
+            409
+          ],
+          "test_window": [
+            457,
+            469
+          ],
+          "train_n": 241,
+          "test_n": 12,
+          "buyable_motifs": [],
+          "called_n": 0,
+          "called_net": 0.0,
+          "baseline_net": -0.009641043908471288,
+          "called_trough_rate": 0.0,
+          "properties": {
+            "realised_vol": 0.014619506021613602,
+            "up_rate": 0.4708333333333333,
+            "bar_count": 518.0,
+            "mean_abs_return": 0.011176444676212538,
+            "train_drift": -0.22374590816597362
+          },
+          "corpus": "9999_ZORA-USDC.json",
+          "symbol": "ZORA-USDC"
+        }
+      ],
+      "separation": {
+        "fired": 0,
+        "abstained": 27,
+        "auc": {
+          "realised_vol": null,
+          "up_rate": null,
+          "bar_count": null,
+          "mean_abs_return": null,
+          "train_drift": null
+        },
+        "discovery_n": 14,
+        "heldout_n": 13,
+        "selector": null,
+        "heldout_check": null
+      }
+    }
+  ]
+}
