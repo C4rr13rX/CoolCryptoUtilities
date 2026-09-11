@@ -114,10 +114,34 @@ tape for any symbol**, and that is true independently of
 `OMEN_STRATEGY_ENABLED=0`. To reach 169 closed bars at 0.22 fill it would need
 roughly 12.9 hours of ticks and it asks for 2.8.
 
-### Which bar width would let it answer — and the answer is the training cadence
+### Which bar width would let it answer — and the answer is NONE of them
 
-Same 6 h of tape, rebucketed at each width, mean `filled_share` over the 8
-symbols:
+> **CORRECTED WITHIN THE SAME PASS.** The 6-hour table below first read
+> `filled_share` **1.000** at 3600 s, and I wrote that an hourly bar makes the
+> strategy able to answer. That was six buckets per symbol — a denominator too
+> small to mean anything. Re-run over **48 hours** the hourly row is **0.879**
+> and forms **149.5** bars against the 169 required. **No width fires.**
+> Both tables are kept so the error is visible rather than edited away.
+
+**48 h of tape** — the honest denominator:
+
+| width | filled | bars formed | needed | fires? |
+|---|---|---|---|---|
+| 60 s | 0.277 | 47.2 | 169 | NO |
+| 120 s | 0.442 | 75.2 | 169 | NO |
+| 180 s | 0.534 | 90.8 | 169 | NO |
+| 300 s | 0.633 | 107.6 | 169 | NO |
+| 600 s | 0.728 | 123.8 | 169 | NO |
+| 900 s | 0.752 | 127.8 | 169 | NO |
+| 1800 s | 0.821 | 139.6 | 169 | NO |
+| 3600 s | **0.879** | **149.5** | 169 | **NO** |
+
+**12.1% of hours in the last two days carried no tick at all** on the busiest
+symbols. That is not a bucket-width problem and no resampling fixes a hole: the
+feed goes dark for whole hours. Wider is monotonically better (0.277 → 0.879)
+and the best available width is still 20 bars short.
+
+**6 h of tape** — the original, retained to show the artifact:
 
 | width | fetch | filled | bars formed | needed | fires? | one bar means |
 |---|---|---|---|---|---|---|
@@ -130,18 +154,22 @@ symbols:
 | 1800 s | 5100 min | 0.917 | 155.8 | 169 | NO | 0.500 h |
 | **3600 s** | 10200 min | **1.000** | **170.0** | 169 | **yes** | **1.000 h** |
 
-**The only width at which the live path can answer is 3600 s, and that is
-exactly the cadence the fabric was trained on.** Every hour of the last six had
-at least one tick on all eight symbols (`filled_share` 1.000); no shorter bucket
-does. So the two filed items are not two decisions — widening the live bar to
-one hour makes the strategy able to answer AND removes the horizon crossing at
-the same time, because `hzn h=12` would then mean 720 minutes on both sides.
+The 1.000 in that last row is the artifact: at 3600 s over 6 h there are about
+six buckets per symbol, so "every bucket filled" is six-for-six. The 48-hour
+table above is the one to read.
 
-The price is a **170-hour tick buffer** (`sample_arrays` is asked for
-`(LOOKBACK_BARS + 2) * bar_seconds`), and the strategy stops being a
-minutes-scale trader — which is the same conflict Jet's horizon table named at
-14:45, arriving here from the feed's density instead of from the cost floor.
-That is an operator decision about what the system IS, not a retune.
+**What survives the correction.** Wider bars help monotonically, and the
+direction of the trade-off is real: the best width on the measured tape is
+3600 s, which is also exactly the training cadence, so if the lookback
+requirement were relaxed the hourly bar would remove the horizon crossing for
+free. But on today's feed no width satisfies 169 closed bars, because 12.1% of
+hours carry no tick. **Making the omen path able to answer is a FEED problem
+before it is a bar-width problem** — which puts it beside the dark-feed items
+already in the backlog rather than beside the cost-floor ones.
+
+The minutes-scale conclusion still stands from two independent directions:
+Jet's horizon table says the minutes horizon sits below this feed's cost floor,
+and this census says it sits below its data density.
 
 A third instance of the same crossing, for the record:
 `omen_reversion.py:273` and `:295` set the position's
