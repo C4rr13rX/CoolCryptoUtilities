@@ -22,7 +22,11 @@ except Exception:  # pragma: no cover - optional dependency
 from cache import CacheBalances, CacheTransfers
 from db import TradingDatabase, get_db
 from trading.data_stream import MarketDataStream
-from trading.pipeline import TrainingPipeline, ghost_reason_is_earned
+from trading.pipeline import (
+    TrainingPipeline,
+    ghost_reason_is_earned,
+    refinement_cadence_for_artifact,
+)
 from trading.portfolio import PortfolioState, NATIVE_SYMBOL
 from trading.scheduler import BusScheduler, TradeDirective
 from trading.equilibrium import EquilibriumTracker
@@ -11000,8 +11004,26 @@ class TradingBot:
             while self._running:
                 # Train more aggressively when no active model exists or ghost
                 # data is insufficient — this is the critical bootstrap phase.
-                has_model = (self.pipeline.model_dir / "active_model.keras").exists()
-                use_cadence = fast_cadence if not has_model else cadence
+                #
+                # THE PLACEHOLDER WAS SLOWING DOWN THE LOOP THAT WOULD REPLACE
+                # IT. This read `.exists()`, and ensure_active_model's bootstrap
+                # writer drops a freshly BUILT, never-trained artifact on that
+                # exact path -- so the file appearing was enough to switch this
+                # loop from fast_cadence 300.0s to cadence 900.0s, a 3x
+                # slowdown of background refinement, entered precisely because
+                # there was no trained model. Self-sustaining: the system
+                # believed it had a model, so it stopped hurrying to build one.
+                # Measured on models/active_model.keras 2026-09-11 01:57 -- 20
+                # of 21 parameter vectors bitwise on their initializer.
+                #
+                # is_artifact_trained reads the weights (no TF, no graph) and
+                # answers False for both "no file" and "untrained file", which
+                # is the question this branch was always asking.
+                use_cadence = refinement_cadence_for_artifact(
+                    self.pipeline.model_dir / "active_model.keras",
+                    cadence=cadence,
+                    fast_cadence=fast_cadence,
+                )
                 await asyncio.sleep(use_cadence)
                 # Wait if system is under pressure before starting heavy training
                 try:

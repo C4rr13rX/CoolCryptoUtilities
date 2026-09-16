@@ -772,6 +772,41 @@ class TradingDatabase:
             rows = cur.fetchall()
         return [(row["symbol"], row["chain"]) for row in rows]
 
+    def feed_tick_times(
+        self,
+        chain: str,
+        *,
+        since_ts: float,
+        until_ts: float,
+        exclude_symbol: Optional[str] = None,
+        limit: int = 5000,
+    ) -> List[float]:
+        """Tick timestamps across the WHOLE feed in a window, ascending.
+
+        Answers "was the pipeline up?" rather than "was this symbol covered?".
+        A gap in one symbol means something completely different depending on
+        that answer: if every other symbol was ticking, the symbol has lost
+        coverage; if nothing ticked at all, the feed was down and the gap says
+        nothing about the symbol.
+
+        ``exclude_symbol`` leaves the symbol under test out, so its own ticks
+        cannot make its own outage look survivable.
+        """
+        query = (
+            "SELECT ts FROM market_stream WHERE chain=? AND ts > ? AND ts < ? "
+            "AND price > 0"
+        )
+        params: List[Any] = [chain, float(since_ts), float(until_ts)]
+        if exclude_symbol:
+            query += " AND symbol <> ?"
+            params.append(str(exclude_symbol))
+        query += " ORDER BY ts ASC LIMIT ?"
+        params.append(int(max(1, limit)))
+        with self._cursor() as cur:
+            cur.execute(query, tuple(params))
+            rows = cur.fetchall()
+        return [float(row["ts"]) for row in rows]
+
     def get_market_price(
         self,
         symbol: str,
@@ -1436,7 +1471,28 @@ class TradingDatabase:
                 params,
             )
 
-    def register_model_version(self, version: str, metrics: Dict[str, Any], path: str, *, activate: bool = False) -> int:
+    def register_model_version(
+        self,
+        version: str,
+        metrics: Dict[str, Any],
+        path: str,
+        *,
+        activate: bool = False,
+        provenance: Optional[str] = None,
+    ) -> int:
+        """Record one write of a model artifact.
+
+        ``provenance`` names WHICH WRITER produced it -- "promotion",
+        "bootstrap_build", "asset_vocab_expansion". Three code paths write
+        models/active_model.keras and only promotion trains anything, so a row
+        that does not say which one wrote it cannot attribute the next head
+        regression to an artifact. It is folded into ``metrics`` rather than
+        given a column so existing stores need no migration; callers read it
+        back as ``json.loads(row["metrics"])["provenance"]``.
+        """
+        metrics = dict(metrics or {})
+        if provenance:
+            metrics.setdefault("provenance", str(provenance))
         with self._conn:
             cur = self._conn.execute(
                 """

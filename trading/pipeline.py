@@ -9,6 +9,7 @@ import time
 import json
 import shutil
 import traceback
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from datetime import datetime, timezone, timedelta
@@ -279,6 +280,170 @@ def _save_model_atomically(model, path: Path, **kwargs) -> None:
                 tmp.unlink()
         except OSError:
             pass
+
+
+def probe_artifact_training(path: Any) -> Dict[str, Any]:
+    """Answer "has this artifact ever been fit?" FROM THE WEIGHTS ALONE.
+
+    No TensorFlow, no graph, no data. A ``.keras`` file is a zip holding
+    ``model.weights.h5``; this opens that with h5py and looks at the 1-D
+    parameter vectors -- biases, LayerNormalization gamma/beta, BatchNorm
+    moving stats -- because every one of them is initialised to an EXACT
+    constant (0.0 or 1.0, bit-for-bit) and a single optimiser step with a
+    non-zero gradient moves it off that constant. So the fraction of 1-D
+    vectors still sitting bitwise on their initializer is a direct read of
+    whether anything was ever fit.
+
+    Measured on models/active_model.keras written 2026-09-11 01:57 (the
+    artifact being served while the live-readiness gate quoted its recall):
+    22 of 23 vectors bitwise pristine -- 18 exactly all-zero, 4
+    LayerNormalization gammas exactly 1.0 -- the one exception being the LSTM
+    bias, which Keras initialises non-zero by construction. Independently
+    corroborated by the kernel route: 19 kernels, observed/theoretical std
+    median 0.9985 over 0.95-1.01, and the three embeddings at
+    0.028866/0.028880/0.028769 against RandomUniform(-0.05, 0.05)'s
+    theoretical 0.0288675.
+
+    This exists because EXISTENCE WAS BEING READ AS TRAINED-NESS. Three code
+    paths write the served artifact and only one of them trains anything, so
+    "the file is there" answered a question nobody had asked, and
+    bot.py's background-refinement loop slowed itself 3x on the strength of
+    it.
+
+    Returns a dict rather than a bare bool so a caller can log WHY; the
+    ``trained`` key is None when the question could not be answered (missing
+    file, no h5py, no 1-D vectors) and a caller must never read None as True.
+    """
+    result: Dict[str, Any] = {
+        "path": str(path),
+        "exists": False,
+        "trained": None,
+        "vectors": 0,
+        "pristine": 0,
+        "pristine_fraction": None,
+        "reason": "",
+    }
+    p = Path(path)
+    if not p.exists():
+        result["reason"] = "artifact does not exist"
+        return result
+    result["exists"] = True
+    try:
+        import h5py  # noqa: PLC0415 - optional, and only for this probe
+    except Exception as exc:  # noqa: BLE001
+        result["reason"] = f"h5py unavailable ({type(exc).__name__}), cannot read weights"
+        return result
+
+    try:
+        if zipfile.is_zipfile(p):
+            with zipfile.ZipFile(p) as zf:
+                names = [n for n in zf.namelist() if n.endswith("model.weights.h5")]
+                if not names:
+                    result["reason"] = "no model.weights.h5 inside the .keras archive"
+                    return result
+                blob = zf.read(names[0])
+            handle = h5py.File(io.BytesIO(blob), "r")
+        else:
+            handle = h5py.File(str(p), "r")
+    except Exception as exc:  # noqa: BLE001
+        result["reason"] = f"could not open weights: {type(exc).__name__}: {exc}"
+        return result
+
+    vectors = 0
+    pristine = 0
+    try:
+        with handle as weights:
+            def _visit(_name: str, obj: Any) -> None:
+                nonlocal vectors, pristine
+                shape = getattr(obj, "shape", None)
+                if shape is None or len(shape) != 1 or int(shape[0]) < 2:
+                    return
+                try:
+                    array = np.asarray(obj[()], dtype=np.float64)
+                except Exception:  # noqa: BLE001 - non-numeric datasets are not parameters
+                    return
+                if array.size == 0:
+                    return
+                vectors += 1
+                # Bitwise equality against the exact initializer constants.
+                # np.all(array == 0.0) is exact for floats; a trained bias is
+                # essentially never exactly zero in every element.
+                if bool(np.all(array == 0.0)) or bool(np.all(array == 1.0)):
+                    pristine += 1
+
+            weights.visititems(_visit)
+    except Exception as exc:  # noqa: BLE001
+        result["reason"] = f"could not walk weights: {type(exc).__name__}: {exc}"
+        return result
+
+    result["vectors"] = vectors
+    result["pristine"] = pristine
+    if vectors == 0:
+        result["reason"] = "no 1-D parameter vectors to read"
+        return result
+    fraction = pristine / float(vectors)
+    result["pristine_fraction"] = fraction
+    # Half is a wide margin, not a tuned threshold: an untrained artifact sits
+    # at 0.96 (22/23 measured) and one fit() step puts a trained one at or
+    # near 0.0. Nothing observed here lands between.
+    result["trained"] = bool(fraction < 0.5)
+    result["reason"] = (
+        f"{pristine} of {vectors} 1-D parameter vectors are bitwise on their initializer"
+    )
+    return result
+
+
+def is_artifact_trained(path: Any) -> bool:
+    """True only when the weights PROVE a fit happened. Unknown is not True."""
+    return probe_artifact_training(path).get("trained") is True
+
+
+_CADENCE_PROBE_CACHE: Dict[str, Tuple[float, bool]] = {}
+
+
+def refinement_cadence_for_artifact(
+    path: Any,
+    *,
+    cadence: float,
+    fast_cadence: float,
+) -> float:
+    """How long background refinement should wait before its next round.
+
+    THE PLACEHOLDER WAS SLOWING DOWN THE LOOP THAT WOULD REPLACE IT. The call
+    site in ``bot.py`` used to read ``os.path.exists(active_model.keras)``, and
+    ``ensure_active_model``'s bootstrap writer drops a freshly BUILT,
+    never-trained artifact on exactly that path -- so the file appearing was
+    enough to move this loop from ``fast_cadence`` (300.0s) to ``cadence``
+    (900.0s), a 3x slowdown of the only loop that would train it, entered
+    precisely because nothing had been trained. Self-sustaining: the system
+    believed it had a model, so it stopped hurrying to build one.
+
+    The question that branch was always asking is "do we have a model worth
+    serving", and ``is_artifact_trained`` answers it from the weights -- no
+    TensorFlow, no graph, no data -- returning False both for "no file" and
+    for "file, but every parameter is still on its initializer".
+
+    Cached on (path, mtime) because the probe reads the artifact's weight blob
+    (13.5 MB today) and this runs on the market-stream event loop; a repeat
+    call against an unchanged file costs a ``stat``.
+    """
+    slow = max(float(fast_cadence), float(cadence))
+    fast = min(float(fast_cadence), float(cadence))
+    p = Path(path)
+    try:
+        key = f"{p}|{p.stat().st_mtime_ns}"
+    except OSError:
+        # No artifact at all -- the bootstrap case, and the one that most needs
+        # the fast loop.
+        return fast
+    cached = _CADENCE_PROBE_CACHE.get(key)
+    if cached is None:
+        trained = is_artifact_trained(p)
+        _CADENCE_PROBE_CACHE.clear()  # one artifact, one entry; never grows
+        _CADENCE_PROBE_CACHE[key] = (time.time(), trained)
+    else:
+        trained = cached[1]
+    return slow if trained else fast
 
 
 def _custom_objects():
@@ -943,6 +1108,47 @@ class TrainingPipeline:
             path.unlink(missing_ok=True)
             return None
 
+    def _register_active_artifact_write(self, path: Path, provenance: str, extra: Optional[Dict[str, Any]] = None) -> Optional[int]:
+        """EVERY write of the served artifact leaves exactly one row.
+
+        promote_candidate had this; the bootstrap build and the asset-vocab
+        rebuild did not, which is why model_versions held 0 rows on 2026-09-11
+        while models/active_model.keras had been rewritten that morning -- the
+        1800x price_mu regression could not be attributed to any artifact
+        because nothing recorded that an artifact had been written at all.
+
+        Never raises: a registry write is bookkeeping and must not be able to
+        cost the caller its model. It is logged if it fails.
+        """
+        probe = probe_artifact_training(path)
+        metrics: Dict[str, Any] = {
+            "trained": probe.get("trained"),
+            "weights_pristine_fraction": probe.get("pristine_fraction"),
+            "weights_probe_reason": probe.get("reason"),
+            "calibration_guarded": False,
+        }
+        if extra:
+            metrics.update(extra)
+        version = f"{provenance.replace('_', '-')}-{int(time.time())}"
+        try:
+            return int(
+                self.db.register_model_version(
+                    version=version,
+                    metrics=metrics,
+                    path=str(path),
+                    activate=True,
+                    provenance=provenance,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            log_message(
+                "training",
+                f"could not register the {provenance} write of the active model: {type(exc).__name__}: {exc}",
+                severity="warning",
+                details={"path": str(path), "provenance": provenance},
+            )
+            return None
+
     def ensure_active_model(self) -> tf.keras.Model:
         model = self.load_active_model()
         if model is not None:
@@ -1015,8 +1221,10 @@ class TrainingPipeline:
         # costs nothing, and the failure is one bounded loss instead of an
         # unbounded one. The encoding fix removes the cause; this removes the
         # amplifier, for disk-full and antivirus locks too.
+        saved = False
         try:
             _save_model_atomically(model, path, include_optimizer=False)
+            saved = True
         except Exception as exc:  # noqa: BLE001 - already logged with traceback
             log_message(
                 "training",
@@ -1024,6 +1232,40 @@ class TrainingPipeline:
                 f"not be persisted: {type(exc).__name__}: {exc}",
                 severity="warning",
                 details={"path": str(path)},
+            )
+        if saved:
+            # A SYSTEM WITH NO MODEL IS WORSE THAN ONE WITH A BAD MODEL, so
+            # this write is NOT refused on calibration grounds the way
+            # promote_candidate's is -- there is nothing to fall back to. But it
+            # is the write that put an UNTRAINED artifact on the served path at
+            # 2026-09-11 01:57 (20 of 21 parameter vectors bitwise on their
+            # initializer), and nothing said so: no warning, no registry row,
+            # no calibration probe. Downstream then read the file's EXISTENCE
+            # as having a model and slowed the loop that would train it.
+            self._register_active_artifact_write(
+                path,
+                "bootstrap_build",
+                extra={
+                    "asset_vocab_size": int(required_vocab),
+                    "model_template": str(template_choice),
+                    "window_size": int(self.window_size),
+                },
+            )
+            log_message(
+                "training",
+                "served model artifact REPLACED BY A FRESH UNTRAINED BASELINE: "
+                f"{path} carries initializer weights only, was not trained, and "
+                "was not checked by the price_mu calibration guard. It is "
+                "deliberately not refused -- there was no model to serve -- but "
+                "no forecast from it is evidence of anything until training "
+                "promotes a candidate over it.",
+                severity="warning",
+                details={
+                    "path": str(path),
+                    "provenance": "bootstrap_build",
+                    "calibration_guarded": False,
+                    "trained": False,
+                },
             )
         self._active_model = self._ensure_vectorizers_ready(model)
         return self._active_model
@@ -1118,6 +1360,16 @@ class TrainingPipeline:
         upgraded = self._rebuild_model_with_asset_vocab(required, model)
         path = self.model_dir / "active_model.keras"
         _save_model_atomically(upgraded, path, include_optimizer=False)
+        # THE SECOND UNREGISTERED WRITER. _transfer_weights carries the trained
+        # weights across, so this write is not necessarily untrained -- but the
+        # embedding it grows is brand new, the calibration guard never sees it,
+        # and before this call it left no trace at all. The probe decides which
+        # it was rather than assuming.
+        self._register_active_artifact_write(
+            path,
+            "asset_vocab_expansion",
+            extra={"asset_vocab_from": current, "asset_vocab_to": required},
+        )
         self._active_model = upgraded
         with _utf8_text_io():
             reloaded = tf.keras.models.load_model(path, custom_objects=_custom_objects(), compile=False)
@@ -1952,6 +2204,7 @@ class TrainingPipeline:
                 model.save(path, include_optimizer=False)
                 self.db.register_model_version(
                     version=version,
+                    provenance="candidate_save",
                     metrics={"score": composite_score, "raw_score": raw_score},
                     path=str(path),
                     activate=False,
@@ -2141,7 +2394,13 @@ class TrainingPipeline:
         # to compare against, and delaying the first deployment just wastes ghost
         # trading time that the system needs to start validating.
         active_path = self.model_dir / "active_model.keras"
-        if shadow_required > 0 and not active_path.exists():
+        # EXISTENCE IS NOT A MODEL. The comment below says "nothing to compare
+        # against", and an artifact whose parameters are all still on their
+        # initializers is exactly that -- ensure_active_model's bootstrap writer
+        # puts one there. Holding a real candidate in shadow for three
+        # iterations while serving initializer noise is the same waste this
+        # branch was written to avoid.
+        if shadow_required > 0 and not is_artifact_trained(active_path):
             shadow_required = 0
         challenger_path = self.model_dir / "challenger_model.keras"
         challenger_meta_path = self.model_dir / "challenger_meta.json"
@@ -2293,8 +2552,11 @@ class TrainingPipeline:
         # read off: the ratio, both medians, and the served log_var.
         self.db.register_model_version(
             version=version,
+            provenance="promotion",
             metrics={
                 "score": float(score),
+                "calibration_guarded": True,
+                "trained": True,
                 "price_mu_ratio": calibration.get("ratio"),
                 "price_mu_median_pred": calibration.get("median_pred"),
                 "price_mu_median_label": calibration.get("median_label"),
