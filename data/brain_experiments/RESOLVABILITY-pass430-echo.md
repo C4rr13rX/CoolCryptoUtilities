@@ -80,3 +80,58 @@ low detection floor and no edge still pays nothing. Pair this with
 actually fill is +0.88bp, which is below every floor in this table. That is not
 a reason to ignore the table — it is the reason the table matters, because it
 says how much tape any claim of a fillable edge needs before it is believable.
+
+---
+
+# ADDENDUM: what our evidence budget actually bought
+
+Measured after the table above, on `storage/trading_cache.db` (`trade_outcomes`,
+read-only `immutable=1`), the 14 days ending 2026-09-16: **196 outcome rows,
+174 ghost / 22 live.**
+
+Where the evidence budget went:
+
+| symbol | rows | % of 14d budget | trades needed for 20bp | proofs bought |
+|---|---|---|---|---|
+| **AERO-USDC** | **50** | **25.5%** | 204 | **0.245** |
+| COMP-USDC | 12 | 6.1% | 101 | 0.119 |
+| CBBTC-USDC | 10 | 5.1% | 294 | 0.034 |
+| VVV-USDC | 6 | 3.1% | 303 | 0.020 |
+| VIRTUAL-USDC | 5 | 2.6% | 472 | 0.011 |
+| **WETH-USDC** | **4** | **2.0%** | 45 | 0.089 |
+
+Also in the 14 days, unpriced because no USDC corpus was in the measured set:
+BASECAT 17, BSTONK 15, CBETH 8, CBXRP 6, CBADA 5, DRB 5, CBZEC 4, PUMP 4. They
+are **unpriced, not zero** — BSTONK is the symbol whose stop cannot bind and
+BASECAT is a known stub, so their dispersion is almost certainly worse than
+AERO's, which would make the conclusion below stronger rather than weaker.
+
+## The number
+
+Across the priced 87 rows (44.4% of the 14-day budget):
+
+```
+proofs actually bought : 0.517
+same 87 rows on WETH   : 1.933      (3.7x more)
+```
+
+**And AERO alone: the 50 AERO rows we bought in 14 days purchased 0.245 of a
+proof. The same 50 rows spent on WETH would have been 1.111 — a complete,
+finished proof with room to spare.**
+
+We did not fail to reach the graduation bar in those 14 days. We reached 25% of
+it, four times over, on a symbol where the bar cannot see.
+
+## Why this is the strongest form of the argument
+
+The usual objection to restricting the universe is that it costs evidence RATE:
+fewer symbols, fewer trades per day, slower to the bar. This addendum prices
+that objection and it does not survive. The restriction would have to cut our
+trade count by more than 3.7x before it lost, and AERO is 25.5% of the budget —
+removing it cannot cost 3.7x. The rate objection is the right question and the
+answer is that the trade is strongly favourable.
+
+That is still not proof the restriction wins: the 22 live rows are where real
+money moves, 9 of them are AERO, and rate must be measured after the change on
+real tape, not inferred here. That measurement is the acceptance criterion on
+[6c361f13] and it has not been run.
