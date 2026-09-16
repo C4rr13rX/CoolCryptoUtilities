@@ -79,6 +79,11 @@ def main() -> int:
                     help="keep only pairs quoted in this asset -- the live "
                          "book is USDC-quoted, and a WETH-quoted corpus prices "
                          "a different trade than the one we place.")
+    ap.add_argument("--peg-floor", type=float, default=0.05,
+                    help="per-trade sd below this PERCENT is treated as a peg "
+                         "and kept out of the headline: a stablecoin pair has "
+                         "no direction to be right about, so an edge that is "
+                         "trivially detectable there is also trivially absent.")
     ap.add_argument("--limit", type=int, default=24)
     ap.add_argument("--min-bars", type=int, default=2000)
     ap.add_argument("--json-out", default=None)
@@ -149,12 +154,29 @@ def main() -> int:
               f"SMALLEST per-trade edge that 30 trades can tell from zero on "
               f"that symbol. Every strategy in this repo is judged on ~20-30 "
               f"ghost trades, and every edge it has ever claimed is 5-20bp.")
-        cheapest = rows[0]
-        print(f"CHEAPEST EVIDENCE: {cheapest['symbol']} at "
-              f"{cheapest['sd']*100:.3f}% per trade needs "
-              f"{cheapest['n_trades_to_resolve']:,.0f} trades for "
-              f"{args.edge_bp:.0f}bp; the dearest here needs "
-              f"{rows[-1]['n_trades_to_resolve']:,.0f}.")
+        # A PEG IS NOT THE CHEAPEST SYMBOL, IT IS A DEGENERATE ONE. USDT-USDC
+        # reads sd 0.011% and "0 trades to prove", and naming it as the winner
+        # is how a true number becomes a false recommendation: there is no
+        # direction to be right about on a stablecoin pair, so an edge that is
+        # trivially detectable there is also trivially absent. Excluded from the
+        # headline and SAID so, rather than silently dropped from the table.
+        real = [r for r in rows if r["sd"] >= args.peg_floor / 100.0]
+        pegs = [r for r in rows if r not in real]
+        if pegs:
+            print(f"EXCLUDED AS PEGS (sd < {args.peg_floor:.2f}%, no direction "
+                  f"to be right about): "
+                  f"{', '.join(r['symbol'] for r in pegs)}. They are still in "
+                  f"the table above; they are not candidates.")
+        if real:
+            print(f"CHEAPEST REAL EVIDENCE: {real[0]['symbol']} at "
+                  f"{real[0]['sd']*100:.3f}% per trade needs "
+                  f"{real[0]['n_trades_to_resolve']:,.0f} trades for "
+                  f"{args.edge_bp:.0f}bp; the dearest here needs "
+                  f"{real[-1]['n_trades_to_resolve']:,.0f}.")
+        print(f"POOLED sd HIDES REGIME CHANGE. Measured pass 430: AERO's "
+              f"quarters run 1.997%/1.313%/1.298%/1.052%, so its pooled bill "
+              f"vs WETH reads 4.53x where the typical quarter is ~2.9x. Quote "
+              f"the RANGE, not this table's single figure.")
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(rows, indent=2),
                                        encoding="utf-8")
