@@ -5894,3 +5894,68 @@ CLOSED BY THIS ENTRY: "money_button does not fire" (it fires 2.4x/hour; the 2-fi
 NOT CLAIMED: production was not restarted; no live trade was placed this pass; the buy-low bias gate was not replayed so live fire rate is at most 1.257% and probably lower; no guardrail was changed and no threshold in scheduler.py or money_button.py was edited.
 
 NEXT, and it needs no discovery: (1) SPLIT THE ID -- the momentum plugin and the scheduler dip rule need distinct strategy_ids before either can graduate on its own evidence. (2) Then restrict the dip lane's universe to the deep pools and re-run this census; the command is `python -X utf8 scripts/money_button_dip_census.py`.
+
+## Pass 425 -- Dune (exec). The unreplayed precondition, replayed; and the dip rule priced.
+
+The previous entry (pass 424, mine) ended by calling its own numbers UPPER
+BOUNDS, because one gate could not be replayed from stored ticks:
+MONEY_BUTTON_REQUIRE_OPPORTUNITY at scheduler.py:1665-1668 demands a fresh
+buy-low bias in the scheduler's `_opportunity_bias`. This pass replayed it.
+
+ROUTE TRIED (1): "the money button is starved of its precondition." MOSTLY
+FALSIFIED, and the falsification is the more useful half.
+  scripts/opportunity_precondition_census.py, 168h, 150 symbols, using the
+  REAL OpportunityTracker class and applying the consumer's own 1800s expiry:
+    ticks where the dip PRICE rule admits                  1564
+    ... with a fresh buy-low bias present (as shipped)       713   45.6%
+    ... with one under a time-bounded debounce               774   49.5%
+  So the precondition is available ~4.2 times an hour. It is NOT the wall,
+  and the pass-424 fire rate of 2.4/hour survives contact with it.
+  CLOSED: "money_button never fires because the opportunity bias is missing."
+
+ROUTE TRIED (2): the debounce defect that route (1) uncovered. REAL, SMALL,
+SHIPPED at 27ba5a0. trading/opportunity.py:51-53 suppressed a same-kind
+signal whose z-score had not moved 0.2, and wrote its reference point only
+on emit -- so it never decayed -- while scheduler.py:1505 DELETES the bias at
+1800s and scheduler.py:1665 refuses the candidate without it. A mean-reverting
+2-5% drawdown holds its z-score still, so the producer went quiet for exactly
+the condition the rule exists to trade. 327 measured refusals landed while the
+consumer held nothing. Bounded by OPPORTUNITY_REFRESH_SEC (default 1800, to
+match the consumer). Worth +3.9pp of armed dip ticks. NOT a lane, and not sold
+as one. Proven red: the new test fails with OPPORTUNITY_REFRESH_SEC=0, which
+restores the old branch exactly.
+
+ROUTE TRIED (3): "is there money in the money button?" -- priced, not counted.
+scripts/money_button_dip_expectancy.py, the rule's OWN exit (take-profit touch
+else close at the 30m horizon, no stop, one position per symbol), 168h, charged
+the per-token on-chain round trip:
+    ALL                87 trades   34% win   mean -1.283%   total -111.63%
+    ETH-USDT  2 100% +0.388%   |   VVV-USDC   21  29%  -0.701%
+    ETH-USDC  1 100% +0.476%   |   ZORA-USDC  11  27%  -0.824%
+    WETH-USDT 1 100% +0.406%   |   ALIGN-USDC 15  33%  -0.446%
+    LDO-USDC  3  67% +0.042%   |   DRB-USDC   22  36%  -0.334%
+    LINK-USDC 1   0% -0.060%   |   ELON-USDC   1   0% -69.900%
+  Every deep-pool pair positive, every thin-pool pair negative, no exception.
+  Deep-pool subtotal: 8 trades, 6 wins, +1.74%. That is a SMALL SAMPLE and is
+  NOT claimed as an edge -- quoting it as a green light is precisely the
+  failure this file exists to prevent.
+  THE STRUCTURAL FINDING, at n=1564 rather than n=8: VVV, DRB, ALIGN and ZORA
+  carry 1367 of the 1564 dip ticks. The 2-5% drawdowns live in the thin tokens
+  and the profit lives in the deep ones. Supply looks healthy exactly where the
+  round trip eats the reversion. This is the third independent measurement this
+  week landing on the token-cost law, and it agrees with pass 424's gross-level
+  version of it.
+
+NOT CLAIMED. Production was not restarted and serves stale code, so nothing
+here is running live. No live trade was placed. No threshold in scheduler.py or
+money_button.py was edited, and no guardrail was loosened. The two strategies
+sharing strategy_id "money_button" are STILL not split -- pass 424 named it as
+the next step and it did not happen this pass either.
+
+NEXT, with the numbers already in hand: restrict the money_button dip universe
+to deep pools. There is no knob for it -- grepping scheduler.py for a
+money_button symbol allowlist returns nothing, and .env carries no MONEY_BUTTON
+variable at all -- so it is a code change, and it is ONE change, which is why it
+was not bolted onto this pass alongside 27ba5a0. Re-run
+`python -X utf8 scripts/money_button_dip_expectancy.py --hours 168` after it and
+the ALL row is the acceptance test.
