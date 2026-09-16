@@ -6326,3 +6326,42 @@ next hypothesis must not be another price-action predicate over this feed --
 that family is exhausted. What has NOT been tested is whether symbol SELECTION
 carries the signal (the `clean` column is flattest at every horizon), and that
 is where the remaining search should go.
+
+## Pass 427 (Echo) -- deep pools cut the bleed 6x but do NOT create an edge
+
+ROUTE (standing instruction b): restrict the tradeable universe to deep pools.
+STATUS: **WORTH TAKING, but as a COST reduction only -- it does not produce an
+edge, and on its own it still loses.**
+
+Unconditional forward return, last 168h, censored at |r|<=20%, sequential per
+symbol, split by data/pool_depth_snapshot.json (28d3db1):
+
+  DEEP (>=$1M: AERO, CBBTC)        round trip ~11bp at WETH-class depth
+     12min n=396  gross med -0.00297%  mean -0.01674%  up 47.5%  NET -0.11297%
+     30min n=186  gross med -0.02589%  mean -0.03532%  up 44.1%  NET -0.13589%
+     60min n=100  gross med -0.04610%  mean -0.06599%  up 44.0%  NET -0.15610%
+     90min n=69   gross med -0.09057%  mean -0.09362%  up 43.5%  NET -0.20057%
+
+  THIN (<$200k: COMP, AAVE, DRB, CBMEGA, CBETH, MOG)   round trip 70bp
+     12min n=408  gross med -0.00879%  mean -0.14305%  up 40.2%  NET -0.70879%
+     30min n=199  gross med -0.02516%  mean -0.28470%  up 38.7%  NET -0.72516%
+     60min n=115  gross med -0.08680%  mean -0.48759%  up 37.4%  NET -0.78680%
+     90min n=80   gross med -0.14660%  mean -0.69937%  up 37.5%  NET -0.84660%
+
+Deep pools are better on EVERY statistic at EVERY horizon: up-rate 47.5% vs
+40.2% at 12 min, and gross mean bleeds 8.5x less (-0.017% vs -0.143%). Both get
+worse as the horizon lengthens, which corroborates the existing note that the
+tradeable book is positive only inside ~15 minutes.
+
+BUT BOTH ARE NEGATIVE GROSS AT EVERY HORIZON, so this is a null, not a strategy.
+The value is that it moves the BAR: a predicate must beat ~11bp of cost on deep
+pools instead of ~70bp on thin ones. The momentum predicate measured this pass
+carries 0.8bp of lift, so it is still 14x short -- but 14x short, not 90x.
+
+CONCLUSION FOR THE NEXT PASS: deep-pool restriction is the single biggest
+available improvement to the arithmetic and should be taken, but taking it does
+NOT produce a profitable trade by itself. It must be combined with a predicate
+carrying more than 11bp of skill, and no such predicate exists in this repo yet.
+Caveat: only 2 symbols clear $1M in the depth snapshot, and that snapshot is a
+point-in-time DexScreener reading from pass 426 -- re-measure depth before
+sizing anything on it.
