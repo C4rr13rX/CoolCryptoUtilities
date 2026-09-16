@@ -72,13 +72,23 @@ from trading.omen_brain import (  # noqa: E402
     label_regime,
 )
 from scripts.omen_experiment import (  # noqa: E402
-    add_horizon_args, settle_horizon, validate_report_horizon,
+    MIN_READABLE_HELDOUT_BARS_AT_3600S, add_horizon_args, heldout_readability,
+    settle_horizon, validate_report_horizon, validate_report_readability,
 )
 
 #: Bars strictly older than this many back from the anchor cannot touch the
 #: label. Derived from the labeller, never hard-coded: if RANGE_WINDOW moves,
 #: the safe prefix moves with it.
 DEEP_EDGE = RANGE_WINDOW
+
+#: The default held-out window, RAISED FROM 120 IN PASS 423 and written into
+#: every report as ``heldout_default_bars``. 120 bars at 3600s cannot hold the
+#: 30 trough labels a per-trade net needs at this feed's 14.46% median base
+#: rate (120 * 0.1446 = 17.4), so every shape arm published a money line its
+#: own window could not carry -- beside a POWER note about a 1.5pp effect,
+#: which is a different and weaker floor. The shared constant rather than a
+#: literal, so the window and the floor cannot drift apart.
+DEFAULT_HELDOUT_TEST_BARS = MIN_READABLE_HELDOUT_BARS_AT_3600S
 
 
 def _closes(window: Sequence[Mapping[str, Any]]) -> List[float]:
@@ -547,7 +557,19 @@ def run_arm(args) -> int:
         "recall_generalisation_gap": recall - heldout,
         "buy_omens": buy_calls,
         "trough_precision": buy_true_trough / max(1, buy_calls),
-        "buy_net_per_trade": (sum(trades) / len(trades)) if trades else None,
+        # THE LABEL CEILING OF THIS HELD-OUT WINDOW, SPLICED BEFORE THE MONEY
+        # KEYS SO IT CANNOT BE REORDERED PAST THEM. ``heldout_readability``
+        # OVERRIDES ``buy_net_per_trade`` with the string UNREADABLE whenever
+        # the window could not have produced 30 correct buys or the arm did not
+        # make 30 calls -- the guarded key is the one every published shape
+        # report quotes, and the float survives as ``buy_net_per_trade_raw``.
+        # This harness's own POWER note below is about detecting a 1.5pp
+        # difference; the ceiling is about whether the number exists at all,
+        # and they are different questions with different floors.
+        "buy_net_per_trade_raw": (sum(trades) / len(trades)) if trades else None,
+        **heldout_readability(test_samples, buy_trades=len(trades),
+                              buy_net_total=sum(trades)),
+        "heldout_default_bars": DEFAULT_HELDOUT_TEST_BARS,
         "every_bar_net_per_trade": sum(every_bar) / max(1, len(every_bar)),
         "crest_omens": sell_calls,
         "crest_precision": sell_paid / max(1, sell_calls),
@@ -558,9 +580,13 @@ def run_arm(args) -> int:
     print(f"  held-out exact            {heldout:.4f} vs majority {majority:.4f}")
     print(f"  RECALL-GENERALISATION GAP {recall - heldout:+.4f}  "
           f"<- the number this item moves")
+    buy_cell = result["readability"]["buy"]
     print(f"  buy omens {buy_calls}, trough precision "
           f"{result['trough_precision']:.4f}, net/trade "
-          + (f"{result['buy_net_per_trade']:+.4%}" if trades else "n/a")
+          + (f"{result['buy_net_per_trade']:+.4%}" if buy_cell["readable"]
+             else f"UNREADABLE (label ceiling n={buy_cell['label_n']} in "
+                  f"{buy_cell['window_bars']} held-out bars, calls "
+                  f"n={buy_cell['trades']}, floor {buy_cell['floor']})")
           + f" vs every-bar {result['every_bar_net_per_trade']:+.4%}")
     print(f"  crest omens {sell_calls}, crest precision "
           f"{result['crest_precision']:.4f}")
@@ -578,6 +604,7 @@ def run_arm(args) -> int:
     result["buy_power_sufficient"] = buy_calls >= 28
     if args.report:
         validate_report_horizon(result)
+        validate_report_readability(result)
         Path(args.report).write_text(json.dumps(result, indent=2))
         print(f"  wrote {args.report}")
     return 0
@@ -696,7 +723,7 @@ def main() -> int:
                         choices=list(MUTATIONS),
                         help="arm mode: add this mutation of every base pair")
     parser.add_argument("--train", type=int, default=600)
-    parser.add_argument("--test", type=int, default=120)
+    parser.add_argument("--test", type=int, default=DEFAULT_HELDOUT_TEST_BARS)
     parser.add_argument("--train-end", type=int, default=None)
     parser.add_argument("--test-end", type=int, default=None)
     parser.add_argument("--recall-sample", type=int, default=100)

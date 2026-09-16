@@ -69,7 +69,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -81,10 +81,28 @@ from trading.omen_brain import (  # noqa: E402
     collection_distinctness, discriminating_collections,
 )
 from omen_experiment import (  # noqa: E402
+    MIN_READABLE_HELDOUT_BARS_AT_3600S, READABLE_LABEL_FLOOR, UNREADABLE,
     WindowError, add_horizon_args, backpressure_probe, balance, bar_seconds,
-    build_samples, load_bars, plan_windows, settle_horizon,
-    validate_report_horizon, window_regime,
+    build_samples, heldout_readability, load_bars, plan_windows,
+    readability_cell, render_readability, settle_horizon,
+    validate_report_horizon, validate_report_readability, window_regime,
 )
+
+
+def render_per_trade(cell: Mapping[str, Any]) -> str:
+    """One arm's money cell as text that cannot be quoted without its n.
+
+    A readable cell prints the percentage; an unreadable one prints the
+    literal ``UNREADABLE`` with BOTH n's -- the label ceiling of the held-out
+    window and the number of calls the arm actually made -- because those two
+    have different fixes and a reader who sees only "UNREADABLE" goes and
+    lengthens the window when the problem was recall.
+    """
+    if cell["readable"]:
+        return f"{cell['net_per_trade']:+.4%} per trade"
+    return (f"{UNREADABLE} (label ceiling n={cell['label_n']} in "
+            f"{cell['window_bars']} held-out bars, calls n={cell['trades']}, "
+            f"floor {cell['floor']})")
 
 
 def _pct(values: Sequence[float]) -> Dict[str, float]:
@@ -96,11 +114,21 @@ def _pct(values: Sequence[float]) -> Dict[str, float]:
             "p90": round(at(0.9), 4), "max": round(ordered[-1], 4)}
 
 
-def score(rows: Sequence[Dict[str, Any]], name: str) -> Dict[str, Any]:
+def score(rows: Sequence[Dict[str, Any]], name: str, *,
+          heldout_trough_labels: int, heldout_window_bars: int) -> Dict[str, Any]:
     """Score one arm. Every count here is reported beside its own n.
 
     ``rows`` are the PRIMARY query set's answers for the samples this arm
     keeps. Money comes first; exact accuracy is last and is a control.
+
+    ``heldout_trough_labels`` is a property of the WINDOW, not of the arm: both
+    arms are scored on the same held-out bars, so both inherit the same ceiling
+    on how many buy calls a perfect brain could have made. At the pass-120
+    default of 200 bars this corpus holds roughly 29 troughs -- one short of
+    the 30-label floor, which is exactly why this harness was the dangerous
+    one: 29 reads as adequate. ``buy_net_per_trade`` is therefore guarded and
+    ``buy_net_per_trade_raw`` keeps the float, so the verdict arithmetic below
+    still has a number while the quotable key does not.
     """
     admitted = [r for r in rows if r["verdict"] == "admitted"]
     exact = sum(1 for r in admitted if r["label"] == r["truth"])
@@ -122,6 +150,11 @@ def score(rows: Sequence[Dict[str, Any]], name: str) -> Dict[str, Any]:
     crests = [r for r in admitted if r["label"] == OMEN_CREST]
     crest_right = sum(1 for r in crests if r["forward"] < 0)
 
+    raw_per_trade = (total / len(trades)) if trades else 0.0
+    cell = readability_cell(
+        "buy", OMEN_TROUGH, int(heldout_trough_labels),
+        int(heldout_window_bars),
+        trades=len(trades), net_per_trade=raw_per_trade)
     return {
         "arm": name,
         "n_samples": len(rows),
@@ -129,7 +162,9 @@ def score(rows: Sequence[Dict[str, Any]], name: str) -> Dict[str, Any]:
         # (a)
         "buy_omens": len(trades),
         "buy_net_total": round(total, 6),
-        "buy_net_per_trade": (total / len(trades)) if trades else 0.0,
+        "readability": {"buy": cell},
+        "buy_net_per_trade": cell["net_per_trade"],
+        "buy_net_per_trade_raw": raw_per_trade,
         "buy_hit_rate": (sum(1 for t in trades if t > 0) / len(trades)) if trades else 0.0,
         # (b)
         "trough_called": len(troughs),
@@ -145,11 +180,24 @@ def score(rows: Sequence[Dict[str, Any]], name: str) -> Dict[str, Any]:
     }
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Split out from ``main`` so the DEFAULT WINDOW is testable without a node.
+
+    This harness is the dangerous one of the five: at its pass-120 default of
+    200 bars the corpus holds ~29 trough labels, one short of the floor, so its
+    reports looked adequate while not being. A test that had to reach :8091 to
+    see that default is a test that never ran.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--train", type=int, default=1500)
-    parser.add_argument("--test", type=int, default=200)
+    # RAISED FROM 200 IN PASS 121. 200 bars at 3600s holds ~29 trough labels on
+    # this corpus -- one short of the 30-label floor, and close enough to it to
+    # read as adequate, which is why every per-trade number this harness has
+    # published was unreadable while looking fine. The default is the floor's
+    # own constant rather than a copied literal, so the two move together.
+    parser.add_argument("--test", type=int,
+                        default=MIN_READABLE_HELDOUT_BARS_AT_3600S)
     add_horizon_args(parser)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--chain", default="base")
@@ -164,6 +212,11 @@ def main() -> int:
                              "The regime is MEASURED, not taken from this.")
     parser.add_argument("--report-dir", default="data/brain_experiments")
     parser.add_argument("--ignore-backpressure", action="store_true")
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
     args = parser.parse_args()
 
     endpoint = args.endpoint or os.getenv("OMEN_BRAIN_ENDPOINT") or "127.0.0.1:8093"
@@ -320,10 +373,13 @@ def main() -> int:
           f"moved (must be 0; anything else is node non-determinism and the "
           f"split rate above is not a query-set effect)")
 
-    all_arm = score(primary_rows, "ALL")
-    agree_arm = score(agree_rows, "AGREE")
+    truth_counts = Counter(s["label"] for s in test_samples)
+    ceiling = {"heldout_trough_labels": truth_counts.get(OMEN_TROUGH, 0),
+               "heldout_window_bars": len(test_samples)}
+    all_arm = score(primary_rows, "ALL", **ceiling)
+    agree_arm = score(agree_rows, "AGREE", **ceiling)
 
-    truth = Counter(s["label"] for s in test_samples)
+    truth = truth_counts
     majority = max(truth.values()) / max(1, len(test_samples))
     every_bar = [s["forward"] - ROUND_TRIP_COST for s in test_samples]
     every_bar_per_trade = sum(every_bar) / max(1, len(every_bar))
@@ -332,7 +388,7 @@ def main() -> int:
         print(f"\n{arm['arm']:<6} n={arm['n_samples']} kept, "
               f"{arm['n_admitted']} admitted")
         print(f"  (a) money    : {arm['buy_omens']} buy omens, "
-              f"{arm['buy_net_per_trade']:+.4%} per trade, "
+              f"{render_per_trade(arm['readability']['buy'])}, "
               f"total {arm['buy_net_total']:+.4f}, "
               f"{arm['buy_hit_rate']:.1%} paid")
         print(f"  (b) trough   : {arm['trough_called']} called, "
@@ -348,11 +404,28 @@ def main() -> int:
     # THE VERDICT, stated in the script's own output so a reader cannot take a
     # subset accuracy for an edge. Abstention pays only if what it KEEPS
     # clears the round trip AND beats buying every bar.
-    delta = agree_arm["buy_net_per_trade"] - all_arm["buy_net_per_trade"]
+    delta = agree_arm["buy_net_per_trade_raw"] - all_arm["buy_net_per_trade_raw"]
     kept_pays = (agree_arm["buy_omens"] > 0
-                 and agree_arm["buy_net_per_trade"] > 0.0
-                 and agree_arm["buy_net_per_trade"] > every_bar_per_trade)
-    if agree_arm["buy_omens"] == 0:
+                 and agree_arm["buy_net_per_trade_raw"] > 0.0
+                 and agree_arm["buy_net_per_trade_raw"] > every_bar_per_trade)
+    if not agree_arm["readability"]["buy"]["readable"]:
+        # THE VERDICT IS THE MOST-QUOTED LINE THIS SCRIPT WRITES, so it is the
+        # line that must refuse first. A window that cannot carry thirty buy
+        # calls cannot answer "does agreement-gating pay" either way, and an
+        # "agreement does not pay" printed off 29 troughs is a claim about the
+        # calendar being read as a claim about the brain.
+        verdict = (
+            f"{UNREADABLE}: this held-out window holds only "
+            f"{agree_arm['readability']['buy']['label_n']} "
+            f"{OMEN_TROUGH!r} labels in "
+            f"{agree_arm['readability']['buy']['window_bars']} bars and the "
+            f"AGREE arm made {agree_arm['buy_omens']} calls, against a floor "
+            f"of {READABLE_LABEL_FLOOR}. No verdict about agreement-gating "
+            f"follows from this window -- rerun with --test >= "
+            f"{MIN_READABLE_HELDOUT_BARS_AT_3600S} at 3600s. Never lower the "
+            f"omen threshold to manufacture labels. "
+            + "; ".join(agree_arm["readability"]["buy"]["unreadable_because"]))
+    elif agree_arm["buy_omens"] == 0:
         verdict = ("AGREEMENT-GATING PLACES NO TRADES: it abstains on every buy "
                    "omen, so there is no per-trade net to compare. Not an edge.")
     elif kept_pays:
@@ -396,7 +469,18 @@ def main() -> int:
         "baseline_every_bar_per_trade": every_bar_per_trade,
         "true_mix": dict(truth),
         "verdict": verdict,
+        # THE DEFAULT IS PART OF THE RESULT. A report that does not say how
+        # many held-out bars its harness cuts by default cannot be compared
+        # against one written before the default moved.
+        "heldout_default_bars": int(parser.get_default("test")),
+        # SPLICED LAST so the guarded keys win: this overrides
+        # buy_net_per_trade / sell_net_per_trade with UNREADABLE whenever the
+        # window's own label ceiling or the call count is below the floor.
+        **heldout_readability(test_samples,
+                              buy_trades=all_arm["buy_omens"],
+                              buy_net_total=all_arm["buy_net_total"]),
     }
+    print("\n" + render_readability(report))
     report_dir = ROOT / args.report_dir
     report_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
@@ -405,6 +489,11 @@ def main() -> int:
     # measured must never reach data/brain_experiments/, because the next
     # reader cannot tell it from a run at a different cadence.
     validate_report_horizon(report)
+    # And checked for the same reason: a per-trade net whose window could not
+    # have produced thirty calls must not reach data/brain_experiments/ as a
+    # bare float, whatever order the splices above end up in after the next
+    # edit to this dict.
+    validate_report_readability(report)
     out = (report_dir /
            f"agreement-{symbol}-h{horizon['horizon_minutes']:.0f}m"
            f"{horizon['horizon_bars']}b-{regime['regime']}{tag}-{stamp}.json")

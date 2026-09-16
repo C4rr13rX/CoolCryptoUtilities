@@ -50,13 +50,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.omen_experiment import (  # noqa: E402
+    MIN_READABLE_HELDOUT_BARS_AT_3600S,
     add_horizon_args,
     bar_seconds,
     build_samples,
+    heldout_readability,
     load_bars,
     plan_windows,
     settle_horizon,
     validate_report_horizon,
+    validate_report_readability,
 )
 from trading.omen_brain import COLLECTIONS, OmenBrain  # noqa: E402
 
@@ -97,7 +100,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--corpus", required=True)
     parser.add_argument("--train", type=int, default=600)
-    parser.add_argument("--test", type=int, default=120)
+    # RAISED FROM 120 IN PASS 423. This probe reports no money at all -- it
+    # counts how many held-out predictions MOVED when the query set changed --
+    # but the window it measures that on is the same window every money arm
+    # then reuses, and a 120-bar window cannot hold 30 troughs at this feed's
+    # median rate. A verdict of "QUERY PATH LIVE" read off a window too short
+    # to score is a green light handed to an arm that cannot be read.
+    parser.add_argument("--test", type=int,
+                        default=MIN_READABLE_HELDOUT_BARS_AT_3600S)
     add_horizon_args(parser)
     parser.add_argument("--endpoint", default=None)
     parser.add_argument("--chain", default="base")
@@ -219,8 +229,19 @@ def main() -> int:
             "streams_fired_b": {str(k): v for k, v in fired_b.items()},
             "verdict": verdict,
             "note": note,
+            "heldout_default_bars": parser.get_default("test"),
+            # THE LABEL CENSUS OF THE WINDOW THIS VERDICT WAS READ OFF.
+            # This harness scores no trades, so both per-trade cells are
+            # UNREADABLE on a call count of zero, and that is the honest
+            # reading: "no money was measured here" rather than an absent key
+            # a later reader fills in from a money arm run on a different
+            # window. The ceiling is what makes the two comparable.
+            **heldout_readability(test_samples, buy_trades=0,
+                                  buy_net_total=0.0),
+            "scores_trades": False,
         }
         validate_report_horizon(report)
+        validate_report_readability(report)
         Path(args.report).write_text(json.dumps(report, indent=2),
                                      encoding="utf-8")
         print(f"wrote {args.report}")

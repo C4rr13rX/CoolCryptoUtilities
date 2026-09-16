@@ -45,6 +45,15 @@ from trading.omen_layers import (  # noqa: E402
     layer_distinctness, relative_bands, sequence_motif, sticky_motifs,
     transition_motif,
 )
+# THE SHARED READABILITY FLOOR, IMPORTED RATHER THAN RESTATED. A second
+# implementation of "30 labels" in this file would drift from
+# ``trading.omen_scoreboard.READABLE_TRADES`` the first time either moved, and
+# the whole point of the guard is that a cell refused on one harness is refused
+# on all of them.
+from scripts.omen_experiment import (  # noqa: E402
+    MIN_READABLE_HELDOUT_BARS_AT_3600S, heldout_readability,
+    validate_report_readability,
+)
 
 #: The L0 streams a motif is built FROM. ``instrument`` and ``horizon`` are
 #: excluded by ``L1_STREAMS`` already -- they name which symbol and how far
@@ -308,6 +317,14 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
             "train_supported_groups": 0,
             "train_vocabulary": vocabulary,
             "train_largest_group": biggest,
+            # MEASURED EVEN HERE. An unspent arm still has a held-out window,
+            # and that window's label ceiling is a fact about the calendar that
+            # does not depend on whether a motif was fitted. Carrying it means
+            # ``guard_edge_for_report`` can write the same readability block for
+            # every arm, so a reader never has to work out whether an absent
+            # ceiling means "not measured" or "not applicable".
+            "heldout_label_counts": {k: int(v) for k, v in
+                                     Counter(r["_label"] for r in te).items()},
             "unspent": True,
             "unspent_reason": (
                 f"{key} has NO group with n>={min_support} in the train "
@@ -388,6 +405,13 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
         "buyable_motifs": sorted(buyable),
         "called_n": len(called), "called_share": len(called) / len(te),
         "called_net": net(called), "baseline_net": net(te),
+        # THE CEILING ON CALLS, measured on THIS test window rather than
+        # assumed from a median. ``called_net`` above is a per-trade mean and a
+        # per-trade mean drawn from a window holding nine troughs is a fact
+        # about the calendar; ``guard_edge_for_report`` turns these counts into
+        # the UNREADABLE guard before any of it reaches a JSON file.
+        "heldout_label_counts": {k: int(v) for k, v in
+                                 Counter(r["_label"] for r in te).items()},
         # A rule that called NOTHING has no per-trade net, and
         # called_net - baseline_net on zero trades manufactures a loss out of
         # an abstention. Measured 2026-09-10: the UP window under relative
@@ -412,6 +436,53 @@ def heldout_edge(bars: Sequence[Mapping[str, Any]], symbol: str, chain: str,
         "crest_mean_forward": mean_forward(crest_called),
         "baseline_mean_forward": mean_forward(te),
     }
+
+
+def guard_edge_for_report(edge: Mapping[str, Any], *,
+                          default_bars: int) -> Dict[str, Any]:
+    """An edge dict turned into something that may be WRITTEN to disk.
+
+    ``heldout_edge`` returns ``called_net`` as a raw float because two other
+    scripts and four tests do arithmetic on it in process. That contract is
+    unchanged. What changes is the ARTIFACT: a JSON file in
+    data/brain_experiments/ is read months later by someone who quotes one key,
+    so the key they quote must carry its own n or refuse to be a number.
+
+    So this returns a COPY in which ``called_net`` reads ``UNREADABLE``
+    whenever the held-out window holds fewer than ``READABLE_LABEL_FLOOR``
+    trough labels or the rule made fewer than that many calls, with the float
+    moved to ``called_net_raw`` -- named so it cannot be quoted by accident --
+    and the shared ``heldout_readability`` block spliced in beside it.
+
+    An ``unspent`` arm made ZERO calls, so it gets the same block with
+    ``buy_trades=0``: its cell is unreadable on the call count, and
+    ``unspent_reason`` beside it says the calls are missing because nothing
+    reached the support floor rather than because the window was short. The
+    block is written rather than omitted because an ABSENT ceiling reads as
+    "not applicable" when what is true is "this window held nine troughs
+    either way".
+
+    A window with no label census at all (an errored arm) is returned with the
+    default-bars field only -- there is nothing measured to guard.
+    """
+    out = dict(edge)
+    out["heldout_default_bars"] = int(default_bars)
+    counts = edge.get("heldout_label_counts")
+    if counts is None:
+        return out
+    # The shared implementation wants samples, and what survives here is the
+    # census of them. Rebuilding one bare label per counted bar is the same
+    # window by construction and keeps ONE implementation of the floor.
+    samples = [{"label": label} for label, n in counts.items() for _ in range(n)]
+    called_n = int(edge.get("called_n") or 0)
+    called_net = float(edge["called_net"]) if "called_net" in edge else 0.0
+    block = heldout_readability(samples, buy_trades=called_n,
+                                buy_net_total=called_net * called_n)
+    out.update(block)
+    if "called_net" in edge:
+        out["called_net_raw"] = float(edge["called_net"])
+        out["called_net"] = block["buy_net_per_trade"]
+    return out
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -455,7 +526,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="fit the motif->trough map on a train window and "
                              "score it, frozen, on a held-out window")
     parser.add_argument("--train", type=int, default=350)
-    parser.add_argument("--test", type=int, default=180)
+    # RAISED FROM 180 IN PASS 423. 180 bars at 3600s cannot hold 30 trough
+    # labels at this feed's 14.46% median base rate (180 * 0.1446 = 26.0), so
+    # the default window was below its own readability floor BEFORE the motif
+    # rule was asked anything. The default is the shared constant rather than a
+    # copied literal so the two cannot drift.
+    parser.add_argument("--test", type=int,
+                        default=MIN_READABLE_HELDOUT_BARS_AT_3600S)
     parser.add_argument("--min-lift", type=float, default=1.3)
     parser.add_argument("--min-support", type=int, default=20)
     parser.add_argument("--relative-bands", action="store_true",
@@ -723,13 +800,20 @@ def main() -> int:
                           f"HELD-OUT EDGE OF THE SHIPPED L2 ({L2_WINNER}) -- "
                           f"no node, no fabric")
         if args.json_out:
-            edge_path = str(args.json_out).replace(".json", "-heldout.json")
-            Path(edge_path).write_text(json.dumps(edge, indent=2),
-                                       encoding="utf-8")
-            l2_path = str(args.json_out).replace(".json", "-l2-heldout.json")
-            Path(l2_path).write_text(json.dumps(l2_edge, indent=2),
-                                     encoding="utf-8")
-            print(f"\nwrote {edge_path}\nwrote {l2_path}")
+            # GUARDED AT WRITE TIME, NOT AT READ TIME. ``edge`` carries
+            # ``called_net`` as a bare float on purpose -- two scripts and four
+            # tests do arithmetic on it in process -- and the artifact is where
+            # that float stops being quotable without its n.
+            default_bars = build_parser().get_default("test")
+            for path_suffix, arm in ((("-heldout.json"), edge),
+                                     (("-l2-heldout.json"), l2_edge)):
+                out_path = str(args.json_out).replace(".json", path_suffix)
+                guarded = guard_edge_for_report(arm, default_bars=default_bars)
+                if "readability" in guarded:
+                    validate_report_readability(guarded)
+                Path(out_path).write_text(json.dumps(guarded, indent=2),
+                                          encoding="utf-8")
+                print(f"\nwrote {out_path}")
 
     if args.json_out:
         Path(args.json_out).write_text(json.dumps({
