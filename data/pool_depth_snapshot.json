@@ -157,5 +157,22 @@
   "ZUCKASAURUS": 36.68,
   "\u725b\u6765": null,
   "\ud801\udcceSD\ud81b\udf0a": null,
-  "\ud83c\udf4e": null
+  "\ud83c\udf4e": null,
+  "_merged_from_28d3db1": [
+    "BASECAT",
+    "BSTONK",
+    "CBADA",
+    "CBXRP",
+    "CBZEC",
+    "OMARCHY",
+    "TYBG"
+  ],
+  "_merged_note": "These rows came from the pass-426 snapshot and were NOT re-swept: their symbols have no ticks in the 168h market_stream window, so the sweep never asked about them. They are Dune reading, not mine, and are older. CBXRP at $117.7M is the deepest pool on record here and is NOT in the current tape -- see [eb269198].",
+  "CBXRP": 117724738,
+  "BSTONK": 261676,
+  "BASECAT": 210674,
+  "CBZEC": 209443,
+  "CBADA": 3450,
+  "OMARCHY": 0,
+  "TYBG": 0
 }
