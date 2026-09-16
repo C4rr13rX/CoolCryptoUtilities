@@ -5959,3 +5959,124 @@ variable at all -- so it is a code change, and it is ONE change, which is why it
 was not bolted onto this pass alongside 27ba5a0. Re-run
 `python -X utf8 scripts/money_button_dip_expectancy.py --hours 168` after it and
 the ALL row is the acceptance test.
+
+## Pass 425 -- Echo (senior): the atf_static cost route is CLOSED, and "money_button has no edge" was a verdict on the wrong strategy
+
+**ROUTE KILLED: "raise the clip / cut the cost on atf_static."** CLOSED.
+atf_static is the one strategy with a live execution branch, which makes it the
+obvious candidate, and it cannot work. Its GROSS is negative: -0.13% of notional
+over 18 trips ([fdeb0316], measured pass 100). Negative gross means the
+DIRECTION is wrong before a cent of cost, so no clip, venue discount or
+deep-pool restriction rescues it. The clip buys 0.14pp of a 0.61pp gap and an
+INFINITE clip still leaves it 0.45pp short. Do not re-open this with another
+cost idea; it needs 0.45pp of gross that does not exist.
+
+**ROUTE RE-OPENED, and this is the correction that matters: every recorded
+verdict on "money_button" was measured on the WRONG STRATEGY.** Dune proved at
+HEAD (bcc4104) that TWO strategies share `strategy_id` money_button and trade in
+OPPOSITE directions -- the momentum rule in `trading/strategies/money_button.py`
+and the dip rule at `trading/scheduler.py:1743`. The entry in this file reading
+"money_button has no edge at the live fee" priced the MOMENTUM rule. It says
+nothing whatsoever about the dip rule, which had never been priced at all. A
+route this file recorded as closed was closed on evidence about a different
+strategy.
+
+**THE DIP RULE, NOW PRICED** (Dune, commit 5f37bc2,
+`scripts/money_button_dip_expectancy.py --hours 168`):
+
+    ALL          87 trades   34% win   mean -1.283%   total -111.63%
+
+As configured it LOSES, and that is the headline. But the split has no
+exception in the sample: every deep-pool pair positive (ETH-USDC +0.476%,
+WETH-USDT +0.406%, ETH-USDT +0.388%, LDO-USDC +0.042%), every thin-pool pair
+negative (ZORA -0.824%, VVV -0.701%, ALIGN -0.446%, DRB -0.334%). Deep-pool
+subtotal 8 trades / 6 wins / +1.74% -- a SMALL SAMPLE, explicitly NOT claimed as
+an edge. 1367 of 1564 dip ticks are in the thin tokens: the 2-5% drawdowns occur
+precisely where the round trip eats the reversion, and the rule is starved
+precisely where it would pay. A signal fix cannot reach this; a universe
+restriction can.
+
+**OPEN, NOT CLOSED -- the threshold.** `scheduler.py:1743` applies ONE constant
+(dip between 2% and 5%) to tokens whose round-trip cost spans 0.04% to 74.98%.
+Capturing fraction f of a dip needs `dip*f > cost`; at WETH's 0.11% and f=0.5
+that is a ~0.22% break-even, so 0.3-0.5% dips on WETH/ETH should clear cost, and
+small dips are far more frequent than 2-5% ones. Filed [3c411c08] as a
+measurement-only sweep. NOT YET TESTED -- do not record a result here for it.
+
+**THE QUESTION THAT GOVERNS ALL OF THE ABOVE AND IS STILL UNANSWERED:** does the
+dip rule at `scheduler.py:1743` pass through the four-way AND at
+`scheduler.py:809-813`? That AND is where the ghost lane dies (direction_prob
+max 0.5000 vs a 0.6 floor; net_margin max 0.0000 vs a 0.0 floor; 1083 of 1646
+route evaluations ending no_candidates). If the dip rule sits behind it, the
+2.4x/hour fire count counts signals a later gate discards and NO threshold sweep
+can help. If it bypasses it, this is the only model-independent path to a live
+trade in the repo. Assigned to Dune; answer it before trusting any sweep number.
+
+**SCOREBOARD UNMOVED:** live P/L -0.1864 over 18 trades, no swap settled this
+pass. Pass gate 723 passed / 0 failed, baseline re-taken from a stale 255.
+
+
+## Pass 425 -- Sage (QA): stale_ghost_book is not the wall, and the deep-pool dip edge is one asset
+
+ROUTE TRIED: treat `stale_ghost_book` as the dominant live-gate refusal and fix
+whatever stops strategies closing trades (item dbbfea96).
+NUMBER: **CLOSED -- the premise is false at HEAD.** `python -X utf8
+scripts/ghost_stale_census.py` (commit 7f91403) runs `_ghost_validation` once per
+strategy over all 41 strategies. stale_ghost_book = **2**, not 13 of 38:
+atf_static (n=1, newest exit 103.8h) and atf_static_scout (n=2, 109.0h). The real
+distribution is cold_start_bootstrap 32 (ready=**True**), insufficient_samples 7,
+stale_ghost_book 2. Strategies refused ONLY by staleness: **zero** -- the same
+gate re-run with `GHOST_MAX_STALE_SEC=0` in process returns insufficient_samples
+for both. Widening that guard opens nothing, so it was not touched.
+
+ROUTE TRIED: attribute stale_ghost_book to the tick-driven exit schedule (3f7a0677).
+NUMBER: **CLOSED -- wrong side of the trade.** `trading_ops` rows with
+`status='ghost-entry'` against `exit` rows are **16:16 over 48h (1.00:1)** and
+**25:35 over 168h (0.71:1** -- the book is draining). A broken exit schedule piles
+entries up at a ratio well above 1. THE TRAP that produced the original reading:
+a raw `action` count is 355 enter vs 16 exit (22:1), but **340 of those 355 carry
+`source='c0d3rv2_atf_static'` and no `status` field** -- orchestrator entry
+CANDIDATES, not ghost opens. Candidate to ghost-entry conversion is 4.49%/48h.
+The shortage is on the ENTRY side (item d7d87724).
+
+ROUTE TRIED: approve money_button and expect ladder step 6 to open.
+NUMBER: **CLOSED -- it cannot, and the refusal is correct code.**
+`_ghost_validation_for_live()` returns subject=`money_button` n=0 ready=False
+reason=`no_qualified_strategy:cold_start_bootstrap`. `_ghost_validation` alone
+DOES return ready=True for it, but on reason `cold_start_bootstrap`, and
+pipeline.py:4716-4733 keeps only reasons in `GHOST_EARNED_READY_REASONS =
+{'', 'fast_track', 'positive_expectancy'}` (:676) with total_net_profit>0, forcing
+the rest not-ready. Its comment states the reason: it "would hand a live-money
+verdict of ready to every strategy that has never been tried, on the strength of
+having no record." money_button has n=0 in the gate window and 2 ghost exits ever,
+newest 294.4h old. Not the wallet and not the clip: deployable_stable_usd 19.66,
+min_clip_usd 6.0, min_clip_block False, halt_live True.
+**ANTI-FIX, do not ship it:** adding `cold_start_bootstrap` to
+`GHOST_EARNED_READY_REASONS` is the exact fail-open that comment prevents and
+would arm every never-tried strategy at once. Successor item 67e0df30.
+
+ROUTE TRIED: restrict the money_button DIP rule to deep pools (item 665ac231).
+NUMBER: **NOT CLOSED, but the supporting number is 96% one asset.** Reproduced
+`python -X utf8 scripts/money_button_dip_expectancy.py --hours 168` exactly: ALL =
+87 trades, 34% win, mean -1.283%, total -111.63%. That negative stands. The
+deep-pool subtotal of 8 trades / 6 wins / +1.74% decomposes into ETH-USDT(2),
+ETH-USDC(1), WETH-USDT(1), LDO-USDC(3), LINK-USDC(1) -- and the first three are
+**the same underlying asset**, ether against two stablecoins. Ether contributes
++1.67% of the +1.74% = **96.0% of all deep-pool profit**. Strip ether: 4 trades,
+2 wins, **+0.07% total = +0.018%/trade**, inside the measured WETH round-trip
+cost band of 0.04-0.11% and indistinguishable from zero. Wilson 95% CI on 6/8 is
+[40.9%, 92.9%]; on ether's 3 distinct pairs, [43.8%, 100.0%]. Both contain 50%.
+Against this loop's own n>=30 floor: deep-pool n=8, ether-independent n<=3. Dune
+flagged the small sample and did not claim an edge -- correct; this is the number
+placed under that flag. Successor item bb53fd2b.
+
+CORRECTION FOR ANY PASS QUOTING A GATE WINDOW: `.env` sets
+`GHOST_VALIDATION_LOOKBACK_SEC=432000` -- **120 hours**, not the 172800 (48h)
+default that the comments throughout `trading/pipeline.py` quote. `live_gate_map.py`
+reads the env and is correct; the prose is not.
+
+SECOND CORRECTION: a strategy with ZERO trades does NOT report stale_ghost_book.
+pipeline.py:5144 tests cold_start first and sets ready=True with reason
+cold_start_bootstrap before the reason chain at :5288 runs, so the `not trades`
+disjunct in `stale_samples` (:4869) is unreachable as a reason. stale_ghost_book
+always means "has a book and it is old", never "has no book".
