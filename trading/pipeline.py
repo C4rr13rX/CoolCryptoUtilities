@@ -4328,14 +4328,22 @@ class TrainingPipeline:
             pass
         self._persist_live_readiness_snapshot()
 
-    def _load_cached_confusion_report(self) -> None:
+    def _load_cached_confusion_report(self) -> bool:
+        """Load the on-disk confusion report. Returns True if one was adopted.
+
+        The return value exists so ``ensure_confusion_fresh`` can re-read the
+        cache instead of only ``__init__``. ``_evaluate_and_promote`` wipes
+        ``_last_confusion_report`` to ``{}`` whenever a build produces nothing
+        (short evaluation split), so a process that has been up for hours can
+        hold an EMPTY in-memory report while this file on disk is minutes old.
+        """
         path = Path("data/reports/confusion_matrices.json")
         if not path.exists():
-            return
+            return False
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
-            return
+            return False
         report = payload.get("confusion")
         if isinstance(report, dict) and report:
             self._last_confusion_report = report
@@ -4356,6 +4364,8 @@ class TrainingPipeline:
                     self._last_confusion_refresh = time.time()
             else:
                 self._last_confusion_refresh = time.time()
+            return True
+        return False
 
     def ensure_confusion_fresh(self, *, max_age: Optional[float] = None, force: bool = False) -> bool:
         if max_age is None:
@@ -4366,6 +4376,20 @@ class TrainingPipeline:
         now = time.time()
         needs_refresh = force
         if not needs_refresh:
+            if not self._last_confusion_report:
+                # THE DISK CACHE IS EVIDENCE TOO, AND NOTHING RE-READ IT.
+                #
+                # Only __init__ called _load_cached_confusion_report, while
+                # _evaluate_and_promote wipes the in-memory report to {} on
+                # every build that yields nothing. From that moment the process
+                # holds an empty report forever and this branch orders a full
+                # rebuild -- minutes of CPU -- on every freshness check, while
+                # data/reports/confusion_matrices.json sits on disk minutes old.
+                # Re-read it here before concluding a refresh is required.
+                try:
+                    self._load_cached_confusion_report()
+                except Exception:
+                    pass
             if not self._last_confusion_report:
                 needs_refresh = True
             elif max_age > 0 and (now - self._last_confusion_refresh) > max_age:
@@ -4388,13 +4412,24 @@ class TrainingPipeline:
             max_age = float(os.getenv("CONFUSION_REFRESH_MAX_AGE", "900") or 900.0)
         except ValueError:
             max_age = 900.0
-        age_sec = max(
-            0.0, time.time() - float(getattr(self, "_last_confusion_refresh", 0.0) or 0.0)
-        )
+        # ABSENT IS NOT STALE, AND PRINTING ONE AS THE OTHER PRINTS THE EPOCH.
+        #
+        # _last_confusion_refresh is initialised to 0.0 and only the two writers
+        # that adopt a report stamp it. When neither has run, `now - 0.0` is the
+        # unix epoch, and the warning line rendered it as a duration:
+        # logs/system.log:5833140 at 06:27:39 reads "judging on a confusion
+        # report 1789122459s old" -- 56 years. That number is a SENTINEL saying
+        # the field was never stamped, not an age.
+        stamp = float(getattr(self, "_last_confusion_refresh", 0.0) or 0.0)
+        never_loaded = stamp <= 0.0
+        age_sec = None if never_loaded else max(0.0, time.time() - stamp)
         return {
-            "confusion_age_sec": round(age_sec, 1),
+            "confusion_age_sec": None if age_sec is None else round(age_sec, 1),
             "confusion_max_age_sec": max_age,
-            "confusion_stale": bool(max_age > 0 and age_sec > max_age),
+            "confusion_stale": bool(
+                age_sec is not None and max_age > 0 and age_sec > max_age
+            ),
+            "confusion_never_loaded": never_loaded,
         }
 
     def _announce_stale_confusion_judgment(self, *, refreshed: bool, refresh_error: str) -> Dict[str, Any]:
@@ -4433,7 +4468,11 @@ class TrainingPipeline:
         if refreshed and not refresh_error:
             self._confusion_stale_judgments = 0
             return freshness
-        if not freshness["confusion_stale"] and not refresh_error:
+        if (
+            not freshness["confusion_stale"]
+            and not freshness.get("confusion_never_loaded")
+            and not refresh_error
+        ):
             # The refresh did not run, but the cached report is still inside
             # its own max age. Judging on it is correct, not a compromise.
             self._confusion_stale_judgments = 0
@@ -4451,11 +4490,22 @@ class TrainingPipeline:
         self._confusion_stale_warn_last = now
         self._confusion_stale_judgments = 0
         cause = f"the refresh raised {refresh_error}" if refresh_error else "the refresh did not run"
+        if freshness.get("confusion_never_loaded"):
+            # No age, because there is no report to be old. Naming this as a
+            # duration is what put "1789122459s old" in the operator's log.
+            headline = (
+                "live readiness is judging with no confusion report at all -- "
+                "no confusion report has ever been loaded in this process"
+            )
+        else:
+            headline = (
+                "live readiness is judging on a confusion report "
+                f"{freshness['confusion_age_sec']:.0f}s old against a "
+                f"{freshness['confusion_max_age_sec']:.0f}s max age"
+            )
         log_message(
             "training",
-            "live readiness is judging on a confusion report "
-            f"{freshness['confusion_age_sec']:.0f}s old against a "
-            f"{freshness['confusion_max_age_sec']:.0f}s max age -- {cause}. "
+            f"{headline} -- {cause}. "
             f"{judgments} readiness verdict(s) since the last such line were decided "
             "on this report; a stale metric is a claim about the present made from the past",
             severity="warning",
@@ -5728,17 +5778,51 @@ class TrainingPipeline:
                 and fpr_fb <= self.max_false_positive_rate
                 and win_fb >= max(0.1, self.min_ghost_win_rate * 0.5)
             )
-            if not ready_fb and not mini_ready_fb and has_active:
+            # A MODEL FILE IS NOT MODEL EVIDENCE.
+            #
+            # This branch used to read: if every measured metric failed and a
+            # model was loadable from disk, declare mini_ready anyway and
+            # OVERWRITE the two metrics that had just failed with values
+            # manufactured from the thresholds they failed -- fpr clamped down
+            # to max_false_positive_rate, win clamped up to half the minimum.
+            # The report then presented those synthesised numbers in the same
+            # keys a reader uses for measurements, so a measured fpr of 1.0
+            # (every signal a false positive, the value used when there is no
+            # feedback at all) was published as 0.15. Readiness was being
+            # granted on the EXISTENCE OF A FILE.
+            #
+            # Kept only behind an explicitly-named flag that defaults OFF, and
+            # when it is on the synthesised values go in their own keys so no
+            # reader can mistake them for a measurement.
+            fpr_floor_applied = False
+            win_floor_applied = False
+            allow_model_file = (
+                os.getenv("LIVE_ALLOW_MODEL_FILE_AS_EVIDENCE", "0") or "0"
+            ).strip().lower() in {"1", "true", "yes", "on"}
+            model_file_grant = False
+            if not ready_fb and not mini_ready_fb and has_active and allow_model_file:
                 mini_ready_fb = True
-                fpr_fb = min(fpr_fb, self.max_false_positive_rate)
-                win_fb = max(win_fb, self.min_ghost_win_rate * 0.5)
+                model_file_grant = True
+                fpr_floor_applied = True
+                win_floor_applied = True
             if not ready_fb and mini_ready_fb and allow_mini_as_ready:
                 ready_fb = True
-                fpr_fb = min(fpr_fb, self.max_false_positive_rate)
-                win_fb = max(win_fb, self.min_ghost_win_rate * 0.5)
+                fpr_floor_applied = True
+                win_floor_applied = True
+            no_model_evidence = (
+                not ready_fb
+                and not mini_ready_fb
+                and samples_fb <= 0
+                and precision_fb <= 0.0
+                and recall_fb <= 0.0
+            )
             report_fb = {
                 "ready": ready_fb,
-                "reason": "no_confusion_data" if not ready_fb else "",
+                "reason": (
+                    ""
+                    if ready_fb
+                    else ("no_model_evidence" if no_model_evidence else "no_confusion_data")
+                ),
                 "horizon": "fb",
                 "precision": precision_fb,
                 "recall": recall_fb,
@@ -5748,11 +5832,28 @@ class TrainingPipeline:
                 "lift": 0.0,
                 "dominant": None,
                 "mini_ready": mini_ready_fb,
-                "mini_reason": "" if mini_ready_fb else "insufficient_accuracy",
+                "mini_reason": (
+                    ""
+                    if mini_ready_fb
+                    else ("no_model_evidence" if no_model_evidence else "insufficient_accuracy")
+                ),
                 "mini_precision": precision_fb,
                 "mini_recall": recall_fb,
                 "mini_samples": samples_fb,
                 "mini_false_positive_rate": fpr_fb,
+                # Measured, always. The threshold-satisfying values live in
+                # their own keys below and are never written over these.
+                "ghost_win_rate_measured": win_fb,
+                "false_positive_rate_floor_applied": fpr_floor_applied,
+                "ghost_win_rate_floor_applied": win_floor_applied,
+                "false_positive_rate_floor_value": (
+                    float(self.max_false_positive_rate) if fpr_floor_applied else None
+                ),
+                "ghost_win_rate_floor_value": (
+                    float(self.min_ghost_win_rate * 0.5) if win_floor_applied else None
+                ),
+                "model_file_grant": model_file_grant,
+                "no_model_evidence": no_model_evidence,
             }
             ghost_ready = bool(ghost_check.get("ready"))
             if report_fb["ready"] and not ghost_ready:
