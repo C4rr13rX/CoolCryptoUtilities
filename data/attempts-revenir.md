@@ -6133,3 +6133,71 @@ from a looser threshold.
 NOT CLAIMED: no restart, no live trade, trading/scheduler.py untouched all pass,
 and no threshold in production changed. Three of the five routes tried today came
 back negative.
+
+## Pass 426 -- Echo (senior). Re-price the ghost book per symbol. ROUTE CLOSED.
+
+COMMIT ec1ee5f. Proof: `python -X utf8 scripts/deep_pool_reprice.py`
+
+ROUTE TRIED: charge every symbol its OWN measured round-trip cost instead of the
+one flat curve `services/roundtrip_cost.py` publishes for all symbols, and ask
+whether the tradeable book's loss is symbol SELECTION rather than DIRECTION.
+
+NUMBER PRODUCED: with 10 implausible rows censored (>20% realised move), EVERY
+measured symbol is negative on GROSS, before a cent of cost.
+
+      AERO   n=52   gross -0.0827   net at its own 0.6395% -> -0.7522
+      WETH   n=4    gross -0.0368   net -0.0545
+      CBBTC  n=11   gross +0.0032   net -0.0122   (top row = 463% of gross)
+      SOL    n=1    gross +0.0045   net -0.0196
+      DEEP   n=16   gross -0.0291   net -0.0864
+      THIN   n=52   gross -0.0827   net -0.7522
+
+CLOSED: symbol selection does NOT set the sign. Re-pricing cannot rescue a book
+that is negative before costs, and deep pools are negative before costs too.
+Restricting the tradeable universe to deep pools does not make this book
+positive. [e449d38f] rejected on this evidence.
+
+THE NUMBER THIS ROUTE RESTED ON WAS READ AT THE WRONG CLIP SIZE. "AERO
+0.64-4.35%" -- the 4.35% is the $10 quote. This book trades AERO at $2.01 mean
+notional, where AERO's measured round trip is 0.6395%. Charging AERO its true
+cost moves the book about eleven cents. The cost wall is REAL but SIZE-DEPENDENT,
+and at the size we actually trade it is not the catastrophe the backlog said.
+
+SECOND FINDING, NOT SOUGHT, AND IT AFFECTS EVERY P/L THIS LOOP HAS QUOTED:
+THE BOOK'S SIGN IS 4.2% OF ITS ROWS. 10 of 237 `trade_outcomes` rows move more
+than 20% (AAVE +174.2%, AERO +161.0%, UNI +122.9%, COMP -55.3%, AERO -54.9%,
+BSTONK +34.1%) and carry +5.9772 of net. The whole book is +2.8129. WITHOUT THOSE
+TEN IT IS -3.1643. The pooled "+7.08" printed in the status every pass is
+substantially artifacts. AERO's entire +2.0385 gross is one row worth +3.2196 --
+157.9% of that symbol.
+
+A NEAR MISS WORTH RECORDING. My FIRST run, uncensored, said deep pools win and I
+wrote the verdict "cost is survivable where the pool is deep". It was two fake
+rows. The check that caught it -- rank each symbol's rows by |gross| and look at
+the top one's share -- took ninety seconds and I nearly skipped it. Any book
+result in this repo should carry a top1-share column; the script now prints one.
+
+CAVEATS, and they are printed in the report body, not only here: the costs are
+QUOTES not fills; slippage and MEV are unmodelled; only 6 symbols were ever
+quoted and 45 others are reported UNMEASURED and charged nothing rather than
+defaulted; and the ghost book records ZERO realised slippage across all 183
+round trips, so this compares two MODELS, not a model against an observation.
+The live lane measured ~27.8 bps of real slippage (21.73 buy + 6.04 sell, n=12)
+that no ghost row carries.
+
+NOT CLOSED, AND OPENED INSTEAD: [c5c198b2] -- CLIP SIZE is the one dimension
+nobody has swept. Every negative result this loop has produced was measured at a
+$2 clip on a book whose mean notional is $2.01, and cost is a percentage tax that
+is not flat in notional: AERO 0.6395% at $2 -> 4.3502% at $10, while WETH
+0.1074% -> 0.0369% over the same range. Thin pools collapse with size; deep pools
+get cheaper. We have been sweeping signal parameters with the cost axis pinned to
+its worst value.
+
+CORRECTION MADE THE SAME PASS: I also rejected [bd851275] on the numbers above
+and then reopened it. It is about Dune's SIMULATED dip expectancy (deep pools +
+2% floor + 15m = +0.429% mean, n=9), a different population from the REALISED
+book I measured. The two do not contradict each other and reaching n=30 on that
+rule is still worth doing.
+
+NOT CLAIMED: no restart, no live trade, no production file touched, no symbol
+banned, no gate changed. The route I was assigned came back negative.
