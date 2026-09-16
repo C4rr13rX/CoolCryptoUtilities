@@ -210,12 +210,32 @@ def check_executor() -> Link:
         readiness = TrainingPipeline(db=get_db()).live_readiness_report()
     except Exception as exc:
         return link.unknown("readiness unavailable: %s" % type(exc).__name__)
+    # Measure the condition the SELECTOR actually computes, not one of its two
+    # terms. selector.build() and the reconcile path both strip the flag only
+    # when `not _readiness_permits_live(readiness) AND not _operator_armed_live()`
+    # -- probing _readiness_permits_live alone reported link 8 FAILED while the
+    # bots were in fact being built live-capable off an explicit
+    # ENABLE_LIVE_TRADING=1. A ladder rung that measures a different predicate
+    # than the code it describes is worse than no rung.
     permits = GhostTradingSupervisor._readiness_permits_live(readiness)
-    if not permits:
+    armed = GhostTradingSupervisor._operator_armed_live()
+    if not permits and not armed:
         return link.failed(
             "bots built with live_trading_enabled=False (ready=%s ghost_ready=%s)"
             % (readiness.get("ready"), readiness.get("ghost_ready")),
             "selector._readiness_permits_live must accept a graduated strategy",
+        )
+    if not permits and armed:
+        # The flag survives, but bot.py still gates every entry on
+        # _strategy_live_approved -> strategy_ledger.is_live_approved(sid).
+        # Say which of the two is carrying the rung, so this never reads as
+        # earned graduation.
+        return link.passed(
+            "bots built live-capable on an EXPLICIT operator arm "
+            "(ENABLE_LIVE_TRADING=1), NOT on ghost evidence "
+            "(ghost_ready=%s reason=%s) -- entries still require a "
+            "ledger-approved strategy"
+            % (readiness.get("ghost_ready"), readiness.get("ghost_reason"))
         )
     return link.passed("bots may trade live (ghost_reason=%s)" % readiness.get("ghost_reason"))
 

@@ -1150,6 +1150,45 @@ class GhostTradingSupervisor:
         # the STRICT path returns. See GHOST_EARNED_READY_REASONS.
         return ghost_reason_is_earned(readiness.get("ghost_reason"))
 
+    @staticmethod
+    def _operator_armed_live() -> bool:
+        """Did a human explicitly arm the live lane with ENABLE_LIVE_TRADING=1?
+
+        Measured 2026-09-16: ``.env`` sets ``ENABLE_LIVE_TRADING=1``, so
+        ``TradingBot.__init__`` (bot.py:635) builds every bot live-capable --
+        and two lines into ``build()`` the selector threw that away, because
+        ``_readiness_permits_live`` returns False on ``ghost_ready=False``
+        (reason ``insufficient_samples``). That is the SAME number that sets
+        ``block_reason='ghost_validation_block'`` in pipeline.py, so ladder
+        links 6 and 8 were one fact reported twice.
+
+        The wholesale disable can only ever fire when the operator set the flag
+        to 1: at 0 the bot is already built with the flag off and the line is a
+        no-op. Its sole effect was therefore to override a deliberate human
+        decision with an aggregate metric.
+
+        Honouring the arm is safe BY CONSTRUCTION, and the safety is not in
+        this function -- it is at bot.py:6715, which gates a live entry on
+        ``live_trading_enabled AND _strategy_live_approved(directive)``.
+        ``_strategy_live_approved`` defers to
+        ``strategy_ledger.is_live_approved(sid)`` under
+        ``STRATEGY_GRADUATION_ENFORCED`` (default 1). With zero ledger-approved
+        strategies -- today's state -- behaviour is unchanged. What this
+        restores is the ability to hand-approve ONE strategy and have that mean
+        something, which the ledger gate was written for and the wholesale
+        disable made unreachable.
+
+        ``LIVE_REQUIRE_MODEL_READY=1`` still wins: an operator who asked for the
+        strict coupling gets it, and this override does not defeat it.
+        """
+        if (os.getenv("LIVE_REQUIRE_MODEL_READY", "0") or "0").strip().lower() in {
+            "1", "true", "yes", "on",
+        }:
+            return False
+        return (os.getenv("ENABLE_LIVE_TRADING", "0") or "0").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+
     def build(self) -> None:
         if self.bots:
             return
@@ -1318,7 +1357,11 @@ class GhostTradingSupervisor:
             bot.configure_route(pair.symbol, pair.tokens)
             bot.stable_checkpoint_ratio = self.stable_checkpoint_ratio
             bot.max_trade_share = 0.12
-            if readiness and not self._readiness_permits_live(readiness):
+            if (
+                readiness
+                and not self._readiness_permits_live(readiness)
+                and not self._operator_armed_live()
+            ):
                 bot.live_trading_enabled = False
             if hasattr(bot, "apply_transition_plan"):
                 bot.apply_transition_plan(transition_plan)
@@ -1646,8 +1689,14 @@ class GhostTradingSupervisor:
                 bot.stable_checkpoint_ratio = self.stable_checkpoint_ratio
                 bot.max_trade_share = 0.12
                 # Same rule as build(): bots added by reconciliation must not
-                # be disabled by the degenerate aggregate metric either.
-                if readiness and not self._readiness_permits_live(readiness):
+                # be disabled by the degenerate aggregate metric either, and an
+                # explicit operator arm survives here too -- a fix applied only
+                # to build() reopens the hole on the next bot reconcile adds.
+                if (
+                    readiness
+                    and not self._readiness_permits_live(readiness)
+                    and not self._operator_armed_live()
+                ):
                     bot.live_trading_enabled = False
                 if hasattr(bot, "apply_transition_plan"):
                     bot.apply_transition_plan(transition_plan)
