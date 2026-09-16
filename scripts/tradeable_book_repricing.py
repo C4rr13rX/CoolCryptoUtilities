@@ -310,6 +310,33 @@ def main() -> int:
     print("  row this book has, and the CI is what says whether it holds.")
     print()
 
+    # --- 5. does DEPTH predict COST? ---------------------------------------
+    print("-" * W)
+    print("5. DOES POOL DEPTH PREDICT ROUND-TRIP COST? -- checking our own proxy")
+    depths = load_depths(DEPTH_SNAPSHOT)
+    chk = []
+    for s, tbl in sorted(MEASURED_ROUND_TRIP_PCT.items()):
+        dep = depths.get(s)
+        c = dict(tbl)
+        if dep is None:
+            print(f"  {s:<7}{'(no depth reading)':>18}")
+            continue
+        print(f"  {s:<7}{dep:>18,.0f}  rt@$2={c.get(2.0):.4f}%  "
+              f"@$10={c.get(10.0):.4f}%  @$50={c.get(50.0):.4f}%")
+        chk.append((dep, c.get(2.0)))
+    print(f"  Only {len(chk)} of {len(MEASURED_ROUND_TRIP_PCT)} quoted symbols have a")
+    print("  depth reading, so this cannot be a correlation -- it is a spot check,")
+    print("  and it FAILS: AERO sits in a pool 4x deeper than CBBTC and costs 9x")
+    print("  more to round-trip at $2 (0.6395% vs 0.0728%).")
+    print("  CONSEQUENCE: DexScreener pool liquidity is NOT established as a")
+    print("  proxy for round-trip cost, and the only rows where we can check it")
+    print("  disagree with the assumption. The variance result in section 4 is")
+    print("  unaffected -- price VARIANCE and round-trip COST are different")
+    print("  quantities and only variance was measured by depth. But no route")
+    print("  may assume that selecting deep pools buys cheaper fills until the")
+    print("  quote census covers more than 6 symbols.")
+    print()
+
     print("CAVEATS THAT TRAVEL WITH EVERY NUMBER ABOVE")
     print("  1. QUOTES, NOT FILLS. Slippage and MEV are NOT modelled. Every")
     print("     'after' figure is a COST FLOOR, the best case, never a realised")
