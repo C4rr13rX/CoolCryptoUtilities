@@ -1,4 +1,7 @@
 {
+  "banding": "sign",
+  "band_streams": [],
+  "l1_vocabulary_train": 15,
   "train_window": [
     357,
     707
@@ -11,23 +14,25 @@
   "test_n": 168,
   "train_base_trough": 0.12571428571428572,
   "buyable_motifs": [
-    "co1 geo=mid tem=lo flo=mid vol=hi cro=lo"
+    "co1 geo=lo tem=lo flo=mid vol=hi cro=lo"
   ],
-  "called_n": 12,
-  "called_share": 0.07142857142857142,
-  "called_net": 0.03247581235100614,
+  "called_n": 9,
+  "called_share": 0.05357142857142857,
+  "called_net": 0.029030311729516846,
   "baseline_net": 0.03837669659914169,
+  "unmeasurable": false,
+  "unmeasurable_reason": "",
   "called_trough_precision": 0.0,
   "baseline_trough_rate": 0.07142857142857142,
   "cost": 0.0065,
   "sellable_motifs": [
-    "co1 geo=mid tem=hi flo=mid vol=hi cro=hi",
+    "co1 geo=lo tem=hi flo=mid vol=hi cro=lo",
     "co1 geo=mid tem=hi flo=mid vol=hi cro=lo"
   ],
-  "crest_called_n": 106,
-  "crest_called_share": 0.6309523809523809,
-  "crest_fall_precision": 0.2358490566037736,
+  "crest_called_n": 9,
+  "crest_called_share": 0.05357142857142857,
+  "crest_fall_precision": 0.4444444444444444,
   "baseline_fall_rate": 0.27976190476190477,
-  "crest_mean_forward": 0.054420797400461254,
+  "crest_mean_forward": 0.01364014349863744,
   "baseline_mean_forward": 0.04487669659914169
 }

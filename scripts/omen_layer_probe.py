@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections import Counter
 from pathlib import Path
@@ -92,6 +93,45 @@ def load_bars(path: Path) -> List[Dict[str, Any]]:
     bars = [b for b in bars if b.get("close")]
     bars.sort(key=lambda b: int(b["timestamp"]))
     return bars
+
+
+def block_census(bars: Sequence[Mapping[str, Any]], block: int
+                 ) -> List[Dict[str, Any]]:
+    """Consecutive NON-OVERLAPPING blocks of ``block`` bars, with each one's
+    own close-to-close return, and the LAST one dropped.
+
+    THE WINDOW RULE, STATED ONCE SO THE RESULT CAN BE READ WITH IT. ``heldout_
+    edge`` scores the TAIL of whatever bar list it is handed, so a single-corpus
+    arm can only ever see the end of the corpus. "Every brain number scored ONE
+    down window" is the failure this repo has already paid for, and it is that
+    tail that produced it. The rule here is mechanical and fixed before any
+    held-out number exists:
+
+      1. cut the corpus into consecutive non-overlapping blocks of ``block``
+         bars from index 0, keeping only whole blocks;
+      2. DROP THE FINAL BLOCK -- it is the tail, and the tail is the read this
+         repo is trying to stop making;
+      3. rank what is left by log(last close / first close);
+      4. the UP window is the maximum, the DOWN window the minimum.
+
+    The whole census is printed, so the choice is auditable rather than
+    asserted: a reader can see every block that was available and check that
+    the two named are the extremes of it.
+    """
+    out: List[Dict[str, Any]] = []
+    whole = len(bars) // block
+    for i in range(whole):
+        lo, hi = i * block, (i + 1) * block
+        first = float(bars[lo]["close"])
+        last = float(bars[hi - 1]["close"])
+        if first <= 0 or last <= 0:
+            continue
+        out.append({
+            "index": i, "start": lo, "stop": hi,
+            "ret": math.log(last / first),
+            "is_tail": i == whole - 1,
+        })
+    return [b for b in out if not b["is_tail"]]
 
 
 def build_layer_frames(bars: Sequence[Mapping[str, Any]], symbol: str,
@@ -535,6 +575,17 @@ def build_parser() -> argparse.ArgumentParser:
                         default=MIN_READABLE_HELDOUT_BARS_AT_3600S)
     parser.add_argument("--min-lift", type=float, default=1.3)
     parser.add_argument("--min-support", type=int, default=20)
+    parser.add_argument("--pick-window", choices=("up", "down"),
+                        help="score the held-out arms on a block chosen by "
+                             "block_census's rule instead of the corpus TAIL. "
+                             "The tail is what a bare --heldout reads, and a "
+                             "number from it is a number from one window; "
+                             "this repo has already paid for that read.")
+    parser.add_argument("--block-bars", type=int, default=None,
+                        help="block size for --pick-window. Defaults to "
+                             "exactly what one arm consumes "
+                             "(train + test + horizon + lookback + 1), so "
+                             "every block can carry a full arm.")
     parser.add_argument("--relative-bands", action="store_true",
                         help="band each L1 stream against ITS OWN terciles "
                              "rather than absolute token signs. Off by "
@@ -705,11 +756,45 @@ def main() -> int:
               "they predict. Held-out edge in an UP and a DOWN window is "
               "still the only scoreboard.")
 
+    # WHICH BARS THE HELD-OUT ARMS SEE. Unpicked, this is the whole corpus and
+    # ``heldout_edge`` reads its tail, which is the single-window read this repo
+    # has already been burned by. --pick-window replaces it with a block chosen
+    # by ``block_census``'s published rule, and the census is printed so the
+    # choice can be checked rather than taken on trust.
+    arm_bars = bars
+    picked: Optional[Dict[str, Any]] = None
+    if args.pick_window:
+        block = args.block_bars or (args.train + args.test + args.horizon
+                                    + LOOKBACK_BARS + 1)
+        census = block_census(bars, block)
+        if not census:
+            print(f"\n--pick-window {args.pick_window}: corpus has fewer than "
+                  f"two whole {block}-bar blocks, so there is no non-tail "
+                  f"block to pick. No arm spent.")
+            return 2
+        ranked = sorted(census, key=lambda b: b["ret"])
+        picked = ranked[-1] if args.pick_window == "up" else ranked[0]
+        print("\n" + "=" * 70)
+        print(f"WINDOW CENSUS -- {len(census)} non-tail blocks of {block} bars "
+              f"(block {len(bars)//block - 1} IS the tail and is excluded)")
+        print("=" * 70)
+        for b in census:
+            mark = "  <== PICKED" if b is picked else ""
+            print(f"  block {b['index']:>2}  bars [{b['start']:>6},"
+                  f"{b['stop']:>6})  log return {b['ret']:+.4f}{mark}")
+        print(f"  RULE: non-overlapping blocks from index 0, final block "
+              f"dropped, ranked on log(last close / first close); "
+              f"{args.pick_window.upper()} = "
+              f"{'max' if args.pick_window == 'up' else 'min'}.")
+        arm_bars = bars[picked["start"]:picked["stop"]]
+
     def run_arm(key: str, title: str) -> Dict[str, Any]:
-        edge = heldout_edge(bars, symbol, args.chain, args.horizon,
+        edge = heldout_edge(arm_bars, symbol, args.chain, args.horizon,
                             args.train, args.test, args.min_lift,
                             args.min_support, relative=args.relative_bands,
                             margin=args.hysteresis, key=key)
+        if picked:
+            edge["picked_block"] = picked
         print("\n" + "=" * 70)
         print(title)
         print("=" * 70)
@@ -799,6 +884,27 @@ def main() -> int:
         l2_edge = run_arm(L2_WINNER,
                           f"HELD-OUT EDGE OF THE SHIPPED L2 ({L2_WINNER}) -- "
                           f"no node, no fabric")
+        # THE REJECTED SCHEME, SCORED ON THE SAME BUILD. [fa75fa1a] rejected
+        # L2_sequence on DISTINCTNESS, which is a statement about vocabulary
+        # size and not about whether it predicts. Without it beside the winner
+        # the winner's margin is unreadable: a number with nothing to be better
+        # than reads as an edge even when the rejected scheme matches it.
+        l2_control = run_arm(L2_CONTROL,
+                             f"HELD-OUT EDGE OF THE REJECTED L2 "
+                             f"({L2_CONTROL}) -- the control, same build")
+        if (not l2_edge.get("unspent") and not l2_control.get("unspent")
+                and l2_edge.get("called_n") and l2_control.get("called_n")):
+            win = l2_edge["called_net"] - l2_edge["baseline_net"]
+            ctl = l2_control["called_net"] - l2_control["baseline_net"]
+            print("\n" + "=" * 70)
+            print("WINNER vs CONTROL, same window, same bands")
+            print("=" * 70)
+            print(f"  {L2_WINNER:<16} edge {win*100:+.4f}%  over "
+                  f"{l2_edge['called_n']} trades")
+            print(f"  {L2_CONTROL:<16} edge {ctl*100:+.4f}%  over "
+                  f"{l2_control['called_n']} trades")
+            print(f"  MARGIN of shipped over rejected: "
+                  f"{(win - ctl)*100:+.4f}% per trade")
         if args.json_out:
             # GUARDED AT WRITE TIME, NOT AT READ TIME. ``edge`` carries
             # ``called_net`` as a bare float on purpose -- two scripts and four
@@ -806,7 +912,9 @@ def main() -> int:
             # that float stops being quotable without its n.
             default_bars = build_parser().get_default("test")
             for path_suffix, arm in ((("-heldout.json"), edge),
-                                     (("-l2-heldout.json"), l2_edge)):
+                                     (("-l2-heldout.json"), l2_edge),
+                                     (("-l2-control-heldout.json"),
+                                      l2_control)):
                 out_path = str(args.json_out).replace(".json", path_suffix)
                 guarded = guard_edge_for_report(arm, default_bars=default_bars)
                 if "readability" in guarded:

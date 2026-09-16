@@ -12,10 +12,10 @@
     "instrument": 0.0013908205841446453
   },
   "l0_mean_inputs": 0.5440890125173852,
-  "l1": 0.013908205841446454,
-  "l2": 0.20166898470097358,
-  "l1_vocabulary": 10,
-  "l2_vocabulary": 145,
+  "l1": 0.02920723226703755,
+  "l2": 0.29763560500695413,
+  "l1_vocabulary": 21,
+  "l2_vocabulary": 214,
   "l1_abstracts": true,
   "l2_abstracts": true
 }
