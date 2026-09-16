@@ -220,6 +220,31 @@ def main() -> int:
                 pops.append("aligned")
             if gate in CLEAN_GATES:
                 pops.append("clean")
+
+            # --- the INVERTED entry, on the same window and the same scaling.
+            # money_button:278 requires r5>0 AND r10>0 AND r30>0, so it only
+            # ever buys a confirmed uptrend. The operator is describing buying
+            # 2-5% DIPS, which is the opposite predicate. Continuation is
+            # closed by the table above; this tests reversion on identical
+            # machinery so the two verdicts are comparable.
+            #
+            # `_return_over` and the unit scaling are the STRATEGY'S OWN, not
+            # a second copy -- a dip measured with different windows than the
+            # uptrend would not be a comparison.
+            ts_w = np.asarray([t[0] for t in window], dtype=float)
+            px_w = np.asarray([t[1] for t in window], dtype=float)
+            if ts_w.size > 1:
+                gap_w = float(np.median(np.diff(ts_w)))
+                unit_w = max(5.0 * 60.0, 2.0 * gap_w)
+                d5 = strat._return_over(ts_w, px_w, unit_w)
+                d10 = strat._return_over(ts_w, px_w, unit_w * 2.0)
+                d30 = strat._return_over(ts_w, px_w, unit_w * 6.0)
+                if d5 < 0.0 and d10 < 0.0 and d30 < 0.0:
+                    pops.append("dip")
+                    # The operator's stated size: a 2%+ fall over the long
+                    # window. A "dip" of 0.05% is noise wearing the name.
+                    if d30 <= -0.02:
+                        pops.append("dip>=2%")
             for h in HORIZONS:
                 fwd_h = _forward_return(ticks, end, h * 60.0)
                 if fwd_h is None:
@@ -386,6 +411,58 @@ def main() -> int:
             lift = "%+7.4f%%" % ((meds["aligned"] - meds["null"]) * 100.0)
         print("  %-7.0f | %s | %s | %s | %s"
               % (h, cells[0], cells[1], cells[2] if len(cells) > 2 else "", lift))
+
+    # ------------------------------------------------------------------
+    # The same table for the INVERTED entry.
+    # ------------------------------------------------------------------
+    print("")
+    print("--- the same sweep for DIPS (r5<0 and r10<0 and r30<0) ---")
+    print("  continuation is closed above; this is the opposite predicate on")
+    print("  the same windows. 'dip>=2%' is the operator's stated size.")
+    print("  %-7s | %-40s | %-40s | %-40s | lift" % ("horizon", "null", "dip", "dip>=2%"))
+    for h in HORIZONS:
+        cells, meds2 = [], {}
+        for pop in ("null", "dip", "dip>=2%"):
+            rows = hz_seq.get((pop, h), [])
+            if not rows:
+                cells.append("%-40s" % "(none)")
+                continue
+            a = np.asarray(rows, dtype=float)
+            meds2[pop] = float(np.median(a))
+            cells.append("n=%-5d net %+7.4f%% med %+6.3f%% w%4.1f%%"
+                         % (a.size, (a.mean() - round_trip) * 100.0,
+                            (float(np.median(a)) - round_trip) * 100.0,
+                            float(((a - round_trip) > 0).sum()) / a.size * 100.0))
+        lift = ""
+        if "dip" in meds2 and "null" in meds2:
+            bps = (meds2["dip"] - meds2["null"]) * 10000.0
+            lift = "%+7.4f%% (%+.2f bp)" % ((meds2["dip"] - meds2["null"]) * 100.0, bps)
+        # CENSORED. The dip>=2% population reports a mean of +113% to +184%,
+        # which is not a return, it is proof of contamination -- and the
+        # selection rule is what causes it: a denomination break looks exactly
+        # like a huge dip, so "fall 2% or more" preferentially SELECTS broken
+        # rows, and the snap-back when the feed returns to the right
+        # denomination books as an enormous profit. This population is
+        # enriched for the artefact by construction, so the uncensored median
+        # cannot be trusted either -- the contaminated rows may be sitting in
+        # the middle of it, not only in the tail.
+        #
+        # 20% over the horizon is this repo's existing plausibility bar.
+        raw2 = hz_seq.get(("dip>=2%", h), [])
+        if raw2:
+            a2 = np.asarray(raw2, dtype=float)
+            keep = a2[np.abs(a2) <= 0.20]
+            dropped = a2.size - keep.size
+            if keep.size:
+                print("  %-7.0f |   dip>=2%% CENSORED |%%|<=20%%: n=%-4d net %+7.4f%% med %+6.3f%% w%4.1f%%   (dropped %d of %d as implausible)"
+                      % (h, keep.size, (keep.mean() - round_trip) * 100.0,
+                         (float(np.median(keep)) - round_trip) * 100.0,
+                         float(((keep - round_trip) > 0).sum()) / keep.size * 100.0,
+                         dropped, a2.size))
+            else:
+                print("  %-7.0f |   dip>=2%% CENSORED: every one of %d rows was implausible"
+                      % (h, a2.size))
+    print("  cost floors to beat: 70.00 bp at this census fee, 11.00 bp at WETH-class depth.")
 
     return 0
 
