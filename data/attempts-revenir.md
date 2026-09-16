@@ -6861,3 +6861,31 @@ corpus is JSON on disk only. Nothing reads it out of the database because there 
 nothing in the database.
 
 PROVES IT: python -X utf8 scripts/data_ingest_starvation_census.py
+
+### Pass 431 correction, same pass, before anyone builds on it
+
+The FEED result stands (two independent windows, clear). The DISCOVERY result does
+not carry at the strength first written. Measured over the full 19.8h log:
+
+  thread inside an over-budget worker: 18.0 h of 19.8 h = 91%
+  discovery events INSIDE  stalls: 121 over 18.0 h =  6.74/h
+  discovery events OUTSIDE stalls:  21 over  1.8 h = 11.70/h   ratio 1.7x
+
+~1.9 sigma on a Poisson SE (outside +-2.55/h on n=21) -- by this repo's own noise
+bar that is NOT significant. Discovery is not blockaded: a "stall window" is a
+stretch of SLOW CYCLES, not one blocked call, and run_cycle still reaches discovery
+at the end of each one. The 2.9h staleness figure was a point-in-time snapshot and
+overstated it; the rate is the honest measure.
+
+Checked and it does hold: TokenDownloadSupervisor.start() -- which would give every
+worker its own loop thread and quietly compensate -- is NEVER called in production.
+production.py:647 run_cycle() is the only use of _download_supervisor; production.py:275
+is a different, async, market-stream supervisor.
+
+NOT CLAIMED: that DOWNLOAD_WORKER_CHAINS=base buys measurable discovery throughput.
+It removes 79.9% of that thread's work regardless, which is arithmetic on log lines
+and does not depend on the discovery question. If someone wants the discovery number
+after the next restart, test events/hour over a full day, not a staleness snapshot.
+
+Production is up since 14:48 on 2026-09-16 (pid 22664). Env is read at process start,
+so the fix IS NOT LIVE; it lands on the next external-supervisor restart.
