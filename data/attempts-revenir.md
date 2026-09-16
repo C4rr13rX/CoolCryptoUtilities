@@ -6550,3 +6550,41 @@ rises with the candidate count -- which the forge already knows how to measure.
 **No screen in this repo should report a lift again without reporting the bar
 it had to clear.** A lift without its selection bar is not a measurement. The
 forge computes the bar for any predicate set handed to it; use it.
+
+### PASS 428 ADDENDUM -- I KILLED IT MYSELF, SAME PASS, WITH THE OBVIOUS OBJECTION
+
+`scripts/xs_rank_depth_check.py`. One command:
+`python -X utf8 scripts/xs_rank_depth_check.py --cut 0.05 --horizon 5`
+
+The +10.73bp was priced at a flat 11bp round trip, which is a promise about
+POOL DEPTH. Split the 510 held-out fires by the depth snapshot (28d3db1):
+
+```
+  bucket              fires   share   gross bp  round trip    NET bp
+  deep  >$1M             57  11.2%      +0.88         22bp    -21.12
+  mid  $250k-1M           1   0.2%    +163.43        128bp    +35.43   <- n=1, ignore
+  thin $50k-250k         33   6.5%     +15.77        400bp   -384.23
+  dust  <$50k            22   4.3%      +4.22       1500bp  -1495.78
+  NOT IN SNAPSHOT       397  77.8%      +9.18     unknown       n/a
+```
+
+**ON THE POOLS WE CAN ACTUALLY FILL, THE LIFT IS +0.88bp, NOT +10.73bp.** The
+aggregate number was carried by the thin bucket (+15.77bp at a 400bp cost) and
+by the 77.8% whose depth is unknown and which are more likely thin than deep.
+The single mid-bucket row at +163bp is n=1 and must not be quoted.
+
+**ROUTE CLOSED.** Cross-sectional reversion is real -- it beat its selection bar
+by 2-3x with a monotone dose-response across eight ladders, and that part
+replicates -- but its skill lives in pools whose round trip eats it 20x over.
+This is the THIRD independent arrival at the same wall
+(`ghost-book-profit-is-in-untradeable-pools`, `dip-supply-is-in-the-thin-tokens`,
+and now this), by three unrelated methods.
+
+**THE LAW THIS ESTABLISHES, and the next pass should treat it as a screen, not a
+discovery:** on this venue, predictability and fillability are ANTI-CORRELATED.
+Thin pools move predictably BECAUSE they are thin -- few participants, so one
+flow dominates the next print -- and that same thinness is what makes the round
+trip 400-1500bp. Any future screen that pools the universe will keep rediscovering
+this and keep being wrong. **Screen on the deep subset from the start.** On deep
+pools the honest number for the best predicate found by a 408-wide enumerated
+search is +0.88bp against a 22bp round trip.
