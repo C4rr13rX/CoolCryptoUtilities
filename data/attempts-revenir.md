@@ -6723,3 +6723,49 @@ derived COST FLOOR; slippage and MEV are unmodelled and the live lane carries
 ~27.8bp the ghost book does not. Re-pricing THESE trades answers what the
 current selector's trades would have cost elsewhere, never what a deep-pool
 strategy would have earned. No gate, threshold or production file was touched.
+
+### Pass 429 addendum -- I decontaminated my own numbers, and found the one real number
+
+**THE GHOST BOOK WAS 9% LIVE. CLOSED (0962fd8).** `trade_outcomes` holds BOTH
+books; `details.mode` is 'ghost' (215) or 'live' (22). Every re-pricing in this
+repo -- including my own 31167be and 5524f69 above -- loaded all 237 and called
+it the ghost book. `scripts/tradeable_book_repricing.py` now defaults to
+`--mode ghost`. **Corrected figures supersede the tables above:**
+
+  tier          n  syms  sigma   grossBP/trade   95% CI (bp)
+  >$1M         56     3   89.6          +23.4    [  -0.1,  +46.8]
+  $100k-$1M    70    10  552.5          +51.5    [ -78.0, +180.9]
+  $10k-$100k   27     6   82.6          -19.2    [ -50.4,  +12.0]
+  <$10k        19     5  526.1          -10.1    [-246.7, +226.4]
+  UNRESOLVED   34    22  496.6          +11.8    [-155.1, +178.7]
+
+Every conclusion above SURVIVES and one improves: 20 trades now resolve 39.3bp
+(was 42.6), and the variance ratio is 6.2x = ~38x the evidence. **The deep
+tier's interval now touches zero at -0.1bp. DO NOT READ THAT AS AN EDGE** --
+five tiers were screened and the selection bar on this tape is 5-12bp and
+scales with the number screened. It is still indistinguishable from zero.
+
+**THE ONE STATISTICALLY REAL NUMBER IN THIS LOOP IS THE LIVE BOOK'S LOSS.**
+The 22 live rows minus 4 annulled leave 18, which net **exactly -0.18637** --
+matching `data/strategy_ledger.json` (`atf_static.live`) to five decimals from
+an independent table. The whole live book is ONE strategy.
+
+  traded notional $18.29   MEDIAN CLIP $0.7500   max $3.00
+  net -102bp of traded notional, vs ~39-45bp resolvable at n=18  -> REAL
+  gross (direction)  -0.08492   -46bp
+  fee   (cost model) -0.10145   -55bp
+  5 wins of 18; P(<=5 | fair coin) = 4.8%
+  robust: dropping BPAD (-1700bp) and BSTONK (+3227bp) leaves 16 rows at -108bp
+
+**Cost is the larger half (54%) but direction at -46bp sits AT the resolution
+limit -- marginal, not absent.** I posted "a cost signature, not a direction
+signature" earlier in the pass and then withdrew it; the honest statement is
+roughly half and half, with only the cost half firmly resolved. This refines
+`live-pl-is-fees-not-direction` rather than repeating it.
+
+**WHAT THE NEXT PASS SHOULD DO.** The -55bp fee term is our OWN synthetic model
+and that model is blind to the token. Expanding the quote census past 6 symbols
+([98bba3bf]) is therefore not analysis, it is the fix, and it is read-only with
+no capital at risk. The remaining open criterion on [42a65c7b] is the one that
+matters most: **tie all 18 live rows to settled on-chain tx hashes.** Two local
+books agreeing is not the chain agreeing.
