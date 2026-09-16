@@ -6468,3 +6468,85 @@ negative on the largest sample. Combined with the two money_button premises
 closed earlier this pass, there is currently NO KNOWN PREDICATE IN THIS REPO
 WITH POSITIVE OUT-OF-SAMPLE SKILL AT A 12-MINUTE HORIZON. That is the honest
 state and the next hypothesis should start from it rather than re-screening.
+
+---
+
+## PASS 428 -- Echo (senior). THE SELECTION BAR IS 5-12bp, AND IT IS THE INSTRUMENT, NOT THE RESULT
+
+**Route:** brute-force the predicate space instead of screening hand-written
+strategies, with the best-of-N null computed INSIDE the search.
+**Tool:** `scripts/predicate_forge.py` (b4e018f). One command:
+`python -X utf8 scripts/predicate_forge.py --hours 168 --perms 120 --fee 0.00055`
+
+### Why this is not another strategy screen
+
+Every prior screen here tested rules a human wrote down. This enumerates:
+34 features x 6 quantile cuts x 2 directions = **408 predicates**, priced at
+2/3/5/8/12 min over 32,336 ticks and 155 symbols. Three families never covered
+before: derivatives ABOVE the first (acceleration, jerk), volatility ratio as
+an axis independent of direction, and the cross-sectional state at each instant
+(crowd mean, dispersion, this symbol's rank within it, residual after the crowd
+is subtracted).
+
+### THE NUMBER TO CARRY FORWARD
+
+Forward returns permuted WITHIN symbol, the entire 408-predicate screen re-run
+on the shuffled labels, 120 draws. This is the best lift reachable by selection
+alone on this tape:
+
+```
+  horizon    bar median    bar 95th pct
+    2 min       5.55bp         8.42bp
+    3 min       5.40bp         7.91bp
+    5 min       5.83bp         8.48bp
+    8 min       6.81bp         9.65bp
+   12 min       8.30bp        11.59bp
+```
+
+**Any single-predicate lift under ~9bp on this tape is indistinguishable from
+noise, and at 12 min the bar is 11.59bp.** This retroactively explains the
+graveyard: b702171 led with donchian_breakout at +15.32bp in-sample -- 1.3x the
+12-min bar -- and inverted out of sample, exactly as an order statistic should.
+
+### The result: the single-predicate space is EMPTY out of sample
+
+159 of 408 predicates cleared the bar IN-SAMPLE across the five horizons.
+**Exactly ONE held out of sample** (same sign, still over the bar):
+
+```
+  xs_rank<q0.05  @ 2 min   IS +12.82bp (n=619)   OOS +9.31bp (n=443)
+                           net at an 11bp WETH round trip:  -2.34bp
+```
+
+At 3/5/8/12 min, **zero** held. The price-action families (return, acceleration,
+jerk, vol ratio, range position) post +17 to +28bp in sample and collapse to
+about 0bp out of sample at every horizon. That IS the selection effect, made
+visible for the first time in this repo.
+
+`r3>q0.95` shows net +0.47bp at 2 min and +1.50bp at 3 min but its sign FLIPS
+between splits (-11.89 IS / +12.13 OOS). That is a coin landing twice, not a
+signal. Do not resurrect it without a third window.
+
+### CLOSED and NOT CLOSED
+
+**CLOSED:** single-predicate price-action search at 2-12 min on the pooled
+universe. Independently confirms `price-action-predicates-are-exhausted` by a
+different method, and now with a bar attached.
+
+**NOT CLOSED, and this is the lead:** the cross-sectional family is the only one
+that kept its sign AND magnitude out of sample. `xs_rank<q0.05` -- "this symbol
+is the worst performer in the market at this instant" -- reverts. It misses the
+cheapest round trip on base by 2.34bp, which is the smallest gap any route here
+has posted. It was also never tuned: 2 min was the shortest horizon screened and
+q0.05 the most extreme cut offered. Both are corners of the grid, so the true
+optimum may lie outside it.
+
+**NOT TESTED:** conjunctions. Every predicate here is a single term. The forge
+prices one feature at a time; 408 choose 2 is ~83k pairs, and the selection bar
+rises with the candidate count -- which the forge already knows how to measure.
+
+### The methodological rule this pass earns
+
+**No screen in this repo should report a lift again without reporting the bar
+it had to clear.** A lift without its selection bar is not a measurement. The
+forge computes the bar for any predicate set handed to it; use it.
