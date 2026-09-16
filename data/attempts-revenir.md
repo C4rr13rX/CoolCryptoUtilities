@@ -6365,3 +6365,43 @@ carrying more than 11bp of skill, and no such predicate exists in this repo yet.
 Caveat: only 2 symbols clear $1M in the depth snapshot, and that snapshot is a
 point-in-time DexScreener reading from pass 426 -- re-measure depth before
 sizing anything on it.
+
+## Pass 427 (Echo) -- first skill screen of the classical set: donchian_breakout is the lead
+
+ROUTE: measure every classical strategy as LIFT OVER NULL IN BASIS POINTS by
+forward replay, rather than out of the ghost book.
+STATUS: **OPEN -- one candidate clears the bar and MUST be confirmed.**
+
+All 16 strategies in trading/strategies/ share one interface
+(`evaluate(self, state, ctx) -> Optional[Dict]`), so this is a swap in the same
+walk loop the money_button harness already uses.
+
+168h, 12-min hold, censored |r|<=20%, subsampled every 4th tick, ALL symbols.
+NOT sequential -- windows overlap, so every n below is optimistic.
+
+    NULL  n=7711  gross median +0.00000%  mean -0.01182%  up 40.9%
+
+    strategy                n     gross med     LIFT      up%
+    donchian_breakout       59    +0.15324%   +15.32 bp   67.8%   <-- clears 11bp
+    ema_cross               28    +0.00057%    +0.06 bp   50.0%
+    stochastic_reversal     30    -0.00509%    -0.51 bp   46.7%
+    mean_reversion          22    -0.00702%    -0.70 bp   50.0%
+    rsi_reversal           180    -0.08489%    -8.49 bp   41.7%
+    bollinger_squeeze / obv_accumulation / vwap_reversion / volume_spike /
+    momentum_breakout        0    never fired on this tape
+    macd_momentum            1 ; supertrend_follow 13   (too few to score)
+
+The null's gross median is EXACTLY 0.00000%, which is the cleanest statement yet
+that this feed is a martingale at a 12-minute horizon.
+
+**donchian_breakout is a LEAD, NOT A RESULT, and it has the same shape as the
+dip lead this same pass killed**: a strong number on small n, chosen as the best
+of 12. Before it is believed it needs (a) sequential per-symbol admission rather
+than overlapping windows, (b) the full tape rather than every 4th tick, (c)
+restriction to deep pools, and (d) `--exclude-recent-hours 168` on the disjoint
+earlier window. The dip lead had 57.6% win in-sample and 30.6% out-of-sample;
+assume nothing until (d) passes.
+
+Note rsi_reversal at -8.49 bp with the largest n (180): it fires often and its
+lift is NEGATIVE, which is consistent with its 0% tradeable ghost win rate in
+the ledger. That is corroboration between two independent books.
