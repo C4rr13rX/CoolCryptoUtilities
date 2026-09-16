@@ -301,6 +301,12 @@ def main() -> int:
     print("=" * 78)
     print("rows in trade_outcomes: %d      depth bar: round trip < %.2f%%" % (len(rows), args.depth_bar))
     print()
+    print("  !! CONTAMINATED: this loads ALL trade_outcomes rows, and 22 of 237")
+    print("  !! are mode='live', not ghost (measured 0962fd8). Every number below")
+    print("  !! mixes the two books. scripts/tradeable_book_repricing.py splits")
+    print("  !! on details.mode and defaults to ghost -- prefer it. Fixing this")
+    print("  !! here is a criterion on [42a65c7b]; the warning stays until then.")
+    print()
 
     if censor is None:
         print("CENSOR: OFF -- every row included, artifacts and all.")
