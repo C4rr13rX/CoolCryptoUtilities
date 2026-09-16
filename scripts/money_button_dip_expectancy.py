@@ -87,25 +87,26 @@ def load_ticks(hours: float) -> Dict[str, List[Tuple[float, float]]]:
     return out
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--hours", type=float, default=168.0)
-    ap.add_argument("--horizon-sec", type=float, default=1800.0)
-    ap.add_argument("--cooldown-sec", type=float, default=1800.0,
-                    help="one open position per symbol: ignore entries inside a live trade")
-    args = ap.parse_args()
+#: The set the 168h census found POSITIVE after cost, plus the majors whose
+#: round trip is in the same class. Named here rather than inferred from the
+#: result, so the sweep cannot select its own universe from its own outcome.
+DEEP_POOLS = (
+    "ETH-USDT", "ETH-USDC", "WETH-USDT", "WETH-USDC", "CBETH-USDC",
+    "WBTC-USDC", "SOL-USDC", "LINK-USDC", "LDO-USDC", "AAVE-USDC",
+    "OP-USDC", "CRV-USDC", "CAKE-USDC",
+)
 
-    lo = float(os.getenv("MONEY_BUTTON_MIN_DRAWDOWN", "0.02"))
-    hi = float(os.getenv("MONEY_BUTTON_MAX_DRAWDOWN", "0.05"))
-    lookback = max(600.0, min(24 * 3600.0, float(os.getenv("MONEY_BUTTON_LOOKBACK_SEC", str(2 * 3600)))))
-    min_net = float(os.getenv("MONEY_BUTTON_MIN_NET_RETURN", "0.005"))
-    rev_frac = float(os.getenv("MONEY_BUTTON_REVERSION_FRACTION", "0.55"))
 
-    ticks = load_ticks(args.hours)
-    if not ticks:
-        print("no ticks in market_stream")
-        return 1
-
+def simulate(
+    ticks: Dict[str, List[Tuple[float, float]]],
+    *,
+    lo: float,
+    hi: float,
+    min_net: float,
+    rev_frac: float,
+    lookback: float,
+    horizon_sec: float,
+) -> Dict[str, List[float]]:
     per_symbol: Dict[str, List[float]] = defaultdict(list)
     for symbol, rows in ticks.items():
         fee = round_trip_for(symbol)
@@ -143,7 +144,7 @@ def main() -> int:
 
             gross = None
             k = i + 1
-            while k < n and rows[k][0] <= ts + args.horizon_sec:
+            while k < n and rows[k][0] <= ts + horizon_sec:
                 if rows[k][1] >= target:
                     gross = tp                      # target touched: the rule's own exit
                     break
@@ -154,8 +155,35 @@ def main() -> int:
                     continue
                 gross = (rows[last_idx][1] - price) / max(price, 1e-9)
             per_symbol[symbol].append(gross - fee)
-            busy_until = ts + args.horizon_sec
+            busy_until = ts + horizon_sec
+    return per_symbol
 
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hours", type=float, default=168.0)
+    ap.add_argument("--horizon-sec", type=float, default=1800.0)
+    ap.add_argument("--sweep", action="store_true",
+                    help="sweep the dip floor on the deep-pool universe, loading ticks once")
+    ap.add_argument("--floors", default="0.0025,0.005,0.01,0.02,0.05")
+    args = ap.parse_args()
+
+    lo = float(os.getenv("MONEY_BUTTON_MIN_DRAWDOWN", "0.02"))
+    hi = float(os.getenv("MONEY_BUTTON_MAX_DRAWDOWN", "0.05"))
+    lookback = max(600.0, min(24 * 3600.0, float(os.getenv("MONEY_BUTTON_LOOKBACK_SEC", str(2 * 3600)))))
+    min_net = float(os.getenv("MONEY_BUTTON_MIN_NET_RETURN", "0.005"))
+    rev_frac = float(os.getenv("MONEY_BUTTON_REVERSION_FRACTION", "0.55"))
+
+    ticks = load_ticks(args.hours)
+    if not ticks:
+        print("no ticks in market_stream")
+        return 1
+
+    if args.sweep:
+        return sweep(ticks, args, hi=hi, rev_frac=rev_frac, lookback=lookback)
+
+    per_symbol = simulate(ticks, lo=lo, hi=hi, min_net=min_net, rev_frac=rev_frac,
+                          lookback=lookback, horizon_sec=args.horizon_sec)
     all_trades = [r for rs in per_symbol.values() for r in rs]
     if not all_trades:
         print("the dip rule admitted no priceable entry in this window")
@@ -185,6 +213,70 @@ def main() -> int:
         print("  worst:")
         for sym, rs in losers[-5:]:
             print(block(sym, rs))
+    return 0
+
+
+def sweep(ticks, args, *, hi: float, rev_frac: float, lookback: float) -> int:
+    """[3c411c08] -- the affordable dip is a function of pool depth.
+
+    One constant (2-5%) is applied today to tokens whose round trip spans
+    WETH 0.11% to KTA 74.98%. Sweeping the FLOOR on the deep-pool universe
+    asks whether a threshold exists that is both profitable after cost and
+    frequent enough to answer the cadence ask. Trades/day is printed beside
+    the mean on every row because either number alone is misleading.
+
+    MIN_NET_RETURN is scaled with the floor rather than held at 0.5%: left
+    at its default it would itself veto every small-dip entry, and the
+    sweep would be measuring that veto instead of the threshold.
+    """
+    deep = {s: r for s, r in ticks.items() if s in DEEP_POOLS}
+    days = max(args.hours / 24.0, 1e-9)
+    print("=" * 86)
+    print("DIP FLOOR SWEEP -- DEEP POOLS ONLY  [3c411c08]")
+    print("=" * 86)
+    print(f"  window {args.hours:.0f}h ({days:.1f}d)   horizon {args.horizon_sec/60:.0f}m   "
+          f"ceiling -{hi:.0%}   universe {len(deep)} of {len(ticks)} symbols")
+    print(f"  {', '.join(sorted(deep))}")
+    print()
+    print(f"    {'floor':>7} {'min_net':>8} {'trades':>7} {'per day':>8} {'win':>6} {'mean net':>10} {'total net':>11}")
+    best = None
+    for raw in args.floors.split(","):
+        floor = float(raw)
+        mn = max(0.0005, floor * 0.25)
+        per_symbol = simulate(deep, lo=floor, hi=hi, min_net=mn, rev_frac=rev_frac,
+                              lookback=lookback, horizon_sec=args.horizon_sec)
+        rs = [r for v in per_symbol.values() for r in v]
+        if not rs:
+            print(f"    {floor:>6.2%} {mn:>7.2%} {0:>7} {0.0:>8.2f} {'--':>6} {'--':>10} {'--':>11}")
+            continue
+        arr = np.asarray(rs, dtype=np.float64)
+        total = float(arr.sum())
+        row = (floor, mn, len(arr), len(arr) / days, 100.0 * float((arr > 0).sum()) / len(arr),
+               float(arr.mean()) * 100.0, total * 100.0)
+        print(f"    {row[0]:>6.2%} {row[1]:>7.2%} {row[2]:>7} {row[3]:>8.2f} {row[4]:>5.0f}% "
+              f"{row[5]:>+9.3f}% {row[6]:>+10.2f}%")
+        if best is None or total > best[1]:
+            best = (row, total, per_symbol)
+    print()
+    if best is None:
+        print("  NO floor produced a priceable trade on the deep-pool universe.")
+        return 0
+    row, total, per_symbol = best
+    print(f"  BEST TOTAL over {args.hours:.0f}h: floor {row[0]:.2%}  "
+          f"-> {row[2]} trades ({row[3]:.2f}/day), {row[4]:.0f}% win, mean {row[5]:+.3f}%, total {row[6]:+.2f}%")
+    print(f"  per-trade mean after cost is {'POSITIVE' if row[5] > 0 else 'NEGATIVE'}.")
+    if row[2] < 30:
+        print(f"  SAMPLE {row[2]} < 30: this is a LEAD REQUIRING MORE DATA, not an edge.")
+    outliers = {s: v for s, v in per_symbol.items() if any(abs(x) > 0.2 for x in v)}
+    if outliers:
+        print("  outliers left in (|return| > 20%), reported not filtered:")
+        for s, v in outliers.items():
+            print(f"    {s:<14} {['%+.1f%%' % (x*100) for x in v if abs(x) > 0.2]}")
+    print("  per symbol at the best floor:")
+    for s, v in sorted(per_symbol.items(), key=lambda kv: -float(np.sum(kv[1]))):
+        a = np.asarray(v, dtype=np.float64)
+        print(f"    {s:<14} {len(a):>4} {100.0*float((a>0).sum())/len(a):>5.0f}% "
+              f"{float(a.mean())*100:>+8.3f}% {float(a.sum())*100:>+9.2f}%")
     return 0
 
 
