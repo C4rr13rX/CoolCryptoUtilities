@@ -6405,3 +6405,34 @@ assume nothing until (d) passes.
 Note rsi_reversal at -8.49 bp with the largest n (180): it fires often and its
 lift is NEGATIVE, which is consistent with its 0% tradeable ghost win rate in
 the ledger. That is corroboration between two independent books.
+
+### Pass 427 addendum -- donchian_breakout CONFIRMED sequentially, PARTIALLY survives out-of-sample
+
+Re-ran it properly: SEQUENTIAL per symbol, FULL tape (not every 4th tick),
+censored |r|<=20%, 12-min hold.
+
+    window          null n   null up   donchian n   med      up      mean      LIFT(med)
+    IN-SAMPLE       4521     41.6%     99           +0.12166% 60.6%  +0.13686%  +12.17 bp
+    OUT-OF-SAMPLE   4360     37.5%     131          +0.00000% 49.6%  +0.08250%   +0.00 bp
+
+VERDICT: **it does NOT clear the 11bp bar out-of-sample on the median.** The
+median lift collapses 12.17 -> 0.00 bp. Do not put money on this yet.
+
+BUT IT DID NOT INVERT, and that distinguishes it sharply from the dip lead
+(57.6% -> 30.6% win, sign flipped). Two things persist in BOTH windows:
+  * up-rate lift: +19.0pp in-sample (60.6 vs 41.6), +12.1pp out (49.6 vs 37.5)
+  * mean stays positive: +13.69 bp in-sample, +8.25 bp out (below the 11bp bar)
+and n GREW out-of-sample (99 -> 131), so this is not a small-sample artefact.
+
+METHOD NOTE THAT MATTERS FOR EVERY FUTURE SCREEN: the median is a bad statistic
+on this tape. Both null medians are EXACTLY +0.00000%, because a large mass of
+consecutive ticks carry an unchanged price, so the median is pinned at zero and
+insensitive to the signal. Report up-rate and censored mean alongside it; a
+"0.00 bp median lift" here means "the median is uninformative", not "no effect".
+
+NEXT STEP FOR THIS CANDIDATE (not a green light): re-run restricted to deep
+pools, where the bar is 11bp rather than 70bp, and where the 8.25bp
+out-of-sample mean would only need a modest improvement to clear. Also check
+whether the up-rate lift survives a per-symbol breakdown or is carried by one
+or two names -- this repo has been burned four times by a result that was a
+handful of rows.
