@@ -6889,3 +6889,33 @@ after the next restart, test events/hour over a full day, not a staleness snapsh
 
 Production is up since 14:48 on 2026-09-16 (pid 22664). Env is read at process start,
 so the fix IS NOT LIVE; it lands on the next external-supervisor restart.
+
+### Pass 431, second correction: the TAIL test is underpowered, and that is the useful part
+
+The mean result stands (66.2 vs 68.3 across a 323min stall, 96.5 vs 93.8 across a
+229min one). But a mean can be flat while a tail is not, so I tested whether the
+biggest feed blackouts sit inside slow-worker windows. All 8 of the largest gaps do:
+
+  58.8min @14:02 static:base | 32.9 @10:25 arb+opt | 31.4 @17:14 opt
+  16.3 @16:47 arb+opt | 11.2 @15:36 arb | 10.2 @09-15 23:25 base
+   9.1 @12:29 dynamic+polygon | 8.7 @11:02 opt
+
+AND IT MEANS NOTHING. The thread is inside an over-budget worker 18.0 of 19.8 h =
+91% of wall clock, so P(all 8 inside | null) = 0.91^8 = 0.47 and the expected count
+under coincidence is 7.3 of 8. The reverse test is equally dead: 1.8h of outside
+time expects 0.8 such gaps, observed 0, p about 0.45. Neither direction discriminates.
+
+NOT CLAIMED EITHER WAY: whether data_ingest stalls cause the blackouts. The rate
+result is cleared; the tail is UNTESTED, not exonerated.
+
+WHY THIS IS ACTIONABLE: the question is unanswerable because there is no clean
+control period at a 91% busy fraction. DOWNLOAD_WORKER_CHAINS=base removes 79.9%
+of the work and restores the contrast. So the order is: (1) restart production so
+the env line is live, (2) re-run this tail test against a busy fraction that is no
+longer 91% -- THEN it discriminates, (3) only then instrument the write path for
+[8c3c6910]. Doing (3) first measures a system whose control period does not exist.
+
+ALSO MEASURED, feeding [8c3c6910]: blackouts are GLOBAL, not per-symbol. Across the
+17:14 (31.4min) and 16:47 (16.3min) gaps, 14 of 15 and 19 of 24 symbols resumed the
+SAME set afterwards. Nothing rotated out. Do not spend a pass on upstream providers
+or per-symbol source health; instrument db.py:1534 and its driving loop.
