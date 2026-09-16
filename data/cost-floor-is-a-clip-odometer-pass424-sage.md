@@ -42,8 +42,19 @@ notional is computed rather than ratio:
 | …530107 | CBBTC-USDC | $5.49 | $0.025344 | 0.004613 |
 | …130032 | PUMP-USDC | $0.75 | $0.007025 | 0.009367 |
 
-The charge is ~$0.02534 per fill regardless of token, so the ratio is
-`flat_fee / notional` and **nothing else**. Notional clusters:
+Eight tokens, one ratio. The mechanism is in `trade_fills.details`, and it is
+**exact** — every fill carries `fee_rate` and `fee_cost_is_round_trip: true`,
+i.e. the fee is a MODEL OUTPUT, not a settled charge:
+
+    fee = 0.003862 * notional + ~$0.0041
+
+Solved from the two clips in the table ($0.007025 at $0.75 and $0.025344 at
+$5.49 gives r = 0.003865, g = $0.00413) and confirmed against the stored
+`fee_rate`, which is **0.003862** on every one of those rows. So
+
+    ratio = 0.003862 + 0.0041 / notional
+
+is a function of **clip size and nothing else**. Notional clusters:
 
     $2.00 x40   $0.75 x36   $5.49 x17   $2.68 x13   $5.50 x13
 
@@ -80,6 +91,36 @@ its real round trip is 0.64-4.35%; the floor every gate checks it against is
 0.4613%. A gate set against this number **cannot refuse AERO on cost**, which
 is the one refusal the chain evidence says would help. The live book is
 -0.1864 over 18 trades and the cost floor is structurally blind to the cause.
+
+## 4b. The book has never contained a settled on-chain cost
+
+Measured after the above, because the obvious fix is "build the floor from real
+fills instead":
+
+    trade_outcomes rows                                    236
+    ...carrying a tx_hash in details                         0
+    discovery_swapprobe rows                                78
+    ...successful, with BOTH buy_tx_hash and sell_tx_hash     0
+    trade_fills rows                                      1434
+      fee_rate == 0.0065 (== FALLBACK_COST)                1253
+      fee_rate == 0.003862                                  120
+      modes: ghost_entry 1172, ghost_exit 218, live_entry 20, live_exit 18
+
+**Zero rows in the book `round_trip_cost` reads carry a transaction hash, and
+zero on-chain swap probes completed both legs.** 1253 of 1389 priced fills
+carry `fee_rate` exactly equal to `FALLBACK_COST` itself. So the module has
+never read a settled venue cost in its life: it re-reads our own fee model, and
+the echo filter cannot catch that, because it only excludes rows whose ratio
+equals the fallback — and the model's output `0.003862 + 0.0041/N` never does.
+
+This is the repo's signature failure with one extra hop. It is not measuring
+its own default; it is measuring its own **model**.
+
+**This blocks the obvious fix.** A per-token floor from settled fills cannot be
+built from this database today — the rows do not exist. Whoever takes
+[78338262] has to source them (the 38 live rows' transaction hashes, or fresh
+two-legged swap probes) before criterion 2 is satisfiable. Saying so here so
+the next pass does not rediscover it.
 
 ## 5. What I did NOT do, and why
 
