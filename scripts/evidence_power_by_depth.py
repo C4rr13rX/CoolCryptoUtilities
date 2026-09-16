@@ -131,14 +131,19 @@ def main() -> int:
     def binom_ge(k: int, n: int, p: float) -> float:
         return sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(k, n + 1))
 
-    need = math.ceil(0.55 * GRADUATION_N)
-    p_pass = binom_ge(need, GRADUATION_N, 0.5)
-    print(f"  THE WIN-RATE LEG IS EXACT. The bar wants 55% of {GRADUATION_N}, i.e. "
-          f"{need}/{GRADUATION_N}.")
-    print(f"  A strategy with NO EDGE AT ALL (p=0.5) clears that "
-          f"{p_pass*100:.1f}% of the time.")
-    print(f"  Screening the {41} strategies that have recorded an outcome, "
-          f"~{41*p_pass:.0f} pass on noise alone.")
+    print("  THE WIN-RATE LEG IS EXACT -- pure binomial, no estimation. The bar")
+    print("  wants 55% of n. What a p=0.5 COIN does against it, at each of the")
+    print("  three values this system actually uses:")
+    print(f"    {'n':>4}  {'source':<44}{'needs':>8}{'coin passes':>13}{'of 41':>8}")
+    for n_bar, src in ((20, "graduation_status.py display"),
+                       (25, "MIN_GHOST_TRADES_FOR_PROMOTION, pipeline.py:928"),
+                       (30, "GHOST_TRADEABLE_MIN_TRADES, pipeline.py:5101")):
+        need = math.ceil(0.55 * n_bar)
+        p = binom_ge(need, n_bar, 0.5)
+        print(f"    {n_bar:>4}  {src:<44}{need:>5}/{n_bar:<2}{p*100:>12.1f}%"
+              f"{41*p:>7.0f}")
+    print("  The display and the code DISAGREE on the bar. A bar nobody can")
+    print("  quote is a bar nobody can audit -- reconcile that before tuning it.")
     print()
     print("  Compare against this repo's own numbers: the cost floor is ~59bp")
     print("  two-leg at the flat model, WETH round-trips for 4-11bp, and the")
