@@ -6436,3 +6436,35 @@ out-of-sample mean would only need a modest improvement to clear. Also check
 whether the up-rate lift survives a per-symbol breakdown or is carried by one
 or two names -- this repo has been burned four times by a result that was a
 handful of rows.
+
+### Pass 427 addendum 2 -- donchian_breakout is DEAD. It does not survive out-of-sample on ANY statistic.
+
+Sequential per symbol, full tape, censored |r|<=20%, 12-min hold. Deep set is
+the 8 symbols >= $200k in data/pool_depth_snapshot.json.
+
+  window              null n   null up  null mean  | donchian n  up     mean      MEAN LIFT
+  IN-SAMPLE all       4521     41.6%    -0.0349%   | 99          60.6%  +0.1369%  +17.17 bp
+  IN-SAMPLE deep       828     46.9%    -0.0059%   | 41          61.0%  +0.1436%  +14.95 bp
+  OUT-OF-SAMPLE all   4360     37.5%    +0.1020%   | 131         49.6%  +0.0825%   -1.95 bp
+  OUT-OF-SAMPLE deep  1441     49.8%    +0.2776%   | 98          48.0%  +0.0585%  -21.91 bp
+
+**ROUTE CLOSED.** The mean lift flips sign (+17.17 -> -1.95 all, +14.95 -> -21.91
+deep) and out-of-sample on deep pools donchian's up-rate (48.0%) is BELOW its own
+null (49.8%). The in-sample up-rate advantage that made the previous addendum
+call it a "partial survival" does not hold: it was the in-sample half doing all
+the work. Disregard the previous addendum's optimism -- this supersedes it.
+
+The tell was visible and I should have weighted it sooner: the in-sample firing
+set is 14 symbols headed by ETH/WETH/LINK/CAKE, and the out-of-sample set is 23
+mostly different, thinner names. The strategy fires on a DIFFERENT UNIVERSE in
+each window, so the in-sample number was partly a symbol-mix effect rather than a
+timing edge. **Any future screen must report the firing symbol set per window and
+check it is stable before comparing the two.**
+
+STATE AT END OF PASS 427: the classical set has now been screened and NOTHING
+clears the bar out-of-sample. donchian_breakout was the only candidate above
+11bp in-sample and it inverts. Five strategies never fire at all. rsi_reversal is
+negative on the largest sample. Combined with the two money_button premises
+closed earlier this pass, there is currently NO KNOWN PREDICATE IN THIS REPO
+WITH POSITIVE OUT-OF-SAMPLE SKILL AT A 12-MINUTE HORIZON. That is the honest
+state and the next hypothesis should start from it rather than re-screening.
