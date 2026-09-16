@@ -6797,3 +6797,32 @@ Fix is small: persist the hash from the receipt the swap path already receives,
 then backfill by matching the wallet's public base history against 18 rows with
 a known window and $0.44-$3.00 clips. If the matched subset nets differently,
 that number replaces -0.18637 and every claim resting on it gets re-stated.
+
+## Pass 430 (Echo, senior) -- 2026-09-16
+
+### Route: score the shipped L2 held-out on a corpus where it HAS support. CLOSED, NEGATIVE.
+Commit 44fa3dc. `python -X utf8 scripts/omen_layer_probe.py --corpus
+data/historical_ohlcv/base/0004_AERO-USDC.json --horizon 12 --heldout
+--relative-bands --train 2400 --test 600 --pick-window up|down`
+The shipped L2 had never been scored held-out ANYWHERE: `heldout_edge` reads the
+TAIL of whatever bars it gets, and the p108 corpora had no n>=20 train group so
+the probe refused the arm. Added `block_census()` (non-overlapping blocks, FINAL
+BLOCK DROPPED, ranked on log return) and the never-run `L2_sequence` control.
+Result on 21926 bars: UP -2.4605%/trade (n=29, SE 0.4119%, t=-5.97, CI
+[-3.27,-1.65]); DOWN +0.6452% (n=27, SE 0.9729%, t=0.66, straddles zero). The
+REJECTED control beats the shipped scheme by 2.72pp in UP. **The one resolvable
+held-out number the shipped L2 has ever produced is a significant LOSS.** Not
+retried. OMEN_STRATEGY_ENABLED stays 0. The "it has never been fairly scored"
+argument for the brain is now spent.
+
+### Route: choose the evidence universe on RESOLVABILITY, not cost. OPEN, filed as [6c361f13].
+Commit 14cf683. `python -X utf8 scripts/symbol_resolvability_census.py
+--horizon-sec 3600 --edge-bp 20`
+Trades to prove a 20bp edge at 2 SE (1h hold, USDC-quoted): WBTC 24, ETH 44,
+WETH 45, COMP 101, **AERO 204**, CBBTC 294, VIRTUAL 472, VELVET 6770. Smallest
+edge 30 trades can resolve: WBTC 18bp, WETH 25bp, AERO 52bp. AERO is our
+most-traded ghost symbol, costs 0.64-4.35% per round trip against WETH's
+0.04-0.11%, and needs 4.5x the trades to prove anything -- it loses on BOTH axes
+at once. Cost and evidence converge on WBTC/ETH/WETH. NOT YET SHIPPED: this
+prices DETECTION, not existence, and the restriction must be measured back to
+back on evidence RATE before anyone believes it is a win.
