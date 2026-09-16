@@ -1,0 +1,67 @@
+{
+  "full": {
+    "key": "FULL BOOK (all rows)",
+    "n": 227,
+    "n_priced": 68,
+    "symbols": 47,
+    "gross_bp_mean": 1.8899610292377333,
+    "gross_bp_se": 28.49463162877661,
+    "gross": -0.13708333779001186,
+    "net_before": -3.1642984187329324,
+    "net_after": -0.8385750472587122,
+    "win_before": 32.59911894273127,
+    "win_after": 41.17647058823529,
+    "per_trade_before": -0.013939640611158292,
+    "per_trade_after": -0.01233198598909871
+  },
+  "restricted": {
+    "key": "RESTRICTED (quoted rt < 0.5%)",
+    "n": 16,
+    "n_priced": 16,
+    "symbols": 3,
+    "gross_bp_mean": -3.946237002664406,
+    "gross_bp_se": 14.703584294881988,
+    "gross": -0.02911528642290464,
+    "net_before": -0.2693381833114573,
+    "net_after": -0.08640111760659853,
+    "win_before": 12.5,
+    "win_after": 37.5,
+    "per_trade_before": -0.016833636456966082,
+    "per_trade_after": -0.005400069850412408
+  },
+  "tiers": {
+    ">$1M": {
+      "n": 70,
+      "symbols": 3,
+      "gross_bp": 11.209534438839343,
+      "se": 11.632843378775023
+    },
+    "$100k-$1M": {
+      "n": 72,
+      "symbols": 10,
+      "gross_bp": 19.09112389880291,
+      "se": 69.59105583484944
+    },
+    "$10k-$100k": {
+      "n": 27,
+      "symbols": 6,
+      "gross_bp": -19.210373145685914,
+      "se": 15.903504990098702
+    },
+    "<$10k": {
+      "n": 23,
+      "symbols": 5,
+      "gross_bp": 2.301538690215984,
+      "se": 100.42607234886407
+    },
+    "UNRESOLVED": {
+      "n": 35,
+      "symbols": 23,
+      "gross_bp": -36.12749979248702,
+      "se": 95.58754546963755
+    }
+  },
+  "nonmonotone_trips": 6,
+  "priced_trips": 68,
+  "censored": 10
+}
