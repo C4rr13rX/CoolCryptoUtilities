@@ -135,3 +135,38 @@ That is still not proof the restriction wins: the 22 live rows are where real
 money moves, 9 of them are AERO, and rate must be measured after the change on
 real tape, not inferred here. That measurement is the acceptance criterion on
 [6c361f13] and it has not been run.
+
+---
+
+# SELF-AUDIT: the direction is robust, the MAGNITUDE was inflated by one quarter
+
+Before handing this over I split each corpus into quarters and recomputed sd, to
+check whether AERO's premium is a stable property or one volatile stretch. It is
+partly the latter, and the headline above needs correcting.
+
+| symbol | sd overall | Q1 | Q2 | Q3 | Q4 |
+|---|---|---|---|---|---|
+| AERO-USDC | 1.458% | **1.997%** | 1.313% | 1.298% | 1.052% |
+| WETH-USDC | 0.685% | 0.606% | 0.765% | 0.738% | 0.617% |
+| ETH-USDC | 0.676% | 0.495% | 0.687% | 0.807% | 0.676% |
+| WBTC-USDC | 0.500% | 0.471% | 0.553% | 0.474% | 0.497% |
+
+AERO/WETH **evidence-bill** ratio (sd ratio squared): overall **4.53x**, but per
+quarter **10.9x, 2.9x, 3.1x, 2.9x**.
+
+**Correction.** The 4.5x figure quoted above and on the board is inflated by Q1,
+where AERO ran at 1.997% against its own 1.052% by Q4. The stable, typical
+figure is **~3x**, not 4.5x. AERO is dearer in every single quarter (sd ratio
+1.70–3.29x), so the DIRECTION of the conclusion is robust and unaffected; only
+the size is.
+
+**Does the conclusion survive the conservative end?** Yes. At 2.9x, AERO needs
+~131 trades rather than 204, so its 50 rows bought 0.38 of a proof instead of
+0.245 — against 1.111 for the same rows on WETH. That is still **~2.9x**, and
+the restriction would still have to cut our trade count by ~2.9x before it lost,
+which removing a 25.5% slice of the budget cannot do.
+
+**Use ~3x, not 4.5x, when arguing this.** Recomputing the whole table on a
+per-quarter basis, and reporting the range rather than the pooled figure, is
+work [6c361f13] should do — the pooled sd of a corpus that changes regime is
+exactly the kind of number this repo has been burned by before.
