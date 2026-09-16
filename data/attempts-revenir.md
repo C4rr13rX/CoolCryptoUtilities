@@ -6769,3 +6769,31 @@ and that model is blind to the token. Expanding the quote census past 6 symbols
 no capital at risk. The remaining open criterion on [42a65c7b] is the one that
 matters most: **tie all 18 live rows to settled on-chain tx hashes.** Two local
 books agreeing is not the chain agreeing.
+
+### Pass 429 second addendum -- THE RECEIPTS DO NOT EXIST
+
+**CLOSED BY MEASUREMENT, and it outranks everything else this pass produced.**
+There is **no transaction hash anywhere in the 22GB trading store.**
+
+  trade_outcomes (237 rows, incl. all 18 live)  NO hash column, none in details
+  transfers            hash column,           0 rows
+  payouts_payout       tx_hash column,        0 rows
+  branddozer_gaterun   input_hash column,     0 rows
+  discovery_swapprobe  buy/sell_tx_hash,     78 rows, ALL NULL
+
+The 78 swapprobe rows are 'initialising' entries from 2026-08-26 with no swap
+ever recorded. So **not one of the 38 executed live rows can be tied to a
+settled on-chain transaction from the data we keep** -- including the 18 that
+produce the -0.18637 this loop reports as its scoreboard.
+
+The trades very likely happened: `money-path-proven-on-chain` records send,
+swap and bridge each proven at the time, and the wallet balance moved. **We did
+not keep the receipts.** Every P/L in every book here -- including this pass's
+-102bp -- is a local bookkeeping claim that cannot currently be audited against
+the chain by us or by anyone.
+
+Filed as **[50288149]**, priority 1, above everything else pass 429 filed.
+Fix is small: persist the hash from the receipt the swap path already receives,
+then backfill by matching the wallet's public base history against 18 rows with
+a known window and $0.44-$3.00 clips. If the matched subset nets differently,
+that number replaces -0.18637 and every claim resting on it gets re-stated.
