@@ -6274,3 +6274,55 @@ SCOPED AND DEPRIORITISED: feed gates block 8601 of 33425 evaluations (25.7%).
 At the measured 22.83% momentum pass rate and 0.035% fire-per-survivor rate,
 repairing 100% of the feed gates buys **0.70 additional fires per 168 hours.**
 [a093cb79] is real but it is not the road to a live trade.
+
+## Pass 427 (Echo) -- the dip inversion, and the 90-min lead KILLED out-of-sample
+
+ROUTE: money_button buys confirmed uptrends; invert it to buy the operator's
+2-5% dips instead.
+STATUS: **CLOSED, by out-of-sample test.**
+COMMANDS:
+    python -X utf8 scripts/money_button_edge_terms.py
+    python -X utf8 scripts/money_button_edge_terms.py --hours 336 --exclude-recent-hours 168
+
+Plain dips (r5<0 and r10<0 and r30<0) are as dead as continuation: median lift
+over null is -1.71 to +0.65 basis points across 12/20/30/45/60/90 min, against
+cost floors of 70bp (census fee) and 11bp (WETH-class depth).
+
+Restricting to the operator's stated size (r30 <= -2%) first showed a mean of
++113% to +184%. That is contamination, and the selection rule CAUSES it: a
+denomination break looks exactly like a huge dip, so "fall 2% or more"
+preferentially selects broken rows and books the snap-back as profit. Censoring
+at the 20% plausibility bar collapsed the mean from +184% to +0.06%.
+
+What survived the censor looked like a real lead IN-SAMPLE (last 168h): net
+median rising -0.473% -> +0.255% and win rate 33.3% -> 57.6% monotonically with
+horizon, 0 rows censored at 90 min.
+
+**IT DID NOT REPLICATE.** Re-run on the DISJOINT 168-336h window (51,874 ticks,
+more data than the in-sample window, nothing refitted):
+
+    horizon   IN-SAMPLE (last 168h)          OUT-OF-SAMPLE (168-336h)
+              n   net mean   med     win     n    net mean   med      win
+    12 min    57  -0.0604%  -0.473%  33.3%   130  +0.7066%  -0.393%  40.8%
+    20 min    46  -0.1526%  -0.480%  28.3%   115  +0.3832%  -0.437%  44.3%
+    30 min    40  -0.1977%  -0.339%  35.0%    98  +0.6966%  -0.720%  40.8%
+    45 min    37  -0.0598%  -0.432%  43.2%    82  +0.2158%  -0.644%  40.2%
+    60 min    36  -0.0547%  -0.047%  47.2%    72  -0.1936%  -0.981%  38.9%
+    90 min    33  +0.0553%  +0.255%  57.6%    62  -1.7260%  -1.577%  30.6%
+
+At 90 min the sign FLIPS (+0.0553% -> -1.7260%), the median flips (+0.255% ->
+-1.577%) and the win rate nearly halves (57.6% -> 30.6%). The in-sample trend
+ran UP with horizon; out-of-sample it runs DOWN (40.8% -> 30.6%). The monotone
+pattern was an artifact of one 168h window and of being the single positive cell
+out of ~36 examined.
+
+The earlier window is also far dirtier: it censors 13-17 rows of 79-143 (~15%)
+against 0-3 of 33-60 in-sample. Any future claim on this population must report
+its censor count.
+
+BOTH money_button premises are now closed by measurement: continuation has <1bp
+of skill at every horizon, and reversion does not replicate out-of-sample. The
+next hypothesis must not be another price-action predicate over this feed --
+that family is exhausted. What has NOT been tested is whether symbol SELECTION
+carries the signal (the `clean` column is flattest at every horizon), and that
+is where the remaining search should go.

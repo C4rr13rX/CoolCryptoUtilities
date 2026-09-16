@@ -122,6 +122,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=float, default=168.0)
     ap.add_argument("--fee", type=float, default=None)
+    ap.add_argument("--exclude-recent-hours", type=float, default=0.0,
+                    help="drop the most recent N hours, so --hours 336 "
+                         "--exclude-recent-hours 168 measures a window that is "
+                         "DISJOINT from the last 168h. This is how a lead found "
+                         "in-sample gets tested out-of-sample without refitting "
+                         "anything.")
     args = ap.parse_args()
 
     from trading.strategies.base import StrategyContext
@@ -141,6 +147,17 @@ def main() -> int:
     required_edge = round_trip * margin
 
     by_symbol = load_ticks(args.hours)
+    if args.exclude_recent_hours > 0:
+        newest = max(t[0] for ticks in by_symbol.values() for t in ticks)
+        cut = newest - args.exclude_recent_hours * 3600.0
+        by_symbol = {
+            sym: [t for t in ticks if t[0] < cut]
+            for sym, ticks in by_symbol.items()
+        }
+        by_symbol = {s_: t for s_, t in by_symbol.items() if len(t) >= 2}
+        print("OUT-OF-SAMPLE: dropped the most recent %.0fh; %d ticks remain."
+              % (args.exclude_recent_hours,
+                 sum(len(v) for v in by_symbol.values())))
     if not by_symbol:
         print("no ticks in the window; nothing to measure.")
         return 0
