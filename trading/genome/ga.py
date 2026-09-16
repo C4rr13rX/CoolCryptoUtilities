@@ -41,6 +41,12 @@ from trading.genome.shapes import (
     extract_windows,
     select_predictive,
 )
+from trading.genome.stagnation import (
+    DEFAULT_PATIENCE,
+    StagnationMonitor,
+    inject_immigrants,
+    widen_space,
+)
 
 # --------------------------------------------------------------------------
 # Gene space. Every entry is (low, high) for floats or a list of choices.
@@ -293,12 +299,33 @@ def evolve(
     brain_predict: Optional[Callable[..., Any]] = None,
     on_generation: Optional[Callable[[int, List[Genome]], None]] = None,
     should_stop: Optional[Callable[[], bool]] = None,
+    stagnation_patience: int = DEFAULT_PATIENCE,
+    on_stagnation: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> List[Genome]:
     """Run the search. ``on_generation`` streams progress to a UI/service;
-    ``should_stop`` lets a running search be cancelled or reconfigured live."""
+    ``should_stop`` lets a running search be cancelled or reconfigured live.
+
+    ``stagnation_patience`` is how many generations may pass with no real
+    improvement in held-out fitness before the search does something about
+    it: random immigrants when the population has collapsed onto one point,
+    a wider gene space when it is spread out and still finding nothing, and
+    a re-seed as a last resort. 0 disables all of it, which is how this
+    function behaved before -- it would run its whole budget resampling one
+    point and report the last generation as confidently as the first.
+    ``on_stagnation`` receives each escape, for the run record.
+    """
     rng = random.Random(seed or int(time.time()))
     space = space or GENE_SPACE
     pop = [random_genome(rng, space) for _ in range(population)]
+
+    # A search with no way of noticing it has stopped discovering will run
+    # its whole budget resampling one point and report the last generation
+    # as confidently as the first. The monitor measures; the escapes below
+    # act. Passing patience=0 turns the whole mechanism off, which is what
+    # the old behaviour was.
+    monitor = None if stagnation_patience == 0 else StagnationMonitor(
+        patience=stagnation_patience)
+    best_ever: Optional[Genome] = None
 
     for gen in range(generations):
         if should_stop and should_stop():
@@ -310,8 +337,37 @@ def evolve(
                     sentiment=sentiment, brain_predict=brain_predict,
                 )
         pop.sort(key=lambda x: x.fitness, reverse=True)
+        if pop and (best_ever is None or pop[0].fitness > best_ever.fitness):
+            best_ever = pop[0]
         if on_generation:
             on_generation(gen, list(pop))
+
+        if monitor is not None:
+            verdict = monitor.observe(gen, pop)
+            action = verdict["action"]
+            if action != "continue":
+                if on_stagnation:
+                    try:
+                        on_stagnation(dict(verdict))
+                    except Exception:  # noqa: BLE001
+                        # A reporting callback must never be able to kill a
+                        # search that is already in trouble.
+                        pass
+                if action == "immigrate":
+                    inject_immigrants(
+                        pop, rng, lambda: random_genome(rng, space),
+                        keep_elite=max(1, elite))
+                elif action == "widen":
+                    space = widen_space(space)
+                elif action == "restart":
+                    # Keep the best genome found: a restart must not be able
+                    # to lose ground, or a long run could end worse than a
+                    # short one and nothing would say why.
+                    pop = [random_genome(rng, space)
+                           for _ in range(population - 1)]
+                    if best_ever is not None:
+                        pop.append(best_ever)
+                    continue
         survivors = pop[:max(1, elite)]
         children: List[Genome] = list(survivors)
         while len(children) < population:
@@ -327,5 +383,12 @@ def evolve(
     for genome in pop:
         if genome.oos_trades == 0:
             evaluate(genome, bars_by_symbol, sentiment=sentiment, brain_predict=brain_predict)
+    # The best genome ever seen may predate a restart or have been bred out
+    # by an immigration wave, and returning a final population that does not
+    # contain it would make a longer search report a WORSE champion than a
+    # shorter one -- with nothing anywhere saying why.
+    if best_ever is not None and all(
+            g.genome_id != best_ever.genome_id for g in pop):
+        pop.append(best_ever)
     pop.sort(key=lambda x: x.fitness, reverse=True)
     return pop
