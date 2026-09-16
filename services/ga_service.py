@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from trading.genome.ga import GENE_SPACE, Genome, evolve
+from trading.genome.stagnation import DEFAULT_PATIENCE
 
 # Anchored to the repo root: web workers run from web/ while the trading
 # process runs from the repo root, so a relative default silently split
@@ -64,11 +65,22 @@ def _save(state: Dict[str, Any]) -> None:
         pass
 
 
-def _update(run_id: str, **fields: Any) -> None:
+def _update(_run_id: str, **fields: Any) -> None:
+    """Merge fields into one run's record.
+
+    The id parameter is underscored because the record itself carries a
+    `run_id` field, and every caller that creates a run passes it both
+    positionally and as a field -- which raised TypeError: got multiple
+    values for argument 'run_id' on the FIRST line of start_run. That is why
+    this service had never completed a single run: not a subtle scheduling
+    problem, a crash before the worker thread was ever created.
+    """
+    run_id = _run_id
     with _lock:
         state = _load()
         run = state["runs"].get(run_id) or {}
         run.update(fields)
+        run["run_id"] = run_id
         run["updated_at"] = time.time()
         state["runs"][run_id] = run
         _save(state)
@@ -190,6 +202,7 @@ def start_run(
     use_sentiment: bool = True,
     use_brain: bool = False,
     seed: int = 0,
+    stagnation_patience: int = DEFAULT_PATIENCE,
 ) -> str:
     """Launch a search in a daemon thread. Returns its run_id immediately."""
     run_id = uuid.uuid4().hex[:12]
@@ -248,6 +261,31 @@ def start_run(
                 if pending:
                     _apply_pending(run_id, pending)
 
+            def on_stagnation(verdict: Dict[str, Any]) -> None:
+                """Record every escape on the run.
+
+                A long search that produced no champion is otherwise
+                indistinguishable from a short one that got unlucky. The
+                escapes are the difference: they say the search noticed it
+                was stuck and what it did about it, which is the first thing
+                anyone asks of a run that found nothing.
+                """
+                with _lock:
+                    state = _load()
+                    run = state["runs"].get(run_id, {})
+                    esc = run.get("stagnation", [])
+                    esc.append({
+                        "generation": verdict.get("generation"),
+                        "action": verdict.get("action"),
+                        "diversity": verdict.get("diversity"),
+                        "best": verdict.get("best"),
+                        "reason": verdict.get("reason"),
+                        "at": time.time(),
+                    })
+                    run["stagnation"] = esc[-100:]
+                    state["runs"][run_id] = run
+                    _save(state)
+
             pop = evolve(
                 bars,
                 population=population,
@@ -258,6 +296,8 @@ def start_run(
                 brain_predict=brain_predict,
                 on_generation=on_generation,
                 should_stop=lambda: _stop_flags.get(run_id, False),
+                stagnation_patience=stagnation_patience,
+                on_stagnation=on_stagnation,
             )
             best = pop[0] if pop else None
             _update(
