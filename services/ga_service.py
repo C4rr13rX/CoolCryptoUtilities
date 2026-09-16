@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from trading.genome.ga import GENE_SPACE, Genome, evolve
 from trading.genome.stagnation import DEFAULT_PATIENCE
+from trading.genome import selection_null
 
 # Anchored to the repo root: web workers run from web/ while the trading
 # process runs from the repo root, so a relative default silently split
@@ -300,10 +301,32 @@ def start_run(
                 on_stagnation=on_stagnation,
             )
             best = pop[0] if pop else None
+            # Judge the champion against the best of the genomes the search
+            # SCREENED, not against a single coin-flipper. A GA keeps the
+            # maximum over everything it evaluated, so the maximum is what
+            # chance has to be asked about -- and on this repo's first four
+            # real runs every seed looked positive while the two largest
+            # samples scored below the median of that null.
+            verdict = None
+            if best is not None and best.oos_trades:
+                try:
+                    verdict = selection_null.judge(
+                        observed_accuracy=best.oos_accuracy,
+                        baseline=best.oos_baseline,
+                        trades=best.oos_trades,
+                        population=population,
+                        generations=generations,
+                    ).as_dict()
+                except Exception:  # noqa: BLE001
+                    # A statistical guard must never be able to lose a run's
+                    # result. No verdict reads as "not judged", which the UI
+                    # shows differently from "judged and passed".
+                    verdict = None
             _update(
                 run_id,
                 status="stopped" if _stop_flags.get(run_id) else "complete",
                 best=best.to_dict() if best else None,
+                selection_null=verdict,
                 finished_at=time.time(),
             )
         except Exception as exc:                    # noqa: BLE001
