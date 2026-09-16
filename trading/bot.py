@@ -1794,15 +1794,47 @@ class TradingBot:
         Directives without a strategy_id (legacy paths) fall back to the
         bot-level promotion gates that admitted them in the first place.
         """
+        # THE OPERATOR ARM MAKES THIS GATE THE ONLY GATE, so under the arm it
+        # must fail CLOSED. Caught by Echo (senior) auditing 9b5cb78, pass 424,
+        # and the audit was right: until selector.py honoured an explicit
+        # ENABLE_LIVE_TRADING=1, `live_trading_enabled` was False on every bot,
+        # so the conjunction at bot.py:6715 was False no matter what this
+        # function returned -- the wholesale disable was MASKING three
+        # fail-open paths here:
+        #
+        #   1. no strategy_id            -> return True (unconditionally live)
+        #   2. is_live_approved raises   -> return True (a locked/corrupt JSON
+        #                                   store approves everything; the
+        #                                   store's concurrency loss is filed)
+        #   3. STRATEGY_GRADUATION_ENFORCED off -> return True for everything
+        #
+        # Removing the mask without this would have made 1 and 2 reachable with
+        # real money. The legacy fallbacks stay exactly as they were for every
+        # path that is live today -- they are only closed when the arm is what
+        # opened the lane, which is new behaviour and carries no legacy.
+        armed = False
+        try:
+            from trading.selector import GhostTradingSupervisor
+
+            armed = GhostTradingSupervisor._operator_armed_live()
+        except Exception:
+            # Fail CLOSED on the arm check too: if we cannot tell whether the
+            # operator armed the lane, assume they did and take the strict path.
+            armed = True
         if os.getenv("STRATEGY_GRADUATION_ENFORCED", "1").lower() not in {"1", "true", "yes", "on"}:
+            if armed:
+                return False
             return True
         sid = str(getattr(directive, "strategy_id", "") or "") if directive is not None else ""
         if not sid:
-            return True
+            # A directive with no strategy_id has no ledger row to approve it.
+            # Under the arm that is not a legacy path to wave through, it is an
+            # unidentified strategy asking to spend money.
+            return False if armed else True
         try:
-            return self.strategy_ledger.is_live_approved(sid)
+            return bool(self.strategy_ledger.is_live_approved(sid))
         except Exception:
-            return True
+            return False if armed else True
 
     def _live_clip_usd(self) -> float:
         """USD notional the transition plan sanctioned for ONE live entry.

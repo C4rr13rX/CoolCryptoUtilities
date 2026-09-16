@@ -165,3 +165,59 @@ class TestBothCallSitesAreGuarded:
             f"{writes} wholesale disables but only {guards} operator-arm guards -- "
             "an unguarded one strips the flag on the next bot added"
         )
+
+
+class TestTheLedgerGateFailsClosedUnderTheArm:
+    """Caught by Echo (senior) auditing 9b5cb78, pass 424 -- the audit was right.
+
+    Before the operator arm, `live_trading_enabled` was False on every bot, so
+    the conjunction at bot.py:6715 was False whatever _strategy_live_approved
+    returned. The wholesale disable was MASKING three fail-open paths in it.
+    Honouring the arm unmasks them, so under the arm they must fail closed.
+    """
+
+    @staticmethod
+    def _approved(directive, *, raises=False, approved=False):
+        from trading.bot import TradingBot
+
+        def _is_live_approved(sid):
+            if raises:
+                raise RuntimeError("json store locked")
+            return approved
+
+        stub = SimpleNamespace(
+            strategy_ledger=SimpleNamespace(is_live_approved=_is_live_approved)
+        )
+        return TradingBot._strategy_live_approved(stub, directive)
+
+    def test_a_directive_with_no_strategy_id_is_refused_under_the_arm(self, monkeypatch):
+        monkeypatch.setenv("ENABLE_LIVE_TRADING", "1")
+        monkeypatch.delenv("LIVE_REQUIRE_MODEL_READY", raising=False)
+        assert self._approved(SimpleNamespace(strategy_id="")) is False
+        assert self._approved(None) is False
+
+    def test_a_raising_ledger_is_refused_under_the_arm(self, monkeypatch):
+        """A locked or corrupt JSON store must not approve every strategy."""
+        monkeypatch.setenv("ENABLE_LIVE_TRADING", "1")
+        monkeypatch.delenv("LIVE_REQUIRE_MODEL_READY", raising=False)
+        assert self._approved(SimpleNamespace(strategy_id="atf_static"), raises=True) is False
+
+    def test_graduation_enforcement_off_is_refused_under_the_arm(self, monkeypatch):
+        monkeypatch.setenv("ENABLE_LIVE_TRADING", "1")
+        monkeypatch.setenv("STRATEGY_GRADUATION_ENFORCED", "0")
+        assert self._approved(SimpleNamespace(strategy_id="atf_static")) is False
+
+    def test_the_legacy_fallbacks_are_unchanged_when_the_arm_is_off(self, monkeypatch):
+        """Only the NEW door is strict -- paths live today keep their behaviour."""
+        monkeypatch.setenv("ENABLE_LIVE_TRADING", "0")
+        monkeypatch.delenv("LIVE_REQUIRE_MODEL_READY", raising=False)
+        monkeypatch.delenv("STRATEGY_GRADUATION_ENFORCED", raising=False)
+        assert self._approved(SimpleNamespace(strategy_id="")) is True
+        assert self._approved(SimpleNamespace(strategy_id="x"), raises=True) is True
+
+    def test_a_ledger_approved_strategy_still_passes_under_the_arm(self, monkeypatch):
+        """Failing closed must not close the door the arm exists to open."""
+        monkeypatch.setenv("ENABLE_LIVE_TRADING", "1")
+        monkeypatch.delenv("LIVE_REQUIRE_MODEL_READY", raising=False)
+        monkeypatch.delenv("STRATEGY_GRADUATION_ENFORCED", raising=False)
+        assert self._approved(SimpleNamespace(strategy_id="atf_static"), approved=True) is True
