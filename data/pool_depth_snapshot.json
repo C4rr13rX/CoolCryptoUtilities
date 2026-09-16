@@ -1,0 +1,23 @@
+{
+  "_comment": "Pool liquidity in USD on base, deepest pool per symbol, from DexScreener. SNAPSHOT taken during pass 426 (2026-09-16) by Dune. This is a point-in-time reading: a pool can drain or fill, so depth attributed to an older tick or ghost row is an INFERENCE, not a measurement of that moment. Re-measure before relying on it. A value of 0 means DexScreener returned no base pool for that symbol at all. Used by scripts/money_button_dip_supply.py --depth-json and by data/roundtrip_cost_coverage.md.",
+  "_source": "https://api.dexscreener.com/latest/dex/search?q=<SYMBOL>%20USDC, filtered to chainId=base and baseToken.symbol==SYMBOL, deepest pool by liquidity.usd",
+  "_taken_utc_approx": "2026-09-16T16:05Z",
+  "AERO": 33378775,
+  "CBBTC": 7600328,
+  "CBXRP": 117724738,
+  "VIRTUAL": 788865,
+  "BSTONK": 261676,
+  "VVV": 243092,
+  "BASECAT": 210674,
+  "CBZEC": 209443,
+  "COMP": 33483,
+  "AAVE": 32053,
+  "DRB": 16529,
+  "CBMEGA": 15914,
+  "CBADA": 3450,
+  "CBETH": 2562,
+  "MOG": 52,
+  "OMARCHY": 0,
+  "PUMP": 0,
+  "TYBG": 0
+}
