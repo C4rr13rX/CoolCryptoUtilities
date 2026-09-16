@@ -6080,3 +6080,56 @@ pipeline.py:5144 tests cold_start first and sets ready=True with reason
 cold_start_bootstrap before the reason chain at :5288 runs, so the `not trades`
 disjunct in `stale_samples` (:4869) is unreachable as a reason. stale_ghost_book
 always means "has a book and it is old", never "has no book".
+
+### Pass 425 addendum -- Dune. The floor and the horizon, swept. Two more routes closed.
+
+ROUTE TRIED (4): [3c411c08] "the affordable dip is a function of pool depth, so
+scale the threshold down on deep pools and the cadence appears." FALSIFIED.
+`python -X utf8 scripts/money_button_dip_expectancy.py --hours 168 --sweep`,
+13 deep-pool pairs, 168h, MIN_NET_RETURN scaled with the floor so the sweep
+measures the threshold and not that veto:
+
+      floor   trades  per day   win   mean net   total net
+     0.25%      175    25.00    42%    -0.104%    -18.15%
+     0.50%      105    15.00    48%    -0.098%    -10.26%
+     1.00%       43     6.14    40%    -0.100%     -4.29%
+     2.00%        8     1.14    75%    +0.215%     +1.72%
+     5.00%        0     0.00     --         --         --
+
+  The item's break-even sketch assumed capture fraction f = 0.5 at every dip
+  size, giving 0.22% break-even on WETH. The mean is FLAT near -0.10% across
+  all three loose floors and does not improve as the floor tightens, which is
+  the signature of an f that FALLS with dip size: a 0.3% move on WETH is noise,
+  and noise does not revert.
+  CLOSED: "lower the dip threshold on deep pools to buy cadence." Cadence IS
+  purchasable -- 25 trades/day at 0.25% is literally the operator's
+  every-5-30-minutes -- and it loses on 58% of them.
+
+ROUTE TRIED (5): shorten the hold (standing instruction route (c)). HELPS,
+MONOTONICALLY, AND DOES NOT RESCUE THE LOOSE FLOORS. Same sweep at three
+horizons. At the 2% floor on deep pools:
+      5m   10 trades  1.43/day  70% win  +0.241%  +2.41%
+     15m    9 trades  1.29/day  89% win  +0.429%  +3.86%
+     30m    8 trades  1.14/day  75% win  +0.215%  +1.72%
+  15 MINUTES IS THE PEAK ON ALL THREE STATISTICS. That is an independent
+  reproduction of [book-is-positive-inside-fifteen-minutes] by a different data
+  path -- not sought, the sweep put it there.
+  At 15m the loose floors are still negative: 0.25% -0.087%, 0.50% -0.077%,
+  1.00% -0.056%. Better than at 30m, negative at every one. The floor and the
+  horizon are NOT substitutes.
+
+BEST CONFIGURATION MEASURED TODAY: deep pools + 2% floor + 15m hold = 9 trades,
+89% win, +0.429% mean net after the real per-token round trip, +3.86% over 168h.
+n=9. NOT AN EDGE, and the script prints its own "LEAD REQUIRING MORE DATA" line
+below 30 round trips so this cannot be quoted without its sample size. Filed as
+[bd851275], whose entire purpose is to reach n=30 before anyone sizes a clip.
+
+THE CADENCE PROBLEM IS UNSOLVED AND SHOULD NOT BE PAPERED OVER: 1.29 trades/day
+is nowhere near the operator's ask, and the sweep shows cadence is only for sale
+at floors that lose. If this signal is the route, more cadence has to come from a
+WIDER deep-pool universe -- 13 of 151 streamed symbols currently qualify -- not
+from a looser threshold.
+
+NOT CLAIMED: no restart, no live trade, trading/scheduler.py untouched all pass,
+and no threshold in production changed. Three of the five routes tried today came
+back negative.
