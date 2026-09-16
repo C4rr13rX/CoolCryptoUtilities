@@ -6201,3 +6201,76 @@ rule is still worth doing.
 
 NOT CLAIMED: no restart, no live trade, no production file touched, no symbol
 banned, no gate changed. The route I was assigned came back negative.
+
+## Pass 427 (Echo, senior) -- money_button's thresholds are CORRECT; the premise has no edge at any horizon
+
+ROUTE: tune money_button's momentum / cost thresholds so it fires more often.
+STATUS: **CLOSED.** Every loosening produces more fires that lose more.
+COMMAND: `python -X utf8 scripts/money_button_edge_terms.py`
+
+The gate census's "momentum_not_aligned 57.08%" is a share of ALL evaluations,
+but gates run in a CHAIN and can only decline what reaches them. Conditional
+rate is 19081/24727 = **77.17% of what it saw**. Chance on three nested windows
+is ~87.5%, so the gate is MORE permissive than chance. It is not mis-set.
+
+Settled it the only way that settles it -- replayed the tape forward over the
+strategy's own 12-min hold for every candidate each gate REFUSED (sequential,
+per-symbol, no re-entry while holding):
+
+    momentum_not_aligned refusals  n=3140  gross +0.0317%  NET -0.6683%  win 5.4%
+    edge_below_cost refusals       n=276   gross -0.0382%  NET -0.7382%  win 3.3%
+
+Both lose. Admitting them loses money. Both gates earn their keep.
+
+BINDING TERM NAMED: trading/strategies/money_button.py:319, conservative_edge
+vs required_edge = (2*fee + slippage) * 1.1 = 0.7700%. Over the 3246
+edge_below_cost refusals the PROJECTED move (12-min extrapolation, BEFORE any
+discount) has median 0.0687%, p95 0.5731%, max 2.4683%. **95% cannot clear the
+cost bar even with both discounts deleted and zero volatility penalty.** The
+discounts are not what refuses them; the cost is.
+
+COUNTERFACTUALS -- all four loosenings lose MORE (sequential):
+    drop the volatility penalty   2 fires  net -2.0410%
+    drop the momentum decay       2 fires  net -2.0410%
+    drop both discounts           5 fires  net -1.1559%
+    raw projection clears cost    8 fires  net -0.8810%
+No threshold was changed. The census is unchanged on purpose.
+
+HORIZON SWEEP -- the operator's "2-5% over 5-30 min, room for 45-60" tested
+directly. Forward return at 12/20/30/45/60/90 min for three populations:
+null (all non-feed evaluations), aligned (passed momentum), clean (only the
+cost gate refused them). **Read the MEDIANS: the null MEAN is
+outlier-contaminated** (+9.56% net at 90 min against its own median -0.73%),
+because null includes denomination breaks and two-regime tickers that the
+momentum gate's price-scale guard strips out of `aligned`. That the aligned
+means are NOT blown up is independent evidence those guards work.
+
+    horizon   null med    aligned med   clean med   aligned win / null win
+    12 min    -0.703%     -0.699%       -0.696%      4.9% / 5.2%
+    20 min    -0.707%     -0.700%       -0.698%      6.6% / 7.5%
+    30 min    -0.707%     -0.700%       -0.696%      8.7% / 9.0%
+    45 min    -0.714%     -0.712%       -0.698%     11.3% / 11.2%
+    60 min    -0.715%     -0.707%       -0.699%     13.8% / 12.2%
+    90 min    -0.734%     -0.731%       -0.694%     17.5% / 14.7%
+
+Every median net sits at -0.70%, which IS the round trip. **The median gross
+move is 0.000% at every horizon and in every population.** Win rate rises with
+horizon only because a longer hold has more chance to clear a fixed cost, and
+aligned barely separates from null: +2.8pp at 90 min, NEGATIVE at 12 min.
+
+CONCLUSION: short-horizon momentum continuation has **no measurable skill on
+this feed at any horizon from 12 to 90 minutes.** Lengthening the hold does not
+rescue it. The 2-5% moves the operator sees on charts are real, but trailing
+momentum alignment does not predict them -- conditioned on aligned momentum the
+median forward move is zero. Do not spend another pass tuning this strategy's
+thresholds; the defect is the premise, not the numbers.
+
+STILL OPEN (this measurement does NOT close it): the `clean` column is the
+flattest of the three at every horizon and its win rate is the highest at 90
+min (18.2%). If a signal exists it is in what SELECTS the symbol, not in the
+momentum arithmetic.
+
+SCOPED AND DEPRIORITISED: feed gates block 8601 of 33425 evaluations (25.7%).
+At the measured 22.83% momentum pass rate and 0.035% fire-per-survivor rate,
+repairing 100% of the feed gates buys **0.70 additional fires per 168 hours.**
+[a093cb79] is real but it is not the road to a live trade.
