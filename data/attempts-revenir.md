@@ -6620,3 +6620,42 @@ horizon. We have been running signal search over a feed that is at best ~11%
 fillable, and the one honest answer available on the fillable part is +0.33bp
 on 81 samples. Before another screen is funded, the tradeable universe has to
 be MEASURED rather than assumed -- see [ce843f60].
+
+### PASS 428, FOURTH RESULT -- [ce843f60] CLOSED. THE TAPE IS 11.6% FILLABLE.
+
+`python -X utf8 scripts/pool_depth_sweep.py --hours 168` -- swept all 153 base
+symbols in market_stream against DexScreener, same rule as the original 18 rows.
+
+```
+  tier            symbols  sym share    ticks  TICK share
+  >$1M                  3      2.0%     3601      11.6%
+  $250k-1M              7      4.6%     1512       4.9%
+  $50k-250k            10      6.5%     9697      31.2%
+  <$50k                43     28.1%     5695      18.3%
+  UNRESOLVED           90     58.8%    10564      34.0%
+```
+
+**QUOTE THE TICK SHARE, NOT THE SYMBOL SHARE.** A deep symbol we barely sample
+does not make our tape fillable. Only **11.6% of our tape sits in a pool over
+$1M**, and only 16.5% clears $250k.
+
+And the row nobody expected: **58.8% of the symbols we stream cannot be resolved
+to a base pool at all** -- 34% of all ticks. We are not merely streaming thin
+tokens, we are streaming 90 tickers whose base pool a DexScreener search cannot
+find. Those ticks have been feeding every strategy score, every ghost trade and
+every graduation decision in this repo. Note `ticker-squatting-breaks-symbol-
+resolution`: some of these are probably name collisions rather than missing
+pools, which makes them worse than useless -- they are OTHER assets' prices.
+
+This supersedes the "2 of 155" phrasing in the previous section: measured, it is
+3 symbols over $1M, and 90 unresolved. The earlier number was an artifact of an
+18-row snapshot, exactly as that section warned.
+
+**WHAT THIS MEANS FOR THE LOOP.** The graduation bar asks for 20 TRADEABLE ghost
+trades. 83.5% of the tape it is scored on is in pools that cannot fill at a price
+any edge here survives. That is a plausible single cause for several symptoms the
+board has been treating separately: the low tradeable evidence rate, the
+tradeable/pooled P/L split, and three independent arrivals at the untradeable-
+pool wall. **The next pass should restrict the STREAM, not the screen** -- stop
+paying for 88.4% of a tape we cannot trade, and re-ask every dead question on
+what is left.
