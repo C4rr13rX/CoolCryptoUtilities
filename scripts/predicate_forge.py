@@ -359,6 +359,11 @@ def main() -> int:
                     help="comma-separated horizons in minutes, overrides HORIZONS_MIN")
     ap.add_argument("--only", type=str, default="",
                     help="screen only features whose name starts with this prefix")
+    ap.add_argument("--min-depth", type=float, default=0.0,
+                    help="restrict the universe to symbols with at least this much "
+                         "pool liquidity in USD, per data/pool_depth_snapshot.json. "
+                         "A symbol ABSENT from the snapshot is excluded, not assumed deep.")
+    ap.add_argument("--depth-json", type=str, default="data/pool_depth_snapshot.json")
     args = ap.parse_args()
 
     global CUTS, HORIZONS_MIN, ONLY_PREFIX
@@ -378,6 +383,24 @@ def main() -> int:
     if not by_symbol:
         print("  no tape. nothing to screen.")
         return 1
+
+    if args.min_depth > 0:
+        raw = json.loads(Path(args.depth_json).read_text(encoding="utf-8"))
+        depth = {k.upper(): float(v) for k, v in raw.items()
+                 if not k.startswith("_") and isinstance(v, (int, float))}
+        before = len(by_symbol)
+        by_symbol = {s: r for s, r in by_symbol.items()
+                     if depth.get(s.split("-")[0].upper(), 0.0) >= args.min_depth}
+        print(f"  DEPTH FILTER: >= ${args.min_depth:,.0f} liquidity keeps "
+              f"{len(by_symbol)} of {before} symbols "
+              f"({len(depth)} have a depth reading at all; the rest are EXCLUDED, "
+              f"not assumed deep).")
+        if not by_symbol:
+            print("  no symbol in the tape clears that depth. nothing to screen.")
+            return 1
+        print("  NOTE: cross-sectional features rank a symbol against its peers, so on a")
+        print("  universe this small xs_* and crowd* are near-degenerate. Read the")
+        print("  price-action families here; the xs_* result belongs to the full run.")
 
     feats, ts, sid, fwd = build_features(by_symbol)
     if len(ts) == 0:

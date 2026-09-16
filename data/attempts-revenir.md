@@ -6588,3 +6588,35 @@ trip 400-1500bp. Any future screen that pools the universe will keep rediscoveri
 this and keep being wrong. **Screen on the deep subset from the start.** On deep
 pools the honest number for the best predicate found by a 408-wide enumerated
 search is +0.88bp against a 22bp round trip.
+
+### PASS 428, THIRD RESULT -- THE UNIVERSE WE CAN FILL IS **2 SYMBOLS OF 155**
+
+`python -X utf8 scripts/predicate_forge.py --hours 168 --perms 120 --fee 0.0011 --min-depth 1000000 --horizons 2,5,12`
+
+```
+  DEPTH FILTER: >= $1,000,000 liquidity keeps 2 of 155 symbols
+  (18 have a depth reading at all; the rest are EXCLUDED, not assumed deep)
+  tape: 2 symbols, 3579 ticks over 168h
+```
+
+**CAVEAT FIRST, because it changes the size of the claim:** the depth snapshot
+covers 18 symbols, not 155. So the honest statement is "2 of the 18 we have
+measured clear $1M", an 11% rate, and the other 137 are UNMEASURED -- not known
+thin. The strong version of this claim is not yet earned.
+
+What IS earned: every screen this repo has ever run pooled a universe whose
+fillability was never checked, and on the measured part of it only 11% clears
+$1M. That is the mechanism under all three arrivals at the untradeable-pool wall.
+
+On those 2 symbols, at a 22bp round trip, one predicate holds out of sample and
+pays: `crowd>q0.90` at 5 min, +29.67bp IS -> +23.83bp OOS, **net +0.33bp on
+n=81**. Do not get excited: +0.33bp is the noise floor, n=81 is thin, the same
+predicate INVERTS at 12 min (+43.85 IS -> -4.64 OOS), and on a 2-symbol universe
+`crowd` (the cross-sectional mean) is near-degenerate with plain momentum. Call
+it "not distinguishable from zero", not "an edge".
+
+**THIS IS THE REDIRECT.** The bottleneck is not the predicate and not the
+horizon. We have been running signal search over a feed that is at best ~11%
+fillable, and the one honest answer available on the fillable part is +0.33bp
+on 81 samples. Before another screen is funded, the tradeable universe has to
+be MEASURED rather than assumed -- see [1a5d4d7f].
