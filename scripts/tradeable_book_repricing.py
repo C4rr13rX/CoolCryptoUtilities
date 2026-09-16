@@ -139,8 +139,40 @@ def ci_str(m: float, se: float, n: int) -> str:
     return f"[{lo:+8.1f}, {hi:+8.1f}] {verdict}"
 
 
-def build(db_path: str, depth_bar: float, max_move_pct: float) -> Dict[str, Any]:
-    rows = load_rows(db_path)
+def load_rows_by_mode(db_path: str, mode: Optional[str]) -> List[Dict[str, Any]]:
+    """trade_outcomes carries BOTH books. details.mode is 'ghost' or 'live'.
+
+    Of 237 rows, 215 are ghost and 22 are live. Every re-pricing in this repo
+    before 2026-09-16 loaded all 237 and called the result the ghost book, so
+    the ghost numbers were ~9% live-contaminated. mode=None restores that old
+    behaviour for comparison; it is never the default.
+    """
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    try:
+        cur = con.execute(
+            "SELECT symbol, quantity, entry_price, exit_price, gross_profit, "
+            "fee_cost, net_profit, status, ts, details FROM trade_outcomes"
+        )
+        out = []
+        for r in cur.fetchall():
+            d = dict(r)
+            try:
+                meta = json.loads(d.pop("details", None) or "{}")
+            except (TypeError, ValueError):
+                meta = {}
+            d["mode"] = meta.get("mode")
+            if mode is not None and d["mode"] != mode:
+                continue
+            out.append(d)
+        return out
+    finally:
+        con.close()
+
+
+def build(db_path: str, depth_bar: float, max_move_pct: float,
+          mode: Optional[str] = "ghost") -> Dict[str, Any]:
+    rows = load_rows_by_mode(db_path, mode)
     depths = load_depths(DEPTH_SNAPSHOT)
 
     kept: List[Dict[str, Any]] = []
@@ -206,17 +238,27 @@ def main() -> int:
     ap.add_argument("--depth-bar", type=float, default=0.50)
     ap.add_argument("--max-move-pct", type=float, default=20.0)
     ap.add_argument("--json", dest="json_out", default=None)
+    ap.add_argument("--mode", default="ghost",
+                    choices=["ghost", "live", "all"],
+                    help="which book. trade_outcomes holds BOTH; 'all' is the "
+                         "old contaminated behaviour, kept only for comparison")
     args = ap.parse_args()
 
-    st = build(args.db, args.depth_bar, args.max_move_pct)
+    mode = None if args.mode == "all" else args.mode
+    st = build(args.db, args.depth_bar, args.max_move_pct, mode)
     rows = st["rows"]
     W = 78
 
     print("=" * W)
     print("GHOST BOOK RE-PRICED PER TOKEN, WITH AN ERROR BAR  [bc7b37c2]")
     print("=" * W)
-    print(f"rows kept {len(rows)}   censored |move|>{args.max_move_pct}%: {st['censored']}"
+    print(f"book: {args.mode.upper()}   rows kept {len(rows)}   "
+          f"censored |move|>{args.max_move_pct}%: {st['censored']}"
           f"   depth rows available: {st['n_depths']}")
+    if mode is None:
+        print("  WARNING: --mode all MIXES the ghost and live books. 22 of 237")
+        print("  rows are live. This is the pre-2026-09-16 behaviour and is")
+        print("  kept only so the contamination can be measured, never quoted.")
     print()
     print("WHICH QUESTION THIS ANSWERS, in one sentence: re-pricing THESE trades")
     print("under a deep-pool cost answers 'what would the trades the current")
