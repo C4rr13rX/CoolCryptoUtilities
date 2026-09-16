@@ -106,6 +106,9 @@ XS_BIN_SEC = 300.0
 #: both directions ("above" and "below").
 CUTS = (0.05, 0.10, 0.25, 0.75, 0.90, 0.95)
 
+#: Restrict the screen to one feature family (set by --only).
+ONLY_PREFIX = ""
+
 #: A predicate firing on fewer ticks than this in either split is not screened.
 MIN_SUPPORT = 60
 
@@ -277,6 +280,8 @@ def make_predicates(
     """
     preds: List[Tuple[str, np.ndarray]] = []
     for name in sorted(feats):
+        if ONLY_PREFIX and not name.startswith(ONLY_PREFIX):
+            continue
         v = feats[name]
         ref = v[mask_is & np.isfinite(v)]
         if len(ref) < MIN_SUPPORT * 4:
@@ -348,7 +353,20 @@ def main() -> int:
     ap.add_argument("--fee", type=float, default=0.003, help="one-way fee rate")
     ap.add_argument("--top", type=int, default=12)
     ap.add_argument("--json", type=str, default="")
+    ap.add_argument("--cuts", type=str, default="",
+                    help="comma-separated quantile cuts, overrides CUTS")
+    ap.add_argument("--horizons", type=str, default="",
+                    help="comma-separated horizons in minutes, overrides HORIZONS_MIN")
+    ap.add_argument("--only", type=str, default="",
+                    help="screen only features whose name starts with this prefix")
     args = ap.parse_args()
+
+    global CUTS, HORIZONS_MIN, ONLY_PREFIX
+    if args.cuts:
+        CUTS = tuple(float(x) for x in args.cuts.split(","))
+    if args.horizons:
+        HORIZONS_MIN = tuple(float(x) for x in args.horizons.split(","))
+    ONLY_PREFIX = args.only
 
     rng = np.random.default_rng(20260916)
 
