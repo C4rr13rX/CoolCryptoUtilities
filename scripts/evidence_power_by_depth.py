@@ -151,6 +151,31 @@ def main() -> int:
     print("  resolve is an edge the bar approves or rejects BY NOISE.")
     print()
 
+    # --- the price of SEARCHING, which is separate from the price of n -----
+    deep_sigma = sigmas.get(">$1M", (float("nan"), 0))[0]
+    print("-" * W)
+    print("THE NOISE BAR FOR A PREDICATE SEARCH -- the cost of screening K")
+    print("The expected best of K independent screens is ~ SE*sqrt(2*ln K), so")
+    print("screening K candidates MANUFACTURES this many bp of apparent edge")
+    print("out of pure noise. A predicate must beat its own cell to mean anything.")
+    Ks = (10, 50, 120, 1000)
+    print(f"  sigma = {deep_sigma:.1f}bp (the >$1M tier, measured above)")
+    print(f"  {'n rows':>8}{'SE bp':>8} | " + "".join(f"K={k:<7}" for k in Ks))
+    for n_rows in (20, 56, 100, 364, 1000):
+        se = deep_sigma / math.sqrt(n_rows)
+        cells = "".join(f"{se*math.sqrt(2*math.log(k)):<9.1f}" for k in Ks)
+        print(f"  {n_rows:>8}{se:>8.1f} | {cells}")
+    print()
+    print("  READ IT DOWN A COLUMN, NOT ACROSS. Doubling K costs almost nothing;")
+    print("  quadrupling n halves the bar. More data buys far more than fewer")
+    print("  candidates does -- so search WIDE, but only on a deep sample, and")
+    print("  gather that sample where sigma is lowest.")
+    print(f"  scripts/predicate_forge.py --perms 120 on the {sigmas.get('>$1M',(0,0))[1]} deep rows we")
+    print(f"  have carries a noise bar of "
+          f"{deep_sigma/math.sqrt(max(1,sigmas.get('>$1M',(0,1))[1]))*math.sqrt(2*math.log(120)):.1f}bp "
+          f"against an edge we hunt at 5-20bp.")
+    print()
+
     print("-" * W)
     print(f"DAYS OF EVIDENCE, at the measured {args.rate_per_day}/day tradeable rate")
     print(f"{'TIER':<13}{'  to resolve 10bp':>20}{'  to resolve 20bp':>20}")
