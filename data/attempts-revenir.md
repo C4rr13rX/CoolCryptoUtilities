@@ -6659,3 +6659,67 @@ tradeable/pooled P/L split, and three independent arrivals at the untradeable-
 pool wall. **The next pass should restrict the STREAM, not the screen** -- stop
 paying for 88.4% of a tape we cannot trade, and re-ask every dead question on
 what is left.
+
+---
+
+## Pass 429 (Echo, senior) -- the instrument, not the signal
+
+**ROUTE TRIED: re-price the ghost book per token and restrict to deep pools
+(the standing instruction's route (b), "attack the cost floor first").
+RESULT: the route's premise is falsified and the route is NOT closed but is
+BLOCKED on a measurement. Commits 31167be, 5524f69, fb963cf.**
+
+**1. ec1ee5f's deep-pool verdict does not survive a bigger sample. CLOSED.**
+That pass concluded from 16 quoted rows that "DEEP pools are negative on GROSS,
+direction sets the sign, not symbol selection". The gross question needs no cost
+quote -- it needs a depth classification, and `data/pool_depth_snapshot.json` has
+one for 153 symbols. On every row the book has:
+
+  tier          n  syms  grossBP/trade   95% CI (bp)
+  >$1M         70     3         +11.2    [ -11.6,  +34.0]  indistinguishable
+  $100k-$1M    72    10         +19.1    [-117.3, +155.5]  indistinguishable
+  $10k-$100k   27     6         -19.2    [ -50.4,  +12.0]  indistinguishable
+  <$10k        23     5          +2.3    [-194.5, +199.1]  indistinguishable
+  UNRESOLVED   35    23         -36.1    [-223.5, +151.2]  indistinguishable
+
+The deep bucket FLIPS SIGN at n=70 and neither reading is significant. Do not
+carry ec1ee5f's verdict forward. **No depth tier has a directional edge
+distinguishable from zero -- and none has a negative one either.**
+
+**2. THE GRADUATION BAR CANNOT RESOLVE ANY EDGE WE COULD EARN. This is the
+finding of the pass.** `python -X utf8 scripts/evidence_power_by_depth.py`.
+The win-rate leg is exact: 55% of 20 is 11/20, which a p=0.5 coin clears
+**41.2%** of the time; at the values the code actually uses it is 34.5% (n=25,
+`trading/pipeline.py:928`) and 29.2% (n=30, `:5101`). Across 41 evidenced
+strategies, 12-17 pass on noise alone. The P/L leg is no better: measured
+per-trade sigma in our deepest pools is 97.3bp, so 20/25/30 trades resolve
+42.6/38.1/34.8bp. **Our cost floor is ~59bp, WETH round-trips for 4-11bp, and
+the selection bar on this tape is 5-12bp.** Every earnable edge is below the
+bar's resolution, so the bar approves and rejects BY NOISE -- and demotion on
+2 consecutive losses is then regression to the mean recorded as evidence
+(atf_static, demoted x7). Filed as [5e7f5e94] and [0ca6168b].
+**DO NOT LOWER THE BAR. It is underpowered, not too strict.**
+
+**3. The lever that survives is VARIANCE, and it is quadratic.** Trades to
+resolve an edge go as (1.96*sigma/e)^2. Sigma is 97.3bp in >$1M and 590.5bp one
+tier down -- 6x the noise is **36x the evidence**. Resolving 20bp takes 91
+trades deep and 3,349 shallow; at 3.9 tradeable/day that is 23 days vs 859.
+**Only 30.8% of our 227 book rows sit in the tier where anything is provable.**
+Filed as [ceadb8da].
+
+**4. POOL DEPTH DOES NOT PREDICT ROUND-TRIP COST. CLOSED, and it blocks the
+cost route.** Checked before building on it: AERO sits in a pool 4x deeper than
+CBBTC and costs **9x more** to round-trip at $2 (0.6395% vs 0.0728%). Only 3 of
+6 quoted symbols even have a depth reading, so it is a spot check, not a
+correlation -- but it points the wrong way and the proxy is not established.
+Depth remains the right selector for **variance** (measured directly); it may
+NOT be assumed to buy cheaper **fills**. The cost route now needs real quotes:
+the census covers 6 symbols and 68 of 237 rows, leaving 159 rows across 45
+symbols charged nothing. Filed as [98bba3bf] -- read-only, no capital at risk,
+and the cheapest unblock on the board.
+
+**WHAT IS NOT CLAIMED.** No edge was found. Every "after" figure is a quote-
+derived COST FLOOR; slippage and MEV are unmodelled and the live lane carries
+~27.8bp the ghost book does not. Re-pricing THESE trades answers what the
+current selector's trades would have cost elsewhere, never what a deep-pool
+strategy would have earned. No gate, threshold or production file was touched.
