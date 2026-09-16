@@ -6826,3 +6826,38 @@ most-traded ghost symbol, costs 0.64-4.35% per round trip against WETH's
 at once. Cost and evidence converge on WBTC/ETH/WETH. NOT YET SHIPPED: this
 prices DETECTION, not existence, and the restriction must be measured back to
 back on evidence RATE before anyone believes it is a win.
+
+## Pass 431 -- Echo (senior). [b8c24590] data_ingest overrun: premise FALSIFIED, real cause found and bounded.
+
+ROUTE TRIED: the item's premise -- "a blocked data_ingest starves the price feed,
+so booked ghost evidence is destroyed". This repo had been stopped by that exact
+shape twice (3-year CEX backfill inside the feed task; 142-source news crawl).
+
+THE NUMBER: **CLOSED NEGATIVE. It does not starve the feed.** market_stream ticks
+per 10 minutes, two independent stall windows on 2026-09-16:
+  03:08:47 -> 08:32:01 (323 min stall): 66.2 inside vs 68.3 outside
+  15:00:26 -> 18:49:49 (229 min stall): 96.5 inside vs 93.8 outside
+market_stream is written by db.py:1534 from the stream's OWN thread. It was never
+inside run_cycle. Do not spend another pass "fixing the feed" here.
+
+WHAT IS TRUE INSTEAD, measured: DownloadSupervisor.run_cycle is one sequential
+thread -- static:<chain> x5 -> dynamic -> market -> discovery. Over 0.8 days of
+log, 78 over-budget worker runs totalling 17.9 h, of which **51,344s / 64,273s =
+79.9% (14.3 h) was downloading OHLCV for ethereum/arbitrum/optimism/polygon --
+four chains this wallet cannot trade.** Worst single run: static:optimism 6,443.9s
+(107 min). `discovery`, called LAST, was 2.9 h stale as a result; `prices` 6.9 h
+(brain-only reader, PAUSED, so no money impact).
+
+CAUSE: services/background_workers.py:678 defaults DOWNLOAD_WORKER_CHAINS to
+"base,ethereum,arbitrum,optimism,polygon" and .env never set it -- while .env:431
+already said LIVE_FOCUS_CHAINS=base.
+
+SHIPPED: .env DOWNLOAD_WORKER_CHAINS=base. Proven to change the built worker list
+(static:base only; discovery now 3 calls deep, not 7). NOT yet measured through a
+production restart -- boot is 13 min and this pass did not have it.
+
+ALSO FOUND, unclaimed: ohlcv_datasets and ohlcv_bars are BOTH 0 rows. The 2.9 GB
+corpus is JSON on disk only. Nothing reads it out of the database because there is
+nothing in the database.
+
+PROVES IT: python -X utf8 scripts/data_ingest_starvation_census.py
