@@ -248,6 +248,19 @@ class BusScheduler:
         self._horizon_min = min(seconds) if seconds else 60
         self._horizon_span = max(seconds) - self._horizon_min if seconds else 1
         self._opportunity_bias: Dict[str, OpportunitySignal] = {}
+        # MONEY-BUTTON GATE CENSUS. ``_money_button_candidate`` has 15
+        # ``return None`` exits and, before this, not one of them recorded
+        # WHICH. Measured 2026-09-16 over 24h of trading_ops: 347 entry
+        # candidates, every one sourced c0d3rv2_atf_static, and ZERO
+        # carrying strategy_id 'money_button' -- while money_button is the
+        # one APPROVED strategy and step 6 of the ladder blocks on
+        # ghost_validation with n=0 for exactly that subject. The lane is
+        # not losing, it is not firing, and nothing said why. Counting is
+        # all this does -- no gate moves.
+        self._mb_gate_counts: Dict[str, int] = {}
+        self._mb_gate_symbols: Dict[str, str] = {}
+        self._mb_gate_pass: int = 0
+        self._mb_census_last_flush: float = 0.0
         self._bucket_bias: Dict[str, float] = {"short": 1.0, "mid": 1.0, "long": 1.0}
         self._gas_alert_cb: Optional[Callable[[str, float], None]] = None
         self._last_gas_alert_ts: float = 0.0
@@ -1634,6 +1647,59 @@ class BusScheduler:
             },
         }
 
+    def _mb_gate_refusal(self, symbol: str, gate: str) -> None:
+        """Count a money-button refusal by NAME, then refuse exactly as before.
+
+        Pure bookkeeping.  Every call site is a ``return None`` that already
+        existed on this path, so no candidate's fate changes and no gate
+        moves -- the only difference is that the refusal now has a name.
+        The census flushes to ``data/money_button_gate_census.json`` so a
+        running production process can be read without attaching to it.
+        """
+        try:
+            self._mb_gate_counts[gate] = self._mb_gate_counts.get(gate, 0) + 1
+            if symbol:
+                self._mb_gate_symbols[gate] = str(symbol)
+            self._mb_flush_gate_census()
+        except Exception:
+            pass
+        return None
+
+    def _mb_flush_gate_census(self, *, force: bool = False) -> None:
+        """Write the running gate tally, at most once per flush interval."""
+        import json
+
+        try:
+            every = float(os.getenv("MONEY_BUTTON_CENSUS_FLUSH_SEC", "300"))
+        except Exception:
+            every = 300.0
+        every = max(30.0, every)
+        now = time.time()
+        if not force and (now - float(self._mb_census_last_flush)) < every:
+            return
+        self._mb_census_last_flush = now
+        refused = sum(self._mb_gate_counts.values())
+        payload = {
+            "ts": now,
+            "passed": int(self._mb_gate_pass),
+            "refused_total": int(refused),
+            "evaluations": int(refused) + int(self._mb_gate_pass),
+            "by_gate": dict(sorted(self._mb_gate_counts.items(), key=lambda kv: -kv[1])),
+            "last_symbol_per_gate": dict(self._mb_gate_symbols),
+        }
+        try:
+            path = os.path.join("data", "money_button_gate_census.json")
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2)
+            os.replace(tmp, path)
+        except Exception:
+            pass
+
+
     def _money_button_candidate(
         self,
         state: RouteState,
@@ -1652,21 +1718,21 @@ class BusScheduler:
     ) -> Optional[Dict[str, Any]]:
         enabled = os.getenv("MONEY_BUTTON_ENABLED", "1").lower() in {"1", "true", "yes", "on"}
         if not enabled:
-            return None
+            return self._mb_gate_refusal("", "strategy_disabled")
         # In autonomous mode the money-button buy-low-sell-high strategy
         # is allowed on live by default; it still goes through the
         # readiness gate + per-trade verification + risk caps before
         # any swap actually executes.
         _mb_live_default = "1" if os.getenv("AUTONOMOUS_MODE", "1").lower() in {"1","true","yes","on"} else "0"
         if live_trading and os.getenv("MONEY_BUTTON_ALLOW_LIVE", _mb_live_default).lower() not in {"1", "true", "yes", "on"}:
-            return None
+            return self._mb_gate_refusal("", "live_not_allowed")
         if last_price <= 0:
-            return None
+            return self._mb_gate_refusal(state.symbol, "no_last_price")
 
         require_opportunity = os.getenv("MONEY_BUTTON_REQUIRE_OPPORTUNITY", "1").lower() in {"1", "true", "yes", "on"}
         opportunity = self._opportunity_bias.get(state.symbol)
         if require_opportunity and (not opportunity or opportunity.kind != "buy-low"):
-            return None
+            return self._mb_gate_refusal(state.symbol, "no_opportunity_bias")
 
         try:
             lookback_sec = float(os.getenv("MONEY_BUTTON_LOOKBACK_SEC", str(2 * 3600)))
@@ -1724,26 +1790,26 @@ class BusScheduler:
         )
         if not is_tf_neutral:
             if direction_prob < min_dir_prob or confidence < min_exit_conf:
-                return None
+                return self._mb_gate_refusal(state.symbol, "tf_direction_or_confidence")
 
         try:
             min_model_net_margin = float(os.getenv("MONEY_BUTTON_MIN_MODEL_NET_MARGIN", "0.0"))
         except Exception:
             min_model_net_margin = 0.0
         if not is_tf_neutral and net_margin < min_model_net_margin:
-            return None
+            return self._mb_gate_refusal(state.symbol, "tf_net_margin")
 
         cutoff = state.samples[-1][0] - lookback_sec if state.samples else 0.0
         recent_prices = [float(price) for ts, price, _ in state.samples if ts >= cutoff and float(price) > 0.0]
         if len(recent_prices) < 8:
-            return None
+            return self._mb_gate_refusal(state.symbol, "fewer_than_8_samples_in_lookback")
         peak = max(recent_prices)
         if peak <= 0.0:
-            return None
+            return self._mb_gate_refusal(state.symbol, "no_positive_peak")
         drawdown = (last_price - peak) / peak
         # We want a controlled dip (e.g., 2-5%) that often mean-reverts.
         if drawdown > -min_drawdown or drawdown < -max_drawdown:
-            return None
+            return self._mb_gate_refusal(state.symbol, "drawdown_outside_dip_window")
 
         median_price = float(np.median(np.asarray(recent_prices, dtype=np.float64)))
         # Conservative reversion target: median is harder to "fake" than mean.
@@ -1751,11 +1817,11 @@ class BusScheduler:
         reversion_target = min(reversion_target, peak)
         expected_return = (reversion_target - last_price) / max(last_price, 1e-9)
         if expected_return <= 0.0:
-            return None
+            return self._mb_gate_refusal(state.symbol, "no_reversion_headroom")
 
         net_expected = expected_return - fee_rate
         if net_expected < min_net_return:
-            return None
+            return self._mb_gate_refusal(state.symbol, "net_expected_below_min_net_return")
 
         # Require the immediate trend to be not-too-negative (avoid catching knives).
         try:
@@ -1783,7 +1849,7 @@ class BusScheduler:
             except Exception:
                 slope_floor = -0.00025
             if slope < slope_floor:
-                return None
+                return self._mb_gate_refusal(state.symbol, "slope_below_knife_floor")
 
         try:
             reversion_fraction = float(os.getenv("MONEY_BUTTON_REVERSION_FRACTION", "0.55"))
@@ -1793,12 +1859,12 @@ class BusScheduler:
         take_profit_return = max(fee_rate + min_net_return, abs(drawdown) * reversion_fraction)
         take_profit_return = min(take_profit_return, expected_return)
         if take_profit_return - fee_rate < min_net_return:
-            return None
+            return self._mb_gate_refusal(state.symbol, "take_profit_below_min_net_return")
         target_price = last_price * (1.0 + take_profit_return)
 
         available_quote = float(portfolio.get_quantity(state.quote_token, chain=chain_name))
         if available_quote <= 0.0:
-            return None
+            return self._mb_gate_refusal(state.symbol, "no_quote_balance")
 
         try:
             max_quote_frac = float(os.getenv("MONEY_BUTTON_MAX_QUOTE_FRAC", "0.12"))
@@ -1821,7 +1887,7 @@ class BusScheduler:
             size_quote = min(size_quote, max_allocation)
         size_base = size_quote / max(last_price, 1e-9)
         if size_base <= 0.0:
-            return None
+            return self._mb_gate_refusal(state.symbol, "size_base_zero")
 
         directive = TradeDirective(
             action="enter",
@@ -1837,6 +1903,8 @@ class BusScheduler:
             tier=tier,
             strategy_id="money_button",
         )
+        self._mb_gate_pass += 1
+        self._mb_flush_gate_census()
         return {
             "directive": directive,
             "score": float(net_expected),
