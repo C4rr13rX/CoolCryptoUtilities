@@ -6619,4 +6619,4 @@ it "not distinguishable from zero", not "an edge".
 horizon. We have been running signal search over a feed that is at best ~11%
 fillable, and the one honest answer available on the fillable part is +0.33bp
 on 81 samples. Before another screen is funded, the tradeable universe has to
-be MEASURED rather than assumed -- see [1a5d4d7f].
+be MEASURED rather than assumed -- see [ce843f60].
