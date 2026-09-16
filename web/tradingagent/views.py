@@ -261,6 +261,37 @@ class LossRecoveryListView(APIView):
         } for r in rows]}, status=status.HTTP_200_OK)
 
 
+class TheoremsView(APIView):
+    """What the system claims about this market, and whether it survived.
+
+    The audit says what happened; this says what we think EXPLAINS it. A
+    theorem is fitted on the first slice of history and judged on the rest,
+    so a claim that only works on the data it came from is reported REFUTED
+    rather than believed -- which is the whole reason this is a separate
+    endpoint from the audit and not a section of it.
+
+    Nothing here reaches live trading. A SUPPORTED theorem becomes a ghost
+    experiment and the existing graduation ladder decides the rest.
+    """
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        from .theorems import (evaluate_all, theorem_summary,
+                               trades_with_features)
+
+        try:
+            hours = min(float(request.query_params.get("hours", 720)), 2160)
+        except (TypeError, ValueError):
+            hours = 720
+
+        trades = trades_with_features(since_sec=hours * 3600)
+        report = evaluate_all(trades)
+        return Response({"report": report,
+                         "summary": theorem_summary(report),
+                         "trades": len(trades),
+                         "window_hours": hours},
+                        status=status.HTTP_200_OK)
+
+
 class MathAuditView(APIView):
     """The full mathematical audit, and the same thing as plain sentences.
 

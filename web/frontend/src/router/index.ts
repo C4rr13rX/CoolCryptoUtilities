@@ -31,6 +31,7 @@ import BusScheduleView from '@/views/BusScheduleView.vue';
 import WizardChatView from '@/views/WizardChatView.vue';
 import ModelControlView from '@/views/ModelControlView.vue';
 import TradingAgentView from '@/views/TradingAgentView.vue';
+import MathView from '@/views/MathView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -119,6 +120,12 @@ const routes: RouteRecordRaw[] = [
     path: '/trading-agent',
     name: 'trading-agent',
     component: TradingAgentView,
+  },
+  {
+    path: '/math',
+    name: 'math',
+    component: MathView,
+    meta: { title: 'Math' },
   },
   {
     path: '/model-control',

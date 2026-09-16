@@ -245,14 +245,64 @@ def candidate_theorems(trades: Sequence[Dict[str, Any]]) -> List[Theorem]:
             "Volatility is usually assumed good for a short-horizon lane. On a "
             "book being selected against it may be the opposite."))
 
-    out.append(Theorem(
-        "loss_capped",
-        "Trades that never exceeded a 1.3% drawdown outperform the rest.",
-        lambda t: float(t.get("return") or 0.0) > -0.013,
-        "The stopping game found 0.0013 optimal on this distribution. Stated "
-        "as a theorem so it is tested out of sample rather than trusted."))
+    # loss_capped USED TO LIVE HERE and it was circular: its condition was
+    # `return > -0.013` while the outcome being measured is that same return.
+    # It reported SUPPORTED at p=0.0000 with d=1.07 on 289 held-out trades --
+    # the strongest result this module has ever produced, and worth nothing.
+    # "Trades that did not lose more than 1.3% outperform trades that did" is
+    # true by construction, and unactionable besides: the condition can only
+    # be evaluated once the trade is over.
+    #
+    # It is not replaced by a fixed version, because the honest form of the
+    # claim -- "capping the loss at 1.3% would have helped" -- is a question
+    # about a COUNTERFACTUAL book, not about the trades we have. Answering it
+    # means re-simulating each trade under that stop, which the ghost lane
+    # already exists to do. A theorem is a statement about observed data; a
+    # stop rule is an intervention, and conflating the two is how the effect
+    # came out ten times larger than anything else here.
+    #
+    # The guard below stops the same shape being reintroduced.
 
-    return out
+    return [t for t in out if not _is_circular(t)]
+
+
+#: Features that ARE the outcome, or are computed from it. A condition built
+#: on any of these is testing the return against itself.
+_OUTCOME_FIELDS = ("return", "pnl", "profit", "net", "gross", "outcome",
+                   "win", "profit_usd", "return_pct")
+
+
+def _is_circular(theorem: "Theorem") -> bool:
+    """Does this theorem's condition read the outcome it is judged on?
+
+    Checked against the closure's own bytecode rather than by name, so a
+    renamed theorem with the same defect is still caught. A theorem that
+    splits trades by their return and is then scored on their return cannot
+    fail, which makes it worse than useless: it is the most significant
+    result in the report and it means nothing.
+    """
+    # `predicate`, not `condition`. The first version of this read a field
+    # that does not exist, so getattr returned None, the guard returned False
+    # for everything, and it would have shipped looking like it worked --
+    # a guard that silently never fires is worse than no guard, because it
+    # is believed.
+    pred = getattr(theorem, "predicate", None)
+    code = getattr(pred, "__code__", None)
+    if code is None:
+        return False
+    seen = set(code.co_consts) | set(code.co_names)
+    # Also the bound defaults and closure cells. `lambda t, f="return": ...`
+    # keeps the field name in __defaults__, not in co_consts, so a theorem
+    # built in a loop over field names -- exactly how the generated
+    # candidates are written -- would otherwise slip past.
+    for extra in (getattr(pred, "__defaults__", None) or ()):
+        seen.add(extra)
+    for cell in (getattr(pred, "__closure__", None) or ()):
+        try:
+            seen.add(cell.cell_contents)
+        except (ValueError, AttributeError):
+            pass
+    return any(isinstance(n, str) and n in _OUTCOME_FIELDS for n in seen)
 
 
 def evaluate_all(trades: Sequence[Dict[str, Any]],

@@ -16,4 +16,5 @@ urlpatterns = [
     path("experiments/", views.ExperimentListView.as_view(), name="experiments"),
     path("recoveries/", views.LossRecoveryListView.as_view(), name="recoveries"),
     path("math/", views.MathAuditView.as_view(), name="math"),
+    path("theorems/", views.TheoremsView.as_view(), name="theorems"),
 ]
