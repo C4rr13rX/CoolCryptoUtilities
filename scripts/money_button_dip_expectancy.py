@@ -51,6 +51,20 @@ ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = "file:%s?mode=ro" % (ROOT / "storage" / "trading_cache.db")
 
 # Full round trips (both legs, gas + slippage), measured on chain.
+#
+# READ THE COVERAGE BEFORE QUOTING A PER-SYMBOL ROW. Six tokens here are
+# MEASURED. Everything else falls through to DEFAULT_ROUND_TRIP, which is an
+# ASSUMPTION -- so of the DEEP_POOLS universe below, only ETH, WETH, USDC and
+# CBETH pairs are priced on a real number; LDO, LINK, CAKE, CRV, OP, AAVE, SOL
+# and WBTC are priced at the default.
+#
+# The direction of that error is not neutral: 0.70% is almost certainly too
+# HIGH for the LINK/AAVE/WBTC class and too LOW for thin pools, which makes
+# the mid-cap rows pessimistic and the thin-token losses, if anything,
+# understated. The headline result survives on the measured pairs alone
+# (ETH-USDT, ETH-USDC and WETH-USDT carry most of the winning cell's total),
+# but a single row for LDO or CAKE is not a measurement and must not be
+# quoted as one. Backlog [bd851275] criterion 3 exists to close this.
 TOKEN_ROUND_TRIP = {
     "WETH": 0.0011,
     "ETH": 0.0011,
