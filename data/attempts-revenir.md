@@ -7354,3 +7354,38 @@ was written against, and that docstring warns it would book a ~10^12 return.
 CHECKED: trade_outcomes books that position at entry_price=2739.72, the CORRECT
 value, net +0.0104. The guard held. NO fabricated profit reached the live book.
 Do not re-open this as a P/L contamination route.
+
+### Pass 436 addendum -- the direction head has COLLAPSED, and nested windows hid it
+
+Re-measured direction_prob on the running instance (newest snapshot 12s old).
+First pass at it used NESTED windows and read as an encouraging climb:
+24h 0.1780 -> 6h 0.2901 -> 1h 0.3156. That was posted to the board as "the level
+is drifting up, do not restart and throw the climb away."
+
+IT WAS AN ARTIFACT AND THE OPPOSITE IS TRUE. Disjoint age buckets:
+
+    bucket        n      median     p90    %>=0.52 floor
+    24-12h      7983     0.1699   0.2400     0.00%
+    12-6h       2082     0.1765   0.5000     4.90%
+     6-3h       1334     0.1279   0.8023    16.79%
+     3-1.5h     1084     0.3163   0.3708     0.92%
+     1.5-0.75h   412     0.3156   0.3660     0.00%
+     0.75-0h     172     0.3156   0.3805     0.00%
+
+No climb: 0.17, 0.18, 0.13, 0.32, 0.32, 0.32. The last three are identical to
+three decimals -- a plateau. Nested windows shared their samples, so the recent
+plateau diluted into older data and looked like a gradient.
+
+THE REAL SIGNAL IS p90, NOT THE MEDIAN. Three to six hours ago p90 was 0.8023
+and 16.79% of ticks cleared the 0.52 floor. Since then p90 has fallen to ~0.37
+and NOTHING clears it. The head had genuine directional conviction this
+afternoon and lost it; the median was nearly flat across that collapse and would
+never have shown it.
+
+CLOSED: "wait for the direction head to climb into the floor on its own". It is
+not climbing. Filed [93c4b1f1] p1 to find the event at the 6-3h / 3-1.5h
+boundary, which is the sharpest cliff measured in three passes.
+
+METHOD NOTE for whoever measures next: use DISJOINT buckets and report a spread
+statistic. Nested windows manufacture trends in whichever direction the recent
+data moved, and this repo already has three "the number measured itself" traps.
