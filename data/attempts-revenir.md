@@ -9656,3 +9656,27 @@ population is starved not outcompeted, atf_static* monopolises the decision
 budget, and the funnel's viable supply is 93% one token. Same fact, three seams.
 
 26 of 45 is true about a JSON file. 13 of 17 is true about the machine.
+
+### Pass 450 integrity note: on this feed, RATIOS reproduce and COUNTS do not.
+
+Same query ("now-86400"), two runs twenty minutes apart in the same pass:
+
+    run 1:  arb 772  refused 572  survivors 200   AERO 186/201 = 92.5%
+    run 2:  arb 662  AERO refused 270             AERO 189/204 = 92.6%
+
+Neither run is wrong. The window is a SLIDING 24h against a live database and
+this feed's events arrive in bursts (median inter-event gap 0.2 min, max 87.5h, up
+to 253 events in one hour), so as "now" advances the trailing edge can drop an
+entire burst. A 110-row swing in twenty minutes is what that looks like.
+
+LOAD-BEARING AND VERIFIED TWICE: AERO is ~93% of the directives that clear every
+gate (92.5% and 92.6% independently). The backlog re-ordering rests on that ratio.
+
+NOT LOAD-BEARING: every absolute count in the sections above (772, 572, 200, 179,
+186). True when measured, will not reproduce exactly. If a later pass re-runs and
+gets different absolutes that is the window sliding, NOT a contradiction -- quote
+your own window and counts rather than reconciling against these.
+
+Same trap as tape-span-is-not-tape-coverage and ten-rows-set-the-books-sign, one
+level up: on a bursty feed a fixed-DURATION window is not a fixed SAMPLE. Prefer
+ratios in acceptance criteria; stamp the window on any absolute.
