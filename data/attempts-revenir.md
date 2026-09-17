@@ -7699,3 +7699,59 @@ still the highest-value CHANGE -- it is the fitness function every searcher is
 scored by. But [656a76bc] is what stops the next five passes rediscovering
 fixtures, and if one agent holds both, do the log first. It is cheaper than one
 false lead and we are averaging three.
+
+## Pass 439 -- Echo (senior). Item [297f47fd], the live fills' missing size and fee.
+
+ROUTE: audit the claim that all live fills record notional_usd 0 / fee_cost 0
+and that 100% of the cost floor's evidence is therefore ghost.
+
+RESULT: THE ITEM'S HEADLINE IS FALSE. Three of its four premises fail.
+
+  1. `real_fee_ratios` reads `trade_outcomes`, not `trade_fills`. Wrong table.
+  2. `trade_outcomes` holds 22 live rows and every one carries fee_cost > 0.
+     A prior pass already repriced them (`details.repriced`).
+  3. 123 real fees survive the filters: 18 LIVE, 105 ghost. Not "all ghost".
+  4. Both live legs already call `_leg_cost_fields` in trading/bot.py (entry
+     ~9403, exit ~10899). The write path was fixed before this pass; the 38
+     existing rows predate the fix. Criterion 1 was already satisfied in code.
+
+WHAT IS ACTUALLY BROKEN, and it is narrower and costs more -- CLOSED, shipped:
+
+    real fees in the book : 123  (18 live / 105 ghost)
+    THE WINDOW THAT SETS THE COST: 0 live / 20 ghost
+    live  median 0.5048%  p75 0.8647%  n=18
+    ghost median 0.4893%  p75 1.2259%  n=105
+    round trip charged    : 0.4613%
+
+  The window is selected by RECENCY ALONE, and ghost rows are written ~10x
+  more often than live ones, so live evidence is buried below the cut BY
+  CONSTRUCTION. Entry gates are charged 0.4613% against a live p75 of
+  0.8647% -- 1.87x too little, in the direction this module's own docstring
+  says loses money. Filed as [5239c617] (3pt, p1) because changing the
+  selection rule is a money-path behaviour change and this pass had already
+  spent its one change.
+
+  NOT OBVIOUS, and the item must not be worked naively: ghost p75 over the
+  full 105 is 1.2259%, HIGHER than live p75. "Just use all the rows" moves
+  the bar the other way. Measure under each rule before choosing.
+
+NEGATIVE RESULT WORTH KEEPING -- the scoreboard is CORRECT, do not re-open:
+  `trade_outcomes` holds 22 live rows; the scoreboard publishes 18. The 4
+  missing are `annulled`, worth -0.145614 net, which looks exactly like the
+  scoreboard understating the loss by 1.78x. IT IS NOT. All four annulments
+  read "no settling ERC-20 Transfer on base for this quantity" -- they are
+  chain-verified non-events, correctly excluded. The published -0.186371
+  reproduces EXACTLY as closed-only over 18. Criterion 5: the number does
+  not move. I nearly posted the 1.78x as the finding of the pass.
+
+REGRESSION I CAUSED AND FIXED, kept because it is a repeating shape here:
+  adding `details` to the SELECT raised on books without that column; the
+  except returned `[]`, and `[]` does not read as "no provenance", it reads
+  as "NO FEES IN THE BOOK" and drops every gate silently onto the 0.65%
+  fallback constant. Ten tests caught it. A read that fails CLOSED into a
+  number nobody checks is how this repo has lost money before.
+
+CRITERIA 2 AND 3 (backfill from tx hashes; a booked row carrying its tx_hash)
+  are NOT closed and are not closeable from the book: no tx hash exists in
+  trade_fills or trade_outcomes for any of the 38 live rows. See memory
+  `no-tx-hash-exists-in-the-store`. Left open on the item, not claimed done.
