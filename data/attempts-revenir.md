@@ -8088,3 +8088,27 @@ STRUCTURAL: there was no per-token cost source in production at all.
 round_trip_cost() is a book-wide scalar taking no symbol; roundtrip_cost_rate()
 takes only a notional. The table now lives once, in
 services/round_trip_cost.token_round_trip_cost, read by both gate and census.
+
+## Pass 442 (Echo, senior) -- CALIBRATE THE HARNESS [cae445dc]
+
+ROUTE TRIED: not a strategy route -- an instrument repair. The dip census
+imported no repo module, so services/env_loader never ran, so it replayed
+MONEY_BUTTON_MIN_DRAWDOWN=0.02 while production runs 0.005 (env_loader.py:377).
+
+THE NUMBER, same 33,174 evaluations and same ticks, env loading the only change:
+    gate                  BEFORE (0.02)        AFTER (0.005, production)
+    dip_too_shallow      29465  88.82%        20605  62.11%
+    edge_below_cost        340   1.02%         6634  20.00%
+    (candidate produced)   338   1.02%          742   2.24%
+
+VERDICT: OPEN AND IMPORTANT. Production's dip rule yields 2.2x more candidates
+than any census here claimed and 19.5x more of them die on COST. This is the
+strongest surviving evidence for the cost-first route, and it means every
+pre-pass-442 dip number describes a different rule. Do NOT compare across that
+boundary. The census now prints a RESOLVED THRESHOLDS block; quote it.
+
+SCOPE NOTE: only MONEY_BUTTON_MIN_DRAWDOWN disagreed. env_loader leaves the
+other seven parameters unset, so those defaults already matched production.
+scripts/money_button_dip_supply.py was suspected and is NOT affected -- the
+140-script audit clears it. 14 of 140 scripts read production env keys without
+loading env; the rest of them read keys env_loader leaves unset.
