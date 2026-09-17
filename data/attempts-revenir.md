@@ -7389,3 +7389,79 @@ boundary, which is the sharpest cliff measured in three passes.
 METHOD NOTE for whoever measures next: use DISJOINT buckets and report a spread
 statistic. Nested windows manufacture trends in whichever direction the recent
 data moved, and this repo already has three "the number measured itself" traps.
+
+---
+
+## Pass 437 (Echo, senior) -- the governor sheds our work on other programs' RAM
+
+ROUTE TRIED: sprint item [2c1cde59], filed as "the feed is dark 57.6h because
+ResourceGovernor pauses HIGH/CRITICAL work on SYSTEM-WIDE memory it does not
+hold". The item's own criteria said the premise was stale and demanded a
+re-measurement first. That instruction was right and it changed the fix.
+
+THE PREMISE HAS NOW FLIPPED TWICE:
+
+    filed      we hold    143 MB of a 99% box   -> external pressure
+    audited    we hold  4,725 MB                -> WE are the hog
+    today      we hold  1,164 MB of a 74.5% box -> external again
+
+Today, measured: 9 processes, 1,164 MB total (pid 32632 `main.py --action
+start` 563 MB, pid 28148 `run_waitress.py` 481 MB). Box 74.5-75.5% used,
+7.8-8.1 GB free of 31.78 GB. Other programs hold 23.9 GB. We are 3.6%.
+
+CLOSED: "the feed is dark". It is not. 10,885 ticks / 24h across 77 symbols,
+and the 24h/48h/72h counts are nearly identical, so the darkness is historical
+and ended at the 2026-09-16 14:48 restart.
+
+CLOSED: "should_pause on HIGH/CRITICAL is what stops the feed". Dormant. That
+branch fires at _EMERGENCY_MEM 0.90 and we are at 0.755. Measured False for
+CRITICAL, HIGH, NORMAL and LOW on a live sample.
+
+OPEN AND SHIPPED -- THE LIVE DEFECT IS ONE LINE DOWN, IN should_throttle:
+
+    threshold_mem = 1.0 - _RESERVE_MEM = 0.70    vs    mem = 0.755
+
+so should_throttle(NORMAL) is True right now, and trading/ghost_limits.py:38
+reads it and clamps the ghost pair budget. Measured with GHOST_PAIR_LIMIT=36,
+GHOST_PAIR_LIMIT_MAX=120 and a 40-asset focus set:
+
+    THROTTLED   (old behaviour, today)   pair_limit= 18   max_limit=  18
+    NOT THROTTLED (after fix)            pair_limit= 40   max_limit= 120
+
+The ghost lane is the first FAIL on the ladder and it has been running at 18
+pairs instead of 40 on memory owned by other programs.
+
+WHY IT IS A BUG, NOT A POLICY: the governor sheds our work on the premise that
+shedding relieves the pressure. At 3.6% of the box, shedding us frees 3.6% and
+the box stays full. We go dark and nothing is fixed. Ineffectiveness, not
+unfairness -- and that is the same mechanism as the 57.6h darkness.
+
+THE FIX, services/resource_governor.py: _memory_pressure_is_external() gates
+the memory term in both should_pause and should_throttle. It returns False --
+old behaviour, full force -- in the three cases where shedding still works:
+no sample yet (unknown is not exhausted), free memory under _MIN_FREE_MB (256)
+where the next allocation fails whoever caused it, and our own tree at >=75% of
+its RSS budget where the memory genuinely IS ours. CPU is untouched: a busy CPU
+is real contention whoever owns the processes.
+
+WHAT IS NOT PROVEN, AND NOBODY SHOULD CLAIM IT:
+
+  * 18 -> 40 is the LIMIT FUNCTION, not realised evidence. Pair breadth is not
+    evidence rate one-for-one and the conversion is unmeasured.
+  * PRODUCTION HAS NOT PICKED THIS UP. It serves stale code until restarted.
+    The fix is committed and unit-proven; it is not yet running.
+  * Symbol breadth per hour over the last 12h is 15-31 (median ~26) and touches
+    18 twice. CONSISTENT with an 18-pair clamp, NOT proof -- stream coverage
+    and the ghost pair limit are different knobs.
+
+METHOD NOTE: the item named should_pause and the defect was in should_throttle,
+four lines away. Both read the same _read_ema(). Reading the named function and
+stopping there would have shipped a fix for the dormant branch and left the
+firing one alone. Check every consumer of a bad input, not the one in the title.
+
+FLAKE FOUND, NOT MINE: tests/test_sequential_scheduler.py::
+test_held_seconds_are_attributed_to_the_category_that_blocked failed once while
+a full-suite run was competing for CPU, then passed 3x deterministically alone
+and in combination. It is timing-sensitive under load. A/B'd against old
+behaviour with GOVERNOR_MIN_FREE_MB=999999999, which restores the old path
+exactly -- a knob worth knowing for the next governor A/B.
