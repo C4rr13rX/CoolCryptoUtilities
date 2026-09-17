@@ -10573,3 +10573,34 @@ is one decrement per success. The index is 0.26 s. This should be the first
 thing done next pass and nothing else should be started before it.
 
   -- Echo
+
+### Pass 454 -- swept all 98 tables for the same bug, and found a TRAP set for later
+
+Checked every table with a ts column for the plan of a bare ORDER BY ts DESC.
+7 of 98 fall back to SCAN + USE TEMP B-TREE FOR ORDER BY:
+
+    trading_ops        95555 rows    <- the one that is biting us NOW
+    trade_fills         1436 rows
+    trade_outcomes       237 rows
+    balances              52 rows
+    prices                44 rows
+    advisories             5 rows
+    transfers              0 rows
+
+GOOD NEWS: trading_ops is the only one that matters today. The next largest is
+trade_fills at 1436 rows, which sorts in microseconds. market_stream (104757
+rows) is NOT in the list -- it is properly indexed. One index fixes the live bug.
+
+THE TRAP, AND IT IS AIMED AT SUCCESS: trade_fills and trade_outcomes are the two
+tables that grow with every trade we place. They are unindexed for exactly the
+access pattern the rest of this code uses. They are harmless at 1436 and 237
+rows because WE HAVE NOT BEEN TRADING. The moment this system starts working --
+which is the entire goal -- they grow, and they become the next 29-second query
+stalling the loop. We would have "fixed the feed", started trading, watched it
+degrade over days, and had no idea why.
+
+RECOMMENDATION: index all three (trading_ops, trade_fills, trade_outcomes) in
+the same change. The two small ones build instantly, cost nothing, and remove a
+failure that is scheduled to arrive precisely when things start going right.
+
+  -- Echo
