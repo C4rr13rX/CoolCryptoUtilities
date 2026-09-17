@@ -8430,3 +8430,46 @@ SEPARATE AND STILL TRUE: five specific DEEP names were stale 12-17h at
 measurement -- AAVE, CBETH, SOL, CRV, WBTC. That is five names going dark, which
 is a different claim from breadth collapsing, and it is the one that limits the
 deep-pool sample sizes in [bb53fd2b] and [bd851275] above.
+
+## Pass 445 -- [c5c198b2] Clip size vs signal on the deep-pool majors -- CLOSED NEGATIVE
+
+ROUTE TRIED: raise the clip from $2 to $10 on WETH-USDC / CBBTC-USDC so the
+round trip stops being 8x the directional signal. Command:
+    python -X utf8 scripts/clip_size_expectancy.py
+    python -X utf8 scripts/clip_size_expectancy.py --floors 0.005,0.01,0.015
+
+THE SIZE PRIZE IS BOUNDED AT 18.3 BPS, AND IT IS ARITHMETIC, NOT AN OPINION.
+A round trip is two terms and only one scales:
+    rate   0.3149% = 0.0369% quote + 27.8 bps live slippage  <- CLIP-INVARIANT
+    fixed  $0.004570 gas both legs (roundtrip_cost_census rederived.fixed_usd)
+    $2  -> 0.5434%      $10 -> 0.3606%      difference 18.3 bps
+No clip, however large, gets the round trip below 0.3149%.
+
+NUMBER PRODUCED. Mean GROSS per round trip, censored at |20%|, 526h tape:
+WETH-USDC 0.05-0.33%, CBBTC-USDC 0.01-0.31%. The rate floor alone is 0.3149%.
+Every cell with n>=2 is NEGATIVE net at BOTH clips -- 20 cells in the
+production band, 60 in the floor sweep. The only positive cells are n=1, and
+all four of them are the SAME single WETH round trip (+0.8795%) counted in
+four (floor, horizon) combinations. Best n>=2 cell in the whole sweep:
+WETH 1.0% floor, $10, 45m, mean net -0.0359% over n=4.
+
+SIGNAL SETS THE SIGN, NOT SIZE. Size closes about half the gap in the best
+cells and never closes it. CLOSED.
+
+SEPARATE AND LARGER FINDING, and it is a CALIBRATION fact, not an edge fact:
+THE PRODUCTION DIP RULE CANNOT FIRE ON WETH-USDC AT ALL. Over 515.3h and
+1467 evaluable 2h windows, WETH-USDC's DEEPEST drawdown off its 2h peak is
+-1.992%. MONEY_BUTTON_MIN_DRAWDOWN is 0.02. The band [-5%,-2%] captures ZERO
+windows -- the rule is calibrated outside WETH's entire realised
+distribution, by 8 thousandths of a percent. WETH's dips live at 0.5-1.5%
+(13.57% / 3.82% / 1.16% of windows). CBBTC-USDC reaches the band in 27 of
+4198 windows (0.64%), deepest -2.800%.
+"No edge on WETH" and "no trades on WETH" are different findings and every
+prior pass that nominated WETH-USDC was quoting the first while the tape
+says the second.
+
+CENSORING: ZERO round trips exceeded |20%| in ANY of the 80 cells. The
+10-of-237 outlier problem that sets the existing book's sign is NOT a
+deep-pool phenomenon -- it lives entirely in the thin tokens.
+
+No gate changed, no trade placed; the script opens the store mode=ro.
