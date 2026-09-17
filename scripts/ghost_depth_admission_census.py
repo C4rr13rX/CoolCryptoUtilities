@@ -170,6 +170,34 @@ def main() -> int:
               % ("%.0f" % bar, fmt(book(kept)), len(kept) - n_before))
     print()
 
+    # THE SAME LADDER, CENSORED. Six rows of 215 carry +5.36 and set the sign of
+    # every bucket above, so the uncensored ladder is not quotable on its own.
+    # `trade_outcomes` is a PRE-GUARD source -- it keeps rows the ledger refused
+    # at record() time -- so any census reading it measures a dirtier book than
+    # graduation does. Printed side by side rather than replacing the
+    # uncensored numbers, because the GAP between them is the finding.
+    try:
+        from services.outcome_plausibility import IMPLAUSIBLE_RET, partition
+
+        censored_all, dropped = partition(all_rows)
+        c_tr = [r for r in censored_all
+                if is_tradeable(r["symbol"], r.get("strategy_id"))]
+        print("-" * 72)
+        print("  THE SAME LADDER, CENSORED  (services.outcome_plausibility,")
+        print("  IMPLAUSIBLE_RET=%.2f) -- %d of %d rows censored"
+              % (IMPLAUSIBLE_RET, len(dropped), len(all_rows)))
+        print("-" * 72)
+        print("    %-16s %s" % ("all tradeable", fmt(book(c_tr))))
+        for bar in BARS:
+            kept = [r for r in c_tr
+                    if isinstance(depth.get(base_symbol(r["symbol"])), (int, float))
+                    and float(depth[base_symbol(r["symbol"])]) >= bar]
+            print("    >= $%-11s %s" % ("%.0f" % bar, fmt(book(kept))))
+        print()
+    except Exception as exc:  # noqa: BLE001
+        print("    CENSORED LADDER UNAVAILABLE: %s" % exc)
+        print()
+
     print("-" * 72)
     print("  PER-STRATEGY: does any strategy's tradeable n move?")
     print("-" * 72)
