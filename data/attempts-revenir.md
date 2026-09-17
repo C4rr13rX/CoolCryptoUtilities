@@ -10296,3 +10296,54 @@ NOT CLOSED: the cause of the stall. Filed as [3de9a523], p1, 5pt, with the
 before-numbers to beat (blocked 87.9%, 370 ticks/h, 0 fills, 0 outcomes).
 
   -- Echo
+
+### Pass 454 addendum -- the stall has a FEEDBACK LOOP, and it is pinned at the cap
+
+Kept measuring after filing [3de9a523]. Two refinements, both from the same log
+tail, and one correction to myself.
+
+THE SELF-THROTTLE. 932 warnings of "market-stream: consensus failure throttling
+REST polls". Latest state per symbol:
+
+  84 symbols throttled
+  backoff ladder observed: 1.6 -> 2.6 -> 4.1 -> 6.6 -> 10.5 -> 16.8 -> 26.8
+                           -> 42.9 -> 68.7 -> 110 -> 120s  (~1.6x, capped 120)
+  640 of 936 throttle events sit at the 120.0s CAP
+  worst: GROVE-USDC 356 failures, TRADE-USDC 348, STONKLESS-USDC 348,
+         FLOW-USDC 348, HONTER-USDC 336, ARB-USDC 292
+
+This closes the loop on the stall. The loop stalls -> in-flight REST calls time
+out -> timeouts count as CONSENSUS failures -> _grow_rest_interval fires every
+4th failure (data_stream.py:1754) -> the symbol ratchets to the 120s cap. The
+feed then polls slower, which is indistinguishable from a dead upstream.
+
+NOTE THE INCOMPLETE FIX. :3674 deliberately does NOT charge the ENDPOINT when
+it can see our own loop was blocked -- someone already understood this failure.
+But the per-symbol CONSENSUS counter still increments, so the endpoint's
+reputation is protected and the symbol's poll interval is not. That is the gap.
+
+CORRECTION TO MYSELF: I first read the greps as "there is no shrink path, the
+interval is a one-way ratchet". WRONG -- _relax_rest_interval exists at :3064
+and :3227 decrements the failure counter on success. The defect is not absence,
+it is ASYMMETRY: grow is one step per 4 failures, recovery is one decrement per
+success, and with the loop blocked 88% of the time successes are scarce.
+GROVE-USDC at 356 failures needs 356 clean polls at a 120s interval -- 11.9h of
+uninterrupted success -- to unwind. It will not get it while the loop stalls.
+
+WHAT THE 84 SYMBOLS ARE. GROVE, TRADE, STONKLESS, HONTER, AICAT,
+USELESSLAPTOP, $GTRADE, "ONLINE, ONCHAIN, ONBASE", DIDDYOIL, CLAWDCHAT. Junk
+microcaps we will never trade, each consuming poll budget and executor threads
+on a 6-CPU box shared with ~30 streams. Consistent with the known 39.3%
+untradeable-pair contamination.
+
+FOURTH SUSPECT FOR THE STALL ITSELF, and I now rank it above the DNS pool.
+Executor starvation makes requests TIME OUT; it cannot make the loop thread
+miss 2230 seconds. Only work on the loop thread, or CPU/GIL starvation of the
+whole process, does that. Measured: production worker PID 32632 has burned
+90005 CPU-seconds in 74880 wall-seconds -- 1.20 cores sustained for 20.8h --
+inside ONE GIL with 57 threads, on a 6-CPU box at 74.9% RAM. A loop thread
+competing with 56 others for the GIL against 1.2 cores of continuous burn is a
+mechanism that fits the observed lag magnitude. Not proven. Measure it before
+fixing it.
+
+  -- Echo
