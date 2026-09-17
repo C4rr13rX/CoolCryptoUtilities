@@ -7168,3 +7168,70 @@ tradeable conversion makes 25 in-window rows cost 205 pooled round trips against
 
 STILL OPEN: money_button is evaluated constantly and has ZERO ghost trades, so it
 refuses or its entries never become round trips. That is [d7d87724]'s question.
+
+================================================================================
+PASS 435 -- Echo (senior). TWO ROUTES CLOSED, ONE NARROWED. Zero production code.
+================================================================================
+
+ROUTE CLOSED: "fix the trident arbitrator so it stops abstaining" -- [f3c48731].
+THE PREMISE IS INVERTED AT SCALE. Re-measured over 3,589 entry-arbitration rows,
+156.3 hours, 16 symbols (the item's own 96% came from 50 rows, 48 of them one
+symbol, and it warned about exactly this):
+
+    via=max_score 2945 (82.1%)    via=trident 644 (17.9%)
+    but 2,920 of the 2,945 fallback firings are AERO-USDC -- 99.15%.
+    EXCLUDING AERO: trident 642 vs max_score 25 -> TRIDENT DECIDES 96.3%.
+    ZORA 260/260, ETH-USDC 34/34, ETH-USDT 33/33, LINK 31/31, WETH-USDT 28/28,
+    CBBTC 114/118, TAO 96/100.
+
+The trident is HEALTHY on 15 of 16 symbols. It DECLINES, it does not fail:
+cdcl_solver.py select() has NO try/except; it returns None only at no_candidates
+(unreachable -- scheduler.py:1109 returns early), a global clause, or an empty
+sat_pool (cdcl_solver.py:564). Certificates on the abstain rows: confidence_floor
+2070, direction_constraint 816, return_above_fees 8 -- all declared at
+cdcl_solver.py:124-141 with no global_check, so global_clauses() at :148 excludes
+them. PER-CANDIDATE. Phase 2. DO NOT "FIX" THE TRIDENT.
+
+Also: these are not contested ticks. offered_total=1 on 2,607 of 2,945 max_score
+rows (88.5%), so max(candidates,key=score) over a ONE-ELEMENT list is an
+unconditional override of the solver's veto, handing the lane to rsi_reversal
+(2121) + rsi_reversal@1w (504) = 89.1% -- the two 0%-tradeable-win strategies.
+
+ROUTE CLOSED: "AERO's fallback overrides are starving the decision budget."
+MY OWN HYPOTHESIS, KILLED BY MY OWN MEASUREMENT. organism_snapshots, 21,881
+cycles / 156h: AERO-USDC 2,522 = 11.5% of cycles. Its fair share of ~14 streamed
+symbols. ZORA 10.8%, ETH-USDT 6.6%, DRB 5.8%, ALIGN 5.8%, VVV 5.7%. AERO does
+not steal cycles. NOBODY SHOULD BUILD A CYCLE REALLOCATION ON AERO EITHER --
+that is now the second such hypothesis this file has killed.
+
+WHAT AERO DOES IS CONVERT. arbitration rows / decision cycles:
+    AERO 1.160  CBBTC 0.831  TAO 0.585  ZORA 0.110
+    WETH-USDC 0.037  ETH-USDC 0.031  LINK 0.026  ETH-USDT 0.023  DRB 0.007
+Mean reversion fires 30-50x more often on the thin volatile names than on the
+deep ones. PREDICTABILITY AND FILLABILITY ARE ANTI-CORRELATED AT THE CANDIDATE-
+GENERATION SEAM. Cost this before choosing route (b): restricting the universe to
+deep pools removes ~96% of candidate SUPPLY, not just cost. That is the real
+price of the deep-pool restriction and it was not on the table before.
+
+NARROWED, and it is the first failing link: money_button was OFFERED INTO
+ARBITRATION 0 TIMES IN 156 HOURS across 3,589 contests. Offered instead:
+rsi_reversal 2121, rsi_reversal@1w 1192, stochastic_reversal@1w 442, @5d 197,
+@3d 166, ema_cross 18. The previous entry left open "it refuses OR its entries
+never become round trips" -- THE SECOND BRANCH IS CLOSED. It never produces a
+candidate at all. It is the one APPROVED strategy, so it wins no tick, books no
+ghost evidence, and _ghost_validation returns samples=0 on cold_start_bootstrap:
+that is step 6. Pass 434's "arbitration refuses money_button 100%" IS WRONG --
+absent is not refused, and the two have different fixes.
+
+CENSUS MECHANISM NAMED (the previous entry flagged the symptom, this is the why):
+scheduler.py:807 calls _money_button_candidate UNCONDITIONALLY, so it ran >=3,589
+times in the window, yet the census reports evaluations:1. _mb_gate_counts /
+_mb_gate_pass are PER-INSTANCE scheduler state (scheduler.py:260-263) and
+_mb_flush_gate_census writes them to one fixed path, so the file is LAST-WRITER-
+WINS across scheduler instances (or the scheduler is reconstructed, zeroing the
+dict). It reports one instance's private tally, never the system's. Filed as
+[508bba78]: make it aggregate, THEN name the gate. Prime suspect among the 15
+return-None exits is no_opportunity_bias -- MONEY_BUTTON_REQUIRE_OPPORTUNITY
+defaults to "1" and demands an OpportunityTracker buy-low bias per symbol -- and
+that is NOT what the broken census names (it names drawdown_outside_dip_window,
+n=1, DRB-USDC). Do not act on that name.
