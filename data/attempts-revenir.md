@@ -7829,3 +7829,36 @@ revalidation, with the ga.py:285 saturation demoted to the second criterion.
 
 DATA CAUTION: `data/ga_runs.json` has 8 rows but 6 distinct results --
 `nullguard` duplicates `seedcheck-909` and `seedcheck-77` appears twice.
+
+### Pass 439, hazard found while closing: TWO cost modules, one underscore apart.
+
+    services/round_trip_cost.py    14353b  MEASURED   0.4613% from the book
+    services/roundtrip_cost.py      8219b  CONSTANT   0.004047 + 0.003187*notional
+
+CONSUMERS ARE DISJOINT.
+
+  MEASURED (round_trip_cost): services/symbol_edge_gate.py,
+    services/strategy_edge_gate.py, trading/strategies/ledger.py,
+    scripts/routing_arbitrage_census.py, scripts/tradeable_symbol_edge.py
+
+  CONSTANT (roundtrip_cost): trading/bot.py:1996 (roundtrip_cost_rate),
+    trading/pipeline.py:844/4924/6072 (ghost_clip_usd, net_profit_usd,
+    min_viable_notional_usd), trading/metrics.py:115,
+    services/atf_static_strategy.py:48
+
+The gates that BAN symbols and strategies read the measured cost. The code
+that prices ENTRIES, sizes clips and computes net profit reads the CONSTANT.
+
+CONSEQUENCE FOR THIS PASS, stated against myself: the live/ghost provenance
+shipped today is on the module that gates symbols and strategies, NOT the
+module deciding entries.
+
+CONSEQUENCE FOR THE BACKLOG: [84e62c6d] (roundtrip_cost_rate takes no symbol,
+3.5-9.6x too dear on WETH) is in the NO-UNDERSCORE module. [5239c617] is in
+the underscore one. They sound like one defect and are in different files --
+do not deal them to one agent as duplicates. [68c4fdb1] and [37657662] both
+concern the constant module.
+
+HAZARD: an agent told to "fix the round trip cost" has a 50% chance of
+editing the file nothing on the entry path imports, measuring no change, and
+concluding the fix did not work.
