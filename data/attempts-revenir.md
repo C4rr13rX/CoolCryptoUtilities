@@ -7039,11 +7039,25 @@ model -- `price_book_at_live_clip` (pipeline.py:844) routes every row through
     median                    -2.3bp
 
 94% of the book's loss is the fee, and five gross winners are booked as net
-losers. AND THE GROSS BOOK IS STILL NEGATIVE: -2.5bp mean, 0.350 win rate against
-0.55. AT ZERO TRADING COST THESE STRATEGIES STILL LOSE. Fixing the cost model does
-NOT open the gate -- it removes a 38.6bp distortion that is swamping a 2.5bp
-signal, so that strategy work can be measured truthfully. That is why it goes
-first, not because it pays by itself.
+losers.
+
+CORRECTED BEFORE PUBLISHING: I first wrote "the gross book is still negative, at
+zero cost these strategies lose". THAT CONCLUSION IS NOT AVAILABLE AT n=20. With a
+noise bar: gross mean -2.46bp, sd 33.13, SE 7.41, t = -0.33, 95% CI [-16.98,
++12.06]bp; win rate 0.350 +/- 0.209, CI [0.141, 0.559], which TOUCHES the 0.55 bar.
+The gross edge is UNMEASURED, not negative.
+
+What IS measurable is the fee: 38.6bp = 5.2 SEs of the signal distribution, against
+a signal at 0.33 SEs. THE FEE IS THE ONLY COMPONENT OF THIS BOOK ABOVE THE
+RESOLUTION LIMIT -- and it is mis-specified by 3.5-9.6x on WETH. So until it is
+right, no strategy comparison this repo runs (GA included) is measuring strategy;
+it is measuring a constant. That is the argument for fixing it first, and it is a
+stronger one than "it might turn a loss into a profit".
+
+THE EVIDENCE BILL, as a number: at sd = 33bp, resolving a 10bp edge at 2 sigma
+needs n = (2*33/10)^2 = about 44 trades. We have 20. The gate's own min_trades of
+25 is UNDERPOWERED for the effect size we are hunting. Not touching that threshold
+-- recording it.
 
 NOT CLOSED, STILL OUTRANKS EVERYTHING: no transaction hash anywhere in the store.
 
