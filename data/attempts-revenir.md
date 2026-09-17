@@ -10002,3 +10002,92 @@ time, report the SPREAD, and RECORD THE FEE TIER AND ROUTE -- quote_and_build
 returns fee and route fields and I did not capture them. The only working quoter
 is services.quote_providers.UniswapV3Local (0x /swap/* all 403;
 router_wallet.univ3_quote_and_build says UniswapV3 unsupported on base).
+
+
+--------------------------------------------------------------------------------
+PASS 453 -- ECHO. THE COST IS MEASURABLE FROM REAL FILLS, AND IT IS THE CLIP.
+--------------------------------------------------------------------------------
+USER ASKED FOR AN EDGE. This is one, it is measured on settled execution rather
+than a model or a quoter, and it reverses how the last three passes read the
+problem. It also closes the method question pass 452 ended on.
+
+WHERE I SHOULD HAVE LOOKED ALL ALONG. Pass 452 burned itself on UniswapV3Local
+quotes that came back non-monotonic across a clip sweep with an impossible
+NEGATIVE round trip, and I closed the pass saying "a single quote at a single
+clip is NOT a cost". Correct, and I never needed the quoter: trade_fills has
+1436 rows and 38 of them are mode=live_entry / live_exit, each carrying
+expected_price AND executed_price from a real swap. All 1392 GHOST legs have the
+two identical (the synthetic-fill defect, bot.py:9576). All 38 LIVE legs differ.
+
+WHY REALISED SLIPPAGE IS THE WHOLE COST, not a part of it. services/fill_cost.py
+:30-38, written by an earlier pass, states it outright: an AMM takes its fee out
+of the output amount, so the DEX fee is NOT separately measurable and arrives
+already inside executed_price. Realised slippage is therefore "the whole
+economic cost of the fee plus spread plus impact together". Round trip =
+slippage + gas, both measured.
+
+THE NUMBER. Deep tokens only (AERO, CBBTC, CBETH), legs adverse-signed (entry
++slip, exit -slip), one decimals-artifact row censored -- CBETH-USDC live_entry
+expected 2731.12 executed 2.739721e-09, a 1e12 factor, the known decimals bug.
+That single row drags the entry MEAN from +15.06bp to -439bp and is exactly the
+"ten rows set the book's sign" trap.
+
+    slippage   29 legs   6.7bp/leg   ROUND TRIP 13.4bp   sd 26.8  95pct CI [-6,+34]
+    gas        38 legs   median 0.00000093 ETH/leg, MEASURED from receipts
+
+    TOTAL ROUND TRIP BY CLIP (gas at ETH 3000-4500):
+        clip  $3  ->  32-41 bp      <- what we actually traded, every time
+        clip $10  ->  19-22 bp
+        clip $23  ->  16-17 bp      <- the whole deployable wallet
+
+    Production charges a symbol-blind 42.5bp at EVERY clip.
+
+THE MECHANISM, trading/pipeline.py:6268:
+    recommended_live_usd = recommended_ratio * deployable_stable
+with recommended_ratio ~0.047-0.107, so a $23 wallet yields a $1.10-2.47 clip.
+The absolute caps (LIVE_MAX_BOOTSTRAP_USD=150, LIVE_FIRST_TRANCHE_USD=50, at
+pipeline.py:6261-6262) sit far above the wallet and NEVER BIND. The binding
+constraint is the percentage ratio. Percentage-of-capital sizing is right for a
+large account and INVERTED for a small one, because gas is fixed per
+transaction, not proportional: the ratio protects against a loss smaller than
+the fee it forces the trade to pay.
+
+WHY IT IS AN EDGE. h* = 0.5 + cost/(2*mean_abs_move), WETH mean_abs_move
+40.7bp/60m (pass 451, n=1613):
+    $3  clip -> h* = 0.95    a near-perfect oracle still loses
+    $23 clip -> h* = 0.66    a 66pct directional call pays
+Memory records max live clip EVER $3.00 and 0 of 22 live trades clearing
+break-even. That is a SIZING failure that has been read as a signal failure for
+many passes, including by me.
+
+NOT CONFIRMED -- DO NOT QUOTE. The by-token spread (the 10-40x in the standing
+instruction) is STILL unmeasured, now on fills as well as on quotes. Thin tokens
+read 322bp round trip, but the 95pct CI is [-64,+386] and CROSSES ZERO, and
+leave-one-out shows BSTONK alone (n=2) carries the entire effect: drop it and
+thin reads 14.7bp, indistinguishable from deep. Every thin symbol has n=2. I set
+out to confirm the by-token premise from fills and I could NOT. It stays open.
+
+CAVEATS, all real. (1) expected_price is the FEED price at decision time
+(bot.py:9390), so slippage also contains drift during the execution window --
+mean-zero over 29 legs, but it is why sd is 26.8bp against a 6.7bp mean. (2) Gas
+is priced at an assumed ETH 3000-4500 band because gas_price_usd is contaminated
+(fill_cost.py:17-22: 5 of 18 rows priced ETH gas at the TRADED PAIR's price).
+(3) THE ONE THAT COULD KILL IT: 13.4bp was measured at ~$3 clips. A $23 clip
+carries more impact. On a 2.2M-depth WETH pool $23 is 0.001pct of the pool so I
+expect it negligible, but IT IS NOT MEASURED, and [c7dee052] criterion 2 makes
+measuring it a precondition for changing any sizing.
+
+ROUTE OPENED: size the live clip against FIXED cost (gas as a bounded share of
+notional) instead of as a percentage of capital. Filed [c7dee052], p1, 5pt,
+todo, unclaimed, five acceptance criteria, files trading/pipeline.py +
+trading/bot.py. It raises NO absolute risk cap -- the deployed-capital sum at
+bot.py:7054-7065 still binds, and it changes one clip's size, never the total
+at risk.
+
+ROUTE STILL CLOSED: lowering the pooled cost constant (pass 445, t=+1.07 at
+zero cost). ROUTE STILL OPEN AND STILL UNMEASURED: per-token cost pricing.
+
+METHOD NOTE, and it is the opposite of the one I left last pass: BEFORE
+quoting a pool, read trade_fills. 38 rows of settled execution outrank any
+number of quotes, they were there the whole time, and no pass had split them by
+mode.
