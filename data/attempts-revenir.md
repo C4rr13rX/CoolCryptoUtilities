@@ -8796,3 +8796,32 @@ ROUTE STATUS: the money_button dip on deep pools is now closed on all three
 axes -- supply (2.37 candidates/day), cost (no level pays, t=+1.07 at zero
 slippage), and shape (expected_return does not predict). It should not be
 reopened without a NEW predicate, not a new threshold.
+
+### Pass 445 caveat on my own per-day rates: the tape SPAN is not the tape COVERAGE
+
+Checked because a 200h run returned the same n as a 526h run for WETH. Ticks by
+100h age bucket (0 = newest 100h):
+
+    WETH-USDC    {0: 378, 1: 1123, 2: 53, 3: 1, 5: 1}
+    CBBTC-USDC   {0: 200, 1: 61, 2: 2334, 3: 1345, 4: 376}
+
+**WETH-USDC has 1501 of its 1556 ticks inside the newest 200h.** Its reported
+"515.6h span" is TWO STRAY OLD TICKS stretching the endpoints. Coverage per
+symbol is wildly uneven, and CBBTC's mass sits 200-500h ago, i.e. the two
+symbols barely overlap in time.
+
+WHAT THIS AFFECTS: only the PER-DAY RATES, which divided by a 21.5-day span
+that several symbols do not actually cover. WETH-USDC's 0.09 candidates/day is
+really about 0.24/day over its ~8.3 days of real coverage. The deep-universe
+2.37/day is therefore UNDERSTATED, probably by something between 1.5x and 3x.
+
+WHAT IT DOES NOT AFFECT: every expectancy number in this pass. Those are
+per-trade means, t-stats and CIs -- they do not divide by span.
+
+DOES THE VERDICT SURVIVE? YES. [8a4ce92b]'s branch test needs >=25 candidates/
+day to be CYCLE-limited. Even correcting 2.37 upward by 3x gives ~7/day, still
+well under 25, and still in the SIGNAL-limited branch. Do not build the
+deep-pool restriction. But whoever quotes the rate should quote it per symbol
+over that symbol's OWN covered window, not over the pooled span -- this is
+[nested-windows-manufacture-a-fake-trend] in a different dress, and I very
+nearly shipped it.
