@@ -11555,3 +11555,49 @@ census-fillable pairs, 8 are **100% DEX**; only `WETH-USDC` is **94.7% kucoin** 
 all tagged `chain='base'`, provenance under `raw`→`'rest'`). So **route (b) "cheap pool + a known
 small effect" is NOT closed — it is UNTESTED on the real Base tape**, and cannot be tested at
 n=92 geckoterminal rows. The blocker there is *supply of Base-pool WETH prices*, not analysis.
+
+## Pass 460 (2026-09-17) -- Echo, senior. Five agents. NO EDGE FOUND.
+
+**Route: attribute the "no confusion report" lines, fixtures vs production. CLOSED -- PRODUCTION.**
+`scripts/tx_forensics.py --attribute "no confusion report has ever been loaded"` returned
+`total 539 | carry a tests/ LITERAL 539 | 100.0% provably test output`. **The tool is WRONG.**
+All 539 are production: 362 distinct stamps over `2026-09-16 13:34:32 -> 2026-09-17 17:11:18`,
+**273 single-line buckets, median gap 112s** (a ~2-min production tick); the burst-of-three
+fixture signature was 88 of 362. Emitter alive: PID 22664 `main.py --action start_production`.
+`--attribute` flags any line whose text appears under `tests/` -- so a well-tested production
+string is condemned by its own assertion (`tests/test_an_absent_confusion_report_cannot_grant_live_readiness.py:109`
+vs the emitter at `trading/pipeline.py:4498`). **Its false-positive rate scales with test coverage
+and it fails toward "not real".** Filed `[f3fbd8ca]` p1. `[b62ad282]` NOT rejected.
+Production decides live readiness with `confusion_stale=False` while `confusion_never_loaded=True`.
+
+**Route: finish the money_button_dip expectancy gate. HALF CLOSED at `4ab7a48`.**
+Blocker 2 was the predicted failure mode: `live_order_refusal` vetoed on BOTH halves of a
+self-approved id's book, so `money_button` (ghost book 2 RTs, -$0.0161) was refused by its own
+gate -- the draft would have closed the live lane it protects. Fixed: live half only for a
+self-approved id, both halves for borrowers/lenders. Suite 8F/5P -> 6F/7P.
+Blocker 1 (wire `trading/bot.py:2072` from `is_live_approved` to `may_place_live_order`, which
+has ZERO non-test callers) flips **28 tests red across 9 files**: they mock `is_live_approved`,
+a bare `Mock()` auto-returns truthy for the new call, and bot.py's `except: return False if armed
+else True` decides instead of the test's intent. Reverted, re-specced with all 10 files declared.
+**RESTART STILL GATED.**
+
+**Route: the Base WETH feed is dying. CONFIRMED as H1 (scheduler ratchet), NOT H2 (CEX ticks more).**
+WETH-USDC 1725 rows, kucoin 1633 / geckoterminal 92. Gecko share **72.3% (09-08) -> 1.3% (09-16),
+monotone in uptime** -- H2 predicts a stable ratio, H1 predicts monotone decline. Mechanism, all
+`trading/data_stream.py`: `_endpoint_scores` mutated at 3 sites (+1.0/-2.0/-0.5) with **no decay,
+cap or reset anywhere**; batch `gather` preserves rank order; consumer loop `dispatched=True; break`
+DISCARDS other endpoints' already-fetched valid answers; `_confirm_consensus` collapses
+`min_required` to 1 so kucoin self-confirms with zero cross-source comparison. Timeouts carry
+"not charging the endpoint" -> rate-limiting and bad-pool-id ruled OUT.
+**NOT ACTED ON.** `[5c239ffa]` re-specced: a mislabelled tape only costs money if it is also
+MISPRICED, so criterion 1 is now a read-only basis measurement (92 gecko ticks paired to nearest
+kucoin, bp vs WETH's 35.75bp round trip). Inside the cost floor -> REJECT the 5-point rewrite.
+
+**Route: is `[c708e723]` aimed right? STEP right, FILE wrong -- re-specced in place.**
+`trading/scheduler.py:566-606` only CALLS and LOGS. The step-3 verdict is computed in
+`services/strategy_edge_gate.py:300-361` and `services/symbol_edge_gate.py:458-605`, both on a
+**300s TTL cache** -- not a life sentence. Independent reproduction of the edge-ban null on a
+fresh window: **0 of 3113**. Both gates charge the pooled token-blind `round_trip_cost()`, a
+different function from `token_round_trip_cost(symbol)` -- the old criteria conflated them.
+
+**Scoreboard unmoved: live P/L -0.1864 over 18 trades. No live orders placed. Production not restarted.**
