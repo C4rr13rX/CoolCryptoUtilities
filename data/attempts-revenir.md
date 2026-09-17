@@ -8002,3 +8002,56 @@ declines. Nobody has split the decline census by token depth.
 
 UPPER BOUND: `market_stream` carries (ts, price) and no volume, so the
 volume-fade guard cannot fire in replay. Real fire counts are <= these.
+
+## Pass 441 (Echo, senior) -- SIGNAL or FEED: why the momentum gate never fires cheap
+
+ROUTE TRIED: the momentum census showed all 18 fires in COBEE/DRB at 0.70%
+round trip and ZERO in a cheap deep name. Before concluding "restrict the
+universe to deep pools", establish WHY: are the cheap names starved by our
+ingest (a fixable feed defect), or does the signal simply not occur there (a
+dead route)?
+
+METHOD: replay the shipped momentum gate over 168h and tally each symbol's
+declines into DENSITY = {window_too_short, feed_frozen, too_few_samples,
+feed_too_sparse_for_hold, window_exceeds_lookback} versus DIRECTION =
+{momentum_not_aligned, move_exhausted, slope_not_positive}, then bucket
+symbols by round-trip cost.
+
+    cohort                symbols  evals   density%  direction%  fired
+    CHEAP (<=0.20% RT)          4   5845       7.0%       82.4%      0
+    DEARER (>0.20% RT)         52  23205      29.5%       60.0%     18
+
+    ETH-USDC    0.11%   1285 evals   6.1% density   82.0% direction   0
+    ETH-USDT    0.11%   1887 evals   6.6% density   82.5% direction   0
+    WETH-USDC   0.11%   1280 evals   6.6% density   83.0% direction   0
+    WETH-USDT   0.11%   1393 evals   8.5% density   82.0% direction   0
+
+**ANSWER: SIGNAL, NOT FEED, and it is not close.** The cheap deep names are the
+BEST-sampled symbols on the tape -- their density-decline rate is 7.0% against
+29.5% in the expensive cohort, four times LOWER. They received 5,845
+evaluations, more per symbol than anything else, and the gate fired zero times.
+They die on DIRECTION 82.4% of the time: ETH and WETH do not produce the
+aligned 5m/10m/30m momentum this gate requires.
+
+**CLOSED NEGATIVE, and this is the strongest of three independent closures of
+the same route:**
+  1. pass 439, live n=21: the per-token cost MODEL is wrong by 0.69x-1.85x, so
+     the quoted cost ranking that motivated the route is unreliable.
+  2. pass 441 momentum census, n=18: the rule never fired cheap in 168h.
+  3. pass 441 this measurement, n=5845 evaluations: it never fired cheap
+     because it has NO SIGNAL there, on the best-sampled data we own.
+Restricting the universe to deep pools does not make the momentum rule
+cheaper. It removes it. Do not re-open on cost arithmetic; re-opening requires
+showing the momentum gate can fire at all in a deep name.
+
+WHAT SURVIVES, stated narrowly: seven thin tokens (3O8, AKARI, BASEFLY,
+BASEMATE, BILL, CAP, CHUBBY) decline 100% on DENSITY and 0% on DIRECTION --
+they are genuinely feed-starved. But every one is a 0.70% cost token, so
+fixing ingest there buys fires in exactly the names the cost evidence says to
+avoid. Not worth a pass.
+
+NET POSITION ON THE ONE APPROVED STRATEGY, both halves now measured alone:
+  money_button_dip  n=333  gross -0.3816%          loses before cost   CLOSED
+  money_button      n=18   gross -0.0184% t=-0.10  loss is 100% cost,
+                                                   and no signal cheap CLOSED
+Neither half has a route to profit on this tape that this pass could find.
