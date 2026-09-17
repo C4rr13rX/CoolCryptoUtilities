@@ -8167,3 +8167,92 @@ no_signal. The gate carries a feed-density guard, a mixed-denomination guard,
 a median-gap-scaled window unit, a volatility discount, a hold-time projection
 and a volume-fade guard, and `no_signal` names none of them. Filed as a
 per-guard histogram over the same 1,468 contests.
+
+================================================================================
+PASS 444 -- [bb53fd2b] THE DEEP-POOL DIP "EDGE" IS NOT ONE ASSET. IT IS NO ASSET.
+ROUTE (b), "RESTRICT THE UNIVERSE TO DEEP POOLS", IS CLOSED FOR THE DIP RULE.
+================================================================================
+
+The item alleged the deep-pool subtotal was 96% ether: 8 trades, 6 wins, +1.74%,
+of which ETH-USDT, ETH-USDC and WETH-USDT are the SAME UNDERLYING. Strip ether
+and it claimed 4 trades at +0.018%. That decomposition was done on the PRE-442
+census, which replayed MIN_DRAWDOWN=0.02 while production runs 0.005, so its
+numbers are not comparable to anything at HEAD. Re-measured on the calibrated
+rule, importing the shipped census's own simulate() and DEEP_POOLS so this is a
+decomposition and not a re-implementation.
+
+THE ETHER-DISJOINT CELL HAS NO SIGN. Not a small edge, not a small loss -- no
+sign that survives a different window or a single symbol.
+
+  window   cell                       n   win   mean net        SE       t
+  168h     DEEP-POOL ALL             40   50%   -0.0182%   0.0633%   -0.29
+  168h       ether pairs (4 = ONE)   32   47%   -0.0366%   0.0719%   -0.51
+  168h       ETHER-DISJOINT           8   62%   +0.0553%   0.1382%   +0.40
+  526h     DEEP-POOL ALL             65   48%   -0.1321%   0.0771%   -1.71
+  526h       ether pairs (5 = ONE)   49   47%   -0.0697%   0.0662%   -1.05
+  526h       ETHER-DISJOINT          16   50%   -0.3233%   0.2385%   -1.36
+  526h       ETHER-DISJOINT, no AAVE 12   58%   +0.0088%       --    +0.07
+
+The 526h negative is ONE SYMBOL. AAVE-USDC is 4 rows -- -1.982%, -2.605%,
+-1.432%, +0.741% -- and removing it takes the cell from -0.3233% (t=-1.36) to
++0.0088% (t=+0.07). This is the "ten rows set the book's sign" pattern again.
+Counting ether once, in every variant, leaves a mean indistinguishable from zero:
++0.055%, -0.323%, +0.009% depending on which window and which four rows.
+
+CRITERION 2 -- THE DATA TO SETTLE IT DOES NOT EXIST. 526h is not a chosen window,
+it is the ENTIRE span of market_stream (526.1h, 102,283 rows). At the full span
+the ether-disjoint deep-pool cell reaches n=16, not n>=30. No shorter window was
+substituted and no longer one is available. n>=30 on ether-disjoint deep pools is
+about 11 more days of streaming at the observed rate, and only if the thin deep
+pools keep streaming -- AAVE, CBETH, SOL, CRV and WBTC have all been dark for
+12-17h at the time of measurement.
+
+CRITERION 3 -- PER-SYMBOL BREAK-EVEN, AND THE FINDING THAT CLOSES THE ROUTE.
+Break-even IS the symbol's own round trip; the sim already nets it out, so
+"clears own cost" means mean gross > that number.
+
+  symbol        n   cost    priced     mean gross   net        clears?  prod gate
+  WETH-USDC     8   0.110%  MEASURED    +0.2582%   +0.1482%    YES      admits
+  WETH-USDT    10   0.110%  MEASURED    +0.1285%   +0.0185%    YES      admits
+  ETH-USDT     13   0.110%  MEASURED    +0.0646%   -0.0454%    no       admits
+  ETH-USDC      7   0.110%  MEASURED    +0.0041%   -0.1059%    no       admits
+  CBETH-USDC   11   0.300%  MEASURED    -0.0142%   -0.3142%    no       admits
+  LDO-USDC      5   0.700%  ASSUMED     +0.6993%   -0.0007%    no       REFUSES
+  OP-USDC       4   0.700%  ASSUMED     +0.6159%   -0.0841%    no       REFUSES
+  AAVE-USDC     4   0.700%  ASSUMED     -0.6194%   -1.3194%    no       REFUSES
+  LINK-USDC     2   0.700%  ASSUMED     +0.8098%   +0.1098%    YES      REFUSES
+  CAKE-USDC     1   0.700%  ASSUMED     +0.9262%   +0.2262%    YES      REFUSES
+
+EVERY ETHER-DISJOINT SYMBOL IS PRICED ON AN ASSUMPTION AND REFUSED BY PRODUCTION.
+That is the whole answer and nobody had checked it. The 0.70% default exceeds
+MONEY_BUTTON_MAX_ROUND_TRIP_COST=0.35%, so the shipped dip gate refuses LDO, OP,
+AAVE, LINK and CAKE outright. The ether-disjoint cell is therefore (i) unpriced --
+not one of its symbols has a measured round trip, so its "mean net" is a
+subtraction of a guess, and (ii) unreachable -- production would not have taken
+one of those 16 trades. Whatever its sign, it is not available to us. The two
+rows that "clear cost" are LINK at n=2 and CAKE at n=1, on that same guess.
+
+WHAT IS LEFT IS ETHER, AND ETHER DOES NOT PAY EITHER: 49 trades at -0.0697%,
+t=-1.05, over the full 526h. The gate-admitted, measured-cost deep-pool universe
+IS the ether cluster plus nothing.
+
+VERDICT: [bb53fd2b] DONE. Route (b) "restrict the tradeable universe to deep
+pools" is CLOSED FOR THE DIP RULE SPECIFICALLY, on three independent grounds:
+the restricted book is negative (-0.1321%/trade, t=-1.71, n=65, full span); the
+ether-disjoint residual is indistinguishable from zero in both directions and
+flips on four rows; and that residual is composed entirely of symbols production
+refuses and cannot price. Pass 442 said deep pools "remove the bleed, not the
+loss" at -0.037%/trade over 168h -- at the full 526h span the restricted book is
+3.6x worse than that, so the route does not improve with more data.
+
+NOT CLOSED, AND DELIBERATELY NOT CLAIMED: WETH-USDC is the only symbol that
+clears its own MEASURED cost in both windows (+0.1551% at 168h n=6, +0.1482% at
+526h n=8). n=8 is not an edge and no significance is claimed for it. It is the
+one deep-pool name that has never been negative here, and it is the single
+cheapest round trip we have measured. If anyone reopens deep pools, reopen it as
+ONE SYMBOL, not as a universe.
+
+COMMAND THAT PROVES IT: scratchpad ether_disjoint.py, which imports
+scripts/money_button_dip_expectancy.py's simulate()/load_ticks()/DEEP_POOLS
+unmodified and re-groups the output; the shipped census reproduces the ALL cell
+with `python -X utf8 scripts/money_button_dip_expectancy.py --hours 168`.
