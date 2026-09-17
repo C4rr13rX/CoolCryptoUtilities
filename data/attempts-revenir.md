@@ -8380,3 +8380,53 @@ now decides the sign of everything.
 
 COMMAND: scratchpad weth_honest_cost.py, importing
 scripts/money_button_dip_expectancy.py's simulate()/load_ticks() unmodified.
+
+================================================================================
+PASS 444 CLOSE -- STEP 1 (FEED) IS TRANSIENT, NOT STRUCTURAL, AND THE BREADTH
+SCARE WAS MY OWN BAD COMPARISON. Recorded so nobody spends a pass on either.
+================================================================================
+
+The pass-444 briefing opened with "[FAIL] 1 FEED  no ticks in 10min", and the
+standing instruction is to work the first failing link and nothing else. Measured
+directly against storage/trading_cache.db at the end of the pass:
+
+  newest tick     0.8 min ago
+  last 10 min      91 ticks / 19 symbols
+  last 30 min     252 ticks / 20 symbols
+  last 60 min     341 ticks / 21 symbols
+
+THE FEED IS RUNNING. Step 1 failed when the briefing was computed and passes now
+-- the signature of a GLOBAL BLACKOUT, not a break. Before working step 1, run
+the tick-recency query; it takes three seconds and distinguishes the two.
+
+CAVEAT, stated because it is the difference between a measurement and a claim: I
+measured the STORE, not the ladder's own check. If graduation_status.py asks a
+different question, its FAIL may be real and about the CHECK. I could not settle
+it -- pass 443 found that script buffers its output and wrote 0 bytes in two
+minutes, and I did not spend the remaining clock re-fighting it.
+
+I THEN GOT THE BREADTH QUESTION WRONG AND CORRECTED IT, which is worth recording
+because the error is a recurring one here. I compared a 10-MINUTE symbol count
+against a 526-HOUR symbol count and called the feed thin. That is invalid -- a
+symbol ticking once an hour appears in the long count and cannot appear in the
+short one. It is the [nested-windows-manufacture-a-fake-trend] error in another
+costume. The like-for-like measurement, distinct symbols per 10-minute bucket:
+
+     0h ago   92 ticks  19 symbols     24h ago   52 ticks   6 symbols
+     1h ago   10 ticks  10 symbols     48h ago    0 ticks   0 symbols
+     3h ago   84 ticks  23 symbols     96h ago   13 ticks   8 symbols
+     6h ago    2 ticks   2 symbols    168h ago   43 ticks   9 symbols
+    12h ago   27 ticks  18 symbols    336h ago  103 ticks  11 symbols
+
+The observed range is 0 to 23 symbols per 10 minutes, and 19 is in the BEST
+quartile of it. "An eighth of its historical breadth" is WITHDRAWN; there is no
+coverage collapse and no investigation to open.
+
+WHAT THE TABLE DOES SHOW, cleanly: the 48h bucket is ZERO ticks and the 6h bucket
+is TWO. Blackouts are routine and global. That is the feed's character, it is
+already filed as [8c3c6910], and today's step-1 FAIL was one of them.
+
+SEPARATE AND STILL TRUE: five specific DEEP names were stale 12-17h at
+measurement -- AAVE, CBETH, SOL, CRV, WBTC. That is five names going dark, which
+is a different claim from breadth collapsing, and it is the one that limits the
+deep-pool sample sizes in [bb53fd2b] and [bd851275] above.
