@@ -575,6 +575,16 @@ class StrategyRegistry:
                 if not strat.enabled():
                     skips[strat.strategy_id] = "disabled"
                     continue
+                # Clear any reason left by an EARLIER tick before asking again.
+                # Without this a strategy that declined at tick 1 naming a
+                # guard, fired at tick 2, then declined at tick 3 without
+                # setting anything would be reported under tick 1's reason --
+                # a stale label is worse than the bare "no_signal", because it
+                # names a guard that did not decline this time.
+                try:
+                    strat.last_decline = None
+                except Exception:  # noqa: BLE001 - read-only attr must not kill the tick
+                    pass
                 cand = strat.evaluate(state, ctx)
             except Exception as exc:  # noqa: BLE001 - one strategy cannot stop the tick
                 skips[strat.strategy_id] = f"raised {type(exc).__name__}"
@@ -582,6 +592,18 @@ class StrategyRegistry:
             if cand:
                 candidates.append(cand)
             else:
-                skips[strat.strategy_id] = "no_signal"
+                # A strategy may name the guard that declined and how far it
+                # missed by ("dip_too_shallow 0.31%<0.50%"). Measured over 168h
+                # at pass 443: 100,370 of 101,199 skips across 72 strategies
+                # said the bare "no_signal" and named nothing, while the 829
+                # that said "min_samples 33<40" carried the guard AND the
+                # distance to it. The margin is the point -- it ranks guards by
+                # how close they came to firing, which is what says where
+                # supply is one nudge away rather than merely absent.
+                #
+                # Opt-in: a strategy that sets nothing is reported exactly as
+                # before, so the other 71 are untouched until each is done.
+                reason = getattr(strat, "last_decline", None)
+                skips[strat.strategy_id] = str(reason) if reason else "no_signal"
         self.last_skips = skips
         return candidates
