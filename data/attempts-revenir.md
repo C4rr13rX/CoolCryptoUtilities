@@ -10127,3 +10127,59 @@ Three further legs are dropped for pricing ETH gas at the TRADED PAIR's price
 is therefore measured on sells and assumed symmetric for buys. Fixing the
 buy-leg native price would double this evidence base and is now criterion 3 of
 [c7dee052].
+
+
+--- PASS 453 CLOSE: THE FIX WAS ALREADY SHIPPED, AND HAS NEVER RUN ---
+I audited my own item before handing it over and the code had beaten me to it.
+
+trading/pipeline.py:6072-6079 ALREADY raises min_clip_usd to
+services.roundtrip_cost.min_viable_notional_usd() = $2.2322 whenever the plan's
+floor sits below it. It landed 2026-09-07 in bc479f3, titled "Replayed at the
+clip the plan authorises, the live book is +0.1987 instead of -0.0389". An
+earlier pass found this exact thing, measured it the same way, and shipped it.
+I rediscovered a solved problem and filed it as new.
+
+THE DATES ARE THE WHOLE STORY:
+    38 live fills span   2026-09-03 11:38 -> 2026-09-05 21:10
+    the clip fix landed  2026-09-07
+    live fills since     ZERO, 11.7 days
+Every live row we own PREDATES the fix. So the negative book is explained by a
+cause that is already repaired, and SIZING IS NOT THE BINDING CONSTRAINT. The
+binding constraint is whatever has stopped the live lane firing at all since
+2026-09-05.
+
+[c7dee052] REJECTED as overtaken by the code. Successor [3dd03e6a], p1, 5pt,
+todo, unclaimed: why has nothing traded in 11.7 days. Its first criterion is the
+cheap one and may be the entire answer -- VERIFY THE RUNNING PRODUCTION INSTANCE
+ACTUALLY CONTAINS bc479f3. Production serves stale code until restarted and boot
+takes 13 minutes; if the live lane is running pre-09-07 code it is still sizing
+at $0.81 and h* is still 1.29. A fix nobody restarted into is a fix that never
+ran.
+
+TWO OF MY OWN CLAIMS WITHDRAWN, so they are not inherited:
+  * Production is NOT a flat symbol-blind 42.5bp. roundtrip_cost_rate(n) =
+    FIXED/n + RATE is ALREADY clip-aware: 81.8bp at $0.81, 45.4 at $3, 33.6 at
+    $23.
+  * It is CONSERVATIVE at the small end (81.8 modelled vs 64.5 measured), NOT
+    anti-correlated with the truth. My pass-453 09:58 line that the cost model
+    steers the funnel into the losing tokens is WITHDRAWN.
+I quoted 42.5bp from memory for an entire pass without opening the module. That
+is the failure I have told three passes in a row to avoid.
+
+WHAT SURVIVES AND IS WORTH KEEPING: the METHOD. trade_fills splits by details
+.mode into 1392 ghost legs (expected == executed, synthetic) and 38 live legs
+(expected != executed, real). services/fill_cost.py turns those into measured
+per-leg gas and slippage with an explicit measured/unmeasured flag. That is the
+only ground-truth cost instrument in this repo and no pass had used it. Deep
+round-trip slippage 13.5bp, n=29, agrees with the module to 0.0000000000.
+
+STILL UNMEASURED AFTER TWO PASSES OF TRYING: the by-token 10-40x cost spread.
+On fills the thin-token 95pct CI is [-64,+386], crosses zero, and BSTONK (n=2)
+carries the entire effect. Neither confirmed nor refuted. Do not quote 10-40x
+and do not quote my 322bp.
+
+STILL BLOCKING HALF THE EVIDENCE: only 15 of 38 legs are measurable and ALL 15
+ARE SELL LEGS. live_entry records gas_spent_native with no native price
+(fill_cost.py:17-22), and 3 further legs price ETH gas at the TRADED PAIR's
+price ($0.4877, $0.5018, $80884.98). Fixing the buy-leg native price doubles the
+evidence base.
