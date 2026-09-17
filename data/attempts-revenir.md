@@ -8887,3 +8887,50 @@ liquidity field (keys: ts/symbol/chain/price/volume/rest/consensus_confidence).
 There is NO historical depth anywhere in this repo. `pairCreatedAt` is the one
 timestamp-checkable fact -- a pool created after a row's ts falsifies that row
 outright -- and nobody has swept it.
+
+### Pass 446 audit: the ladder's first FAIL is a coin flip, and the standing text names the wrong link
+
+`python -X utf8 scripts/graduation_status.py` right now:
+
+    [PASS] 5  GRADUATION  approved: money_button
+    [PASS] 8  EXECUTOR    bots built live-capable on an EXPLICIT operator arm
+    [FAIL] 3  GHOST       no ghost activity in 1h      <- the actual first FAIL
+
+The loop's standing instructions still say the first failing link is step 5 with
+step 8 also failing. **Both now PASS.** A pass obeying that text literally
+spends itself on a link that is green.
+
+**And step 3 is not a real failure.** 215 non-live closed ghost rows over 21.3
+days = **0.421 closes/hour**. Poisson: P(zero in any 1h window) = e^-0.421 =
+**65.7%**. Step 3 reports FAIL about two thirds of the time on arrival noise
+alone, with nothing wrong. A healthy lane needs a **5.5h** window to clear a
+one-event test 90% of the time. Filed as [8585ce26]. Corroborates
+`step-3-ghost-gate-has-no-power` with a second, independent arrival rate.
+
+Consequence: "work the first failing link and nothing else" is a good rule
+pointed at a broken instrument. Steps 6 (RISK) and 10 (PROFIT) are formally
+unknowable until step 3 stops flickering.
+
+### Pass 446: the ghost book cannot measure its own dispersion -- CLOSED as a measurement input
+
+I tried to corroborate the 9-of-132 resolvability figure from a second source by
+deriving per-symbol dispersion from the ghost rows themselves instead of corpus
+bars. Per-symbol sd of `gross/notional`, trades needed = (2*sd/0.0020)^2:
+
+    AERO    n=35  sd 28.978%  ->    83,972 trades
+    BSTONK  n=14  sd 10.878%  ->    11,832
+    CBBTC   n= 5  sd  9.801%  ->     9,607
+    AAVE    n= 3  sd 100.954% -> 1,019,172
+    WETH    n= 4  sd  0.476%  ->        23
+    CBETH   n= 5  sd  0.372%  ->        14
+
+An AERO round-trip sd of 29% and an AAVE sd of 101% are not market dispersion,
+they are contaminated rows. **CLOSED: never size an evidence bar, a stop or a
+variance gate from ghost round-trip returns.** Corpus bars are the only clean
+dispersion source in this repo.
+
+What survives: both methods put the resolvable rows in the low teens of 132
+(corpus 9, ghost-derived 16, and the latter counts MOG, whose pool is $52). The
+DIRECTION is corroborated; no exact count from the ghost derivation is usable,
+and the 9 rests on pass 430's corpus figures rather than on anything measured
+this pass.
