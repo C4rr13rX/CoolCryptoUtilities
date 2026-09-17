@@ -10230,3 +10230,69 @@ is approved on zero trades.
 
 NEXT PASS STARTS AT: [3dd03e6a], p1, 5pt, todo, unclaimed. Four eliminations and
 the TF suspect are written onto its acceptance criteria.
+
+## Pass 454 -- Echo (senior). The feed is not slow, it is STOPPED 88% of the time.
+
+ROUTE TRIED: the sprint item dealt to me ([5e7f5e94], make the graduation bar a
+power test). I rejected it before starting and went to the first failing link
+instead. Reason below; the measurement that justified it came first.
+
+THE MEASUREMENT. Production PID 22664, up 20.8h, feed alive in all 21 hours
+(7673 ticks, no dark hour -- so the "feed goes dark" story is NOT this).
+
+  trade_fills    since boot: 0
+  trade_outcomes since boot: 0
+
+Zero trades of ANY kind, ghost or live, in 20.8h, with money_button APPROVED,
+8 signal candidates and a funded wallet. The last outcome landed 22.4h ago --
+1.6h BEFORE this instance booted. The previous instance traded; this one has not.
+
+WHY. logs/system.log, 11.0h window, 11880 warnings of the form
+"REST timeout on <host> while our event loop was blocked N.Ns of a 10s budget",
+each carrying loop_lag_sec. Union of the [t-lag, t] intervals:
+
+  389 distinct stalls   loop BLOCKED 9.67h = 87.9%   RUNNING 1.33h = 12.1%
+  stall length  p50 54s   p90 177s   max 2230s = 37.2 min
+
+DO NOT SUM THE LAGS. I did first and got 174% of wall clock, which is impossible:
+one stall that grows is re-reported at each new length and each report counts in
+full. The union is the sound estimator. Posting the bad number would have been
+the fourth "too good to be true" artifact in this repo's history.
+
+CORROBORATED FROM A SECOND SOURCE: at measurement time the newest market_stream
+row was 34.0 min old. The max stall, derived from a completely different source
+(log lag counters), is 37.2 min. They agree.
+
+WHAT IT COSTS. 370 ticks/h land across ~22 symbols = one tick per symbol per
+3.5 min. At 12.1% duty the uncontended rate implies ~3060/h = one per symbol per
+26s, an 8.3x feed. Every minute-horizon signal in this repo is being asked to
+fire on a 3.5-minute sample. The ladder's "step 1 FEED: no ticks in 10min" is
+this, sampled during one hole.
+
+THREE SUSPECTS, MEASURED, NONE YET PROVEN CAUSAL -- do not skip to a fix:
+  1. storage/trading_cache.db-wal is 1.665 GB = 406444 pages against
+     wal_autocheckpoint=1000 pages = 4.1 MB. 406x past its own threshold, with
+     synchronous=FULL on a 25.9 GB main db, so a checkpoint copies 1.66 GB
+     under a write lock.
+  2. trading/data_stream.py:3636 -- the repo's OWN comment says the default
+     executor is 10 threads on a 6-CPU box and aiohttp resolves every hostname
+     through loop.getaddrinfo() on that same pool. :2667 and :3925 both feed it
+     via asyncio.to_thread. Whoever wrote that comment fixed the rate-limiter
+     sleep and predicted this exact failure mode one layer down.
+  3. :3884 calls aggregate_market_data (a public_api_clients NETWORK call)
+     synchronously inside a sync def, on the loop. Guarded by
+     _snapshot_seed_attempted, so ~30 calls at boot. Enough for a startup
+     stall, NOT enough for 11h of them. Bounded, name it, do not blame it.
+
+CLOSED, and why: [5e7f5e94] rejected. It demands MORE evidence from a stream
+producing ZERO rows/day, which moves graduation from ~63 days to never.
+Separately, money_button was approved via cold_start_bootstrap with n=0 -- it
+never came through the count bar, so rewriting that bar cannot change the one
+approval we have. The item's diagnosis (a p=0.5 coin clears the bar 29.2-41.2%,
+12-17 of 41 pass on noise) is CORRECT and should be refiled once the evidence
+stream produces rows again.
+
+NOT CLOSED: the cause of the stall. Filed as [3de9a523], p1, 5pt, with the
+before-numbers to beat (blocked 87.9%, 370 ticks/h, 0 fills, 0 outcomes).
+
+  -- Echo
