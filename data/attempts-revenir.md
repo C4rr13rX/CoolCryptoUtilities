@@ -9191,3 +9191,54 @@ row derived from a gas figure.
 threshold it never loaded. I trusted a ladder that was missing its first rung.
 Then I trusted a column name. Every one was fixed by reading what WRITES the
 value instead of what reads it.
+
+---
+
+## Pass 448 (Echo, senior) -- directional predicate search on the FILLABLE subset: CLOSED, negative
+
+**Route tried.** [4327cfba]. Brute-force the predicate space (408 predicates: first,
+second and third derivatives at five scales, vol structure, range position, and the
+cross-sectional/crowd terms) restricted to the symbols we can actually fill, over the
+longest tape the store holds, with the selection bar computed by permuting the labels
+and re-running the entire screen.
+
+**Command.** `python -X utf8 scripts/predicate_forge.py --hours 600 --min-depth 1000000 --perms 200`
+Commit 5f24678, artifact `data/predicate_forge_deep_1m.json`.
+
+**Tape, measured not assumed.** market_stream holds 103,316 rows over **528.7h**. The
+screen received 528.6h. `predicate_forge` had been printing the REQUESTED `--hours` as
+though it were the span -- `load_ticks` cuts back from `MAX(ts)`, so `--hours 600`
+silently returns 528.6h and the header claimed 600h. Fixed. **Any forge output from
+before 5f24678 quotes the flag, not the tape.**
+
+**Deep universe at >=$1M: 7 of 400 tape symbols, 16,096 ticks.** AERO-USDC 8120,
+CBBTC-USDC 4318, CBXRP-USDC 3068, AERO-WETH 320, LAPTOP-USDC 191, AERO-DAI 79,
+AERO-CBBTC 5 (dropped, `build_features` needs 40).
+
+**Selection bar, deep-only candidate set, 95th pct of 200 permuted screens:**
+2m 7.13bp | 3m 6.52bp | 5m 6.63bp | 8m 7.60bp | 12m 32.42bp.
+
+**Number it produced.** Nothing clears its own bar out of sample and pays the 60bp
+default. At the MEASURED 31.49bp floor exactly one predicate paid: `accel6<q0.05` at
+12m, +44.96bp gross on n=553, +13.47bp net. **It is an artifact.** AERO-WETH supplies
+119 of the 553 fires and carries **112% of the gross**; censor that one pair and the
+lift is **-7.01bp on n=434**. AERO-WETH is 320 ticks over 230.8h, stale 247h, median
+tick spacing **0.0 minutes** (duplicate timestamps), 12m |forward| p95 5.74%.
+
+**CLOSED: directional predicate search on this feed.** Not "no edge found" -- the
+stronger statement that the search cannot resolve one here, for the reason below.
+
+**The finding that generalises, and it is worse than the headline.** The concentration
+test is now INSIDE the screen: every survivor reports the symbol carrying the most OOS
+gross and the lift without it. **It fires on 48 of 60 reported rows.** AERO-USDC carries
+103%, 131%, 206%, 2375% of the gross on various predicates. A six-symbol universe cannot
+distinguish a predicate from a symbol. This retroactively bounds **every** deep-subset
+number in this repo, including the +0.88bp / n=57 and the +0.33bp / n=81 from b20c654
+that [4327cfba] and [ca395016] were both written around.
+
+**What is NOT closed, and why.** WETH, ETH, LDO, OP, CAKE, UNI and XRP are all `null` in
+`data/pool_depth_snapshot.json`. Ranking by pool depth therefore EXCLUDES the cheapest
+tokens on the operator's cost table (WETH 0.04-0.11%) and SELECTS the most expensive
+(AERO 0.64-4.35%). **Pool depth is not fillability.** AERO-USDC's gross at 12m is
++3.53bp against a 60.5-435bp AERO round trip -- dead on both sides. The fillable-subset
+question cannot be answered properly until those nulls resolve ([205092e7]).
