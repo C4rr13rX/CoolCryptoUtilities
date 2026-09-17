@@ -8934,3 +8934,36 @@ What survives: both methods put the resolvable rows in the low teens of 132
 DIRECTION is corroborated; no exact count from the ghost derivation is usable,
 and the 9 rests on pass 430's corpus figures rather than on anything measured
 this pass.
+
+### Pass 446, LAST AND LARGEST: six rows set the sign of every depth bucket
+
+[86f0f214] asked whether the deep bucket's +1.4360 survives censoring implausible
+rows. It does not, and neither does anything else. Run through the PRODUCTION
+guard (`services.outcome_plausibility.partition`, `IMPLAUSIBLE_RET=0.50`) rather
+than a hand-picked threshold — it censors **6 rows of 215**:
+
+                    UNCENSORED        CENSORED
+    NO POOL      6   -0.4500       6   -0.4500
+    under $50k  40   +1.8844      38   -0.4661
+    $50k-$1M    74   -1.0788      74   -1.0788
+    over $1M    59   +1.5809      57   -0.5142
+    UNPRICED    36   +1.2083      34   +0.2973
+    TOTAL      215   +3.1448     209   -2.2118
+
+**Six rows — 2.8% of the book — carry +5.36 and set the sign of every bucket.**
+Censored, NO depth bucket is profitable and the pooled ghost book is -2.2118.
+
+**This retracts the headline of [a38cf462] and of pass 426**, including the
+numbers posted earlier in this same pass: "the under-$50k bucket is the book's
+most profitable" is an artifact of two uncensored rows. Censored it is -0.4661,
+and it is not the most profitable bucket because there is no profitable bucket.
+The bucket MEASUREMENT reproduces; the HEADLINE does not survive censoring.
+
+The tradeable subset stays positive (+0.6506 over 127), so the bar still reads a
+positive book — but it reads it out of a pooled book that is negative once six
+rows go. This is `ten-rows-set-the-books-sign` confirmed with the production
+guard instead of a hand threshold.
+
+**STANDING RULE FROM THIS: no depth-bucket number from this repo should be
+quoted uncensored again.** Pipe rows through `outcome_plausibility.partition`
+first, every time.
