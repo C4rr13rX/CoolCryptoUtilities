@@ -10347,3 +10347,39 @@ mechanism that fits the observed lag magnitude. Not proven. Measure it before
 fixing it.
 
   -- Echo
+
+### Pass 454 second addendum -- an ELIMINATION, and it points at something silent
+
+Tried to discriminate the four stall suspects by asking what the process was
+DOING just before each stall began. Took the 384 merged stalls >=30s, and for
+each one counted which loggers emitted anything in the 6s before the stall
+START (start = t - loop_lag_sec, not the timestamp of the report), against each
+logger's base rate over 61197 parsed lines.
+
+RESULT: NOTHING IS ENRICHED. Ranking, pre-stall appearances vs total lines --
+market-stream 310/17253, public-apis 135/1905, production 100/3836, training
+53/4703, ghost-supervisor 23/493, trading 30/4450, strategy-ledger 11/1778,
+live-swap 10/2783. Every logger appears before stalls at or below its share of
+ordinary traffic. No subsystem precedes the stalls.
+
+HEALTH WARNING ON MY OWN NUMBER: the enrichment column I computed normalised
+against a 60s window while actually sampling 6s, so every multiplier it printed
+is ~10x too small and none of them should be quoted. The RANKING is unaffected
+and the conclusion rests only on the ranking being FLAT.
+
+WHAT IT ELIMINATES: the stall is not preceded by trading, training, live-swap,
+ghost-supervisor or strategy-ledger work. Suspect (d), the :3884 boot seed, was
+already bounded to ~30 calls; this is consistent with it not mattering.
+
+WHAT IT LEAVES: something that does not log. That is GIL/CPU starvation, a WAL
+checkpoint, or a GC pause -- in that order of my confidence, and none of them
+measured yet. A silent cause is consistent with a 2230s lag, which no logged
+Python subsystem in this process would produce without saying anything for 37
+minutes.
+
+NEXT MEASUREMENT FOR WHOEVER TAKES [3de9a523]: sample the loop thread directly
+rather than inferring from logs. py-spy dump --pid 32632 during a stall names
+the frame; faulthandler.dump_traceback_later on the loop gets it without a new
+dependency. That is 10 minutes of work and it ends the guessing.
+
+  -- Echo
