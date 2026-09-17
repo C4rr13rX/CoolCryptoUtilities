@@ -11066,3 +11066,381 @@ reads that field**, retracted. Briefed a 30.8%-deep baseline that is the MIXED
 ghost+live book; the ghost-lane figure is 27.2% (56/206) with sigma 89.6bp.
 
   -- Echo
+
+
+## Pass 457 -- Echo (senior)
+
+### Route tried: the POSITIVE tail of the per-symbol edge statistic. CLOSED NEGATIVE.
+
+Production's edge-ban already computes mean return vs cost with a t-stat per
+strategy x symbol (observed refusing `obv_accumulation@1w` on AERO at **t=-8.39**,
+297 holds in 23h). We had only ever read its NEGATIVE tail. Ran the symmetric
+question over 237 `trade_outcomes` rows, return as `(exit-entry)/entry`, 6 rows
+censored (bad price or |r|>50%). Only **3 pairs reach n>=9**; bar `sqrt(2 ln 3)=1.482`.
+
+    (unknown)   AERO-USDC     n=16  +55.1bp  t=2.34  CLEARS
+    (unknown)   BASECAT-USDC  n=27  -85.7bp  t=-0.78
+    atf_static  AERO-USDC     n=18  -49.9bp  t=-2.03
+
+**The one clearing cell is an artifact and I killed it.** Its "strategy" is
+`(unknown)` -- 91 of 237 rows carry no `strategy_id` in `details`, so it is an
+unattributed bucket, not a strategy. And pooling all 52 AERO rows:
+
+    all 52 AERO rows        mean +10.6bp  t=0.75   <- does NOT clear the bar
+    drop largest row        mean  +7.0bp  t=0.50
+    drop top TWO            mean  +3.5bp  t=0.25
+    drop top THREE          mean  +0.2bp  t=0.01
+
+**Three rows carry the whole AERO mean** (top row +198.3bp). Same artifact as the
+already-retired "AERO is the one symbol that pays". And the convergence: AERO's
+full-sample gross mean **+10.6bp** vs its measured round-trip cost **~10.8bp** --
+net -0.2bp. The gross edge equals the cost to capture it. **NO PAIR CLEARS ITS
+NOISE BAR.** Systematic version filed `[881d5448]`, but `[5d2bd0f8]` (the inverted
+cost table) must land first: at the ban's 65bp constant even the fake cell is
+negative, at the measured 10.8bp it looks payable. The constant decides the answer.
+
+### Measured, and it redirects the loop
+
+`trade_outcomes` **0 rows in 23.0h** of production uptime while `market_stream`
+took **8,016 ticks** (feed alive, newest tick 0.9 min old, 101/hr, 17 symbols).
+Evidence rate **3.7/day (7d before boot) -> 0.0/day**. So the 62.7-day graduation
+ETA is projected off a rate that is currently zero; the funnel is not slow.
+
+But `trading_ops` carries **1,327 rows since boot** incl. `enter/ghost-entry` **8**
+and `exit/ghost-exit` **6**. **The scheduler is NOT halted** -- 6 ghost exits
+completed and booked 0 outcomes. The zero is a BOOKING failure between `ghost-exit`
+and `trade_outcomes`, filed `[a8e54bdc]` p1. All 8 entries and all 6 exits are ONE
+symbol, VIRTUAL-USDC. Entry funnel: 433 candidates across 12+ symbols -> 8 entries,
+all one name (ZORA 94 -> 0, LINK 90 -> 0, UNI 76 -> 0).
+
+The 297 `entry-predropped-edge-ban` holds are **all AERO-USDC and the guard is
+CORRECT** -- it refuses a strategy at mean -1.668% before any cost. Its cost input
+is wrong (65bp vs 10.8bp measured) but the verdict survives the correction. Do not
+file those holds as starvation.
+
+`[3550bc30]` rejected as falsified: the feed is not what blocks the feed.
+
+### Echo's own errors this pass, recorded
+
+**Claimed the scheduler was halted and wrote nothing** ("8,016 ticks in, 0 rows
+out, ghost or live"). `trading_ops` falsifies it -- 1,327 rows. I had checked only
+`trade_outcomes`. Corrected on the board and in memory within the pass, and
+redirected Flint, whose fix I had wrongly sold as the evidence-path deadlock
+breaker. **Lesson now in memory: `trade_outcomes` being empty is not evidence the
+scheduler stopped -- check `trading_ops`.** Also used `crew.py dm ... USER`, which
+has no USER target and is in my own notes.
+
+  -- Echo
+
+## Pass 458 -- Pike. SELECTION, NOT EXECUTION: the entries have no direction to eat.
+
+**ROUTE.** The one question this loop had not asked: is the realised sub-coin-flip
+hit rate a SELECTION failure (the entries carry no directional information) or an
+EXECUTION failure (they carry information the exit rule destroys)? If the same
+entries, scored at a FIXED horizon with the exit reason IGNORED, are directionally
+positive, the edge exists and the exit is eating it -- and the whole problem moves.
+
+**POPULATION, and it is 60% larger than the one everybody quotes.** `trading_ops`
+`action='exit'`, deduped on `trade_id` (762 rows -> 431 distinct; the duplicates are
+the re-drop artifact pass 105 recorded), keeping rows that carry `entry_ts` +
+`entry_price` + `exit_price` with `entry_ts` inside the `market_stream` tape:
+**n=376** (361 ghost-exit, 11 live-exit, 4 quarantined). `trade_outcomes` holds only
+237. Both price legs read from `market_stream` so no denominator can mix sources;
+returns as `(exit-entry)/entry`; `|r|>50%` censored.
+
+**THE DESIGN POINT THAT DECIDES THE ANSWER -- a drifting tape hands you >0.5 for
+free.** Raw entry-conditional forward returns look like a monster edge:
+
+    fwd   5m  n=180  +9.43 bp     fwd  30m  n=233  +78.38 bp
+    fwd  15m  n=187  +39.76 bp    fwd  60m  n=227 +116.88 bp   fwd 120m n=222 +96.44 bp
+
+At 60 min a count-matched baseline of RANDOM ticks of the SAME symbol within +/-12 h
+of each entry reads **+114.45 bp**. Entry minus baseline = **+0.84 bp, t=0.01**. The
+entire +116.88 bp is unconditional drift on Base memecoins. **Any future pass that
+reports a raw forward return without a drift-matched baseline will "find" a +117 bp
+edge that is 99.3% tape drift.**
+
+**THE PRIMARY TEST, distribution-free and immune to drift.** P(an entry's forward
+return beats its OWN symbol's median forward return over +/-12 h). Under the null
+this is **0.5000 exactly**, whatever the drift. Ties by midrank. Bar `sqrt(2 ln 10)`
+= 2.146 (5 horizons x 2 statistics), stated before the look:
+
+    H=  5m  n=180  beat 0.5194  CI[0.4468,0.5913]  z=+0.52
+    H= 15m  n=187  beat 0.5401  CI[0.4686,0.6100]  z=+1.10
+    H= 30m  n=233  beat 0.5215  CI[0.4575,0.5847]  z=+0.66
+    H= 60m  n=227  beat 0.5198  CI[0.4550,0.5839]  z=+0.60
+    H=120m  n=222  beat 0.5045  CI[0.4392,0.5696]  z=+0.13
+
+**NOTHING CLEARS. Max |z| = 1.10. Every CI contains 0.5.** Robust to tie handling --
+strict (tie=loss) / midrank / ties-dropped, all 15 variants inside the bar, max |z|
+across all of them **1.11**, so the negative is not a tie artifact (I checked because
+12.2% of 5-min forward returns are EXACTLY 0.0 and that would have biased it down).
+
+**VERDICT: SELECTION. The exit rule is innocent -- there is no edge at entry to eat.**
+A random tick of the same symbol in the same 24 h does as well as the bot's entry, at
+every horizon from 5 minutes to 2 hours. This CLOSES the "the exit is destroying an
+edge" route, which was the most promising unexplored relocation of the problem.
+
+**CONDITIONING SWEEP -- the second offered route, closed in the same run.** 16
+conditions (hour-of-day x4, tick age at entry <=60s / >60s, top 6 symbols, local-vol
+quartiles x4) x 5 horizons, **K=80, bar 2.960 stated before the look**. On the SIGN
+statistic **max |z| over 79 scored cells = 2.88** -- and the largest cell is
+`H=120 / hour 18-23, beat 0.3203`, the WRONG SIGN for an edge. Expected max |z| for 79
+pure-noise cells is ~2.96, so 2.88 is unremarkable. **NOTHING CLEARS.**
+
+**ONE CELL CLEARED ON THE MEAN, AND I KILLED IT.** Scoring the mean statistic against
+the same K=80 bar, exactly 1 of 79 clears: `H=60 / local-vol Q3, n=57, +180.22 bp,
+t=+3.18`. Four independent kills:
+
+    drop top 1 row      +158.87 bp  t=+2.98  still clears
+    drop top 2 rows     +136.84 bp  t=+2.76  KILLED
+    drop top 6 rows      +63.32 bp  t=+1.73  KILLED
+    censored of BASECAT  +54.20 bp  t=+1.43  KILLED  (BASECAT carries +83.1% of the
+                                                      cell gross on 25 of 57 rows)
+    cell MEDIAN +20.03 bp vs mean +180.22 bp -- a 9.0x ratio
+
+**TWO rows set its sign.** Same one-symbol-carries-the-gross artifact as pass 448's
+`accel6<q0.05` (AERO-WETH 112% of gross) and pass 457's `(unknown)/AERO` cell. The
+concentration test has now killed the single best survivor in three consecutive
+passes; it should be inside every screen, not applied afterwards.
+
+**THE STANDING NUMBER "0.4758, BELOW A COIN FLIP" IS NOT SUPPORTED.** Found while
+reconciling why my population books +90 bp where the scoreboard says 0.4758. On
+`trade_outcomes`, `(exit-entry)/entry`, `|r|<=50%`: **W=110, L=107, and 14 EXACT
+TIES** (6.1%) -- rows where `exit_price == entry_price` bit-for-bit with
+`gross_profit` exactly `0.0`, a stale mark that never moved; 10 of the 14 are
+`timed-exit`.
+
+    ties counted as non-wins  0.4762  CI[0.4127,0.5405]  z=-0.72  n=231
+    exact ties EXCLUDED       0.5069  CI[0.4409,0.5727]  z=+0.20  n=217
+
+**The CI contains 0.5 either way -- "below a coin flip" was never significant, and
+the standing text never carried its CI.** Corrected, the realised hit rate is a coin
+flip, not below one. **This does NOT open the money path**: `h* = 0.5 + cost/(2*mean
+|move|)` is strictly above 0.5, and 0.5069 with that CI cannot be shown to clear any
+positive-cost `h*`. What it retires is the *rhetoric* that direction is actively
+INVERTED. Direction is ABSENT, not negative -- which is exactly what my primary test
+says independently on a different table and a 60% larger population.
+
+**POWER, stated honestly, because it splits the verdict in two.**
+
+    SIGN statistic: resolvable above beat-rate 0.570-0.580; measured 0.5045-0.5401
+                    with 95% upper bounds 0.570-0.610  -> RESOLVED, no edge.
+    MEAN statistic: 95% upper bound +33.98 / +85.66 / +146.50 / +141.62 / +176.56 bp
+                    at 5/15/30/60/120m against a measured ~31.5 bp round-trip floor.
+                    The upper bound EXCEEDS the floor at EVERY horizon
+                    -> UNRESOLVABLE. A mean-return edge exactly the size of the cost
+                    floor cannot be excluded on n=180-233.
+
+So: **NO EDGE in sign, UNRESOLVABLE in mean.** This is the same wall as
+[[no-cell-in-317-is-an-edge-only-a-mispricing]]'s "positive inside 15 minutes is
+UNRESOLVABLE", but the CI is now far tighter (15m `[-30.65,+85.66]` bp vs the old
+`[-196,+194]`) because of the drift control and the bigger population -- and the
+SIGN half, which the 317-cell sweep never isolated, is now resolved NEGATIVE.
+
+**I TRIED TO KILL MY OWN POPULATION AND FAILED, WHICH STRENGTHENS IT.** My 376 rows
+book **+90.21 bp, pos 0.6595** where the scoreboard says 0.4758, and the split by
+exit reason looked fabricated: `max_hold` **120 of 120 POSITIVE**, `target_hit` 26/26,
+`take_profit_limit` 15/15, `time_take_profit` 10/10, `stop_loss` **0 of 47**. Against
+the tape over the SAME hold on the 186 rows where both legs are corroborated,
+**BOOKED - TAPE = -42.92 bp, t=-1.27, median +0.37 bp** -- the book is NOT inflated.
+`max_hold`'s tape-implied positive rate is **0.8553**, against its booked 1.0000. So
+the 120/120 is **exit-chain SURVIVORSHIP, not a booking bug**: a position that fell
+hit `stop_loss` first (0 of 47 positive) and never reached the timeout. Every exit
+family's sign is set by the exit rule's own definition, and pooling them is
+meaningless -- take-profit family +928.63 bp on n=52 (pos 1.0000) vs everything else
+-45.61 bp on n=321. **Do not quote a pooled booked mean over mixed exit reasons
+again; it measures the exit taxonomy, not the market.**
+
+**TWO HAZARDS FOUND ON THE WAY, both worth filing.**
+
+1. **28.2% of round trips (106 of 376) have NO tape tick within 300 s of their own
+   `entry_ts`.** The bot recorded an entry at a price the feed cannot corroborate
+   within five minutes -- consistent with [[feed-takes-global-blackouts]]. Where it
+   CAN be corroborated the prices are sound (`entry_price / tape_base` median
+   **1.0000**, p25 0.9991, p75 1.0001, p05 0.9852, p95 1.0107), so this is a coverage
+   hole, not fabrication. Any per-entry forward study on this store loses 28% of its
+   population before it starts, and that is now the binding constraint on resolving
+   the MEAN statistic -- n=376 becomes n=180-233.
+2. **The stop side books ~330 bp worse than the tape.** `stop_loss` n=33: booked
+   -651.28 bp vs tape -321.74 bp, **excess -329.54 bp CI[-642.78,-16.29] t=-2.06**.
+   Consistent with the `max(price, stop_price)` half of the overshoot family. **NOT
+   proof** -- a stop fires on a spike the tape may never have sampled, and my tape leg
+   is a nearest-preceding tick up to 300 s old, so under-sampling is a live
+   alternative. Worth a proper look; do not bank the 330 bp.
+
+**LIVE SUBSET: DO NOT QUOTE IT.** Only 11 of 376 round trips are live-exits and 3-7
+survive tape corroboration per horizon. The live-vs-ghost directional comparison is
+**UNRESOLVABLE** on this store. The third idea on my brief dies on n, not on a result.
+
+**COMMANDS.** Read-only throughout; nothing written to the repo but this entry.
+Scripts in the pass scratchpad, `pike_sel_vs_exec.py` (primary + baselines),
+`pike_v3.py` (tie + booked-vs-tape kills), `pike_v4.py` (K=80 sweep), `pike_v5.py`
+(mean-statistic sweep + the kill). The headline reproduces from the store alone:
+
+    python -X utf8 -c "import sqlite3,json,math;c=sqlite3.connect('file:storage/trading_cache.db?mode=ro',uri=True);r=[((x[3]-x[2])/x[2]) for x in c.execute('select outcome_id,symbol,entry_price,exit_price from trade_outcomes') if x[2] and x[3] and x[2]>0 and abs((x[3]-x[2])/x[2])<=0.5];W=sum(1 for v in r if v>0);L=sum(1 for v in r if v<0);T=sum(1 for v in r if v==0);print('W',W,'L',L,'TIES',T,'with-ties %.4f'%(W/len(r)),'ties-excluded %.4f'%(W/(W+L)))"
+
+**NEXT, and it is a narrowing not a new idea.** The SIGN half is closed: no entry
+rule in this repo picks a direction better than a coin flip, at any horizon, under
+any of 16 conditionings, on the largest population the store supports. The MEAN half
+is unresolvable and needs ~4-8x the population to reach the 31.5 bp floor -- which
+needs the 28% entry-tick blackout closed first, and the booking failure between
+`ghost-exit` and `trade_outcomes` (`[a8e54bdc]`) is upstream of ever getting there.
+**Do not commission another directional predicate search on this tape** (pass 448
+closed the search, this pass closes the realised entries). The honest read is that
+this feed cannot resolve a 31.5 bp edge, and the work that changes that is COVERAGE,
+not cleverness.
+
+  -- Pike
+
+
+## Pass 459 -- Forge. The predicate search was graded by a 60bp CONSTANT. Graded by the chain it flips ONE verdict in the whole space, and that one is a one-symbol artifact. CLOSED NEGATIVE.
+
+**Route tried.** Replace the flat token-blind `--fee` in `scripts/predicate_forge.py`
+with the per-symbol MEASURED round trip from `data/round_trip_quote_census_20260917T190210Z.json`
+(git `769cc58`, chain base, book_mode ghost, landed pass 458), and re-run the identical
+search both ways on the same tape and the same seed to see whether the cost constant had
+been setting the search's answer. Commits `564caf1` and `4d7ce41`.
+
+**Commands** (seed is hard-coded 20260916, so these are reproducible):
+
+    python -X utf8 scripts/predicate_forge.py --hours 168 --perms 200 --cost-mode flat
+    python -X utf8 scripts/predicate_forge.py --hours 168 --perms 200 --cost-mode census
+    python -X utf8 scripts/predicate_forge.py --hours 168 --perms 200 --cost-mode flat   --fillable-only
+    python -X utf8 scripts/predicate_forge.py --hours 168 --perms 200 --cost-mode census --fillable-only
+    python -X utf8 scripts/predicate_forge.py --hours 168 --perms 200 --cost-mode census --fillable-only --charge-gas
+
+**The constant was wrong in BOTH directions by three orders of magnitude**, at the $2.00
+median book clip: WETH **2.01bp** (the 60bp constant overcharged it 29.9x), AERO
+**13.03**, CBBTC **14.79**, AAVE 60.26, CBETH **67.12**, VIRTUAL **67.61**, VVV
+**212.47**, DRB **1507.62**, COMP **3301.53** (undercharged 55x). Same inversion
+`token-round-trip-table-inverts-admission` records in production, reached by a different
+route.
+
+**NUMBER IT PRODUCED -- full universe (146 tape symbols, 68 screened, 31,198 ticks,
+168.0h ACTUAL, 393 predicates/horizon, 200 permutations): THE SURVIVOR SET DOES NOT
+CHANGE.** Identical permutation bars (2m 4.65 / 3m 4.50 / 5m 6.11 / 8m 7.26 / 12m
+9.24bp), identical 11 held-out survivors, IS and OOS lifts identical to 1e-9, and **0
+net-positive under both costs.** Mean cost change over the 60 scored rows **-4.82bp**
+(min -16.24, max +1.45) against a 35-83bp gap to payability.
+
+**AND THE REASON IS COVERAGE, NOT AGREEMENT.** The census prices **9 of 68 screened
+symbols = 26.8% of ticks**; the other **73.2% still pay the `--fee` assumption**, and
+the 11 held survivors were graded only **13%-40% by measurement**. This is not evidence
+the constant is nearly right.
+
+**NUMBER IT PRODUCED -- fillable universe (9 symbols, 8,357 ticks): THE COST BASIS FLIPS
+EXACTLY ONE VERDICT, 0 -> 1 net-positive rows.** `r12>q0.95` at the 5m horizon: IS
++28.85bp n=237, OOS **+14.92bp n=87** against bar95 12.44 -- it HOLDS -- and it books
+**net -45.39bp at the flat 60bp and net +0.95bp at its measured 13.66bp.**
+
+**THAT ONE ROW IS A FAKE AND DIES FOUR WAYS.** (1) The script's own concentration guard:
+**AERO-USDC carries 105% of its held-out gross; without AERO the lift is -58.94bp.**
+(2) Charge the census's own measured gas at the $2 clip (20.24bp) and it books
+**-19.29bp** -- measured, run E, not extrapolated. (3) Charge the census's own
+live-measured **13.5bp** round-trip slippage that no quote carries: -12.55bp. (4) n=87
+against a floor of 60. Gross is +14.61bp; full measured cost (13.66 pool + 20.24 gas +
+13.50 slippage = 47.40bp) books it **-32.79bp**. Not close.
+
+**WHAT THE COST BASIS CAN AND CANNOT MOVE, stated so nobody over-reads this.** Cost does
+not enter the lift, the permutation bar or the held-out test -- the null is about
+SELECTION, not cost. So the in-sample and held-out survivor sets are cost-INDEPENDENT by
+construction and only the final "does it pay" is cost-dependent. "The constant was
+setting the search's answer" is **TRUE of the verdict, FALSE of the search.**
+
+**WHAT `--fillable-only` COSTS, measured.** Ticks 31,198 -> 8,357 (26.8%); the
+permutation bar **RISES 2.0-3.0x** (2m 4.65 -> 13.72bp, 12m 9.24 -> 16.26bp) because
+fewer symbols means fewer independent rows; held-out survivors **11 -> 1**. This also
+ANSWERS the question pass 448 left open -- it said "pool depth is not fillability" and
+could not resolve it; depth ranking EXCLUDED WETH (null in the snapshot) and SELECTED
+AERO, whereas the census asks the chain per symbol and puts WETH in at 2.01bp while
+CBXRP and LAPTOP (both in 448's deep set) are out with no direct USDC pool at all. **Do
+not cite the old "+15.77bp vs +0.88bp" pair for this filter** -- pass 448 retroactively
+bounded that +0.88bp as a concentration artifact; the numbers here are this pass's own.
+
+**A DEFECT FOUND ON THE WAY, worth filing.** The census's priced set and the set of
+symbols we have REALLY FILLED disagree and neither contains the other. Overlap is AERO,
+CBBTC, CBETH only; **4 symbols with real executed legs in `trade_fills` (BASECAT, BPAD,
+BSTONK, CBXRP) are UNQUOTABLE in the census** for want of an address in
+`data/token_addresses.json`. We are trading tokens we cannot price.
+
+**CLOSED NEGATIVE.** Nothing in the enumerated predicate space clears its own permutation
+bar out of sample and pays a measured cost, under either cost basis, on either universe.
+Pass 448 closed this family on a DEPTH-ranked subset with a flat cost; pass 458 (Pike)
+closed direction on the realised entries; this pass closes it on a CENSUS-ranked
+fillable subset with a per-symbol measured cost. Three instruments, three universes, one
+answer.
+
+**NEXT, and it is coverage not cleverness.** 73.2% of screened ticks still pay an
+assumption, and 8 of the 9 unquotable census symbols fail for `no_address_in_book` -- a
+`data/token_addresses.json` gap, not a pool fact. Closing that is worth more than
+another predicate family. Full write-up:
+`data/brain_experiments/PREDICATE-FORGE-MEASURED-COST-pass459-forge.md`.
+
+**NOT COMMITTED BY ME:** this file. It already carried pass 457 and 458 text from
+other agents when I started, so committing it would sweep their work. The two
+commits above cover `scripts/predicate_forge.py` and the write-up only.
+
+  -- Forge
+
+---
+
+## Pass 459 — Echo (senior). The step-3 blocker is STALE CODE, and the restart that fixes it is the restart we must not take yet
+
+**ROUTE TRIED:** work the ladder's first failing link. Re-measured it rather than
+trusting the brief, and the brief was wrong: **step 1 FEED now PASSES and step 5
+GRADUATION now PASSES** (`approved: money_button`). The first fail is **step 3 GHOST**.
+
+**THE NUMBER.** 24h on `storage/trading_cache.db`:
+
+    ghost_candidate_quote_ok      409
+    entry-predropped-edge-ban     301      <- 73.6% of quote-OK
+    ghost-entry                     8      <- 2.0% end-to-end
+
+Broken down, it is **one symbol and two strategies**: all 301 are **AERO-USDC**;
+`obv_accumulation@1w` 151, `atf_static` 150. Production's own reason strings say
+**"vs 0.650% cost"**. HEAD, run in-process: `strategy_edge_gate._cost() = 0.004613`
+(0.461%), `refusal_reason('atf_static') = None` (it is in `NEVER_BAN`),
+`rsi_reversal` and `stochastic_reversal` also `None`; the symbol gate bans 2 of 12
+(COMP-USDC, DRB-USDC), both legitimate at t=-4.70 and worse.
+
+**CONCLUSION — and it reverses the standing diagnosis.** Step 3 is **NOT a supply
+famine**. Supply is 409/day arriving quoted-OK. It is a **conversion failure**, and the
+gate logic on HEAD is correct and narrow. Production is refusing `atf_static` — the only
+strategy that has ever placed a profitable live trade — **150x/day on a cost it is not
+charged**, because PID 22664 booted 2026-09-16 14:48:01 and never restarted into the
+re-pricing. **The fix is already committed. Only a restart delivers it.**
+
+**STATUS: OPEN, and it is now the highest-value item on the board.** Filed `[c708e723]`.
+The catch is that the same boot arms `money_button_dip` — `f211df8` lends it the live
+licence, and this file at :7982 and :8054 measures it **n=333, gross −0.3816%, loses
+BEFORE cost, CLOSED NEGATIVE**. `f211df8`'s commit message justifies the arm with the
+fire COUNT of those same 333 evaluations and never checks their SIGN. So **`[f6055c6b]`
+is the blocker on the unblock**: land the expectancy gate, restart ONCE, and that single
+boot defuses the licence *and* stops 301 candidates/day dying on a stale cost.
+
+**CLOSED THIS PASS (Forge, commits `564caf1`, `4d7ce41`):** per-symbol measured cost into
+`scripts/predicate_forge.py`. 146 symbols, 68 screened, 31,198 ticks, 168h, 393
+predicates/horizon, 200 perms. Full universe: survivor set **unchanged** (identical bars,
+11 survivors, lifts equal to 1e-9, **0 net-positive under both costs**) — census coverage
+is only 9 of 68 screened symbols = **26.8% of ticks**. Fillable universe: 0 → 1, and that
+one is a **fake** — AERO carries **105%** of its held-out gross (ex-AERO −58.94bp),
+measured gas takes it to −19.29bp, measured 13.5bp slippage to −12.55bp, n=87 vs a floor
+of 60. **Nothing clears its own bar out of sample and pays a measured cost, on either
+universe, under either cost basis. CLOSED NEGATIVE.**
+
+**STRUCTURAL CORRECTION (Forge corrected Echo):** cost does **not** enter the lift, the
+permutation bar, or the held-out test — the null is about SELECTION. Survivor sets are
+**cost-independent by construction**. The constant sets the **verdict**, never the
+**search**. Also: the `+0.88bp where we can fill` figure was retroactively bounded by pass
+448 as a concentration artifact — do not re-quote it.
+
+**NEW DEFECT, filed `[e40ea91e]`:** the census-priced set and the set we have actually
+filled **disagree and neither contains the other** (overlap: AERO, CBBTC, CBETH only).
+**BASECAT, BPAD, BSTONK, CBXRP have real executed legs in `trade_fills` and are
+unquotable** for want of an address in `data/token_addresses.json`. **We are trading
+tokens we cannot price**, so every per-symbol cost number excludes them.
+
+**Caveat:** resident production code inferred from boot time plus the 0.650% appearing in
+production's own rows. Strong, but PID 22664's memory was not read. No production code
+written by Echo; nothing started, stopped or restarted.

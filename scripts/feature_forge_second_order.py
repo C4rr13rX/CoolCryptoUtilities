@@ -28,12 +28,19 @@ THREE RULES THIS SCRIPT OBEYS, because this repo has been burned by each:
      CHECKED against a block sign-flip permutation null, which is the same
      family-wise quantity measured instead of assumed.
 
-  2. FILLABLE SUBSET ONLY. Predictability and fillability are measured
-     anti-correlated on this venue: +15.77bp of lift where we cannot fill,
-     +0.88bp where we can. The symbol set is READ from the round-trip quote
-     census artifact (the 'quoted' block), never hardcoded, and every symbol
-     carries its own measured round-trip cost into the table so a 2bp effect in
-     a 1508bp pool is visibly not a result.
+  2. FILLABLE SUBSET ONLY -- and the reason is TRADEABILITY, not a measured
+     anti-correlation. An earlier draft of this docstring justified the
+     restriction with the pair "+15.77bp of lift where we cannot fill, +0.88bp
+     where we can". DO NOT CITE THAT PAIR: pass 448 retroactively bounded the
+     +0.88bp as a CONCENTRATION ARTIFACT, and pass 459 recorded the retraction
+     in data/attempts-revenir.md:11358 and in
+     data/brain_experiments/PREDICATE-FORGE-MEASURED-COST-pass459-forge.md:144.
+     The restriction does not need that number and never did: an edge in a pool
+     this venue cannot fill is not a result, whatever its size. That argument is
+     structural and survives the retraction intact. The symbol set is READ from
+     the round-trip quote census artifact (the 'quoted' block), never hardcoded,
+     and every symbol carries its own measured round-trip cost into the table so
+     a 2bp effect in a 1508bp pool is visibly not a result.
 
   3. THE SE IS CLUSTERED. Consecutive fires share ticks and a symbol's ticks
      share a regime, so the naive SE is too small. Clusters are
