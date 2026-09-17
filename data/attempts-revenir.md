@@ -9270,3 +9270,102 @@ AERO by a broken sweep), it does not clear the cost floor at any horizon. The ga
 not signal discovery: it is 31.49bp of round trip against a 4-11bp censored gross.
 Fixing the depth sweep ([205092e7]) buys an honest measurement and a lower noise
 bar; it does not open the money path.
+
+### Pass 449: routing arbitrage on base -- CLOSED, and NOT on cost. There is one venue.
+
+HYPOTHESIS ([6969ce6a]): directional predictability on this venue lives in pools
+whose round trip eats it 20x, so the honest move is a NON-DIRECTIONAL return.
+Routing arbitrage needs no forecast -- only two venues disagreeing at one
+instant -- and `scripts/routing_arbitrage_census.py` (shipped pass 426, 6cfa70d)
+was never priced against real round-trip cost.
+
+DID: tried to run it. It does not complete. Then wrote a bounded-timeout probe
+(scratchpad only, nothing in the repo edited) calling the SAME three providers
+through the SAME `quote_and_build`, each quote in a thread with an 8s deadline,
+over 6 symbols x 2 rounds = 12 observations.
+
+RESULT: **0 of 12 observations produced a dispersion reading.** Not one. The
+reason is identical on every symbol and every round, and it is not cost:
+
+    uniswap : TIMEOUT (>8s; faulthandler caught it stalled >75s)
+    sushi   : "SushiV2 unsupported on base"
+    camelot : "CamelotV2: no router configured"
+
+SUSHI AND CAMELOT DO NOT SERVE BASE. One of them says so in words. Of the three
+venues the census enumerates, at most ONE can quote this chain, and
+`dispersion()` returns None below two venues (line 148-150). **Routing
+arbitrage is undefined here: there is no second price.**
+
+Symbols covered, so this is not a thin-token artifact -- the three deepest pools
+in the snapshot fail exactly like the dust one:
+
+    WETH   deep  >$1M ($2.20M, hand-resolved pass 448)   0/3
+    AERO   deep  >$1M ($33.41M)                          0/3
+    CBBTC  deep  >$1M ($7.60M)                           0/3
+    SOL    mid  $250k-1M ($636k)                         0/3
+    DRB    dust  <$50k ($16.5k)                          0/3
+    KTA    depth absent from snapshot                    0/3
+
+WHY NOBODY CAUGHT THIS. `routing_arbitrage_census.py:233` guards on
+`len(providers) < 2`, and all three provider objects CONSTRUCT fine (0.0s each,
+no exception). The guard tests CONSTRUCTABILITY, not CHAIN SUPPORT. So the
+script prints a confident `venues: uniswap, sushi, camelot` header and then
+reports "fewer than two venues answered" on every single pair. A reader who saw
+the header would believe the instrument had three venues to compare.
+
+Independent corroboration of [[base-has-no-dex-fallback]] from a new direction:
+the fallbacks are not merely unwired in the router, they cannot quote base.
+
+THE COST CHARGE CRITERION, ANSWERED HONESTLY. The item asked to charge each
+opportunity its own pool depth from `scripts/xs_rank_depth_check.py:42`. There
+are zero opportunities, so there is nothing to charge and I am not inventing a
+number for an empty set. What CAN be stated is the BAR each bucket sets -- the
+venue spread a cross-venue loop would have to clear:
+
+    bucket             RT charge   + gas @ $10    + gas @ $0.75 (the real clip)
+    deep  >$1M            11bp        15bp            64bp
+    mid  $250k-1M         64bp        68bp           117bp
+    thin $50k-250k       200bp       204bp           253bp
+    dust  <$50k          750bp       754bp           803bp
+
+Two defects found in that pricing while using it, both filed:
+
+  1. `xs_rank_depth_check.py:108` charges `rate * 2` while its own docstring at
+     line 41 says each rate IS "the round-trip rate". Those are the operator's
+     round-trip numbers (WETH 0.11%, AERO 0.64-2.0%, KTA 7.5%), so the script
+     DOUBLE-CHARGES. Direction is safe -- it makes a negative more negative, so
+     the xs_rank conclusion stands -- but every magnitude it printed is 2x too
+     pessimistic.
+  2. The bucket table prices cost by DEPTH, and this repo already measured that
+     depth does not predict cost ([[pool-depth-does-not-predict-round-trip-cost]]).
+     AERO is the proof: $33.41M of depth puts it in the 11bp "deep" bucket while
+     its measured round trip is 64-435bp. The table would UNDERCHARGE AERO by
+     6-40x, in the direction that manufactures a false positive.
+
+SIMULTANEITY, the criterion that mattered most and the one the route dies on
+twice over. The census does NOT take its two prices at one instant: line 177 and
+line 189 call `quote_all` SEQUENTIALLY, and `quote_all` itself loops providers
+sequentially. The arbitrage legs are `span_a + span_b` apart, and it records the
+span without ever gating on it. Measured spans here were 8.0-14.4s per sweep. At
+this tape's 22.33bp median 15-minute move, a 14.4s gap injects
+22.33 * sqrt(14.4/900) = 2.8bp of pure clock, and the >75s stall injects 6.4bp.
+So any "paying" loop under ~6bp would have been manufactured by time, not venue
+-- on an instrument whose smallest real bar is 15bp.
+
+STALE DOCSTRING, corrected: the file's header says the round trip costs 0.3187%.
+It now reads 0.4613% from `services/round_trip_cost` -- the script charges the
+right number (`leg cost: 0.2307%` in its own header) and DESCRIBES the wrong one.
+
+**CLOSED: routing arbitrage / cross-venue dispersion as a path to a profitable
+trade, on base, with this provider set.** It is not closed on cost and the cost
+question was never reached. It is closed because arbitrage requires two venues
+and this deployment has one. Reopening needs a SECOND base venue that can
+actually quote (Aerodrome is the obvious candidate and is not in `_providers()`
+at all) -- that is a provider-integration task, not an analysis task, and until
+someone does it every dispersion number on base is n=0.
+
+NOT CLOSED BY THIS: within-venue routing improvement. Uniswap V3 on base has
+multiple fee tiers and the census treats "uniswap" as one venue, so it has never
+compared the 0.05% / 0.30% / 1.00% pools against each other. That is a real
+cost-reduction question with a real second price, and it is the only live remnant
+of this route. Filed.
