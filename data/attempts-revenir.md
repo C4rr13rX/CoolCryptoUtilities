@@ -7862,3 +7862,38 @@ concern the constant module.
 HAZARD: an agent told to "fix the round trip cost" has a 50% chance of
 editing the file nothing on the entry path imports, measuring no change, and
 concluding the fix did not work.
+
+### Pass 439, final measurement: realised live cost PER TOKEN. Corrects a claim I made minutes earlier.
+
+Realised cost = `fee_cost / notional` over LIVE `trade_outcomes` rows:
+
+    symbol           n   med_cost   med_notl   model_rate   model/real
+    BSTONK-USDC      2    1.2409%     0.7500      0.8583%        0.69x
+    CBETH-USDC       3    0.9644%     0.4336      1.2521%        1.30x
+    CBXRP-USDC       1    0.8647%     0.7500      0.8583%        0.99x
+    BASECAT-USDC     1    0.5506%     0.7500      0.8583%        1.56x
+    CBBTC-USDC       4    0.5379%     1.3120      0.6272%        1.17x
+    AERO-USDC        9    0.4646%     0.7500      0.8583%        1.85x
+    BPAD-USDC        1    0.3356%     1.5000      0.5885%        1.75x
+
+    ALL LIVE n=21, median 0.5286%, spread across symbols 3.7x
+
+**AERO IS SECOND CHEAPEST OF SEVEN AT OUR ACTUAL CLIP.** The standing brief's
+"WETH 0.04-0.11%, AERO 0.64-4.35%" is QUOTED cost across clip sizes, not
+realised live cost, and round-trip cost INVERTS with clip size here (AERO
+0.64% at $2 -> 4.35% at $10). At the live median clip of $0.75 AERO's
+realised fee is 0.4646%. I asserted "AERO's realised cost is 6-13x WETH's"
+on the board and it is wrong in direction.
+
+CLOSED NEGATIVE: "restrict the universe away from AERO toward deep pools"
+does NOT follow from live evidence. Do not re-open it on the quoted figures.
+
+WHAT SURVIVES for [84e62c6d]: `roundtrip_cost_rate` IS token-blind
+(`services/roundtrip_cost.py:93`, takes `notional_usd` only) and is wrong per
+token by 0.69x-1.85x, a 2.7x span -- too LITTLE on the dearest symbol
+(BSTONK) and too MUCH on the cheapest (AERO). The prize is a 3.7x spread, not
+the 100x the quoted figures imply.
+
+CAVEATS: n=21 total; five of seven symbols have n<=3; AERO n=9 is the only
+one with weight. There are NO live WETH rows -- cbETH is not WETH. The
+cross-symbol RANKING is weak. The token-blindness of the model is not.
