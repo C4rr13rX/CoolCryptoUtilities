@@ -9447,3 +9447,49 @@ THE ONE CAVEAT THAT SURVIVES: production serves stale code until restarted and
 the plan is built at runtime, so an instance that started before `.env` changed
 still holds 3.00 in memory. That is one read on the running process and it is the
 only remaining route by which the old cap could still bind.
+
+## Pass 450 (Echo, senior) -- [d7d87724] the ghost lane's 94% drop is ONE CORRECT GATE. CLOSED NEGATIVE as a defect.
+
+ROUTE TRIED: find the stage between 'entry candidate' and 'ghost-entry' that
+discards ~94% of candidates, on the hypothesis that the ghost lane refuses
+candidates it generated and that fixing the refusal would raise the evidence rate.
+
+THE NUMBER IT PRODUCED, 24h of trading_ops to 2026-09-17 08:38:
+
+    1955 candidates dropped pre-arbitration   trading/scheduler.py:580 (edge ban, 1214 ticks)
+     233 discarded as arbitration losers      trading/scheduler.py:645
+     572 refused by the chaos lattice         trading/bot.py:8499   <-- 74.1% of 772
+     200 survive to the guards below
+      13 ghost-entry                          trading/bot.py:9512
+
+CLOSED, and closed as NOT A DEFECT. 100% of the 572 refusals carry one condition
+verbatim in details.detail: "chaos: <SYM>: information decays after 0.5-1.6 min
+but the signal looks 100-432 min ahead". 431 of 572 are rsi_reversal@1w; 383 of
+572 (67%) are AERO-USDC, also the most expensive token here. The gate is RIGHT.
+Do not widen it, do not soften it -- the comment at trading/bot.py:8470-8486
+records that this exact check exists because a forecast aimed past the horizon
+produced the +500% clamp artifact. Raising the ghost entry rate by relaxing it
+would re-admit the artifact.
+
+ALSO CLOSED: the edge-ban predrop as the suspected killer. FALSIFIED. It dropped
+1955 candidates but 738 of its 1214 ticks still kept >=1 enter candidate
+(surviving_enter_candidates -> 1:560, 0:476, 2:148, 3:29, 4:1).
+
+CORRECTION TO A NUMBER THIS LOOP HAS QUOTED FOR FOUR PASSES: the "237 candidates
+-> 2 entries = 0.8% conversion" is not a conversion rate of anything. The two
+candidate statuses are one if/else on a single write (services/atf_static_strategy
+.py:1769) so summing them is fair, but they are written by atf_static, which wins
+ZERO arbitrations. Numerator and denominator are different strategies. The
+same-population seam is 1005 offered_total -> 772 arbitrated -> 13 entries = 1.7%.
+
+MEASUREMENT INSTRUMENT FOUND UNRELIABLE, and this affects every pass: the step 3
+GHOST gate (scripts/live_path_check.py:103-118) reads FAIL on 61.3% of hours
+across 14 days that produced 1232 ghost events. Widening does not fix it -- 24h
+still FAILs 28.6% -- because arrivals are bursty (median inter-event gap 0.2 min,
+p90 18.6 min, max 87.5h; 9.5 events per active hour, max 253). Filed [86e2d257]
+for a staleness predicate. Until it lands, do not take "[FAIL] 3 GHOST" at face
+value.
+
+WHERE THE WORK ACTUALLY IS: [b3d087c7], unblocked this pass on the above. The
+population proposes horizons the feed cannot carry. That is the cause; the chaos
+gate is the symptom doing its job.
