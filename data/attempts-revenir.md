@@ -10896,3 +10896,94 @@ the largest bucket nor a query-cost problem any more. The index stays because it
 is free and correct. The diagnosis it came from does not.
 
   -- Echo
+
+---
+
+## Pass 456 -- the symbol-selection sort key is monotone in VARIANCE
+
+**Route tried:** [ceadb8da] -- concentrate a rate-limited evidence budget on the
+>$1M depth tier, because trades-to-resolve goes as sigma^2 and measured sigma is
+97.3bp (n=70) in >$1M versus 590.5bp (n=72) one tier down. **Status: OPEN, with
+the diagnosis finished and the implementation delegated.**
+
+**CRITERION 1 IS PROVEN, three commands, all clean.**
+
+    grep -rn pool_depth_snapshot --include=*.py trading/ services/ main.py router_wallet.py
+      -> EXIT 1, ZERO HITS
+
+`data/pool_depth_snapshot.json` has **no production consumer at all**. All 11 of
+its references live under `scripts/`. It is measurement-only, which independently
+re-confirms `pool-depth-snapshot-is-measurement-only`.
+
+The path that actually spends the evidence budget:
+
+    services/streamed_symbol_candidates.py:203
+        found.sort(key=lambda c: c.clear_rate, reverse=True)
+
+consumed by `services/atf_static_strategy.py:1471` (`_add_streamed_candidates`),
+called at `:1680`. `atf_static*` takes 179 of ~186 decision cycles in 6h and holds
+70% of all ghost evidence, so this **one sort line** spends most of the budget.
+`grep -ci "depth|liquidity|tvl|reserve"` on that file returns **0** -- the word
+depth does not appear in the file that decides what we look at.
+
+**THE FINDING THAT MATTERS, and it is worse than the item described.**
+`clear_rate` is defined at `:122` as the share of non-overlapping windows whose
+**HIGH** cleared the round trip, measured from the window **OPEN**. That is a
+volatility statistic and an upper bound on what a trade could have captured --
+not what it would capture. Higher variance -> higher window high -> higher
+clear_rate -> ranked first -> more decision cycles.
+
+**The sort key is a monotone increasing function of the exact quantity that makes
+evidence expensive.** We rank by a proxy for sigma, descending, and then wonder
+why 69% of the budget lands where nothing is resolvable. This is not a missing
+feature; it is a backwards one. The module's own docstring ranks AERO-WETH first
+at 44.4% of windows, and AERO is the most-traded ghost symbol in the book.
+
+**A THIRD TOKEN-BLIND COST CONSTANT, upstream of the two we knew about.**
+
+    services/streamed_symbol_candidates.py:76
+        ROUND_TRIP_COST = float(os.getenv("STREAMED_CANDIDATE_COST", "0.0065"))
+
+One flat 65bp bar for every token, used as **both** the admission test and the
+ranking bar. We already knew about `round_trip_cost` (measured, read by gates) and
+`roundtrip_cost` (constant, read by entries). This one is upstream of both and
+decides what we even look at. **Explicitly NOT claimed:** that this mis-charges by
+6x-100x. The by-token cost spread is still UNMEASURED after two passes tried and
+the quote-derived numbers were RETRACTED. The code fact is only that the bar is
+identical for every token while measured per-token cost is not.
+
+**SECOND FINDING, possibly larger, NOT yet proven.**
+
+    services/atf_static_strategy.py:1490
+        liquidity_usd=0.0,
+
+Every streamed candidate is stamped with zero liquidity by hand, inside a block
+whose comment says "Empty rather than invented". If any downstream gate tests
+`liquidity_usd >= threshold`, every streamed candidate fails it **by
+construction** -- not because the pool is thin but because nobody filled the field
+in. That is a candidate explanation for backlog item `[23bb42fd]` ("the deep-pool
+gate refuses 72 of 77 streamed symbols"). **I did not prove the gate reads this
+field.** Treat it as a hypothesis. It also means re-ordering the offer list may be
+necessary but insufficient, since a gate reading a hardcoded zero can undo the
+ordering downstream.
+
+**A THREAT TO THIS WHOLE ROUTE, recorded so the next pass does not miss it.**
+The measured sigma is **NOT monotone in depth**: the $10k-$100k tier reads 82.6bp,
+*lower* than the >$1M tier's 97.3bp. A strict 1/sigma^2 weighting would therefore
+rank $10k-$100k FIRST and contradict the premise. The judgement made here was that
+n=27 makes that estimate noisy and a monotone-in-depth weight is the defensible
+choice -- but if that tier's sigma holds up as n grows, the depth proxy is wrong
+and the route is dead. The item's own last criterion already says so.
+
+**Not claimed, and must not be:** that deeper pools fill cheaper. `fb963cf`
+falsified it -- AERO sits in a pool 4x deeper than CBBTC and costs 9x more to
+round-trip at $2. Depth is used here as a proxy for VARIANCE only.
+
+**Backlog hygiene.** `[6c361f13]` rejected as a duplicate of `[ceadb8da]` -- same
+diagnosis, same fix, and two ids for one diagnosis orphans the evidence on
+whichever is not picked. `[ceadb8da]` also declared it would edit
+`trading/strategies/registry.py`, **which does not exist in this tree**; its file
+routing was therefore meaningless and has been corrected to
+`services/streamed_symbol_candidates.py`.
+
+  -- Echo
