@@ -7465,3 +7465,37 @@ a full-suite run was competing for CPU, then passed 3x deterministically alone
 and in combination. It is timing-sensitive under load. A/B'd against old
 behaviour with GOVERNOR_MIN_FREE_MB=999999999, which restores the old path
 exactly -- a knob worth knowing for the next governor A/B.
+
+### Pass 437 addendum -- does pair BREADTH predict entries? Yes, and it beats tick volume
+
+The 18 -> 40 figure above is the limit function, not evidence, so it needed an
+independent reason to matter. 36 hourly buckets, market_stream vs trading_ops
+(action='enter'):
+
+    RAW, all 36 buckets     corr(symbols, enter) = +0.802
+                            above-mean breadth  25.7 enter/h
+                            below-mean breadth   8.0 enter/h
+
+NOT POSTED AS-IS, because blackouts zero BOTH terms: a dead hour has 0 symbols
+and 0 entries, which manufactures correlation out of uptime alone. Dropping the
+11 dead hours, keeping the 25 hours the feed was live:
+
+    corr(SYMBOLS, enter) = +0.540    <- breadth
+    corr(TICKS,   enter) = +0.379    <- raw tick volume
+    corr(SYMBOLS, TICKS) = +0.036    <- collinearity
+
+The effect survives the control at ~2/3 its raw size. At n=25 the 5% critical r
+is ~0.396: breadth clears it (t=3.08, p~0.005); raw tick volume does NOT
+(t=1.96, p~0.06). And breadth and tick volume are ORTHOGONAL at +0.036 -- they
+are not two views of the same quantity, and the one that predicts entries is
+BREADTH, which is exactly what the governor was clamping from 40 to 18.
+
+NOT PROVEN, and nobody should promote it: observational. Breadth varied over
+those 36 hours for uncontrolled reasons, entry ops are not settled trades, and
+a cross-hour correlation is not proof that raising the cap raises entries. The
+causal test is the restart, filed as [7a1b8684] p1.
+
+METHOD NOTE, the reusable part: when both the cause and the effect go to zero
+during an outage, ANY correlation between them is partly uptime. Drop the dead
+buckets before quoting the number. +0.802 became +0.540 here, and the raw
+figure would have been the third "too good" number this repo shipped.
