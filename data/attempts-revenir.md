@@ -8756,3 +8756,43 @@ money_button pay. It will not.
 WHAT WOULD HAVE TO BE TRUE for a dip route to work: an admission test that
 does NOT contain the fee, so selectivity can be tuned independently of cost.
 That is a rule-shape change, not a cost fix, and nobody has costed it.
+
+### Pass 445 FINAL: the rule-shape escape hatch is closed too -- expected_return does not predict realised
+
+I ended the postscript above saying "what would have to be true is an admission
+test that does NOT contain the fee, so selectivity can be tuned independently
+of cost -- and nobody has costed it." I had time, so I costed it.
+
+Admit on `expected_return >= BAR` with fee=0 (so selectivity is INDEPENDENT of
+cost), then charge the real 0.3606% at settlement. Deep universe, $10, 5m:
+
+        bar     n  per day   mean gross    mean net       t
+      0.50%   429    19.95     +0.0981%    -0.2625%   -8.23
+      0.75%   199     9.26     +0.0920%    -0.2686%   -4.76
+      1.00%   115     5.35     +0.0905%    -0.2701%   -2.95
+      1.50%    37     1.72     +0.2394%    -0.1212%   -1.21
+      2.00%     9     0.42     +0.0647%    -0.2959%   -0.90
+      3.00%     0       --           --          --      --
+
+**GROSS IS FLAT AT ~0.09% ACROSS A 2x RANGE OF THE BAR, AND NEVER REACHES THE
+0.3149% FLOOR.** Demanding twice the expected move (0.5% -> 1.0%) leaves
+realised gross unchanged at +0.09% while n drops 429 -> 115. The 1.5% row at
++0.2394% is n=37 and t=-1.21 -- not a signal, and 2.0% falls straight back to
++0.0647%.
+
+THE CONCLUSION, AND IT IS THE STRONGEST FORM OF THE NEGATIVE: **the rule's own
+`expected_return` estimate carries essentially no information about the trade's
+realised return.** A selectivity knob cannot be built, because the quantity it
+would select on is uninformative. The rule-shape fix does not exist.
+
+ONE HONEST NOTE ON WHY THIS GROSS (+0.09%) IS LOWER THAN THE +0.1769% I
+reported for the fee-coupled version at n=99: the fee also enters the TARGET
+(`tp = max(fee + min_net, |dd| * rev_frac)`), so a real fee sets a HIGHER
+take-profit and the trades that touch it book more. That +0.1769% is therefore
+a TARGET-HEIGHT effect, not better selection -- which is consistent with
+everything above and makes the finding tighter, not weaker.
+
+ROUTE STATUS: the money_button dip on deep pools is now closed on all three
+axes -- supply (2.37 candidates/day), cost (no level pays, t=+1.07 at zero
+slippage), and shape (expected_return does not predict). It should not be
+reopened without a NEW predicate, not a new threshold.
