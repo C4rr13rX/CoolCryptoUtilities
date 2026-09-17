@@ -11670,3 +11670,32 @@ Reproduce with:
 **Not measured, and stated as unmeasured:** WETH slippage at any clip. Zero WETH fills exist in
 `trade_fills`. That is what item `ec37fd2e` buys, and it needs operator authorisation because it
 spends real money.
+
+### Pass 461 addendum (Echo) — TWO CORRECTIONS TO THE ENTRY ABOVE, BOTH AGAINST MYSELF
+
+**1. "Too loose" is mostly LATENT, and I should have said so.** Checked the table against the
+tape (`market_stream`, 24h): 61 symbols, 6969 ticks; the census prices **4** of them =
+**20.6% of ticks**. AAVE, CBBTC, CBETH, COMP, DRB and VVV are **not streamed at all**, so the
+39–85x under-charges are a latent hazard, not a live loss. Root cause of the coverage hole:
+`scripts/routing_arbitrage_census.py` defaults to `--mode ghost --min-rows 3` — it drew its
+symbols from the **ghost book, not the stream**, pricing what we have traded rather than what we
+could trade. Filed `[15bce061]`; it needs no new code, the script already takes `--pairs`.
+
+**2. …but NOT entirely latent, and VIRTUAL is the counterexample.** VIRTUAL-USDC *is* streamed
+(332 ticks/24h) and *is* under-charged. Checking the curve shapes instead of assuming them:
+
+    clip       $0.75    $2.00    $6.00   $10.00
+    WETH        2.0bp    2.0bp    2.0bp    2.1bp   FLAT
+    AERO       24.3bp   13.0bp   10.3bp     --     DECREASING (fixed leg amortises)
+    VIRTUAL    31.7bp   67.6bp  180.9bp  291.6bp   INCREASING 9x (price impact dominates)
+
+`roundtrip_cost_rate` is `FIXED/n + RATE` — **monotonically decreasing by construction**. One of
+three live shapes rises. Consequences: (a) any per-symbol accessor must **interpolate the curve**
+and must never collapse a symbol to one bp figure, which would be wrong by 4.6x on VIRTUAL;
+(b) **"raise the clip" is not a universal remedy** — right for AERO, free for WETH, catastrophic
+for VIRTUAL; (c) an "unpriced symbols must refuse" rule would delete **93% of the streamed
+universe and 79% of ticks** on landing — a universe restriction wearing a cost fix's name.
+Unpriced must return today's number **labelled and counted**, not refused.
+
+**Status: the cost measurement is CLOSED. Coverage is OPEN and is now the binding constraint** —
+a commit claiming "cost is per-symbol" is true for a fifth of the tape until `[15bce061]` runs.
