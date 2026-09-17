@@ -139,6 +139,26 @@ def main() -> int:
     if fee_overridden:
         fee_rate = float(args.fee_rate)
 
+    # RUNG 0, and it is the one every earlier census missed. scheduler.py:1776
+    # gates on the MEASURED per-symbol round trip BEFORE any price-action gate.
+    # services/round_trip_cost.py knows six tokens; everything else takes a
+    # pessimistic 70bp default, so only four tokens can ever clear a 35bp bar.
+    max_round_trip = _env_float("MONEY_BUTTON_MAX_ROUND_TRIP_COST", 0.0035)
+    try:
+        from services.round_trip_cost import token_round_trip_cost
+    except Exception:  # noqa: BLE001
+        token_round_trip_cost = None
+
+    def _symbol_admitted(sym: str) -> tuple:
+        """(admitted, measured_cost) for the FIRST gate."""
+        if max_round_trip <= 0.0 or token_round_trip_cost is None:
+            return True, None
+        try:
+            c = float(token_round_trip_cost(sym))
+        except Exception:  # noqa: BLE001
+            return True, None
+        return (c <= max_round_trip), c
+
     conn = sqlite3.connect("file:%s?mode=ro" % path, uri=True)
     cur = conn.cursor()
     cur.execute("select symbol, ts, price from market_stream where price > 0 order by symbol, ts")
@@ -161,9 +181,22 @@ def main() -> int:
     dd_of_net_pass: list = []
     dd_of_dd_pass: list = []
 
+    n_symbol_refused = 0
+    n_ticks_symbol_refused = 0
+    admitted_syms: list = []
+    refused_syms: list = []
+    real_admissible = 0
+
     for sym, rows in tapes.items():
         if len(rows) < 8:
             continue
+        sym_ok, sym_cost = _symbol_admitted(sym)
+        if sym_ok:
+            admitted_syms.append((sym, sym_cost))
+        else:
+            n_symbol_refused += 1
+            n_ticks_symbol_refused += len(rows)
+            refused_syms.append((sym, sym_cost))
         ts = np.array([r[0] for r in rows])
         px = np.array([r[1] for r in rows])
         for i in range(len(rows)):
@@ -217,6 +250,8 @@ def main() -> int:
                 continue
             n_tp_pass += 1
             per_sym[sym][2] += 1
+            if sym_ok:
+                real_admissible += 1
 
     W = 76
     print("=" * W)
@@ -237,6 +272,16 @@ def main() -> int:
           % (min_net, fee_rate + min_net, 100 * (fee_rate + min_net)))
     print("knife : slope floor %.5f/min over %.0fs" % (slope_floor, slope_window))
     print()
+    print("  RUNG 0 -- the MEASURED per-symbol round-trip gate (scheduler.py:1776),")
+    print("  which runs BEFORE everything below and which every earlier census missed:")
+    print("    bar MONEY_BUTTON_MAX_ROUND_TRIP_COST = %.4f (%.1fbp)"
+          % (max_round_trip, max_round_trip * 1e4))
+    print("    symbols ADMITTED : %d   %s"
+          % (len(admitted_syms),
+             ", ".join("%s %.0fbp" % (s, (c or 0) * 1e4) for s, c in sorted(admitted_syms)[:8])))
+    print("    symbols REFUSED  : %d (%d ticks) -- almost all on the 70bp default for the unmeasured"
+          % (n_symbol_refused, n_ticks_symbol_refused))
+    print()
     print("  rung                                       survivors      refused")
     print("  " + "-" * (W - 4))
     print("  0 ticks with a full %.0fh lookback       %11d" % (lookback / 3600.0, n_eval))
@@ -252,6 +297,12 @@ def main() -> int:
           % (n_slope_pass, n_knife_kill))
     print("  6 take-profit clears fee + min_net       %11d  %11d"
           % (n_tp_pass, n_slope_pass - n_tp_pass))
+    print()
+    print("  ****  REAL ADMISSIBLE SUPPLY (rung 0 AND all six rungs) : %d  ****" % real_admissible)
+    print("        %d of the %d price-action survivors are in a symbol rung 0 refuses."
+          % (n_tp_pass - real_admissible, n_tp_pass))
+    print("        Quoting the rung-6 number alone is what produced every earlier")
+    print("        dip-supply figure in this repo, including 3,049 and 521.")
     print()
     if n_dd_pass:
         print("  the COST rung (4) refuses %.2f%% of everything the dip band admits"
