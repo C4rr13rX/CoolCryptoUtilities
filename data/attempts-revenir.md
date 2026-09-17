@@ -9595,3 +9595,39 @@ and that one of the two is arithmetically incapable of being the cause. Bounded
 cause, one suspect, one line of instrumentation from proof. [32f75564] re-ordered
 so :9443 is criterion 1 and the negative position-book result is recorded as
 already done.
+
+### Pass 450 FINAL: the funnel is not primarily leaking, it is being FED ONE UNTRADEABLE TOKEN.
+
+The 200 directives that clear the chaos gate, by SYMBOL, 24h to 2026-09-17 08:38:
+
+    AERO-USDC   186        <-- 93%
+    WETH-USDC    10
+    LINK/SOL/ALIGN/ETH/CAKE-USDC   1 each
+    total       201
+
+AERO costs 0.64-4.35% per round trip in this repo's own measurements, against an
+edge that has never exceeded ~30bp anywhere here. WETH -- the one token at
+0.04-0.11% -- gets TEN of the 200.
+
+CONSEQUENCE FOR [32f75564]: take it as MAKE THE REFUSAL COUNTABLE, which is how
+its criteria are written. NOT as an evidence-rate fix. Unblocking wall 2 would
+manufacture up to 179 more AERO entries a day and AERO cannot pay; doing that and
+calling it progress is the failure mode this note exists to prevent.
+
+THE REFRAME. Wall 1 refuses 572 because 26 of 45 strategies aim >=5h into a
+0.5-1.6 min feed. Wall 2 silently loses 179 of 200 survivors. But the survivors
+were 93% one expensive token BEFORE either wall touched them. The binding
+constraint is the UNIVERSE, upstream of both gates -- route (b) in the standing
+instructions -- and it is independently corroborated by the depth work, where WETH
+resolves to $2.2M and reads null only because the sweep drops QUOTE-side tokens.
+
+COULD NOT MEASURE, stated not estimated: I tried to prove :9443 fires by calling
+services.entry_price_corroboration.book_disagreement on the survivor symbols. It
+imports and runs, but the prices table keys tokens in a form not matching
+'AERO'/'WETH' (cols: chain, token, usd, source, ts) and the clock ran out. FREE
+STRUCTURAL NOTE for whoever takes it: book_disagreement returns disagrees=False
+when support=0 (no PRIOR ENTRY in the window). With 13 entries in 24h support is
+thin everywhere, so :9443 may not be able to fire 179 times either. If
+instrumenting :9443 does not close the residual, the 179 are lost BEFORE any
+status is set -- the failure mode scheduler.py:1141 already documents for the
+candidate seam -- and that is the next thing to chase, not the guard.
