@@ -13,12 +13,24 @@ came from, and measured 2026-09-17 against the production book that mattered::
 
 Eighteen live fee measurements sat in the book and NONE of them were in the
 window that set the price, because ghost rows are written about ten times more
-often than live ones and the window is chosen by recency alone. The two
-populations do not agree: live p75 is 0.8647% against the 0.4613% charged, so
-every entry gate was told a round trip is 1.87x cheaper than the live fills
-actually paid. Understating cost is the direction that loses money -- this
-module's own docstring says so -- and a caller that cannot see the split
-cannot see that it is happening.
+often than live ones and the window is chosen by recency alone.
+
+THE FIRST VERSION OF THIS DOCSTRING SAID THAT WAS COSTING MONEY. It is not,
+and the claim is withdrawn. Measured under each candidate selection rule,
+every live-inclusive one charges the SAME number::
+
+    last 20 by recency (today)      0.4613%
+    last 10 live + last 10 ghost    0.4613%    identical
+    last 40 by recency              0.4652%    +0.83%
+    all 123 rows                    1.2259%    +166%, the stale gas regime
+
+and the two populations are statistically indistinguishable -- Mann-Whitney
+U=719.0, p=0.1065 over n=18 live against 105 ghost. A p75 over 18 rows is one
+or two rows, not a regime.
+
+The count is therefore here for the DIVERGENCE case: the exclusion is
+structural, so on the day live fees part company with ghost fees the charged
+cost will not notice and nobody will be told.
 
 The item [297f47fd] claimed all 122 real fees were ghost. That is false: 18
 are live. The defect is narrower and worse -- the live rows exist, carry real

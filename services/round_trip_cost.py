@@ -157,9 +157,20 @@ def fee_ratio_samples(limit: int = 0, *, db_path: Optional[Path] = None,
     written ~10x more often than live ones, so recency alone buries every
     live fee below the window, and the cost floor that gates entries had
     zero live evidence in it while 18 live measurements sat in the book.
-    They do not agree: live p75 0.8647% against the 0.4613% being charged.
-    Understating cost is the direction that loses money, so a caller that
-    cannot see this split cannot see that it is being lied to.
+
+    WHAT THAT IS NOT: it is not currently costing money, and the first
+    version of this docstring claimed it was. Measured under each candidate
+    rule, every live-inclusive one charges the SAME number -- last 20 by
+    recency 0.4613%, last 10 live + last 10 ghost 0.4613%, last 40 by
+    recency 0.4652%. Only "all 123 rows" moves it (1.2259%) and that is the
+    pre-gas-tip-fix regime ``WINDOW`` exists to exclude. The two populations
+    are statistically indistinguishable: Mann-Whitney U=719.0, p=0.1065 over
+    n=18 live against 105 ghost. A p75 over 18 rows is one or two rows.
+
+    So the count is here for the DIVERGENCE case, not for today's number:
+    the exclusion is structural, so on the day live fees do part company
+    with ghost fees, the charged cost will not notice and nobody will be
+    told. A caller that cannot see the split cannot see that either.
     """
     path = db_path or _db_path()
     if not Path(path).exists():
