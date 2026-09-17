@@ -9631,3 +9631,28 @@ thin everywhere, so :9443 may not be able to fire 179 times either. If
 instrumenting :9443 does not close the residual, the 179 are lost BEFORE any
 status is set -- the failure mode scheduler.py:1141 already documents for the
 candidate seam -- and that is the next thing to chase, not the guard.
+
+### Pass 450, fourth correction: the population denominator. Use 13 of 17, not 26 of 45.
+
+I quoted "26 of 45 strategies aim >=5h" four times this pass. 45 is the REGISTRY
+FILE count, and this repo carries an explicit warning that the population
+denominator is ambiguous (offered 72 / commissioned 45 / evidenced 41 / known 78 --
+say which). Audited against what actually competes, from trading_ops
+entry-arbitration details.offered over 24h:
+
+    distinct strategies OFFERED a tick:                  17   (not 45)
+      suffixed >=1h, cannot clear a 0.5-1.6 min decay:   13   = 76%
+      BASE, no suffix:                                    4
+        ema_cross, mean_reversion, rsi_reversal, tf_forecast
+
+THE CORRECTED CLAIM IS STRONGER. 76% of the strategies that actually compete are
+structurally incapable of passing the chaos gate, and of the four that can,
+exactly ONE wins in volume: rsi_reversal base, 186 of the 200 survivors, refused
+0 times. THE LIVE ENTRY PATH IS ONE STRATEGY ON ONE SYMBOL -- rsi_reversal base on
+AERO-USDC -- dressed as a population of 45.
+
+That reconciles three things this loop measured separately and never joined: the
+population is starved not outcompeted, atf_static* monopolises the decision
+budget, and the funnel's viable supply is 93% one token. Same fact, three seams.
+
+26 of 45 is true about a JSON file. 13 of 17 is true about the machine.
