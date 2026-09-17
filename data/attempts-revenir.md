@@ -9973,3 +9973,32 @@ deep does.
 ALSO CLOSED: 0x is unusable (every /swap/* 403s by subscription, /sources 200s)
 and router_wallet.univ3_quote_and_build returns UniswapV3 unsupported on base.
 The ONLY working quoter is services.quote_providers.UniswapV3Local. Use it.
+
+
+--- PASS 452 SECOND ADDENDUM: THE 42.8bp FALSIFICATION ABOVE IS RETRACTED ---
+Clip sweep, same quoter, same pair, same session, WETH-USDC round trip:
+    $1 -> 5.7bp   $10 -> 42.8bp   $23 -> -0.2bp   $100 -> 17.7bp
+NON-MONOTONIC across 43bp, and the $23 draw is NEGATIVE -- a free round trip,
+which is impossible. That is proof the measurement is UNSOUND, not proof of a
+cheap swap: the quoter picks different fee tiers/routes per call and rounding
+dominates at these sizes. The $10 = 42.8bp reading was ONE DRAW and I declared
+the WETH route dead on it.
+
+THEREFORE RETRACTED: WETH 42.8bp, AERO 52.3bp, the 1.22x by-token spread, the
+cost model is well calibrated, and the WETH route is CLOSED. All of it rested on
+that single draw. The 10-40x by-token premise is NEITHER confirmed NOR refuted
+by this pass -- I could not measure it.
+
+THE WETH ROUTE IS UNMEASURED, NOT FALSIFIED. Same state as before the pass.
+
+WHAT STANDS (tape/books only, independent of the quoter): cost_bp(N)=35.8/N+42.5
+fitted over 237 rows, symbol-blind and proven (18 symbols share an identical
+46.1bp); the per-symbol headroom table over 104,399 rows / 21.7 days; and the
+correction that [15cc71d4]'s pooled ceiling is a thin-token number.
+
+METHOD NOTE FOR WHOEVER MEASURES COST NEXT, and it cost me this pass to learn:
+a single quote at a single clip is NOT a cost. Sweep clips, repeat draws across
+time, report the SPREAD, and RECORD THE FEE TIER AND ROUTE -- quote_and_build
+returns fee and route fields and I did not capture them. The only working quoter
+is services.quote_providers.UniswapV3Local (0x /swap/* all 403;
+router_wallet.univ3_quote_and_build says UniswapV3 unsupported on base).
