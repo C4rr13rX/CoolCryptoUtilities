@@ -8825,3 +8825,65 @@ deep-pool restriction. But whoever quotes the rate should quote it per symbol
 over that symbol's OWN covered window, not over the pooled span -- this is
 [nested-windows-manufacture-a-fake-trend] in a different dress, and I very
 nearly shipped it.
+
+### Pass 446: a pool-depth bar on the ghost lane -- HONESTY FIX, NOT A ROUTE. And 93% of graduation's evidence is unresolvable
+
+Route: [a38cf462], "restrict the evidence universe on pool depth". Reproduce
+with `python -X utf8 scripts/ghost_depth_admission_census.py 30` (commit
+104e31d).
+
+**CLOSED AS A ROUTE TO PROFIT. Kept as an honesty fix.** A depth bar makes
+graduation strictly SLOWER and cannot repair anything already banked.
+
+1. **Pass 426's result REPRODUCES, and I nearly published a refutation of it
+   that was my own windowing error.** `trade_outcomes` is 237 rows TOTAL (233
+   closed + 4 annulled), not 237-in-a-window; pass 426 bucketed the WHOLE
+   TABLE. At full span I land on it within a few rows per bucket (under-$50k
+   40 rows +1.8844 vs their 44 rows +1.8863). A 14.3-day re-run flips every
+   bucket's sign, which is [nested-windows-manufacture-a-fake-trend] with the
+   window in the denominator.
+
+2. **The thin-pool profit is entirely STALE.** All of that +1.88 sits in rows
+   older than 14.3 days; in the newest 14.3 days under-$50k is **-0.3953**.
+
+3. **A depth bar cannot be applied retroactively AT ALL, and that is
+   deliberate.** `trading/strategies/ledger.py:736` bumps `stats["tradeable"]`
+   inside `if _live_tradeable(symbol, sid)`, and ledger.py:328-334 states the
+   sub-book "is incremental and is NEVER RECOMPUTED, so a ban that lands
+   tomorrow cannot retroactively delete yesterday's evidence". Graduation reads
+   a STAMP, not rows. A filter bolted onto graduation's read is a no-op. This
+   also explains the status's 55 vs my derived 132: a stamp versus a query,
+   neither wrong. Filed as [236f960c] against line 736, forward-only.
+
+4. **The bar, and what it costs.** $50k, chosen because the sign is INSENSITIVE
+   to it -- win rate climbs monotonically 40/46/49/55% across $0/$50k/$250k/$1M,
+   so no bar is fitted. Tradeable book with sub-bar rows excluded: **+7.1268
+   over 132 -> +3.0317 over 72**. Per strategy at a $50k bar: atf_static 8 of
+   10 rows, 53 days to 20. At a $1M bar **atf_static has ZERO rows and
+   graduates NEVER** -- its whole tradeable record is VIRTUAL $790k, BSTONK
+   $262k, CBZEC $209k and two unpriced.
+
+5. **THE RESULT THAT MATTERS, crossing this with [6c361f13].** Of the 132
+   tradeable ghost rows graduation counts, **NINE are in a symbol whose
+   variance 20-45 trades can resolve** (WBTC/ETH/WETH/CBETH). 42 distinct base
+   tokens. AERO alone is 35 rows (26%) and needs 204 trades to prove 20bp at
+   0.64-4.35% cost. OMARCHY (4 rows) has no base pool at all; MOG (3 rows) has
+   a $52 pool. The bar is not slow -- it is measuring something it cannot see.
+
+**CAVEAT AGAINST MY OWN DEPTH DATA.** `data/pool_depth_snapshot.json` says in
+its `_source` field that it matches `baseToken.symbol==SYMBOL`. That is a
+ticker-string match and inherits ticker-squatting wholesale: it reports CBETH
+at $2,564 and CBADA at $3,450, which are squatted tickers, not thin pools. The
+direction of every result above survives (AERO, BSTONK and the no-pool rows are
+not squatting artifacts) but NO INDIVIDUAL SYMBOL DEPTH HERE is trustworthy
+without an address check. [236f960c] was amended to require address-keyed depth
+before any bar ships -- as filed it would have refused real CBETH, and WETH is
+currently UNPRICED in the snapshot, so the bar would refuse the one symbol we
+want.
+
+**Snapshot-vs-timestamp, stated plainly as a could-not:** DexScreener's search
+endpoint returns current liquidity only and `market_stream.raw` carries no
+liquidity field (keys: ts/symbol/chain/price/volume/rest/consensus_confidence).
+There is NO historical depth anywhere in this repo. `pairCreatedAt` is the one
+timestamp-checkable fact -- a pool created after a row's ts falsifies that row
+outright -- and nobody has swept it.
