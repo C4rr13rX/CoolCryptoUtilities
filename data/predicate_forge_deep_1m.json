@@ -1,0 +1,591 @@
+[
+  {
+    "horizon_min": 2.0,
+    "bar95_bp": 7.134551109913524,
+    "bar50_bp": 4.889416825114665,
+    "screened": 391,
+    "survivors": 20,
+    "held": 1,
+    "rows": [
+      {
+        "predicate": "r3<q0.05",
+        "is_lift_bp": 14.226639999841861,
+        "is_n": 296,
+        "oos_lift_bp": 4.615339891651422,
+        "oos_n": 664,
+        "oos_net_bp": -54.14373901051229,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 1.0250517969290258,
+        "lift_bp_without_top_symbol": -0.4348899453206421
+      },
+      {
+        "predicate": "r6<q0.05",
+        "is_lift_bp": 13.277544050113796,
+        "is_n": 290,
+        "oos_lift_bp": 4.011779950322086,
+        "oos_n": 731,
+        "oos_net_bp": -54.74729895184162,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.9329680759120302,
+        "lift_bp_without_top_symbol": 0.909484519213042
+      },
+      {
+        "predicate": "r12<q0.05",
+        "is_lift_bp": 12.869145276507512,
+        "is_n": 297,
+        "oos_lift_bp": 4.898136138902003,
+        "oos_n": 759,
+        "oos_net_bp": -53.86094276326171,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.6518120654796642,
+        "lift_bp_without_top_symbol": 5.481071470621546
+      },
+      {
+        "predicate": "idio>q0.95",
+        "is_lift_bp": -11.725684291205155,
+        "is_n": 256,
+        "oos_lift_bp": 0.26415435756452227,
+        "oos_n": 498,
+        "oos_net_bp": -58.494924544599186,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 1.3051067729130859,
+        "lift_bp_without_top_symbol": -1.10476299595962
+      },
+      {
+        "predicate": "idio>q0.90",
+        "is_lift_bp": -10.17977926359022,
+        "is_n": 541,
+        "oos_lift_bp": -1.0333389498860153,
+        "oos_n": 703,
+        "oos_net_bp": -59.79241785204973,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 6.6270942484963875,
+        "lift_bp_without_top_symbol": -2.7555814446561233
+      },
+      {
+        "predicate": "idio<q0.05",
+        "is_lift_bp": 10.06237285829928,
+        "is_n": 297,
+        "oos_lift_bp": 3.916977184778654,
+        "oos_n": 487,
+        "oos_net_bp": -54.84210171738506,
+        "top_symbol": "LAPTOP-USDC",
+        "top_symbol_gross_share": 0.6282676178316466,
+        "lift_bp_without_top_symbol": 2.098321924015134
+      },
+      {
+        "predicate": "accel3<q0.05",
+        "is_lift_bp": 9.844032600643512,
+        "is_n": 340,
+        "oos_lift_bp": 0.505212377777413,
+        "oos_n": 641,
+        "oos_net_bp": -58.253866524386304,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 2.055383262146904,
+        "lift_bp_without_top_symbol": -5.113681679529792
+      },
+      {
+        "predicate": "idio_z<q0.05",
+        "is_lift_bp": 9.4163481935897,
+        "is_n": 368,
+        "oos_lift_bp": 7.526409046189762,
+        "oos_n": 265,
+        "oos_net_bp": -51.23266985597395,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.5183901057276562,
+        "lift_bp_without_top_symbol": 13.64566744005496
+      },
+      {
+        "predicate": "idio_z>q0.95",
+        "is_lift_bp": -9.257401275514807,
+        "is_n": 295,
+        "oos_lift_bp": -4.618541032967733,
+        "oos_n": 194,
+        "oos_net_bp": -63.37761993513144,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.6485773357183596,
+        "lift_bp_without_top_symbol": -17.71327739444049
+      },
+      {
+        "predicate": "r30<q0.05",
+        "is_lift_bp": 8.912912112194133,
+        "is_n": 294,
+        "oos_lift_bp": 1.547733299709148,
+        "oos_n": 711,
+        "oos_net_bp": -57.21134560245456,
+        "top_symbol": "LAPTOP-USDC",
+        "top_symbol_gross_share": 0.8056008558698753,
+        "lift_bp_without_top_symbol": 0.5875634939329457
+      },
+      {
+        "predicate": "volratio3>q0.95",
+        "is_lift_bp": 8.69775566966513,
+        "is_n": 296,
+        "oos_lift_bp": -3.7374261653025367,
+        "oos_n": 308,
+        "oos_net_bp": -62.496505067466245,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.8537697923400884,
+        "lift_bp_without_top_symbol": -5.917886945652637
+      },
+      {
+        "predicate": "accel12<q0.05",
+        "is_lift_bp": 8.447476103819985,
+        "is_n": 303,
+        "oos_lift_bp": 4.100748524121468,
+        "oos_n": 666,
+        "oos_net_bp": -54.65833037804225,
+        "top_symbol": "LAPTOP-USDC",
+        "top_symbol_gross_share": 0.6015157249596871,
+        "lift_bp_without_top_symbol": 2.2901914652276663
+      }
+    ]
+  },
+  {
+    "horizon_min": 3.0,
+    "bar95_bp": 6.516301483954718,
+    "bar50_bp": 4.998711945264484,
+    "screened": 391,
+    "survivors": 27,
+    "held": 0,
+    "rows": [
+      {
+        "predicate": "r12<q0.05",
+        "is_lift_bp": 13.81242821670431,
+        "is_n": 311,
+        "oos_lift_bp": 4.350528460062268,
+        "oos_n": 789,
+        "oos_net_bp": -54.608774530710036,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.9670187470321245,
+        "lift_bp_without_top_symbol": 0.46763864575500075
+      },
+      {
+        "predicate": "r6<q0.05",
+        "is_lift_bp": 13.6417827139142,
+        "is_n": 299,
+        "oos_lift_bp": 4.269906357440403,
+        "oos_n": 752,
+        "oos_net_bp": -54.689396633331896,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 1.232716252958443,
+        "lift_bp_without_top_symbol": -3.226977481814232
+      },
+      {
+        "predicate": "r3<q0.05",
+        "is_lift_bp": 13.517481864758842,
+        "is_n": 315,
+        "oos_lift_bp": 5.504987911967583,
+        "oos_n": 676,
+        "oos_net_bp": -53.45431507880471,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 1.1527718788016983,
+        "lift_bp_without_top_symbol": -2.9519549799805516
+      },
+      {
+        "predicate": "accel60<q0.05",
+        "is_lift_bp": 11.157863812183795,
+        "is_n": 351,
+        "oos_lift_bp": -3.5245029881418164,
+        "oos_n": 679,
+        "oos_net_bp": -62.48380597891412,
+        "top_symbol": "LAPTOP-USDC",
+        "top_symbol_gross_share": 1.3340905506680445,
+        "lift_bp_without_top_symbol": 0.8817607774982658
+      },
+      {
+        "predicate": "accel30<q0.05",
+        "is_lift_bp": 11.038075237575912,
+        "is_n": 298,
+        "oos_lift_bp": -3.3367793061397077,
+        "oos_n": 781,
+        "oos_net_bp": -62.29608229691201,
+        "top_symbol": "LAPTOP-USDC",
+        "top_symbol_gross_share": 1.2677427255100113,
+        "lift_bp_without_top_symbol": 0.6541240305519997
+      },
+      {
+        "predicate": "jerk60<q0.05",
+        "is_lift_bp": 10.991191744068338,
+        "is_n": 364,
+        "oos_lift_bp": -2.589520886843508,
+        "oos_n": 743,
+        "oos_net_bp": -61.54882387761581,
+        "top_symbol": "LAPTOP-USDC",
+        "top_symbol_gross_share": 2.2900435718276433,
+        "lift_bp_without_top_symbol": 2.114745531906124
+      },
+      {
+        "predicate": "idio>q0.95",
+        "is_lift_bp": -10.58760088546111,
+        "is_n": 274,
+        "oos_lift_bp": 0.7189102238026521,
+        "oos_n": 483,
+        "oos_net_bp": -58.240392766969656,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 1.2153237692955143,
+        "lift_bp_without_top_symbol": -0.910455629331567
+      },
+      {
+        "predicate": "accel6<q0.05",
+        "is_lift_bp": 10.57806178414902,
+        "is_n": 266,
+        "oos_lift_bp": -0.9113875362378969,
+        "oos_n": 620,
+        "oos_net_bp": -59.8706905270102,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 23.746692954353133,
+        "lift_bp_without_top_symbol": -6.779349384671809
+      },
+      {
+        "predicate": "r30<q0.05",
+        "is_lift_bp": 10.261308390984524,
+        "is_n": 303,
+        "oos_lift_bp": -2.7373119618236803,
+        "oos_n": 718,
+        "oos_net_bp": -61.69661495259598,
+        "top_symbol": "LAPTOP-USDC",
+        "top_symbol_gross_share": 1.3091648927654325,
+        "lift_bp_without_top_symbol": 0.5637952903538919
+      },
+      {
+        "predicate": "accel12<q0.05",
+        "is_lift_bp": 10.103233847283276,
+        "is_n": 307,
+        "oos_lift_bp": 4.569220089712806,
+        "oos_n": 669,
+        "oos_net_bp": -54.3900829010595,
+        "top_symbol": "LAPTOP-USDC",
+        "top_symbol_gross_share": 0.5975182874029481,
+        "lift_bp_without_top_symbol": 2.4091351973996193
+      },
+      {
+        "predicate": "accel3<q0.05",
+        "is_lift_bp": 9.850367320380709,
+        "is_n": 353,
+        "oos_lift_bp": -1.703371899862347,
+        "oos_n": 652,
+        "oos_net_bp": -60.662674890634655,
+        "top_symbol": "LAPTOP-USDC",
+        "top_symbol_gross_share": 8.855494088350987,
+        "lift_bp_without_top_symbol": 5.527811764158275
+      },
+      {
+        "predicate": "idio_z<q0.05",
+        "is_lift_bp": 9.184375491530226,
+        "is_n": 378,
+        "oos_lift_bp": 4.7482478545842834,
+        "oos_n": 264,
+        "oos_net_bp": -54.211055136188016,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.8656610067006314,
+        "lift_bp_without_top_symbol": 2.666334943783039
+      }
+    ]
+  },
+  {
+    "horizon_min": 5.0,
+    "bar95_bp": 6.632810704120213,
+    "bar50_bp": 5.039042849728453,
+    "screened": 391,
+    "survivors": 17,
+    "held": 1,
+    "rows": [
+      {
+        "predicate": "accel60<q0.05",
+        "is_lift_bp": 12.890891285975506,
+        "is_n": 379,
+        "oos_lift_bp": 0.7230281885812554,
+        "oos_n": 683,
+        "oos_net_bp": -58.16161287143938,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 1.0452499331099623,
+        "lift_bp_without_top_symbol": -0.20888473900790805
+      },
+      {
+        "predicate": "r3<q0.05",
+        "is_lift_bp": 12.594479537601856,
+        "is_n": 330,
+        "oos_lift_bp": 5.573599100666653,
+        "oos_n": 662,
+        "oos_net_bp": -53.31104195935398,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.7961691485677735,
+        "lift_bp_without_top_symbol": 4.159361291953857
+      },
+      {
+        "predicate": "accel30<q0.05",
+        "is_lift_bp": 11.905661392833464,
+        "is_n": 304,
+        "oos_lift_bp": -0.18268421008291266,
+        "oos_n": 761,
+        "oos_net_bp": -59.06732527010355,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 1.7002573840443431,
+        "lift_bp_without_top_symbol": -0.8269858750797063
+      },
+      {
+        "predicate": "accel3<q0.05",
+        "is_lift_bp": 11.377339675292443,
+        "is_n": 356,
+        "oos_lift_bp": -1.3291788515373117,
+        "oos_n": 644,
+        "oos_net_bp": -60.21381991155795,
+        "top_symbol": "LAPTOP-USDC",
+        "top_symbol_gross_share": 17.242162331531617,
+        "lift_bp_without_top_symbol": 3.630756700203267
+      },
+      {
+        "predicate": "r6<q0.05",
+        "is_lift_bp": 11.043200787348956,
+        "is_n": 317,
+        "oos_lift_bp": 5.946059400482589,
+        "oos_n": 711,
+        "oos_net_bp": -52.938581659538045,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.9710794569699395,
+        "lift_bp_without_top_symbol": 0.5357950467183263
+      },
+      {
+        "predicate": "jerk60<q0.05",
+        "is_lift_bp": 10.798076958458507,
+        "is_n": 385,
+        "oos_lift_bp": 3.5874922837521175,
+        "oos_n": 749,
+        "oos_net_bp": -55.29714877626852,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 1.075545047234249,
+        "lift_bp_without_top_symbol": -0.40015422745338164
+      },
+      {
+        "predicate": "jerk3<q0.05",
+        "is_lift_bp": 10.461164593517248,
+        "is_n": 361,
+        "oos_lift_bp": -5.464055131151227,
+        "oos_n": 540,
+        "oos_net_bp": -64.34869619117187,
+        "top_symbol": "LAPTOP-USDC",
+        "top_symbol_gross_share": 1.1102926246642577,
+        "lift_bp_without_top_symbol": 0.504872754517689
+      },
+      {
+        "predicate": "r12<q0.05",
+        "is_lift_bp": 9.631210301258912,
+        "is_n": 341,
+        "oos_lift_bp": 7.273957865681443,
+        "oos_n": 751,
+        "oos_net_bp": -51.61068319433919,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.5723003677752724,
+        "lift_bp_without_top_symbol": 9.32411381318612
+      },
+      {
+        "predicate": "accel6<q0.05",
+        "is_lift_bp": 9.578610650376735,
+        "is_n": 306,
+        "oos_lift_bp": 3.200788683160583,
+        "oos_n": 571,
+        "oos_net_bp": -55.68385237686005,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 1.198169709346883,
+        "lift_bp_without_top_symbol": -1.953573080424916
+      },
+      {
+        "predicate": "z30>q0.95",
+        "is_lift_bp": 8.148277815527509,
+        "is_n": 426,
+        "oos_lift_bp": 1.4648645482868052,
+        "oos_n": 199,
+        "oos_net_bp": -57.41977651173383,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 1.320329729805162,
+        "lift_bp_without_top_symbol": -8.656733488095455
+      },
+      {
+        "predicate": "jerk30>q0.95",
+        "is_lift_bp": 8.071634237436145,
+        "is_n": 351,
+        "oos_lift_bp": 4.711626261013883,
+        "oos_n": 409,
+        "oos_net_bp": -54.17301479900675,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.9470312238695389,
+        "lift_bp_without_top_symbol": 1.1476104029310072
+      },
+      {
+        "predicate": "vol60>q0.95",
+        "is_lift_bp": 8.01061602271476,
+        "is_n": 326,
+        "oos_lift_bp": -4.554806859048543,
+        "oos_n": 533,
+        "oos_net_bp": -63.439447919069174,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 1.454751014363922,
+        "lift_bp_without_top_symbol": 3.321359622374093
+      }
+    ]
+  },
+  {
+    "horizon_min": 8.0,
+    "bar95_bp": 7.601716153994655,
+    "bar50_bp": 5.948537518262842,
+    "screened": 391,
+    "survivors": 23,
+    "held": 5,
+    "rows": [
+      {
+        "predicate": "accel60<q0.05",
+        "is_lift_bp": 20.16995515232998,
+        "is_n": 386,
+        "oos_lift_bp": 7.410723192679187,
+        "oos_n": 623,
+        "oos_net_bp": -50.766866298847816,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 0.8839404698649833,
+        "lift_bp_without_top_symbol": 1.2432077059131907
+      },
+      {
+        "predicate": "accel3<q0.05",
+        "is_lift_bp": 16.747279863971883,
+        "is_n": 388,
+        "oos_lift_bp": 6.703604745579033,
+        "oos_n": 585,
+        "oos_net_bp": -51.47398474594797,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.9563251625933791,
+        "lift_bp_without_top_symbol": 1.1587117713779256
+      },
+      {
+        "predicate": "r3<q0.05",
+        "is_lift_bp": 15.666826617200071,
+        "is_n": 376,
+        "oos_lift_bp": 12.886944916519804,
+        "oos_n": 615,
+        "oos_net_bp": -45.29064457500721,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.6716675532148535,
+        "lift_bp_without_top_symbol": 16.59317639246903
+      },
+      {
+        "predicate": "jerk60<q0.05",
+        "is_lift_bp": 14.898071255124625,
+        "is_n": 369,
+        "oos_lift_bp": 7.571240476573719,
+        "oos_n": 694,
+        "oos_net_bp": -50.60634901495329,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 1.1943789193214034,
+        "lift_bp_without_top_symbol": -1.961600375398352
+      },
+      {
+        "predicate": "jerk3<q0.05",
+        "is_lift_bp": 12.877844851951133,
+        "is_n": 378,
+        "oos_lift_bp": 2.435060231888839,
+        "oos_n": 497,
+        "oos_net_bp": -55.74252925963817,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 2.2024773690154005,
+        "lift_bp_without_top_symbol": -5.8224200700722735
+      },
+      {
+        "predicate": "r6<q0.05",
+        "is_lift_bp": 12.875538681931404,
+        "is_n": 381,
+        "oos_lift_bp": 11.549393138231538,
+        "oos_n": 631,
+        "oos_net_bp": -46.628196353295465,
+        "top_symbol": "AERO-USDC",
+        "top_symbol_gross_share": 0.6385100353285016,
+        "lift_bp_without_top_symbol": 13.203942226701058
+      },
+      {
+        "predicate": "accel6<q0.05",
+        "is_lift_bp": 12.459070128132675,
+        "is_n": 368,
+        "oos_lift_bp": 9.710581556092926,
+        "oos_n": 528,
+        "oos_net_bp": -48.467007935434076,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 0.526624345724158,
+        "lift_bp_without_top_symbol": 6.47771480171238
+      },
+      {
+        "predicate": "r12<q0.05",
+        "is_lift_bp": 10.971891291217199,
+        "is_n": 404,
+        "oos_lift_bp": 12.339864798712629,
+        "oos_n": 668,
+        "oos_net_bp": -45.83772469281438,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 0.4937147449984703,
+        "lift_bp_without_top_symbol": 8.243822682307444
+      },
+      {
+        "predicate": "idio_z<q0.05",
+        "is_lift_bp": 10.715173416904655,
+        "is_n": 406,
+        "oos_lift_bp": 26.790899572771114,
+        "oos_n": 232,
+        "oos_net_bp": -31.38668991875589,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 0.7632315888701224,
+        "lift_bp_without_top_symbol": 8.542048303825101
+      },
+      {
+        "predicate": "accel60<q0.10",
+        "is_lift_bp": 10.317756253579082,
+        "is_n": 787,
+        "oos_lift_bp": 1.079271559846564,
+        "oos_n": 1171,
+        "oos_net_bp": -57.09831793168045,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 1.496419875884672,
+        "lift_bp_without_top_symbol": -1.5546267794840762
+      },
+      {
+        "predicate": "accel30<q0.05",
+        "is_lift_bp": 10.084359031614209,
+        "is_n": 365,
+        "oos_lift_bp": 3.039462380233927,
+        "oos_n": 696,
+        "oos_net_bp": -55.13812711129308,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 1.49655688923448,
+        "lift_bp_without_top_symbol": -2.887080323572088
+      },
+      {
+        "predicate": "jerk60<q0.10",
+        "is_lift_bp": 9.660705941832813,
+        "is_n": 753,
+        "oos_lift_bp": 2.52553258626567,
+        "oos_n": 1083,
+        "oos_net_bp": -55.65205690526134,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 1.0798113321086256,
+        "lift_bp_without_top_symbol": -0.37694823083295065
+      }
+    ]
+  },
+  {
+    "horizon_min": 12.0,
+    "bar95_bp": 32.42252815732254,
+    "bar50_bp": 29.28713242928996,
+    "screened": 391,
+    "survivors": 1,
+    "held": 1,
+    "rows": [
+      {
+        "predicate": "accel6<q0.05",
+        "is_lift_bp": 33.25474349474738,
+        "is_n": 396,
+        "oos_lift_bp": 41.77917100718024,
+        "oos_n": 553,
+        "oos_net_bp": -15.041744231691686,
+        "top_symbol": "AERO-WETH",
+        "top_symbol_gross_share": 1.122455635960745,
+        "lift_bp_without_top_symbol": -7.014934715189185
+      }
+    ]
+  }
+]

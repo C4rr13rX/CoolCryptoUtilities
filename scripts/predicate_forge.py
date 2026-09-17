@@ -401,18 +401,33 @@ def main() -> int:
         print("  NOTE: cross-sectional features rank a symbol against its peers, so on a")
         print("  universe this small xs_* and crowd* are near-degenerate. Read the")
         print("  price-action families here; the xs_* result belongs to the full run.")
+        print("  DEEP UNIVERSE, per symbol (a symbol under 40 ticks is dropped by")
+        print("  build_features and contributes nothing):")
+        for s in sorted(by_symbol, key=lambda k: -len(by_symbol[k])):
+            r = by_symbol[s]
+            span_h = (r[-1][0] - r[0][0]) / 3600.0 if len(r) > 1 else 0.0
+            drop = "  DROPPED (<40 ticks)" if len(r) < 40 else ""
+            print(f"    {s:<22} depth ${depth.get(s.split('-')[0].upper(), 0.0):>14,.0f}"
+                  f"  ticks {len(r):>6}  span {span_h:>6.1f}h{drop}")
 
     feats, ts, sid, fwd = build_features(by_symbol)
     if len(ts) == 0:
         print("  no usable ticks after warmup.")
         return 1
+    # Same ordering build_features assigns sid by, so sid -> symbol name.
+    names = sorted(s for s, r in by_symbol.items() if len(r) >= 40)
 
     cut_ts = np.quantile(ts, args.split)
     mask_is = ts <= cut_ts
     mask_os = ts > cut_ts
 
     preds = make_predicates(feats, mask_is)
-    print(f"  tape      : {len(by_symbol)} symbols, {len(ts)} ticks over {args.hours:g}h")
+    # --hours is a REQUEST, not a fact: load_ticks cuts back from MAX(ts), so
+    # asking for more tape than the store holds silently returns less. Print
+    # what we actually got, or the run reports a span it never measured.
+    span_h = (float(ts.max()) - float(ts.min())) / 3600.0
+    print(f"  tape      : {len(by_symbol)} symbols, {len(ts)} ticks over "
+          f"{span_h:.1f}h ACTUAL (requested {args.hours:g}h)")
     print(f"  features  : {len(feats)}   predicates: {len(preds)}")
     print(f"  split     : in-sample {int(mask_is.sum())} ticks | held-out {int(mask_os.sum())}")
     print(f"  horizons  : {', '.join(f'{h:g}m' for h in HORIZONS_MIN)}")
@@ -468,6 +483,36 @@ def main() -> int:
             rows.append({"predicate": name, "is_lift_bp": float(lifts_is[i]),
                          "is_n": int(sup_is[i]), "oos_lift_bp": oos, "oos_n": n_os,
                          "oos_net_bp": net})
+        # CONCENTRATION GUARD. This repo has repeatedly shipped a headline that
+        # a handful of rows carried: 98% of gross in 7 rows, six rows flipping
+        # the sign of the whole ghost book. A mean lift is not evidence until
+        # you know how few symbols made it. For every survivor, report the
+        # single symbol carrying the most gross and what the lift becomes with
+        # that symbol removed -- if it flips sign, the predicate is that one
+        # symbol and nothing else.
+        for r in rows:
+            if r["oos_n"] < MIN_SUPPORT:
+                continue
+            p = dict(preds)[r["predicate"]]
+            m = p & mask_os & np.isfinite(y)
+            tot = float(y[m].sum())
+            worst_s, worst_share, censored = -1, 0.0, float("nan")
+            for s in np.unique(sid[m]):
+                ms = m & (sid == s)
+                share = float(y[ms].sum()) / tot if abs(tot) > 1e-12 else 0.0
+                if share > worst_share:
+                    rest = m & (sid != s)
+                    worst_s, worst_share = int(s), share
+                    censored = float(y[rest].mean()) * 10000.0 if rest.sum() else float("nan")
+            r["top_symbol"] = names[worst_s] if worst_s >= 0 else ""
+            r["top_symbol_gross_share"] = worst_share
+            r["lift_bp_without_top_symbol"] = censored
+            if worst_share > 0.5 or (np.isfinite(censored)
+                                     and np.sign(censored) != np.sign(r["oos_lift_bp"])):
+                print(f"     !! {r['predicate']}: {r['top_symbol']} carries "
+                      f"{worst_share*100:.0f}% of OOS gross; without it the lift is "
+                      f"{censored:+.2f}bp. ONE-SYMBOL ARTIFACT, not a predicate.")
+
         held = [r for r in rows if r["oos_n"] >= MIN_SUPPORT
                 and np.sign(r["oos_lift_bp"]) == np.sign(r["is_lift_bp"])
                 and abs(r["oos_lift_bp"]) > bar95]
