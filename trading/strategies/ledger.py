@@ -125,6 +125,30 @@ _LIVE_APPROVAL_BASE_IDS: Dict[str, str] = {
 }
 
 
+#: Recorded round trips a book must hold before its SIGN is allowed to refuse a
+#: live order. One, deliberately.
+#:
+#: [f6055c6b] The bar is on SPENDING, not on refusing. A strategy with no book
+#: at all is not refused -- absence of evidence is not evidence of a loss, and
+#: refusing on it would stop every strategy ever placing a first live order and
+#: turn all fifteen of
+#: ``tests/test_the_ledger_lends_a_variant_id_its_base_licence.py`` red. But a
+#: strategy that HAS traded and lost does not get the benefit of "not enough
+#: data yet": that argument runs in the direction of the money, and this repo
+#: has already shipped a graduation bar a coin clears 29-41% of the time by
+#: reasoning that way.
+#:
+#: Raise it if a strategy is being refused on a book too thin to mean anything.
+#: Note which way that trades: a higher floor buys patience with losing rules.
+_LIVE_ORDER_MIN_TRADES_ENV = "STRATEGY_LIVE_ORDER_MIN_TRADES"
+
+#: Seconds between repeats of the same strategy's refusal in the log. The gate
+#: is asked on every decision cycle; without this it would be the loudest line
+#: in the file within a minute and get filtered, which is how a refusal becomes
+#: silent by a different route.
+_LIVE_ORDER_LOG_INTERVAL_S = 300.0
+
+
 #: Absolute ceiling on a single ghost outcome, in quote units. The account
 #: this runs against holds single-digit dollars, so any individual trade
 #: clearing this is a bookkeeping artifact rather than a fill.
@@ -1411,6 +1435,188 @@ class StrategyLedger:
             # there would change which book is judged, which is a separate
             # decision with its own evidence, so it is left alone.
             return self._inherits_live_approval_locked(sid)
+
+    # ------------------------------------------------------------------
+    # The order gate: a licence is necessary, not sufficient
+    # ------------------------------------------------------------------
+
+    def _losing_book_locked(self, sid: str) -> Optional[str]:
+        """Name the first RECORDED book of ``sid`` that lost money, or None.
+
+        Each mode is judged ALONE and in its own units. Pooling ghost and live
+        would add a sum struck at the ghost clip to a sum struck at the live
+        one -- ``ghost-book-prices-rows-at-mixed-clips`` -- and a pooled sign
+        can differ from both signs it is made of. Judging each book separately
+        needs no cross-clip arithmetic at all: it is the sign of a sum of quote
+        units against zero, which is why no rate, no percentage and no
+        basis-point figure appears anywhere in this method. (This project has
+        already subtracted a rate from a dollar once, in expectancy, and
+        compared dollars with percent once, in tail risk.)
+
+        LIVE is checked first so that when both books lose, the refusal names
+        the one that lost real money.
+        """
+        ent = self._data.get(sid)
+        if not isinstance(ent, dict):
+            return None
+        floor = max(_env_int(_LIVE_ORDER_MIN_TRADES_ENV, 1), 1)
+        for mode_key in ("live", "ghost"):
+            book = ent.get(mode_key)
+            if not isinstance(book, dict):
+                continue
+            try:
+                trades = int(book.get("trades", 0) or 0)
+                total = float(book.get("total_profit", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                # An unreadable book is not a clean one. Same fail-closed
+                # choice `_inherits_live_approval_locked` makes on an
+                # unreadable demotion count.
+                return f"{sid} {mode_key} book is unreadable"
+            if trades < floor or total >= 0.0:
+                continue
+            return (
+                f"{sid} {mode_key} book n={trades} "
+                f"net={total:+.4f} mean={total / trades:+.6f}/round-trip"
+            )
+        return None
+
+    def live_order_refusal(self, strategy_id: str) -> Optional[str]:
+        """Why a LIVE ORDER under this id must be refused now, or None.
+
+        [f6055c6b] THE CHECK THAT WAS MISSING BETWEEN A LICENCE AND AN ORDER.
+
+        ``is_live_approved`` answers "is this rule ALLOWED to spend?". Until
+        this method existed, nothing anywhere asked "and does it MAKE MONEY
+        when it does?" -- the whole money path in ``bot.py`` turned on the
+        first question alone.
+
+        That gap became load-bearing at ``f211df8``. That commit is CORRECT and
+        is not reverted here: ``70fc09c`` renamed the buy-the-dip rule to
+        ``money_button_dip`` and silently de-armed it, and lending the variant
+        its base's licence is the right repair. But read the reason the commit
+        message gives for arming it -- "the dip variant is the one that
+        actually fires -- 333 dip evaluations last pass" -- against what
+        ``data/attempts-revenir.md`` lines 7982 and 8054 record about that same
+        sample::
+
+            money_button_dip   n=333  gross -0.3816%  loses BEFORE cost  CLOSED
+            money_button       n=18   gross -0.0184%  loss is 100% cost  CLOSED
+
+        The arm was justified by the fire COUNT and nobody checked the SIGN.
+        Production was serving 23h-stale code, so the only thing standing
+        between that and live orders on a rule our own record closes as losing
+        was a restart that had not happened yet.
+
+        WHAT THIS READS, AND WHAT IT REFUSES TO READ. The book the ledger has
+        actually recorded, at the moment of the order. ``-0.3816`` is nowhere
+        in this file, and must never be: a constant wearing a measurement's
+        clothes is this project's single most repeated defect (six
+        ``TOKEN_ROUND_TRIP`` entries that INVERT admission, ``roundtrip_cost``'s
+        token-blind flat rate that DECIDES ENTRIES, the forge's 60bp). Seed a
+        profitable book and this same code permits the same order; that is
+        asserted in ``tests/test_money_button_dip_live_gate.py``.
+
+        TWO BOOKS ARE CONSULTED, AND ONLY TWO:
+
+        1. the id's OWN recorded book, always;
+        2. the book of the row LENDING it a licence, and only while the licence
+           is genuinely borrowed. Spending on someone else's approval means
+           being judged on the evidence behind it. An id that earns its own
+           ``live_approved`` is judged on its own book alone, which is why the
+           bare ``money_button`` -- the one row an operator hand-approved, in
+           full knowledge of its record -- is untouched by this. Refusing that
+           too would close the live lane outright, and that is a different act
+           needing a different mandate.
+
+        EVALUATED AT ORDER TIME, EVERY ORDER. Never cached, never stamped onto
+        a row, never evaluated once at arm time. A verdict computed once and
+        kept is how ``demotion-outlived-the-number-that-caused-it`` happened,
+        and a rule whose expectancy turns negative mid-session would otherwise
+        keep spending until the next boot.
+
+        IT DOES NOT TOUCH THE LEDGER. No demotion, no ``graduation_blocked``,
+        no write of any kind: ``approved_ids()``, ``any_live_approved()`` and
+        the operator's row all read exactly as before. It refuses an ORDER. It
+        also leaves GHOST firing alone on purpose -- the evidence that can
+        overturn this refusal is the evidence the variant earns by trading in
+        simulation, and a gate that stopped that would make its own verdict
+        permanent.
+
+        KNOWN FRAGILITY, stated rather than hidden. On today's real ledger the
+        dip variant is refused because of its LENDER's book, which is 2 ghost
+        round trips for -$0.0161 -- thin enough that one +$0.017 ghost outcome
+        on ``money_button`` would lift the refusal. The durable refusal is the
+        variant's OWN book, which does not exist yet because the id is a day
+        old and production has not rebooted. It fires ~333 times a pass, so
+        that book arrives quickly once it runs, and from then on the variant is
+        refused on its own evidence rather than on its lender's.
+        """
+        sid = (strategy_id or "").strip() or "unclassified"
+        with self._lock:
+            reason = self._losing_book_locked(sid)
+            if reason:
+                reason = f"measured negative expectancy: {reason}"
+            else:
+                base = _LIVE_APPROVAL_BASE_IDS.get(sid)
+                borrowed = base and base != sid and not self._approved(
+                    sid, self._data.get(sid)
+                )
+                lent = self._losing_book_locked(base) if borrowed else None
+                if lent:
+                    reason = (
+                        f"{sid} spends on a licence lent by {base}, whose "
+                        f"measured expectancy is negative: {lent}"
+                    )
+            if not reason:
+                return None
+            self._log_live_order_refusal_locked(sid, reason)
+            return reason
+
+    def _log_live_order_refusal_locked(self, sid: str, reason: str) -> None:
+        """Say it out loud, at most once per strategy per interval.
+
+        ``f211df8``'s own commit message names the failure this avoids: the
+        pre-fix refusal "returns a bare False and nothing logs a refusal that
+        names the id", and reconstructing which rule turned a live entry back
+        has cost this project whole passes. A second unnamed False would be the
+        same defect with the sign flipped.
+        """
+        try:
+            now = time.time()
+            last = getattr(self, "_live_order_refusal_logged", None)
+            if not isinstance(last, dict):
+                last = {}
+                self._live_order_refusal_logged = last
+            if now - float(last.get(sid, 0.0)) < _LIVE_ORDER_LOG_INTERVAL_S:
+                return
+            last[sid] = now
+            log_message(
+                "strategy-ledger",
+                f"LIVE ORDER REFUSED for {sid}: {reason}",
+                severity="warning",
+            )
+        except Exception:
+            # A gate that cannot log is still a gate. Never let the logging
+            # path decide whether money is spent.
+            pass
+
+    def may_place_live_order(self, strategy_id: str) -> bool:
+        """Licence AND measured expectancy. The full question the money path asks.
+
+        Deliberately a conjunction of two separately answerable questions
+        rather than one fused test, so that a refusal can always be attributed:
+        ``is_live_approved`` says whether the rule holds a licence at all, and
+        ``live_order_refusal`` says what its book measured. Fusing them is how
+        "the strategy is not graduated" and "the strategy loses money" would
+        become the same bare False.
+
+        Neither call is made under ``self._lock`` -- both take it themselves,
+        and ``threading.Lock`` is not reentrant.
+        """
+        sid = (strategy_id or "").strip() or "unclassified"
+        if not self.is_live_approved(sid):
+            return False
+        return self.live_order_refusal(sid) is None
 
     def any_live_approved(self) -> bool:
         with self._lock:
