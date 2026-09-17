@@ -65,6 +65,15 @@ _CRITICAL_MEM = float(os.getenv("GOVERNOR_CRITICAL_MEM", "0.82"))
 # Absolute emergency — start killing our own child processes.
 _EMERGENCY_MEM = float(os.getenv("GOVERNOR_EMERGENCY_MEM", "0.90"))
 
+# Below this much free memory the next allocation fails whoever caused it, so
+# we shed regardless of attribution. Above it, memory we do not hold is not a
+# reason to shed OUR work — see _memory_pressure_is_external().
+_MIN_FREE_MB = float(os.getenv("GOVERNOR_MIN_FREE_MB", "256"))
+
+# Our tree counts as "the hog" at this fraction of its own RSS budget. Matches
+# the point at which _scale_workers() already starts shrinking us.
+_OUR_HOG_FRACTION = float(os.getenv("GOVERNOR_OUR_HOG_FRACTION", "0.75"))
+
 # How often the background sampler runs (seconds).
 _SAMPLE_INTERVAL = float(os.getenv("GOVERNOR_SAMPLE_INTERVAL", "2"))
 
@@ -398,6 +407,44 @@ class ResourceGovernor:
         with self._lock:
             return self._ema_cpu / 100.0, self._ema_mem
 
+    def _memory_pressure_is_external(self) -> bool:
+        """True when the memory is other programs' and shedding us cannot help.
+
+        The governor sheds our work on the premise that doing so relieves the
+        pressure. That premise only holds when the memory is OURS. Measured on
+        this box 2026-09-16: the system was 74.5% used with 8.10 GB free while
+        our whole process tree held 1,164 MB — 3.6%. Shedding us frees 3.6% and
+        the box stays full, so the only effect is that we go dark. That is how
+        the feed spent 57.6 hours dark, and it is why ``should_throttle`` is
+        True today at a 0.70 threshold against a 0.745 reading, halving the
+        ghost pair budget at trading/ghost_limits.py:38.
+
+        Three ways this returns False, i.e. keeps the old behaviour at full
+        force:
+
+          * the sampler has not produced a reading yet (``avail <= 0``) — that
+            is "unknown", and the safe reading of unknown is the conservative
+            one;
+          * absolute free memory is under ``_MIN_FREE_MB`` — below that the
+            next allocation fails whoever caused it;
+          * our own tree is at or over ``_OUR_HOG_FRACTION`` of its RSS budget
+            — then the memory IS ours and shedding genuinely works.
+
+        CPU is deliberately not covered: a busy CPU is real contention no
+        matter who owns the processes.
+        """
+        with self._lock:
+            avail = self._mem_available_mb
+            ours = self._our_rss_mb
+            budget = self._max_rss_mb
+        if avail <= 0.0:
+            return False
+        if avail < _MIN_FREE_MB:
+            return False
+        if budget > 0.0 and ours >= budget * _OUR_HOG_FRACTION:
+            return False
+        return True
+
     # ------------------------------------------------------------------
     # Public queries — the API that components use
     # ------------------------------------------------------------------
@@ -489,6 +536,10 @@ class ResourceGovernor:
         if self.is_priority_paused(priority):
             return True
         cpu, mem = self._read_ema()
+        if self._memory_pressure_is_external():
+            # Not our memory, and headroom remains: shedding us would free a
+            # rounding error and stop the feed. CPU pressure below is unaffected.
+            mem = 0.0
         if priority <= Priority.HIGH:
             # Only pause HIGH/CRITICAL at emergency levels
             return mem >= _EMERGENCY_MEM
@@ -499,6 +550,8 @@ class ResourceGovernor:
         if self.is_priority_paused(priority):
             return True
         cpu, mem = self._read_ema()
+        if self._memory_pressure_is_external():
+            mem = 0.0
         threshold_cpu = 1.0 - _RESERVE_CPU
         threshold_mem = 1.0 - _RESERVE_MEM
         if priority == Priority.LOW:
