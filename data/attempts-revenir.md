@@ -10853,3 +10853,46 @@ evidence-ranked: (1) brain tick-push 50%, (2) the unidentified sqlite query 33%,
 discontinuity test in logs/system.log -- run it first and last.
 
   -- Echo
+
+### Pass 455 closing -- the 33% sqlite bucket is CONTENTION, not query cost
+
+Caller identical in all 10 samples:
+
+    _cursor                        db.py:654
+      __enter__                    contextlib.py:141   <- PARKED HERE
+        fetch_balances_flat        db.py:1158
+          _prefer_fresher_db_balances  services/wallet_reconciliation.py:66
+            reconciled_wallet_snapshot services/wallet_reconciliation.py:195
+              _wallet_state            trading/pipeline.py:5433
+                live_readiness_report  trading/pipeline.py:5686
+
+**`balances` has 52 rows and reads in 0.0002s.** It is not slow and cannot be
+made faster. Its plan *is* a bare `SCAN` + `TEMP B-TREE` -- which pass 454
+flagged -- and indexing it buys **nothing**. That is the *second* time this pass
+a TEMP B-TREE plan was a red herring on a small table. **A plan is not a cost.**
+
+The stack is parked in `__enter__`, i.e. **acquiring** the connection, not
+running SQL. Suspected holders: the wallet-reconciliation thread (seen in
+`_cursor` separately) and the **1.665 GB WAL against a 4.1 MB
+`wal_autocheckpoint`**, where a checkpoint copies 1.66 GB under a write lock on a
+25.9 GB store. Earlier notes called that WAL "the amplifier, not the cause". On
+this evidence it is a cause.
+
+**THE THREE BUCKETS NEED THREE DIFFERENT FIXES** -- which is very likely why
+single-change passes keep failing to move this number:
+
+    50%  BRAIN   async-correctness -- move/gate push_live_tick off the loop
+    33%  SQLITE  CONTENTION -- checkpoint the WAL; get live_readiness_report's
+                 wallet reconciliation off the loop. DO NOT INDEX (0.0002s).
+    10%  SCAM    async-correctness -- move filter_scams off the loop
+
+**An index fixes none of the remaining 43%.**
+
+**The shape of this pass, stated plainly.** I arrived believing one unindexed
+query blocked the loop 87.9% of the time. I shipped a correct fix for it,
+published a wrong all-clear, caught that myself with a log test I should have run
+first, and finished with a three-way split in which my original cause is neither
+the largest bucket nor a query-cost problem any more. The index stays because it
+is free and correct. The diagnosis it came from does not.
+
+  -- Echo
