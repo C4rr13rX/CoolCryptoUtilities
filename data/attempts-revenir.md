@@ -9840,3 +9840,90 @@ add, every time.
 
 GATE: 723 passed, 0 failed (was 723/0). live trades 18 == 18, net P/L -0.186371
 == -0.186371. Zero production code written this pass.
+
+
+================================================================================
+PASS 452 -- ECHO (senior). ROUTE: find an edge (user ask, 09:40). PER-SYMBOL
+HEADROOM vs COST. RESULT: the binding variable is the TOKEN, not the horizon.
+NOT CLOSED -- reduced to ONE unmeasured number.
+================================================================================
+
+WHAT I MEASURED, all from storage/trading_cache.db, no production code written.
+
+(1) COST CURVE, least-squares over all 237 trade_outcomes rows with a notional:
+      cost_bp(N) = 35.8/N + 42.5     (FIXED $0.00358/round trip, RATE 42.5bp)
+      $0.75 -> 90.3bp   $5 -> 49.6bp   $23.18 -> 44.0bp   $100 -> 42.8bp
+    It NEVER falls below 42.5bp. CORROBORATION, NOT DISCOVERY: Sage pass 424
+    ([78338262]) solved 38.6bp + $0.0041 from two points; I fit all 237. Same
+    structure, two methods. And it is SYMBOL-BLIND, proven not assumed: 18
+    distinct symbols share an identical 46.1bp, 23 share an identical 65.0bp,
+    and the rate is a pure function of NOTIONAL.
+
+(2) TAPE HEADROOM PER SYMBOL, market_stream 104,399 rows / 21.7 days, forward
+    move at a target elapsed time with a 3x gap cutoff, contamination-guarded
+    (drop any row >0.5 in log-price off its +/-20-row local median).
+      mean |move| bp        15m     30m     60m     n@60m
+      CBBTC-USDC           12.5    16.7    22.3      3982
+      CBETH-USDC           12.8    22.2    32.7      4277
+      ETH-USDC             16.2    24.0    39.0      1598
+      WETH-USDC            18.8    25.4    40.7      1613
+      LINK-USDC            24.4    32.7    48.0      1577
+      AERO-USDC            29.9    45.5    67.6      8116
+      ZORA-USDC            38.2   114.4   131.4      4655
+      BASECAT-USDC        234.4   327.6   481.0      6054
+
+(3) CROSSED. Required direction accuracy h* = 0.5 + cost/(2*mean|move|).
+    h* >= 1.00 means A PERFECT ORACLE STILL LOSES.
+      at 90.3bp (our real $0.75 clip): WETH/ETH/CBBTC/CBETH/AERO/LINK ALL
+        IMPOSSIBLE at 15m, 30m AND 60m. Only BASECAT passes (69.3% at 15m).
+      at 42.5bp (the book asymptote): deep tokens STILL IMPOSSIBLE at every
+        horizon <=60m. AERO 60m 81.4%. BASECAT 15m 59.1%.
+      at 7.5bp (operator on-chain WETH figure, NOT in this DB): WETH 60m 59.2%,
+        30m 64.8%. First plausibly-clearable number in this repo history.
+
+WHAT THIS CONTRADICTS. [15cc71d4] (Gale pass 107) concluded 'a perfect direction
+call loses at 5 and 10 minutes -- the MINUTES horizon is below the cost floor',
+from ~5000 ticks POOLED ACROSS ALL SYMBOLS. That pool is not a market number:
+per-symbol mean|move| at 15m spans 12.5bp to 234.4bp, an 18x spread, and
+AERO+BASECAT supply 14,517 tape rows against WETH's 1652. The pooled figure is a
+thin-token number wearing a market label. Item REFINED via scrum accept, not
+re-filed. The conclusion changes shape: not 'short horizons cannot pay' but
+'DEEP tokens cannot pay at ANY horizon <=60m under a symbol-blind fee, while
+THIN tokens can' -- which is exactly backwards from the real economics and
+mechanically explains why 93% of the entry funnel lands in AERO. The selector is
+faithfully optimising a cost function that is wrong by token.
+
+THE COUNTER-ARGUMENT, AND IT IS MY OWN PRIOR RESULT. [017594f6], Echo pass 445:
+re-simulating the deep universe at lower slippage gives 27.8bp n=99 net -0.1837
+t=-3.58; 10bp n=249 net -0.0693 t=-1.48; ZERO bp n=330 gross +0.1221 net +0.0395
+t=+1.07. AT FREE EXECUTION THE POOLED NET IS NOT SIGNIFICANT, because the
+admission test (expected_return - fee >= min_net) doubles as a quality filter, so
+a cheaper fee admits a worse entry set. WHY IT DOES NOT TRANSFER: that test
+lowered ONE POOLED CONSTANT -- a LOOSENING that admits more THIN-token entries,
+which is where the dilution came from. A TOKEN-AWARE cost is a REALLOCATION with
+OPPOSITE signs: bar RISES on AERO/thin, FALLS only on deep. Anyone re-simulating
+must use PER-TOKEN rates, never a flat cut. Recorded on the item so it is not
+quoted to kill the route.
+
+STATUS: NOT AN EDGE YET, AND I WILL NOT DRESS IT UP. The WETH route has three
+legs and only one is measured:
+  1. WETH tape headroom   MEASURED THIS PASS. 40.7bp/60m, n=1613.
+  2. WETH real round trip NEVER MEASURED ON CHAIN. 237 trade_outcomes rows with
+     ZERO tx_hash; discovery_swapprobe 0 rows with both leg hashes; trade_fills
+     fee_rate a model constant on 1253/1436. Every cost number in this repo,
+     mine and Gale's alike, is a model arguing with itself.
+  3. WETH gross edge      NEVER MEASURED. The n=99 behind +0.1769% gross contains
+     NOT ONE WETH-USDC fill.
+
+CLOSED / NOT CLOSED: the ROUTE 'lower the pooled cost constant to open the dip
+rule' is CLOSED (pass 445, t=+1.07 at zero cost). The ROUTE 'price cost per
+token, which reallocates rather than loosens' is OPEN and is the only route whose
+arithmetic could close. Decision thresholds, stated in advance so the next pass
+cannot move the goalposts: WETH real round trip under 12.2bp makes a 65% call
+pay at 60m; under 8.1bp a 60% call pays. Above ~20bp WETH needs 74.6% and the
+route is dead too.
+
+NEXT: [017594f6], todo, p1, 5pt, unclaimed, now with a WETH-first arm. Two legs
+of a real WETH-USDC swap at a $10 clip with both receipts read from chain.
+
+NO PRODUCTION CODE WRITTEN. Measurement script lived in scratchpad only.
