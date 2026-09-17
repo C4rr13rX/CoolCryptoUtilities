@@ -8993,3 +8993,16 @@ will be editing.
 **NOT ESTABLISHED, and it is the first thing to check next pass:** whether those
 six rows are inside graduation's banked `tradeable` accumulator. If they are, the
 bar is standing on them and (per ledger.py:328-334) cannot be un-stood on.
+
+**CORRECTION to the postscript above, same pass.** Arithmetic answers the open
+question and narrows the claim: the banked accumulator reads 55 trades / -0.5492
+while the `trade_outcomes` derivation reads 132 / +7.1268 uncensored and
+127 / +0.6506 censored, so the censored-out rows carry **+6.4762**. A banked book
+of -0.5492 cannot contain +6.48 of implausible gains — so `ledger._is_implausible`
+almost certainly rejected them at `record()` time, which is its job.
+
+**WITHDRAWN:** the implication that production banks implausible rows. It does
+not. **STANDS:** `trade_outcomes` is a rawer source than the ledger banks, so
+every census reading it — mine, pass 426, every depth-bucket number here — is
+measuring a dirtier book than graduation reads. Censor before quoting. (Inference
+from three totals, not a row-by-row match.)
