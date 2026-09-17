@@ -7897,3 +7897,54 @@ the 100x the quoted figures imply.
 CAVEATS: n=21 total; five of seven symbols have n<=3; AERO n=9 is the only
 one with weight. There are NO live WETH rows -- cbETH is not WETH. The
 cross-symbol RANKING is weak. The token-blindness of the model is not.
+
+---
+
+## Pass 441 (Echo, senior) -- the money_button DIP rule, measured alone for the first time
+
+ROUTE TRIED: split the shared `strategy_id='money_button'` so the scheduler's
+BUY-THE-DIP rule and the momentum PLUGIN stop pooling into one ledger row, then
+re-run the 168h replay census against the now-isolated dip rule.
+
+Commit 70fc09c. `trading/scheduler.py:_money_button_candidate` now emits
+`MONEY_BUTTON_DIP_STRATEGY_ID = 'money_button_dip'`. The plugin keeps the bare
+`money_button` because that row carries the operator's live arm
+(`live_approved_by: "Dune (exec) pass 424, on USER instruction 2026-09-16"`,
+granted on 2 ghost trades at net -0.0161).
+
+THE NUMBER (`./.venv/Scripts/python.exe scripts/money_button_dip_census.py`,
+168h, 149 symbols, 33136 evaluations -- UPPER BOUNDS, the
+MONEY_BUTTON_REQUIRE_OPPORTUNITY buy-low bias gate is not replayed):
+
+    money_button_dip   338 fires (1.020% of evaluations), 333 resolved
+                       17.7% win (59W/274L)
+                       mean NET   -1.1512%
+                       mean GROSS -0.3816%     <- before any cost
+                       total net  -383.36% of notional
+                       median hold 31.6 min, target hit 45/333 (13.5%)
+
+**CLOSED NEGATIVE: the dip rule has no gross edge.** Gross is negative BEFORE
+cost is charged. Cost is 0.77 of the 1.15 loss (67%); the remaining 33% is the
+signal being wrong. This matters because it forecloses the obvious rescue --
+removing the cost floor entirely still leaves a losing rule. Do not spend a
+pass making this rule cheaper.
+
+WHERE THE LOSS SITS: COBEE-USDC is 9 trades at -10.422% net = -93.8 of the
+-383.36 total. 2.7% of trades carry 24% of the loss, the same shape as
+`ten-rows-set-the-books-sign`.
+
+COST DOES NOT EXPLAIN THE SPREAD. Within the SAME 0.70% cost cohort, mean gross
+runs +0.114% (ALIGN, n=78) to -9.722% (COBEE, n=9). Token choice is moving
+GROSS, not only fees -- which is a different claim from the standing brief's
+cost-wall story and does not depend on it.
+
+THE ONE POSITIVE POCKET, AND IT DOES NOT REOPEN A CLOSED ROUTE: the 12 trades
+in the deep/cheap names (ETH-USDT 4, UNI 2, CAKE 1, LINK 1, LDO 4) are +0.158%
+mean net. n=12. Pass 439 already CLOSED NEGATIVE "restrict the universe toward
+deep pools" on LIVE evidence at n=21, and 12 replayed ghost rows are WEAKER
+evidence than that, not stronger. Recorded as a direction to test, explicitly
+NOT as a reopening. Whoever revisits it needs live rows, not more replay.
+
+STILL UNMEASURED: the momentum plugin's own replay. The census script replays
+the DIP gate only. The plugin now holds the live arm alone on 2 ghost trades at
+net -0.0161, and nobody has ever measured it in isolation either.
