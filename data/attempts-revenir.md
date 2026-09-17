@@ -9111,3 +9111,46 @@ everything-except-the-best-symbol. Filed **[205092e7]**, 3pt, p1.
 pools and supply multiplies"; it is "charge each symbol its own cost, which
 removes AERO and admits WETH" — and it cannot be evaluated at all until the
 depth snapshot can resolve WETH.
+
+### PASS 447 HEADLINE, and it supersedes everything above in this section
+
+**THE FIRST GATE IS A SIX-TOKEN TABLE.** `trading/scheduler.py:1776-1787` runs
+BEFORE the drawdown band, the net-expected gate and the knife guard:
+
+    max_round_trip = MONEY_BUTTON_MAX_ROUND_TRIP_COST (default 0.0035 = 35bp)
+    symbol_cost    = services.round_trip_cost.token_round_trip_cost(symbol)
+    if symbol_cost > max_round_trip: refuse "round_trip_cost_above_max"
+
+It is ALREADY symbol-aware. `services/round_trip_cost.py` `TOKEN_ROUND_TRIP`
+holds **six** tokens -- WETH 11bp, ETH 11bp, USDC 11bp, CBETH 30bp, AERO 435bp,
+KTA 7498bp. Every other token returns `TOKEN_ROUND_TRIP_DEFAULT` = 70bp, which
+the module documents as a deliberate pessimistic assumption for the unmeasured.
+**So only CBETH, ETH, USDC and WETH can ever clear the bar**, and ~154 other
+streamed symbols are refused before a single price-action gate runs.
+
+Crossed with the ladder: of the 521 ticks clearing all six price-action rungs,
+those in an admitted symbol are **CBETH-USDC 8, WETH-USDC 0, WETH-USDT 0**.
+
+**REAL ADMISSIBLE DIP SUPPLY = 8 TICKS OVER 14.3 DAYS = 0.56/day.** Not 3,049
+(pass 426), not 521 (this pass's ladder). This is the first explanation the
+"2 fires in 32,916 evals" number has ever had. CBETH-USDC's pool is $2,564 deep,
+so **zero** admissible ticks are in a deep pool.
+
+Found by going after an INDEPENDENT source for my own ladder:
+`data/money_button_gate_census.json` had been reset to one evaluation, and that
+one refusal named a gate my ladder did not model.
+
+**CONSEQUENCES.** The per-symbol counts earlier in this entry (AERO 25, CBXRP 3,
+CBBTC 2) are price-action only and are NOT REACHABLE -- AERO is refused at 435bp
+before the tape is read. Both my route (b) pricing AND my correction to it are
+superseded. [84e62c6d] (flat `fee_rate` in the admission arithmetic) is still
+real but is no longer the top item, because a stricter symbol-aware gate already
+sits upstream of it.
+
+**THE LEVER, CHEAP AND FILED AS [e0d52af3].** The gate refuses on ABSENCE OF A
+MEASUREMENT, not on cost. The two deep names most likely to be genuinely cheap --
+CBBTC ($7.6M liq) and CBXRP ($117M liq) -- are assumed 70bp purely because they
+are missing from a six-row table. Measure them; if either lands under 35bp it
+joins the universe AND it is a deep pool, which is what route (b) has been asking
+for and has never been able to name. **Do NOT widen the 35bp bar** -- it is what
+keeps AERO at 435bp out. The defect is the empty table behind it.
