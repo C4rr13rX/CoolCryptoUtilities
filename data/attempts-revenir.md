@@ -9561,3 +9561,37 @@ slot.
 
 NOT CONFIRMED, and not claimed. Measured: the 179, the complete census that fails
 to account for them, the two silent sites. The cause is BOUNDED, not named.
+
+### Pass 450, third correction: I killed my own :9462 hypothesis with a measurement. One suspect left.
+
+ROUTE TRIED: the stuck-position-slot theory -- that :9462 (entry-refused-live-held)
+silently refuses every later ghost entry on a symbol whose slot never clears,
+which would explain the 179 unaccounted directives.
+
+THE NUMBER IT PRODUCED:
+    kv_store['state']['ghost_trading']['positions']   n=0
+    kv_store['atf_static_strategy:ghost_positions']   n=1   VIRTUAL-USDC, age 0.7h
+    state keys are only ['ghost_trading','last_epoch','training_pipeline']; no other
+    persisted position book exists, and no kv key matches 'position'/'live' besides
+    the atf one.
+
+CLOSED NEGATIVE. _release_position_for_entry returns False ONLY for a LIVE
+position. With an empty ghost book and one fresh holding, at most ONE symbol could
+be refused that way. It cannot produce 179 of 200. DO NOT RE-DUMP THE POSITION
+BOOKS -- this is done.
+
+WHAT SURVIVES AS THE ONE REMAINING SUSPECT: bot.py:9443,
+entry-refused-implausible-basis. It refuses when an independent check says the
+entry price basis "disagrees" and returns at 9446 with NO log_trade. An 89.5%
+silent refusal rate (179/200) is what a contaminated-basis guard would produce on
+this feed, and the support is already on record from earlier passes: 39.3% of
+streamed pairs are untradeable, a contaminated tick becomes the next entry basis,
+and the plausibility threshold sits above the known-bad rows. Those three say the
+basis check should be firing constantly -- and it fires silently.
+
+NOT CLAIMED: that :9443 fires 179 times. What is measured is the 179, the complete
+census that fails to account for them, that only two sites on that path are silent,
+and that one of the two is arithmetically incapable of being the cause. Bounded
+cause, one suspect, one line of instrumentation from proof. [32f75564] re-ordered
+so :9443 is criterion 1 and the negative position-book result is recorded as
+already done.
