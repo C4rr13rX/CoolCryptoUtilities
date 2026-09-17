@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import os
 import sqlite3
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -48,15 +49,24 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 DB_PATH = "file:%s?mode=ro" % (ROOT / "storage" / "trading_cache.db")
 
 # Full round trips (both legs, gas + slippage), measured on chain.
 #
-# READ THE COVERAGE BEFORE QUOTING A PER-SYMBOL ROW. Six tokens here are
-# MEASURED. Everything else falls through to DEFAULT_ROUND_TRIP, which is an
-# ASSUMPTION -- so of the DEEP_POOLS universe below, only ETH, WETH, USDC and
-# CBETH pairs are priced on a real number; LDO, LINK, CAKE, CRV, OP, AAVE, SOL
-# and WBTC are priced at the default.
+# [9329b42f] THE TABLE MOVED. It used to be a literal here, which made this
+# script the only place in the repo that knew WETH from KTA -- and meant the
+# production gate could not charge the same number this census charges. It now
+# lives in services/round_trip_cost.py beside the book-wide scalar, and BOTH
+# trading/scheduler.py's dip gate and this script read it from there. If the
+# two ever disagree again, it is a bug, not a modelling choice.
+#
+# READ THE COVERAGE BEFORE QUOTING A PER-SYMBOL ROW. Six tokens are MEASURED
+# (WETH, ETH, CBETH, USDC, AERO, KTA). Everything else falls through to the
+# default, which is an ASSUMPTION -- so of the DEEP_POOLS universe below, only
+# ETH, WETH, USDC and CBETH pairs are priced on a real number; LDO, LINK,
+# CAKE, CRV, OP, AAVE, SOL and WBTC are priced at the default.
 #
 # The direction of that error is not neutral: 0.70% is almost certainly too
 # HIGH for the LINK/AAVE/WBTC class and too LOW for thin pools, which makes
@@ -65,20 +75,15 @@ DB_PATH = "file:%s?mode=ro" % (ROOT / "storage" / "trading_cache.db")
 # (ETH-USDT, ETH-USDC and WETH-USDT carry most of the winning cell's total),
 # but a single row for LDO or CAKE is not a measurement and must not be
 # quoted as one. Backlog [bd851275] criterion 3 exists to close this.
-TOKEN_ROUND_TRIP = {
-    "WETH": 0.0011,
-    "ETH": 0.0011,
-    "CBETH": 0.0030,
-    "USDC": 0.0011,
-    "AERO": 0.0435,
-    "KTA": 0.7498,
-}
-DEFAULT_ROUND_TRIP = 0.0070
+from services.round_trip_cost import (  # noqa: E402
+    TOKEN_ROUND_TRIP,
+    default_token_round_trip,
+    token_round_trip_cost as round_trip_for,
+)
 
-
-def round_trip_for(symbol: str) -> float:
-    base = symbol.split("-")[0].upper()
-    return TOKEN_ROUND_TRIP.get(base, DEFAULT_ROUND_TRIP)
+#: What the production dip gate refuses above. Same env var, same default, so
+#: this census reports the universe the scheduler will actually admit.
+DEFAULT_MAX_ROUND_TRIP = float(os.getenv("MONEY_BUTTON_MAX_ROUND_TRIP_COST", "0.0035"))
 
 
 def load_ticks(hours: float) -> Dict[str, List[Tuple[float, float]]]:
@@ -180,6 +185,9 @@ def main() -> int:
     ap.add_argument("--sweep", action="store_true",
                     help="sweep the dip floor on the deep-pool universe, loading ticks once")
     ap.add_argument("--floors", default="0.0025,0.005,0.01,0.02,0.05")
+    ap.add_argument("--max-round-trip", type=float, default=DEFAULT_MAX_ROUND_TRIP,
+                    help="report the sub-universe the production dip gate admits "
+                         "(MONEY_BUTTON_MAX_ROUND_TRIP_COST); 0 disables the split")
     args = ap.parse_args()
 
     lo = float(os.getenv("MONEY_BUTTON_MIN_DRAWDOWN", "0.02"))
@@ -217,6 +225,33 @@ def main() -> int:
     print()
     print(f"    {'symbol':<18} {'trades':>5} {'win':>6} {'mean net':>9} {'total net':>10}")
     print(block("ALL", all_trades))
+
+    # [9329b42f] The universe the production dip gate now admits. Printed
+    # beside ALL, never instead of it: the point of the item is the DIFFERENCE
+    # between the two, and a sub-universe quoted alone is a selection effect.
+    max_rt = float(args.max_round_trip or 0.0)
+    if max_rt > 0.0:
+        admitted = {s: rs for s, rs in per_symbol.items() if round_trip_for(s) <= max_rt}
+        adm_trades = [r for rs in admitted.values() for r in rs]
+        refused_n = len(all_trades) - len(adm_trades)
+        print(block(f"ADMITTED<={max_rt:.2%}", adm_trades) if adm_trades
+              else f"    {'ADMITTED<=%.2f%%' % (max_rt*100):<18} {0:>5}  the gate admits no priceable entry")
+        print()
+        print(f"  the dip gate refuses a symbol whose base-token round trip exceeds "
+              f"{max_rt:.2%} (MONEY_BUTTON_MAX_ROUND_TRIP_COST).")
+        print(f"  admitted {len(admitted)} of {len(per_symbol)} symbols that traded, "
+              f"{len(adm_trades)} of {len(all_trades)} round trips; {refused_n} refused.")
+        measured = [s for s in admitted if s.split('-')[0].upper() in TOKEN_ROUND_TRIP]
+        print(f"  of the admitted, {len(measured)} of {len(admitted)} are priced on a MEASURED "
+              f"token cost; the rest sit at the {default_token_round_trip():.2%} assumption.")
+        if adm_trades:
+            n = len(adm_trades)
+            if n < 30:
+                print(f"  SAMPLE n={n} < 30: this is a LEAD REQUIRING MORE DATA, NOT AN EDGE. "
+                      f"Do not quote the mean as an expectancy.")
+            else:
+                print(f"  SAMPLE n={n}: large enough to quote, and still one venue over "
+                      f"{args.hours:.0f}h -- not a live result.")
     print()
     ranked = sorted(per_symbol.items(), key=lambda kv: -float(np.sum(kv[1])))
     for sym, rs in ranked[:14]:

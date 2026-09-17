@@ -1747,6 +1747,45 @@ class BusScheduler:
         if last_price <= 0:
             return self._mb_gate_refusal(state.symbol, "no_last_price")
 
+        # [9329b42f] THE DIP UNIVERSE IS PRICED OUT, NOT MIS-SIGNALLED.
+        #
+        # scripts/money_button_dip_expectancy.py replays THIS rule's own exit
+        # over 168h of stored ticks and charges each round trip the base
+        # token's own on-chain cost. Measured 2026-09-17: ALL 85 trades, 32%
+        # win, mean -1.871%. The split has no exception -- every positive cell
+        # is a token in the cheap class (ETH-USDT +0.388%, ETH-USDC +0.476%,
+        # WETH-USDT +0.406%) and every double-digit loss is a thin one
+        # (COBEE-USDC -12.458%, ELON-USDC -69.900%). The dip is real in the
+        # thin names; the round trip eats the reversion before we get it.
+        #
+        # So refuse on COST, not on signal. The number comes from
+        # services.round_trip_cost.token_round_trip_cost -- the single
+        # per-token table in the repo, shared with the census so the two
+        # cannot disagree. An UNMEASURED token prices at the pessimistic
+        # default (0.70%) and is refused by the default threshold: that is
+        # deliberate, because "we have never priced it" is not evidence that
+        # it is cheap.
+        #
+        # Set MONEY_BUTTON_MAX_ROUND_TRIP_COST=1 to restore the old universe.
+        # This gate only ADDS a refusal -- it loosens no threshold below it.
+        #
+        # ORDERING NOTE for whoever reads the census next: this sits FIRST, so
+        # symbols that used to be counted under no_opportunity_bias now count
+        # here instead. The census names only the FIRST failing guardrail, so
+        # the drop in those buckets is re-attribution, not improvement.
+        try:
+            max_round_trip = float(os.getenv("MONEY_BUTTON_MAX_ROUND_TRIP_COST", "0.0035"))
+        except Exception:
+            max_round_trip = 0.0035
+        if max_round_trip > 0.0:
+            try:
+                from services.round_trip_cost import token_round_trip_cost
+                symbol_cost = float(token_round_trip_cost(state.symbol))
+            except Exception:
+                symbol_cost = 0.0
+            if symbol_cost > max_round_trip:
+                return self._mb_gate_refusal(state.symbol, "round_trip_cost_above_max")
+
         require_opportunity = os.getenv("MONEY_BUTTON_REQUIRE_OPPORTUNITY", "1").lower() in {"1", "true", "yes", "on"}
         opportunity = self._opportunity_bias.get(state.symbol)
         if require_opportunity and (not opportunity or opportunity.kind != "buy-low"):

@@ -69,6 +69,57 @@ def fallback_cost() -> float:
     """The fallback, read from the environment at call time."""
     return float(os.getenv("SYMBOL_EDGE_ROUND_TRIP_COST", str(FALLBACK_COST)))
 
+
+#: PER-TOKEN full round trips (both legs, gas + slippage), measured on chain.
+#:
+#: This is the ONLY per-token cost table in the repo, and it lives here so a
+#: census and the production gate cannot disagree. ``round_trip_cost()`` below
+#: takes NO symbol -- it is a single book-wide scalar over all receipts -- and
+#: ``services/roundtrip_cost.roundtrip_cost_rate()`` (one underscore apart,
+#: different module) takes only a notional. Neither can tell WETH from KTA,
+#: and on this venue that is the whole spread: 0.11% against 74.98%.
+#:
+#: READ THE COVERAGE BEFORE QUOTING A ROW. Six tokens here are MEASURED.
+#: Everything else falls through to ``DEFAULT_TOKEN_ROUND_TRIP``, which is an
+#: ASSUMPTION, not a measurement -- so an unlisted token is UNPRICED, and
+#: ``token_round_trip_cost`` deliberately returns the pessimistic default for
+#: it rather than a cheap guess. A caller that refuses above a threshold
+#: therefore refuses the unmeasured by default, which is the intended
+#: direction: understating cost is the direction that loses money.
+TOKEN_ROUND_TRIP = {
+    "WETH": 0.0011,
+    "ETH": 0.0011,
+    "CBETH": 0.0030,
+    "USDC": 0.0011,
+    "AERO": 0.0435,
+    "KTA": 0.7498,
+}
+
+#: What an UNLISTED (unmeasured) token costs. Read at call time, like
+#: everything else in this module.
+DEFAULT_TOKEN_ROUND_TRIP = float(os.getenv("TOKEN_ROUND_TRIP_DEFAULT", "0.0070"))
+
+
+def default_token_round_trip() -> float:
+    """The unmeasured-token cost, read from the environment at call time."""
+    return float(os.getenv("TOKEN_ROUND_TRIP_DEFAULT", str(DEFAULT_TOKEN_ROUND_TRIP)))
+
+
+def token_round_trip_cost(symbol: str) -> float:
+    """Full round-trip cost for ``symbol``'s BASE token, as a fraction.
+
+    ``symbol`` is a pair like ``WETH-USDC``; the base is what sets the cost,
+    because the quote leg on this venue is the stable side. Unlisted tokens
+    get ``default_token_round_trip()`` -- an assumption, and by construction a
+    pessimistic one. Callers that need to know the difference should check
+    membership in ``TOKEN_ROUND_TRIP`` themselves rather than inferring it
+    from the returned number.
+    """
+    base = str(symbol or "").split("-")[0].strip().upper()
+    if base in TOKEN_ROUND_TRIP:
+        return float(TOKEN_ROUND_TRIP[base])
+    return default_token_round_trip()
+
 #: Smallest notional whose fee ratio is meaningful. Below this the division
 #: turns rounding into a double-digit "cost" -- the book holds a row at
 #: 54237% for exactly this reason.
