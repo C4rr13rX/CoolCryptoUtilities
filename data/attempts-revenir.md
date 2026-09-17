@@ -9006,3 +9006,13 @@ not. **STANDS:** `trade_outcomes` is a rawer source than the ledger banks, so
 every census reading it — mine, pass 426, every depth-bucket number here — is
 measuring a dirtier book than graduation reads. Censor before quoting. (Inference
 from three totals, not a row-by-row match.)
+
+**CORROBORATION WITHDRAWN.** The depth finding was recorded as double-confirmed
+("two methods, two data sources, one answer"). Neither method censors:
+`scripts/roundtrip_cost_coverage.py` and `scripts/deep_pool_reprice.py` both have
+ZERO references to `outcome_plausibility` and both read `trade_outcomes` raw.
+They agree because they share the same six contaminated rows. **Two methods over
+one dirty source is one measurement, not two.** `scripts/tradeable_book.py` DOES
+censor (24 references), which is why its numbers never matched the raw censuses —
+that gap was the guard working, not a bug. Before counting two sources as
+independent, check whether they share a table.
