@@ -8517,3 +8517,52 @@ sign, because the expectancy is near-invariant to it. That item stays live for
 anything charging a FIXED threshold, and is defused for the dip rule.
 CONSEQUENCE FOR THE ROUTE: the negative on the deep-pool dip is now robust to
 the cost assumption I most distrusted. CLOSED, and closed harder.
+
+### Pass 445, third result: the gating measurement on [8a4ce92b] (step 6, the FIRST FAILING LINK)
+
+[8a4ce92b] states its own branch test: ">=25 entry candidates/day means we are
+CYCLE-limited and the deep-pool restriction wins ~8x; ~2/day means we are
+SIGNAL-limited and the restriction LOSES 2.4x." Nobody had run it. I ran it.
+
+money_button's dip rule over its OWN deep-pool universe (DEEP_POOLS from
+money_button_dip_expectancy.py, plus CBBTC-USDC), 526h tape, $10 clip,
+production band [-5%,-2%], min_net 0.5%:
+
+    symbol         ticks  span_h  band_wins  admitted  adm/day
+    ETH-USDT        2387   475.8          5         2     0.10
+    ETH-USDC        1567   348.7          1         1     0.07
+    WETH-USDT       1584   515.5          2         1     0.05
+    WETH-USDC       1555   515.5          0         0     0.00
+    CBETH-USDC      4455   512.5         24         3     0.14
+    WBTC-USDC        298   332.3          0         0     0.00
+    SOL-USDC         276   503.7          0         0     0.00
+    LINK-USDC       1509   208.0          2         1     0.12
+    LDO-USDC        1134   189.8          8         3     0.38
+    AAVE-USDC        516   499.1         18         3     0.14
+    OP-USDC          496   208.0          3         2     0.23
+    CRV-USDC         294   494.2          0         0     0.00
+    CAKE-USDC       1432   516.0          7         0     0.00
+    CBBTC-USDC      4316   499.6         27         3     0.14
+
+    97 band windows -> 19 admitted entries over 21.5 days
+    ENTRY CANDIDATES PER DAY, WHOLE DEEP UNIVERSE: 0.88
+
+**0.88/day. That is below even the item's own SIGNAL-limited figure of ~2/day.**
+Five of fourteen deep symbols produce ZERO candidates in three weeks.
+
+ANSWER: SIGNAL-LIMITED, decisively. Criterion 4 of [8a4ce92b] fires only on the
+CYCLE-limited branch, so **DO NOT BUILD THE DEEP-POOL GHOST RESTRICTION.** It
+would cut supply, not raise it. Route CLOSED with a number.
+
+AND IT SIZES THE WAIT. Step 6 needs 25 in-window round trips from ONE strategy,
+and the gate's candidate set is exactly ['money_button'] -- so the system-wide
+rate across all strategies is irrelevant to unblocking it; only money_button's
+own rate counts. At 0.88 candidates/day, and assuming every candidate became a
+countable round trip (it does not), n=25 is **28.4 days away**. That is the
+honest size of the "wait for evidence" route, measured rather than hoped.
+
+Combined with the pass-445 expectancy result -- every cell with n>=2 negative,
+robust to the cost assumption -- waiting 28 days buys evidence for a rule whose
+measured expectancy is negative. Both halves of the money_button route are now
+closed by measurement: it does not fire often enough, and when it fires it does
+not pay.
