@@ -7755,3 +7755,32 @@ CRITERIA 2 AND 3 (backfill from tx hashes; a booked row carrying its tx_hash)
   are NOT closed and are not closeable from the book: no tx hash exists in
   trade_fills or trade_outcomes for any of the 38 live rows. See memory
   `no-tx-hash-exists-in-the-store`. Left open on the item, not claimed done.
+
+### Pass 439 CORRECTION, same pass, before the item was worked.
+
+The "1.87x too little" above is WITHDRAWN. I measured the charged cost under
+each candidate selection rule -- which is what [5239c617] asks for, and which
+I should have run before writing the claim:
+
+    SELECTION RULE                       n   live  charged   vs today
+    TODAY: last 20 by recency            20     0   0.4613%    +0.00%
+    last 10 live + last 10 ghost         20    10   0.4613%    +0.00%
+    last 40 by recency                   40     0   0.4652%    +0.83%
+    last 20 LIVE only                    18    18   0.8647%   +87.44%
+    all 123 rows                        123    18   1.2259%  +165.73%
+
+EVERY live-inclusive rule charges the SAME 0.4613%. The mixed rule is
+identical to today. The only rule that moves the number is "all 123 rows",
++166%, and that is the pre-gas-tip-fix regime the WINDOW exists to exclude.
+
+And the two populations do not differ: Mann-Whitney U=719.0 p=0.1065 over
+n=18 live v 105 ghost. I asserted "the populations do not agree" from two
+p75 numbers without testing it; at n=18 a p75 is one or two rows.
+
+CLOSED NEGATIVE: there is no measured money in the cost window's provenance.
+Do not reopen it as a profitability item. [5239c617] is re-specified as
+ROBUSTNESS -- the exclusion is structural, so the day live and ghost fees DO
+diverge, the charged cost will not notice and nobody will be told.
+
+STILL TRUE: the window is 0 live / 20 ghost by construction; the provenance
+shipped is correct and cost-neutral; the fail-closed regression was real.
