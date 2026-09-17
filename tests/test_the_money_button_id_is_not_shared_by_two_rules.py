@@ -36,7 +36,9 @@ still sits at the pre-dip shelf.
 
 from __future__ import annotations
 
+import os
 import time
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -85,8 +87,30 @@ def funded_portfolio(monkeypatch) -> PortfolioState:
     return portfolio
 
 
+#: [9329b42f] AAA-USDC IS NOT A REAL TOKEN, so it has no measured round trip,
+#: so the dip rule's cost gate prices it at the pessimistic unmeasured default
+#: (0.70%) and refuses it ``round_trip_cost_above_max``. That refusal is
+#: CORRECT -- "we have never priced it" is not evidence a token is cheap -- but
+#: it is not this file's subject. These tests pin that the two rules carry
+#: DISTINCT ledger ids; they are not about which universe the dip rule trades.
+#:
+#: So the universe is pinned OPEN here, explicitly and only here. This is NOT
+#: the docstring's "no threshold moved to make these pass": every
+#: MONEY_BUTTON_* threshold the rule evaluates is still its shipped default,
+#: and the tape is still shaped to clear them. What is pinned is the cost
+#: UNIVERSE, which did not exist when this tape was written. Swapping in a
+#: measured symbol instead would couple an id test to the cost table and break
+#: it again the day WETH's measured cost crosses 0.35%.
+DIP_UNIVERSE_PINNED_OPEN = {"MONEY_BUTTON_MAX_ROUND_TRIP_COST": "1"}
+
+
 def _dip_directive(portfolio: PortfolioState):
     """Run the REAL scheduler rule and return the directive it emits."""
+    with patch.dict(os.environ, DIP_UNIVERSE_PINNED_OPEN):
+        return _dip_directive_inner(portfolio)
+
+
+def _dip_directive_inner(portfolio: PortfolioState):
     scheduler = BusScheduler(prefill=False)  # prefill=False keeps this off the network
     state = RouteState(symbol="AAA-USDC", base_token="AAA", quote_token="USDC")
     for index, price in enumerate(SETTLED_DIP_3PCT):
@@ -189,20 +213,26 @@ def test_the_two_rules_really_do_trade_opposite_directions(funded_portfolio):
         std_price=1.0,
         timestamp=NOW,
     )
-    rising = scheduler._money_button_candidate(
-        state,
-        last_price=float(CONFIRMED_UPTREND[-1]),
-        last_volume=1000.0,
-        portfolio=funded_portfolio,
-        chain_name="base",
-        fee_rate=0.0005,
-        direction_prob=0.5,
-        confidence=0.5,
-        net_margin=0.0,
-        base_allocation=None,
-        risk_budget=1.0,
-        live_trading=False,
-    )
+    # Pinned open for the same reason as _dip_directive: BBB is not a real
+    # token, so the cost gate would refuse it FIRST and the census would name
+    # round_trip_cost_above_max instead of the drawdown gate this line is
+    # about. The gate census reports only the FIRST failing guardrail, so a
+    # gate added upstream masks every assertion made downstream of it.
+    with patch.dict(os.environ, DIP_UNIVERSE_PINNED_OPEN):
+        rising = scheduler._money_button_candidate(
+            state,
+            last_price=float(CONFIRMED_UPTREND[-1]),
+            last_volume=1000.0,
+            portfolio=funded_portfolio,
+            chain_name="base",
+            fee_rate=0.0005,
+            direction_prob=0.5,
+            confidence=0.5,
+            net_margin=0.0,
+            base_allocation=None,
+            risk_budget=1.0,
+            live_trading=False,
+        )
     assert rising is None, "the dip rule should refuse a tape making new highs"
     assert "drawdown_outside_dip_window" in scheduler._mb_gate_counts
 
