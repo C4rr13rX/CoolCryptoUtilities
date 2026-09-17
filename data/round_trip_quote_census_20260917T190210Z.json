@@ -1,0 +1,873 @@
+{
+  "schema_version": 1,
+  "artifact": "round_trip_quote_census",
+  "generated_at_utc": "2026-09-17T19:02:10Z",
+  "generated_by": "scripts/routing_arbitrage_census.py --round-trip-census",
+  "git_sha": "769cc58",
+  "chain": "base",
+  "book_mode": "ghost",
+  "THESE_ARE_QUOTES_NOT_FILLS": {
+    "what_is_measured": "USDC -> token -> USDC, read-only router quotes. cost_pct = (in - back) / in, in percent of notional. POOL cost only: fee plus price impact at that clip.",
+    "not_modelled": [
+      "slippage against a moving book",
+      "MEV",
+      "gas (a dollar per leg, not a rate)",
+      "partial fills",
+      "failed transactions"
+    ],
+    "live_measured_round_trip_slippage_bp": 13.5,
+    "live_measured_round_trip_slippage_at_75c_clip_bp": 27.8,
+    "slippage_caveat": "THESE ARE QUOTES, NOT FILLS. The live lane measured 13.5-27.8 bp of round-trip slippage (pooled over 38 legs, and at the $0.75 clip respectively) that NO quote here carries, and MEV is unmodelled entirely. Every cost in this file is therefore a FLOOR -- the best case -- and is NOT a realisable cost. The two slippage figures are the same quantity at different clips, not a disagreement.",
+    "fills_beat_quotes": "storage/trading_cache.db trade_fills holds 38 real executed legs. Where a quote here disagrees with a fill for the same symbol, THE QUOTE IS THE SUSPECT.",
+    "no_default_rate": "A symbol absent from 'quoted' is charged NOTHING. There is no default, no nearest neighbour and no chain average. This repo shipped 'round_trip_cost measured its own default' on 2026-09-04; this file will not."
+  },
+  "clip_distribution_usd": {
+    "n": 215,
+    "min": 1.1984285093451822e-14,
+    "max": 5.9998200000000015,
+    "mean": 2.391426404099381,
+    "p05": 0.062795322,
+    "p10": 0.136766727,
+    "p25": 0.7499775000000001,
+    "median": 1.99994,
+    "p75": 3.8109522833739318,
+    "p90": 5.493789556919358,
+    "p95": 5.497278905596859
+  },
+  "clip_grid_usd": [
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    2.0,
+    4.0,
+    6.0,
+    10.0
+  ],
+  "measured_gas_context": {
+    "n_live_rows": 22,
+    "source": "trade_outcomes.fee_cost where details.mode == 'live'; gas only on that path",
+    "median_round_trip_usd": 0.004047007887550228,
+    "median_per_leg_usd": 0.002023503943775114,
+    "as_a_rate_bp_by_clip": {
+      "$0.1": 404.7007887550228,
+      "$0.25": 161.88031550200913,
+      "$0.5": 80.94015775100456,
+      "$0.75": 53.96010516733637,
+      "$1": 40.47007887550228,
+      "$2": 20.23503943775114,
+      "$4": 10.11751971887557,
+      "$6": 6.745013145917047,
+      "$10": 4.047007887550228
+    },
+    "warning": "GAS IS NOT IN THE 'quoted' RATES. Those are pool cost (fee + impact) only. Do not add these two numbers without deciding which clip you are charging at."
+  },
+  "instrument": {
+    "quoter": "Uniswap V3 QuoterV2 quoteExactInput, asked directly",
+    "both_legs_same_fee_tier": true,
+    "plausibility_floor": "cost_pct >= 2 * fee_tier / 10000; readings below it are recorded under 'implausible' and NEVER published as a rate",
+    "why_not_the_router_provider": "UniswapV3Local picks the best tier per leg INDEPENDENTLY, which crosses two pools and produced negative round-trip costs (AERO -0.0464%, -0.0982%) -- the artifact pass 452 retracted. It also swallows HTTP 429 and reports it as 'no viable pool', making a throttle indistinguishable from an absent pool.",
+    "eth_calls": 252,
+    "rate_limit_hits_429": 25,
+    "multihop_routes_not_searched": "only DIRECT USDC<->token pools are priced. A token that only trades through WETH is reported UNQUOTABLE here, not cheap."
+  },
+  "row_source": {
+    "db": "storage/trading_cache.db",
+    "table": "trade_outcomes",
+    "min_rows": 3,
+    "rows_in_scope": 215,
+    "symbols_qualifying": 18,
+    "rows_qualifying": 177,
+    "rows_quoted": 98
+  },
+  "venue_chain_support": {
+    "uniswap": {
+      "supported": true,
+      "reason": "UNI_V3['base'] configured"
+    },
+    "sushi": {
+      "supported": false,
+      "reason": "SUSHI_V2_ROUTER has no 'base' key (chains: arbitrum)"
+    },
+    "camelot": {
+      "supported": false,
+      "reason": "CAMELOT_V2_ROUTER['base'] is empty -- no router configured"
+    }
+  },
+  "venues_that_answered": {
+    "uniswap": {
+      "status": "ANSWERED",
+      "supported": true,
+      "reason": "UNI_V3['base'] configured",
+      "symbols_asked": 10,
+      "symbols_answered": 9,
+      "symbols": [
+        "AAVE",
+        "AERO",
+        "CBBTC",
+        "CBETH",
+        "COMP",
+        "DRB",
+        "VIRTUAL",
+        "VVV",
+        "WETH"
+      ],
+      "instrument": "QuoterV2 quoteExactInput, direct pools only"
+    },
+    "sushi": {
+      "status": "NOT_ON_CHAIN",
+      "supported": false,
+      "reason": "SUSHI_V2_ROUTER has no 'base' key (chains: arbitrum)",
+      "symbols_asked": 0,
+      "symbols_answered": 0,
+      "note": "never asked, so this is NOT a venue that failed to answer -- it is a venue that is not here."
+    },
+    "camelot": {
+      "status": "NOT_ON_CHAIN",
+      "supported": false,
+      "reason": "CAMELOT_V2_ROUTER['base'] is empty -- no router configured",
+      "symbols_asked": 0,
+      "symbols_answered": 0,
+      "note": "never asked, so this is NOT a venue that failed to answer -- it is a venue that is not here."
+    }
+  },
+  "venue_count_that_answered": 1,
+  "unquotable_causes": {
+    "no_address_in_book": "data/token_addresses.json has no address for this symbol on this chain. NOT a statement about the pool -- the census never got to ask. Fixable here, but NOT by resolving the ticker: this repo has already been bitten by ticker squatting, and a wrong address would produce a confident cost for the wrong token.",
+    "no_plausible_tier": "every Uniswap V3 fee tier either had no direct USDC<->token pool or round-tripped BELOW its own 2*fee floor, which is a broken measurement rather than a cheap pool.",
+    "tier_priced_nothing": "a tier was chosen at the probe clip but priced nothing anywhere on the clip grid.",
+    "endpoint_throttled": "the only working Base endpoint answered 429 after every retry. A throttle is not a fact about a pool, so this is UNRESOLVED, never UNQUOTABLE."
+  },
+  "unquotable_by_cause": {
+    "symbols": {
+      "no_address_in_book": 8,
+      "no_plausible_tier": 1
+    },
+    "rows": {
+      "no_address_in_book": 65,
+      "no_plausible_tier": 14
+    }
+  },
+  "venue_activity": {},
+  "venue_activity_note": "EMPTY BY DESIGN in --round-trip-census mode. This tracks the PROVIDER path (quote_one), which only the dispersion mode uses; the census prices through SameTierQuoter. Read 'venues_that_answered' instead.",
+  "quote_deadline_sec": 180.0,
+  "venues_exempt_from_strikeout": [
+    "uniswap"
+  ],
+  "quoted": {
+    "AERO": {
+      "address": "0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+      "rows": 45,
+      "fee_tier": 500,
+      "venues_asked": [
+        "uniswap"
+      ],
+      "venues_answered": [
+        "uniswap"
+      ],
+      "fee_tier_chosen_by": "cheapest plausible same-tier round trip at the $2.00 median clip",
+      "probe_cost_pct": 0.10100303009090272,
+      "points": [
+        [
+          0.1,
+          0.101
+        ],
+        [
+          0.25,
+          0.1004
+        ],
+        [
+          0.5,
+          0.1004
+        ],
+        [
+          0.75,
+          0.242933
+        ],
+        [
+          1.0,
+          0.1302
+        ],
+        [
+          2.0,
+          0.1303
+        ],
+        [
+          4.0,
+          0.10195
+        ],
+        [
+          6.0,
+          0.102933
+        ]
+      ],
+      "clips_answered": 8,
+      "clips_attempted": 9,
+      "failures": {},
+      "implausible": {
+        "$10": {
+          "cost_pct": 0.0376,
+          "floor_pct": 0.1,
+          "why": "cost 0.0376% is below the 2*fee floor 0.1000% -- a round trip through one pool cannot cost less than twice its fee"
+        }
+      },
+      "throttled_clips": 0,
+      "tier_probe": {
+        "fee_100": {
+          "cost_pct": 93.914217,
+          "implausible": null
+        },
+        "fee_500": {
+          "cost_pct": 0.101003,
+          "implausible": null
+        },
+        "fee_3000": {
+          "cost_pct": 0.638119,
+          "implausible": null
+        },
+        "fee_10000": {
+          "cost_pct": 2.98804,
+          "implausible": null
+        }
+      }
+    },
+    "COMP": {
+      "address": "0x9e1028f5f1d5ede59748ffcee5532509976840e0",
+      "rows": 16,
+      "fee_tier": 10000,
+      "venues_asked": [
+        "uniswap"
+      ],
+      "venues_answered": [
+        "uniswap"
+      ],
+      "fee_tier_chosen_by": "cheapest plausible same-tier round trip at the $2.00 median clip",
+      "probe_cost_pct": 33.01479044371331,
+      "points": [
+        [
+          0.1,
+          3.401
+        ],
+        [
+          0.25,
+          5.4412
+        ],
+        [
+          0.5,
+          8.9902
+        ],
+        [
+          0.75,
+          13.999067
+        ],
+        [
+          1.0,
+          19.0905
+        ],
+        [
+          2.0,
+          33.01535
+        ],
+        [
+          4.0,
+          58.4632
+        ],
+        [
+          6.0,
+          72.308767
+        ],
+        [
+          10.0,
+          83.38526
+        ]
+      ],
+      "clips_answered": 9,
+      "clips_attempted": 9,
+      "failures": {},
+      "implausible": {},
+      "throttled_clips": 0,
+      "tier_probe": {
+        "fee_100": "no pool on tier 100 for USDC->token",
+        "fee_500": "no pool on tier 500 for USDC->token",
+        "fee_3000": "no pool on tier 3000 for USDC->token",
+        "fee_10000": {
+          "cost_pct": 33.01479,
+          "implausible": null
+        }
+      }
+    },
+    "CBBTC": {
+      "address": "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf",
+      "rows": 8,
+      "fee_tier": 500,
+      "venues_asked": [
+        "uniswap"
+      ],
+      "venues_answered": [
+        "uniswap"
+      ],
+      "fee_tier_chosen_by": "cheapest plausible same-tier round trip at the $2.00 median clip",
+      "probe_cost_pct": 0.14490434713041392,
+      "points": [
+        [
+          0.1,
+          1.22
+        ],
+        [
+          0.25,
+          0.4544
+        ],
+        [
+          0.5,
+          0.3012
+        ],
+        [
+          0.75,
+          0.25
+        ],
+        [
+          1.0,
+          0.1479
+        ],
+        [
+          2.0,
+          0.1479
+        ],
+        [
+          4.0,
+          0.109625
+        ],
+        [
+          6.0,
+          0.109617
+        ],
+        [
+          10.0,
+          0.10962
+        ]
+      ],
+      "clips_answered": 9,
+      "clips_attempted": 9,
+      "failures": {},
+      "implausible": {},
+      "throttled_clips": 0,
+      "tier_probe": {
+        "fee_100": {
+          "cost_pct": 0.773823,
+          "implausible": null
+        },
+        "fee_500": {
+          "cost_pct": 0.144904,
+          "implausible": null
+        },
+        "fee_3000": {
+          "cost_pct": 0.632369,
+          "implausible": null
+        },
+        "fee_10000": {
+          "cost_pct": 2.081062,
+          "implausible": null
+        }
+      }
+    },
+    "VIRTUAL": {
+      "address": "0x0b3e328455c4059eeb9e3f84b5543f74e24e7e1b",
+      "rows": 6,
+      "fee_tier": 500,
+      "venues_asked": [
+        "uniswap"
+      ],
+      "venues_answered": [
+        "uniswap"
+      ],
+      "fee_tier_chosen_by": "cheapest plausible same-tier round trip at the $2.00 median clip",
+      "probe_cost_pct": 0.6761702851085533,
+      "points": [
+        [
+          0.1,
+          0.129
+        ],
+        [
+          0.25,
+          0.1724
+        ],
+        [
+          0.5,
+          0.2448
+        ],
+        [
+          0.75,
+          0.316933
+        ],
+        [
+          1.0,
+          0.3889
+        ],
+        [
+          2.0,
+          0.67615
+        ],
+        [
+          4.0,
+          1.245725
+        ],
+        [
+          6.0,
+          1.808783
+        ],
+        [
+          10.0,
+          2.91586
+        ]
+      ],
+      "clips_answered": 9,
+      "clips_attempted": 9,
+      "failures": {},
+      "implausible": {},
+      "throttled_clips": 0,
+      "tier_probe": {
+        "fee_100": "no pool on tier 100 for USDC->token",
+        "fee_500": {
+          "cost_pct": 0.67617,
+          "implausible": null
+        },
+        "fee_3000": {
+          "cost_pct": 0.599268,
+          "implausible": "cost 0.5993% is below the 2*fee floor 0.6000% -- a round trip through one pool cannot cost less than twice its fee"
+        },
+        "fee_10000": {
+          "cost_pct": 2.140164,
+          "implausible": null
+        }
+      }
+    },
+    "VVV": {
+      "address": "0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf",
+      "rows": 6,
+      "fee_tier": 10000,
+      "venues_asked": [
+        "uniswap"
+      ],
+      "venues_answered": [
+        "uniswap"
+      ],
+      "fee_tier_chosen_by": "cheapest plausible same-tier round trip at the $2.00 median clip",
+      "probe_cost_pct": 2.1247137414122426,
+      "points": [
+        [
+          0.25,
+          2.0072
+        ],
+        [
+          0.5,
+          2.0238
+        ],
+        [
+          0.75,
+          2.040667
+        ],
+        [
+          1.0,
+          2.0574
+        ],
+        [
+          2.0,
+          2.1247
+        ],
+        [
+          4.0,
+          2.258975
+        ],
+        [
+          6.0,
+          2.392917
+        ],
+        [
+          10.0,
+          2.65967
+        ]
+      ],
+      "clips_answered": 8,
+      "clips_attempted": 9,
+      "failures": {},
+      "implausible": {
+        "$0.1": {
+          "cost_pct": 1.997,
+          "floor_pct": 2.0,
+          "why": "cost 1.9970% is below the 2*fee floor 2.0000% -- a round trip through one pool cannot cost less than twice its fee"
+        }
+      },
+      "throttled_clips": 0,
+      "tier_probe": {
+        "fee_100": "no pool on tier 100 for USDC->token",
+        "fee_500": {
+          "cost_pct": 79.198076,
+          "implausible": null
+        },
+        "fee_3000": {
+          "cost_pct": 0.388762,
+          "implausible": "cost 0.3888% is below the 2*fee floor 0.6000% -- a round trip through one pool cannot cost less than twice its fee"
+        },
+        "fee_10000": {
+          "cost_pct": 2.124714,
+          "implausible": null
+        }
+      }
+    },
+    "CBETH": {
+      "address": "0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22",
+      "rows": 5,
+      "fee_tier": 3000,
+      "venues_asked": [
+        "uniswap"
+      ],
+      "venues_answered": [
+        "uniswap"
+      ],
+      "fee_tier_chosen_by": "cheapest plausible same-tier round trip at the $2.00 median clip",
+      "probe_cost_pct": 0.6711701351040531,
+      "points": [
+        [
+          0.1,
+          0.603
+        ],
+        [
+          0.25,
+          0.6084
+        ],
+        [
+          0.5,
+          0.6172
+        ],
+        [
+          0.75,
+          0.626267
+        ],
+        [
+          1.0,
+          0.6352
+        ],
+        [
+          2.0,
+          0.6712
+        ],
+        [
+          4.0,
+          0.743125
+        ],
+        [
+          6.0,
+          0.814983
+        ],
+        [
+          10.0,
+          0.95837
+        ]
+      ],
+      "clips_answered": 9,
+      "clips_attempted": 9,
+      "failures": {},
+      "implausible": {},
+      "throttled_clips": 0,
+      "tier_probe": {
+        "fee_100": "no pool on tier 100 for USDC->token",
+        "fee_500": "no pool on tier 500 for USDC->token",
+        "fee_3000": {
+          "cost_pct": 0.67117,
+          "implausible": null
+        },
+        "fee_10000": "no pool on tier 10000 for token->USDC"
+      }
+    },
+    "DRB": {
+      "address": "0x3ec2156d4c0a9cbdab4a016633b7bcf6a8d68ea2",
+      "rows": 5,
+      "fee_tier": 3000,
+      "venues_asked": [
+        "uniswap"
+      ],
+      "venues_answered": [
+        "uniswap"
+      ],
+      "fee_tier_chosen_by": "cheapest plausible same-tier round trip at the $2.00 median clip",
+      "probe_cost_pct": 15.075852275568266,
+      "points": [
+        [
+          0.1,
+          1.44
+        ],
+        [
+          0.25,
+          2.6732
+        ],
+        [
+          0.5,
+          4.6624
+        ],
+        [
+          0.75,
+          6.571733
+        ],
+        [
+          1.0,
+          8.4062
+        ],
+        [
+          2.0,
+          15.07625
+        ],
+        [
+          4.0,
+          25.76635
+        ],
+        [
+          6.0,
+          33.89225
+        ],
+        [
+          10.0,
+          45.415
+        ]
+      ],
+      "clips_answered": 9,
+      "clips_attempted": 9,
+      "failures": {},
+      "implausible": {},
+      "throttled_clips": 0,
+      "tier_probe": {
+        "fee_100": "no pool on tier 100 for USDC->token",
+        "fee_500": "no pool on tier 500 for USDC->token",
+        "fee_3000": {
+          "cost_pct": 15.075852,
+          "implausible": null
+        },
+        "fee_10000": {
+          "cost_pct": 37.962089,
+          "implausible": null
+        }
+      }
+    },
+    "WETH": {
+      "address": "0x4200000000000000000000000000000000000006",
+      "rows": 4,
+      "fee_tier": 100,
+      "venues_asked": [
+        "uniswap"
+      ],
+      "venues_answered": [
+        "uniswap"
+      ],
+      "fee_tier_chosen_by": "cheapest plausible same-tier round trip at the $2.00 median clip",
+      "probe_cost_pct": 0.0407512225366761,
+      "points": [
+        [
+          0.1,
+          0.02
+        ],
+        [
+          0.25,
+          0.0204
+        ],
+        [
+          0.75,
+          0.020133
+        ],
+        [
+          1.0,
+          0.0201
+        ],
+        [
+          2.0,
+          0.0201
+        ],
+        [
+          4.0,
+          0.020325
+        ],
+        [
+          6.0,
+          0.020483
+        ],
+        [
+          10.0,
+          0.02081
+        ]
+      ],
+      "clips_answered": 8,
+      "clips_attempted": 9,
+      "failures": {},
+      "implausible": {
+        "$0.5": {
+          "cost_pct": 0.0196,
+          "floor_pct": 0.02,
+          "why": "cost 0.0196% is below the 2*fee floor 0.0200% -- a round trip through one pool cannot cost less than twice its fee"
+        }
+      },
+      "throttled_clips": 0,
+      "tier_probe": {
+        "fee_100": {
+          "cost_pct": 0.040751,
+          "implausible": null
+        },
+        "fee_500": {
+          "cost_pct": 0.102953,
+          "implausible": null
+        },
+        "fee_3000": {
+          "cost_pct": 0.599118,
+          "implausible": "cost 0.5991% is below the 2*fee floor 0.6000% -- a round trip through one pool cannot cost less than twice its fee"
+        },
+        "fee_10000": {
+          "cost_pct": 1.99016,
+          "implausible": "cost 1.9902% is below the 2*fee floor 2.0000% -- a round trip through one pool cannot cost less than twice its fee"
+        }
+      }
+    },
+    "AAVE": {
+      "address": "0x63706e401c06ac8513145b7687a14804d17f814b",
+      "rows": 3,
+      "fee_tier": 3000,
+      "venues_asked": [
+        "uniswap"
+      ],
+      "venues_answered": [
+        "uniswap"
+      ],
+      "fee_tier_chosen_by": "cheapest plausible same-tier round trip at the $2.00 median clip",
+      "probe_cost_pct": 0.6025680770423113,
+      "points": [
+        [
+          0.1,
+          0.6
+        ],
+        [
+          0.5,
+          0.6
+        ],
+        [
+          0.75,
+          0.6004
+        ],
+        [
+          1.0,
+          0.6009
+        ],
+        [
+          2.0,
+          0.60255
+        ],
+        [
+          4.0,
+          0.60595
+        ],
+        [
+          6.0,
+          0.60935
+        ],
+        [
+          10.0,
+          0.61618
+        ]
+      ],
+      "clips_answered": 8,
+      "clips_attempted": 9,
+      "failures": {},
+      "implausible": {
+        "$0.25": {
+          "cost_pct": 0.5996,
+          "floor_pct": 0.6,
+          "why": "cost 0.5996% is below the 2*fee floor 0.6000% -- a round trip through one pool cannot cost less than twice its fee"
+        }
+      },
+      "throttled_clips": 0,
+      "tier_probe": {
+        "fee_100": "no pool on tier 100 for USDC->token",
+        "fee_500": "no pool on tier 500 for USDC->token",
+        "fee_3000": {
+          "cost_pct": 0.602568,
+          "implausible": null
+        },
+        "fee_10000": {
+          "cost_pct": 98.378401,
+          "implausible": null
+        }
+      }
+    }
+  },
+  "unquotable": {
+    "BASECAT": {
+      "rows": 36,
+      "cause": "no_address_in_book",
+      "venues_answered": [],
+      "venues_asked": [],
+      "reason": "no address for BASECAT on base in data/token_addresses.json"
+    },
+    "BSTONK": {
+      "rows": 14,
+      "address": "0x0f61edbfe6cd86024c0f210c0695b08df55fdfc9",
+      "cause": "no_plausible_tier",
+      "venues_answered": [],
+      "venues_asked": [
+        "uniswap"
+      ],
+      "reason": "no Uniswap V3 tier of [100, 500, 3000, 10000] round-tripped USDC->BSTONK->USDC plausibly at the $2.00 probe clip",
+      "tier_probe": {
+        "fee_100": "no pool on tier 100 for USDC->token",
+        "fee_500": "no pool on tier 500 for USDC->token",
+        "fee_3000": "no pool on tier 3000 for USDC->token",
+        "fee_10000": "no pool on tier 10000 for USDC->token"
+      }
+    },
+    "CBXRP": {
+      "rows": 6,
+      "cause": "no_address_in_book",
+      "venues_answered": [],
+      "venues_asked": [],
+      "reason": "no address for CBXRP on base in data/token_addresses.json"
+    },
+    "CBADA": {
+      "rows": 5,
+      "cause": "no_address_in_book",
+      "venues_answered": [],
+      "venues_asked": [],
+      "reason": "no address for CBADA on base in data/token_addresses.json"
+    },
+    "OMARCHY": {
+      "rows": 4,
+      "cause": "no_address_in_book",
+      "venues_answered": [],
+      "venues_asked": [],
+      "reason": "no address for OMARCHY on base in data/token_addresses.json"
+    },
+    "CBZEC": {
+      "rows": 4,
+      "cause": "no_address_in_book",
+      "venues_answered": [],
+      "venues_asked": [],
+      "reason": "no address for CBZEC on base in data/token_addresses.json"
+    },
+    "PUMP": {
+      "rows": 4,
+      "cause": "no_address_in_book",
+      "venues_answered": [],
+      "venues_asked": [],
+      "reason": "no address for PUMP on base in data/token_addresses.json"
+    },
+    "CBMEGA": {
+      "rows": 3,
+      "cause": "no_address_in_book",
+      "venues_answered": [],
+      "venues_asked": [],
+      "reason": "no address for CBMEGA on base in data/token_addresses.json"
+    },
+    "MOG": {
+      "rows": 3,
+      "cause": "no_address_in_book",
+      "venues_answered": [],
+      "venues_asked": [],
+      "reason": "no address for MOG on base in data/token_addresses.json"
+    }
+  },
+  "unresolved": {}
+}
