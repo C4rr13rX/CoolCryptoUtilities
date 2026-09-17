@@ -8712,3 +8712,47 @@ THE ONE MEASUREMENT THAT DECIDES THE ROUTE: real realised slippage on
 deep-pool pairs at a $10 clip. It cannot come from the tape -- it needs live
 fills or a quoter probe at size. That is the next pass's highest-value work
 and it belongs to exec.
+
+### Pass 445 POSTSCRIPT: the dilution DOES survive pooling, and it bounds the whole route
+
+I filed [017594f6] saying "whether the dilution survives pooling is UNTESTED".
+It took four minutes to test, so I tested it rather than leaving the next pass
+to find out. Deep universe, $10 clip, 5m, RE-SIMULATED at each rate (never
+rescaled), censored at |20%|:
+
+    slip_bps      fee     n   mean gross    mean net       t
+        27.8   0.3606%    99    +0.1769%    -0.1837%   -3.58
+        15.0   0.2326%   154    +0.1201%    -0.1125%   -2.97
+        10.0   0.1826%   249    +0.1133%    -0.0693%   -1.48
+         5.0   0.1326%   294    +0.1198%    -0.0128%   -0.32
+         0.0   0.0826%   330    +0.1221%    +0.0395%   +1.07
+
+**AT ZERO SLIPPAGE -- free execution, gas only -- THE POOLED NET IS +0.0395%
+WITH t=+1.07. THAT IS NOT SIGNIFICANT.** The best case obtainable by fixing
+the cost wall entirely is an edge indistinguishable from zero.
+
+THE MECHANISM, CONFIRMED AT SCALE. The dilution is not a one-symbol artifact:
+gross falls from +0.1769% to ~+0.12% and STAYS there as the fee drops, while n
+goes 99 -> 330. The rule's admission test (expected_return - fee >= min_net) is
+doing double duty as a QUALITY FILTER -- the expensive version trades less and
+better, the cheap version trades more and worse, and the two effects cancel
+almost exactly. **The dip rule's edge and its cost are locked together.**
+
+CONSEQUENCE, AND IT CLOSES THE ROUTE PROPERLY. money_button's dip does not
+fail on cost, and it does not fail on signal. It fails on BOTH JOINTLY: there
+is no cost level at which it pays significantly, because lowering the cost
+lowers the bar. The +0.1769% at t=+3.45 is real but it belongs to a
+99-trade high-quality subset that the 31.5bp floor sits above, and you cannot
+keep that subset while paying less for it -- the subset IS defined by what you
+pay.
+
+[017594f6] IS NOT WITHDRAWN but its upside is now MEASURED AND BOUNDED: the
+best it can do for money_button is +4bp at t=+1.07. It remains worth doing for
+a different reason -- roundtrip_cost_rate is wired in as an ENTRY GATE
+([84e62c6d]) and a 2.5x-too-high slippage figure there refuses trades on every
+rule, not just this one. Do NOT take the item expecting it to make
+money_button pay. It will not.
+
+WHAT WOULD HAVE TO BE TRUE for a dip route to work: an admission test that
+does NOT contain the fee, so selectivity can be tuned independently of cost.
+That is a rule-shape change, not a cost fix, and nobody has costed it.
