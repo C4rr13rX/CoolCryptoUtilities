@@ -51,6 +51,25 @@ tens of basis points, which is larger than any edge this repo has ever
 claimed -- meaning most of what a naive search would have "found" is noise
 that a permutation could have found too.
 
+THIRD, IT IS GRADED BY A MEASURED COST, PER SYMBOL, NOT BY A CONSTANT. A
+search graded by the wrong cost rejects real edges and admits fake ones, and
+this repo has measured that a flat token-blind rate does exactly that: the
+standing TOKEN_ROUND_TRIP table charges AERO 435bp where the chain says 10-13,
+charges CBBTC 70bp where the chain says 11-15, and waves CBETH through at 30bp
+where the chain says 67. So the round trip charged to a survivor is read from
+data/round_trip_quote_census_*.json -- a committed, on-chain QuoterV2 census
+that prices 9 symbols on a clip grid taken from the actual book -- and each
+symbol pays its OWN number at the clip you ask for.
+
+Three things about that cost are stated out loud on every run, because a
+silent fallback is how a constant gets shipped wearing a measurement's name:
+which symbols were priced, which fell back to --fee and how many ticks that
+covers, and the fact that a QUOTE IS NOT A FILL. The census numbers are pool
+cost (fee + impact) only; the live lane measured 13.5bp of round-trip
+slippage that no quote carries and gas is charged separately. Every census
+cost is therefore a FLOOR -- the best case -- so "net positive" under it is
+the most optimistic reading available, not a realisable P/L.
+
 Surviving in-sample is still not an edge. The tape is split by TIME, the
 search runs on the first part only, and survivors are then priced once on the
 held-out part, where no selection has taken place and the number is honest.
@@ -62,17 +81,19 @@ reports honestly when none of them are.
 Usage:
     python -X utf8 scripts/predicate_forge.py
     python -X utf8 scripts/predicate_forge.py --hours 336 --perms 400
-    python -X utf8 scripts/predicate_forge.py --fee 0.0065   # charge the live fee
+    python -X utf8 scripts/predicate_forge.py --cost-mode flat --fee 0.0065
+    python -X utf8 scripts/predicate_forge.py --fillable-only
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -80,7 +101,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from money_button_gate_census import load_ticks  # noqa: E402
+from money_button_gate_census import DB_PATH, load_ticks  # noqa: E402
+
+#: The committed measured round-trip cost census. Pinned by name, not globbed,
+#: so a re-run reproduces: this is the artifact pass 458 landed at 1a33c9a.
+DEFAULT_COST_CENSUS = "data/round_trip_quote_census_20260917T190210Z.json"
 
 #: Forward horizons in MINUTES. Deliberately short: every screen run in this
 #: repo so far held for 12 minutes or longer and nothing cleared the bar, and
@@ -345,12 +370,236 @@ def permutation_bar(
     return out
 
 
+# ---------------------------------------------------------------------------
+# COST. Per symbol, measured, with the fallback stated out loud.
+# ---------------------------------------------------------------------------
+
+
+def _ticker(symbol: str) -> Tuple[str, str]:
+    """Split a tape symbol 'AERO-USDC' into ('AERO', 'USDC'), upper-cased."""
+    base, _, quote = str(symbol).upper().partition("-")
+    return base, quote
+
+
+def load_cost_census(path: str) -> dict:
+    """Read the round-trip quote census and refuse anything that is not one.
+
+    The schema is NOT assumed: the artifact is checked by its own
+    `artifact` tag before a single rate is read out of it.
+    """
+    p = Path(path)
+    if not p.is_absolute():
+        p = ROOT / p
+    if not p.exists():
+        raise FileNotFoundError(f"cost census not found: {p}")
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    tag = doc.get("artifact")
+    if tag != "round_trip_quote_census":
+        raise ValueError(
+            f"{p} is artifact '{tag}', not 'round_trip_quote_census'. "
+            "Refusing to read costs out of a file that is not a cost census."
+        )
+    if not isinstance(doc.get("quoted"), dict) or not doc["quoted"]:
+        raise ValueError(f"{p} prices no symbol at all ('quoted' is empty).")
+    doc["_path"] = str(p)
+    return doc
+
+
+def census_rate(entry: dict, clip_usd: float) -> Optional[Tuple[float, float]]:
+    """(clip_actually_used, ROUND-TRIP rate as a fraction) for one symbol.
+
+    `points` is a list of [clip_usd, cost_pct] where cost_pct is the WHOLE
+    round trip (USDC -> token -> USDC) in percent of notional. We charge the
+    nearest clip the curve actually priced and report which one that was --
+    interpolating would invent a reading between two measurements.
+    """
+    pts = [(float(c), float(v)) for c, v in entry.get("points", [])
+           if np.isfinite(float(c)) and np.isfinite(float(v))]
+    if not pts:
+        return None
+    clip, pct = min(pts, key=lambda cv: (abs(cv[0] - clip_usd), -cv[0]))
+    return clip, pct / 100.0
+
+
+def live_filled_tickers() -> Tuple[set, int]:
+    """Tickers with a REAL executed leg on chain, from trade_fills.
+
+    The alternative definition of "fillable" -- not what a quoter says we
+    could fill, but what we demonstrably did. Returns (tickers, n_legs).
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH, uri=True)
+    except Exception:
+        return set(), 0
+    try:
+        rows = conn.execute(
+            "SELECT symbol, details FROM trade_fills "
+            "WHERE details LIKE '%live_entry%' OR details LIKE '%live_exit%'"
+        ).fetchall()
+    except Exception:
+        return set(), 0
+    finally:
+        conn.close()
+    out, n = set(), 0
+    for symbol, details in rows:
+        try:
+            mode = str(json.loads(details or "{}").get("mode", ""))
+        except Exception:
+            mode = ""
+        if mode in ("live_entry", "live_exit"):
+            out.add(_ticker(symbol)[0])
+            n += 1
+    return out, n
+
+
+def resolve_round_trip(
+    names: Sequence[str],
+    census: Optional[dict],
+    clip_usd: float,
+    flat_fee: float,
+    charge_gas: bool,
+) -> Tuple[np.ndarray, dict]:
+    """Round-trip rate per screened symbol, plus a full audit of where it came from.
+
+    Census rates are POOL cost only (fee + impact at that clip). Gas is a
+    dollar per leg, not a rate, so it is only folded in when asked for and is
+    then a CLIP artifact, identical for every symbol -- which is exactly the
+    token-blindness this function exists to remove. Off by default, printed
+    either way.
+    """
+    rt = np.zeros(len(names), dtype=float)
+    priced: List[dict] = []
+    fell_back: List[str] = []
+    gas_rate = 0.0
+    if census is not None and charge_gas:
+        gas_usd = float(census.get("measured_gas_context", {})
+                        .get("median_round_trip_usd", 0.0) or 0.0)
+        gas_rate = gas_usd / clip_usd if clip_usd > 0 else 0.0
+
+    quoted = (census or {}).get("quoted", {})
+    for i, name in enumerate(names):
+        base, quote = _ticker(name)
+        entry = quoted.get(base) if census is not None else None
+        # The census priced USDC <-> token. A USDT-quoted feed row is a
+        # DIFFERENT denomination; this repo has already been bitten by
+        # denomination contamination, so it does not inherit the USDC rate.
+        if entry is not None and quote not in ("USDC", ""):
+            entry = None
+        hit = census_rate(entry, clip_usd) if entry else None
+        if hit is None:
+            rt[i] = 2.0 * flat_fee
+            fell_back.append(name)
+            continue
+        clip_used, pool = hit
+        rt[i] = pool + gas_rate
+        priced.append({
+            "symbol": name, "ticker": base, "clip_usd": clip_used,
+            "pool_rt_bp": pool * 10000.0, "gas_rt_bp": gas_rate * 10000.0,
+            "charged_rt_bp": rt[i] * 10000.0,
+            "fee_tier": entry.get("fee_tier"), "census_rows": entry.get("rows"),
+        })
+    return rt, {
+        "priced": priced,
+        "fell_back": fell_back,
+        "flat_rt_bp": 2.0 * flat_fee * 10000.0,
+        "gas_rt_bp": gas_rate * 10000.0,
+        "charge_gas": bool(charge_gas),
+        "clip_usd": clip_usd,
+    }
+
+
+def print_cost_basis(report: dict, mode: str, census: Optional[dict],
+                     tick_counts: Dict[str, int]) -> None:
+    """Say, every run, exactly what each symbol was charged and what it fell back to."""
+    priced, fell = report["priced"], report["fell_back"]
+    n_all = len(priced) + len(fell)
+    t_priced = sum(tick_counts.get(r["symbol"], 0) for r in priced)
+    t_all = sum(tick_counts.get(s, 0) for s in list(tick_counts))
+    if mode == "flat":
+        print(f"  COST BASIS: FLAT --fee. {report['flat_rt_bp']:.0f}bp round trip charged to "
+              f"EVERY one of {n_all} symbols.")
+        print("     This is the token-blind constant. It is here to be compared against, not")
+        print("     believed: the measured chain costs below it span 2bp to 3300bp.")
+        print()
+        return
+
+    meta = census or {}
+    print(f"  COST BASIS: per-symbol MEASURED round trip (census), flat --fee as the fallback.")
+    print(f"     census   : {meta.get('_path','?')}")
+    print(f"     provenance: git {meta.get('git_sha','?')}  chain {meta.get('chain','?')}  "
+          f"book_mode {meta.get('book_mode','?')}  generated {meta.get('generated_at_utc','?')}")
+    print(f"     clip     : ${report['clip_usd']:.2f} requested; each symbol charged at the "
+          f"nearest clip ITS curve priced")
+    gas_txt = (f"CHARGED, {report['gas_rt_bp']:.2f}bp at this clip (identical for every symbol)"
+               if report["charge_gas"] else
+               f"NOT charged (--charge-gas adds {_gas_preview(census, report['clip_usd']):.2f}bp "
+               f"at this clip, token-blind)")
+    print(f"     gas      : {gas_txt}")
+    print(f"     PRICED FROM THE CENSUS: {len(priced)} of {n_all} screened symbols "
+          f"({t_priced} of {t_all} ticks, {100.0*t_priced/max(t_all,1):.1f}%)")
+    for r in sorted(priced, key=lambda x: x["charged_rt_bp"]):
+        print(f"        {r['symbol']:<16}{r['charged_rt_bp']:>10.2f}bp RT  @ ${r['clip_usd']:<6.2f}"
+              f"  tier {str(r['fee_tier']):<6} census rows {r['census_rows']}")
+    print(f"     FELL BACK TO THE FLAT --fee: {len(fell)} of {n_all} symbols "
+          f"({t_all - t_priced} of {t_all} ticks, "
+          f"{100.0*(t_all-t_priced)/max(t_all,1):.1f}%), charged "
+          f"{report['flat_rt_bp']:.0f}bp each")
+    if fell:
+        show = sorted(fell, key=lambda s: -tick_counts.get(s, 0))
+        head = ", ".join(show[:10])
+        more = f" ... and {len(show)-10} more" if len(show) > 10 else ""
+        print(f"        {head}{more}")
+        print("        THE FALLBACK IS A CONSTANT, NOT A MEASUREMENT. Any survivor whose")
+        print("        symbol is on that list was graded by an assumption.")
+    else:
+        print("        None. Every screened tick was graded by a measurement.")
+    caveat = meta.get("THESE_ARE_QUOTES_NOT_FILLS", {})
+    slip = caveat.get("live_measured_round_trip_slippage_bp")
+    print(f"     QUOTES ARE NOT FILLS: census rates are pool cost (fee + impact) only. The")
+    print(f"        live lane measured {slip}bp of round-trip slippage no quote here carries,")
+    print(f"        and MEV is unmodelled. Every cost below is a FLOOR, so 'net positive' is")
+    print(f"        the most optimistic reading available and not a realisable P/L.")
+    print()
+
+
+def _gas_preview(census: Optional[dict], clip_usd: float) -> float:
+    gas_usd = float((census or {}).get("measured_gas_context", {})
+                    .get("median_round_trip_usd", 0.0) or 0.0)
+    return (gas_usd / clip_usd if clip_usd > 0 else 0.0) * 10000.0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=float, default=168.0)
     ap.add_argument("--perms", type=int, default=200)
     ap.add_argument("--split", type=float, default=0.6, help="in-sample share by TIME")
-    ap.add_argument("--fee", type=float, default=0.003, help="one-way fee rate")
+    ap.add_argument("--fee", type=float, default=0.003,
+                    help="one-way fee rate. USED ONLY as the explicit fallback for symbols "
+                         "the cost census does not price (or everywhere, under "
+                         "--cost-mode flat). Every run prints which symbols it covered.")
+    ap.add_argument("--cost-mode", choices=("census", "flat"), default="census",
+                    help="census (default): charge each symbol its MEASURED round trip from "
+                         "--cost-census, falling back to --fee where it is not priced. "
+                         "flat: charge 2*--fee to everything, the old token-blind behaviour, "
+                         "kept so the two can be compared on the same tape and seed.")
+    ap.add_argument("--cost-census", type=str, default=DEFAULT_COST_CENSUS,
+                    help="measured round-trip quote census artifact")
+    ap.add_argument("--cost-clip", type=float, default=0.0,
+                    help="clip in USD to charge the cost at; 0 = the census's own median "
+                         "clip from the live book")
+    ap.add_argument("--charge-gas", action="store_true",
+                    help="also charge the census's measured median round-trip gas as a rate "
+                         "at --cost-clip. It is the SAME number for every symbol, so it is "
+                         "a clip artifact, not a token cost. Off by default, printed always.")
+    ap.add_argument("--fillable-only", action="store_true",
+                    help="restrict the universe to symbols the live lane can actually fill. "
+                         "Predictability and fillability are measured ANTI-CORRELATED here, "
+                         "so an edge in a pool we cannot trade is not a result.")
+    ap.add_argument("--fillable-source", choices=("census", "live-fills"), default="census",
+                    help="census (default): a symbol is fillable if the round-trip census "
+                         "priced a direct USDC pool for it through the one venue that answers "
+                         "on Base. live-fills: only symbols with a REAL executed leg in "
+                         "trade_fills. The two disagree; both sets are printed.")
     ap.add_argument("--top", type=int, default=12)
     ap.add_argument("--json", type=str, default="")
     ap.add_argument("--cuts", type=str, default="",
@@ -379,10 +628,63 @@ def main() -> int:
     print("PREDICATE FORGE -- enumerate the space, and price the selection")
     print("=" * 88)
 
+    # The cost census is loaded BEFORE the tape, because --fillable-only reads
+    # its universe out of it. A missing or wrong-shaped artifact is a hard
+    # stop, never a silent slide back to the constant.
+    census: Optional[dict] = None
+    if args.cost_mode == "census" or args.fillable_only:
+        try:
+            census = load_cost_census(args.cost_census)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"  COST CENSUS UNUSABLE: {exc}")
+            print("  Refusing to fall back silently to the flat --fee. Pass --cost-mode flat")
+            print("  if a token-blind constant is really what you want.")
+            return 2
+    clip = args.cost_clip or float(
+        (census or {}).get("clip_distribution_usd", {}).get("median", 2.0) or 2.0)
+
     by_symbol = load_ticks(args.hours)
     if not by_symbol:
         print("  no tape. nothing to screen.")
         return 1
+
+    if args.fillable_only:
+        census_set = set((census or {}).get("quoted", {}))
+        fills_set, n_legs = live_filled_tickers()
+        if args.fillable_source == "census":
+            keep, defn = census_set, (
+                f"the {len(census_set)} symbols the round-trip census PRICED -- i.e. a direct "
+                f"USDC pool exists for them on {(census or {}).get('chain','?')} and the one "
+                f"venue that answers there quoted a whole round trip")
+        else:
+            keep, defn = fills_set, (
+                f"the {len(fills_set)} symbols with a REAL executed leg in trade_fills "
+                f"({n_legs} live legs)")
+        before = len(by_symbol)
+        by_symbol = {s: r for s, r in by_symbol.items()
+                     if _ticker(s)[0] in keep and _ticker(s)[1] in ("USDC", "")}
+        print(f"  FILLABLE FILTER (--fillable-source {args.fillable_source}): keeps "
+              f"{len(by_symbol)} of {before} tape symbols.")
+        print(f"     DEFINITION USED: {defn}.")
+        print(f"     Nothing better exists in this repo -- there is no 'live lane can fill this'")
+        print(f"     list anywhere -- so this is a stand-in, and it is the one being reported.")
+        print(f"     census-priced set : {', '.join(sorted(census_set)) or '(none)'}")
+        print(f"     live-filled set   : {', '.join(sorted(fills_set)) or '(none)'}  "
+              f"({n_legs} live legs)")
+        both = sorted(census_set & fills_set)
+        print(f"     THE TWO DISAGREE: overlap is {', '.join(both) or '(none)'}. "
+              f"{len(fills_set - census_set)} symbols we DID fill are unquotable in the census")
+        print(f"     ({', '.join(sorted(fills_set - census_set)) or 'none'}), so neither set is "
+              f"a superset of the other.")
+        print(f"     WHY: predictability and fillability are measured ANTI-CORRELATED on this")
+        print(f"     tape (+15.77bp lift where we cannot fill, +0.88bp where we can). A result")
+        print(f"     from the full universe is mostly a result about pools we cannot trade.")
+        if not by_symbol:
+            print("  no fillable symbol is in the tape. nothing to screen.")
+            return 1
+        print("  NOTE: on a universe this small the cross-sectional families (xs_*, crowd*,")
+        print("  idio*) rank a symbol against very few peers and are near-degenerate.")
+        print()
 
     if args.min_depth > 0:
         raw = json.loads(Path(args.depth_json).read_text(encoding="utf-8"))
@@ -431,8 +733,18 @@ def main() -> int:
     print(f"  features  : {len(feats)}   predicates: {len(preds)}")
     print(f"  split     : in-sample {int(mask_is.sum())} ticks | held-out {int(mask_os.sum())}")
     print(f"  horizons  : {', '.join(f'{h:g}m' for h in HORIZONS_MIN)}")
-    print(f"  round trip: {2 * args.fee * 10000:.0f}bp charged to every survivor")
     print()
+
+    # Per-symbol round trip, expanded to one rate per TICK so each trade pays
+    # the cost of the token it was actually in.
+    rt_by_sid, cost_report = resolve_round_trip(
+        names, census if args.cost_mode == "census" else None,
+        clip, args.fee, args.charge_gas)
+    rt_row = rt_by_sid[sid]
+    priced_names = {r["symbol"] for r in cost_report["priced"]}
+    priced_row = np.array([n in priced_names for n in names], dtype=float)[sid]
+    print_cost_basis(cost_report, args.cost_mode, census,
+                     {n: len(by_symbol[n]) for n in names})
 
     results = []
     for H in HORIZONS_MIN:
@@ -466,8 +778,8 @@ def main() -> int:
         order = survivors[np.argsort(-np.abs(lifts_is[survivors]))][: args.top]
         print(f"     SURVIVORS IN-SAMPLE: {len(survivors)} of {int(ok.sum())} screened."
               f" Held-out test follows.")
-        print(f"     {'predicate':<24}{'IS lift':>10}{'IS n':>8}{'OOS lift':>11}{'OOS n':>8}"
-              f"{'net/trade':>11}")
+        print(f"     {'predicate':<24}{'IS lift':>9}{'IS n':>8}{'OOS lift':>10}{'OOS n':>8}"
+              f"{'RT cost':>10}{'net/trade':>11}  {'%census':>8}")
         rows = []
         for i in order:
             name, p = preds[i]
@@ -475,14 +787,24 @@ def main() -> int:
             oos = float(l_os[0])
             n_os = int(s_os[0])
             m = p & mask_os & np.isfinite(y)
-            gross = float(y[m].mean()) if n_os >= MIN_SUPPORT else float("nan")
-            net = (gross - 2 * args.fee) * 10000.0 if n_os >= MIN_SUPPORT else float("nan")
-            flag = "" if n_os >= MIN_SUPPORT else "  (thin)"
-            print(f"     {name:<24}{lifts_is[i]:>+9.2f}{int(sup_is[i]):>8}"
-                  f"{oos:>+10.2f}{n_os:>8}{net:>+10.2f}{flag}")
+            thick = n_os >= MIN_SUPPORT
+            gross = float(y[m].mean()) if thick else float("nan")
+            # Each row pays the round trip of the token it was in. The mean of
+            # those rates is what this predicate actually costs -- not a
+            # constant, and not the same number for two different predicates.
+            cost = float(rt_row[m].mean()) if thick else float("nan")
+            net = (gross - cost) * 10000.0 if thick else float("nan")
+            # What share of this predicate's held-out rows were graded by a
+            # MEASUREMENT rather than by the --fee assumption.
+            cov = float(priced_row[m].mean()) * 100.0 if thick else float("nan")
+            flag = "" if thick else "  (thin)"
+            print(f"     {name:<24}{lifts_is[i]:>+8.2f}{int(sup_is[i]):>8}"
+                  f"{oos:>+9.2f}{n_os:>8}{cost*10000.0:>9.2f}{net:>+10.2f}"
+                  f"{cov:>9.0f}%{flag}")
             rows.append({"predicate": name, "is_lift_bp": float(lifts_is[i]),
                          "is_n": int(sup_is[i]), "oos_lift_bp": oos, "oos_n": n_os,
-                         "oos_net_bp": net})
+                         "oos_cost_bp": cost * 10000.0, "oos_net_bp": net,
+                         "oos_census_priced_pct": cov})
         # CONCENTRATION GUARD. This repo has repeatedly shipped a headline that
         # a handful of rows carried: 98% of gross in 7 rows, six rows flipping
         # the sign of the whole ghost book. A mean lift is not evidence until
@@ -519,10 +841,15 @@ def main() -> int:
         print(f"     HELD OUT OF SAMPLE (same sign, still over the bar): {len(held)}")
         if held:
             paying = [r for r in held if r["oos_net_bp"] > 0]
-            print(f"     ... and NET POSITIVE after a {2*args.fee*10000:.0f}bp round trip: {len(paying)}")
+            basis = ("its own MEASURED round trip" if args.cost_mode == "census"
+                     else f"a flat {2*args.fee*10000:.0f}bp round trip")
+            print(f"     ... and NET POSITIVE after {basis}: {len(paying)}")
             for r in paying:
+                fb = "" if r["oos_census_priced_pct"] >= 99.5 else (
+                    f"  [only {r['oos_census_priced_pct']:.0f}% of its rows were "
+                    f"PRICED; the rest paid the --fee assumption]")
                 print(f"         *** {r['predicate']} -> {r['oos_net_bp']:+.2f}bp/trade"
-                      f" on n={r['oos_n']}")
+                      f" on n={r['oos_n']} after {r['oos_cost_bp']:.2f}bp cost{fb}")
         print()
         results.append({"horizon_min": H, "bar95_bp": bar95, "bar50_bp": bar50,
                         "screened": int(ok.sum()), "survivors": len(survivors),
@@ -536,8 +863,12 @@ def main() -> int:
         for r in results
     )
     if any_paying:
-        print("  A predicate cleared selection, held out of sample, and pays the fee.")
+        print("  A predicate cleared selection, held out of sample, and pays the cost.")
         print("  It is a CANDIDATE, not an edge: re-run on a later tape before trading it.")
+        if args.cost_mode == "census":
+            print("  And the cost it paid is a FLOOR -- pool fee and impact from a QUOTE, with")
+            print("  no slippage (13.5bp measured live), no MEV and, unless --charge-gas, no")
+            print("  gas. Subtract those before calling anything payable.")
     else:
         print("  NOTHING in this space clears its own selection bar out of sample and")
         print("  pays the round trip. That is a real result: it prices how much of a")
@@ -546,7 +877,24 @@ def main() -> int:
     print("=" * 88)
 
     if args.json:
-        Path(args.json).write_text(json.dumps(results, indent=2), encoding="utf-8")
+        payload = {
+            "cost_mode": args.cost_mode,
+            "cost_census": args.cost_census if args.cost_mode == "census" else None,
+            "cost_census_git_sha": (census or {}).get("git_sha") if census else None,
+            "cost_clip_usd": clip,
+            "charge_gas": bool(args.charge_gas),
+            "flat_fee_one_way": args.fee,
+            "fillable_only": bool(args.fillable_only),
+            "fillable_source": args.fillable_source if args.fillable_only else None,
+            "cost_basis": cost_report,
+            "hours_requested": args.hours,
+            "span_hours_actual": span_h,
+            "symbols": len(by_symbol),
+            "ticks": int(len(ts)),
+            "horizons": list(HORIZONS_MIN),
+            "results": results,
+        }
+        Path(args.json).write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"  wrote {args.json}")
     return 0
 
