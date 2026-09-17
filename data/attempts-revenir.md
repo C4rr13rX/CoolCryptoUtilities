@@ -7784,3 +7784,48 @@ diverge, the charged cost will not notice and nobody will be told.
 
 STILL TRUE: the window is 0 live / 20 ghost by construction; the provenance
 shipped is correct and cost-neutral; the fail-closed regression was real.
+
+### Pass 439, second route: can a fitness penalty kill the GA's best-of-N artifact?
+
+CLOSED NEGATIVE. Do not re-attempt the K-penalty form.
+
+ROUTE: [[ga-edge-does-not-survive-the-seed]] says every GA seed comes back
+positive and the edge decays with sample size. Root cause found at
+`trading/genome/ga.py:285-286`:
+
+    confidence = math.sqrt(min(1.0, total / 200.0))
+    genome.fitness = oos_edge * expectancy * 1000.0 * confidence
+
+A sample-size discount already exists and SATURATES at 200 trades -- 200 and
+1,423 trades receive the identical confidence 1.0. Measured over all 8 runs
+in `data/ga_runs.json`: corr(trades, edge) = -0.768, corr(log trades, edge)
+= -0.913.
+
+PROPOSED FIX, prototyped read-only: score `edge - SE*sqrt(2 ln K)`, K=32
+(population 8 x 4 generations).
+
+IT DOES NOT WORK. Re-scored over all 8 runs:
+
+    run                 n      edge  noisebar    margin    fit_NOW    fit_NEW
+    seedcheck-909     132 +20.4107pp 11.4577pp  +8.9531pp     1.8397     0.9933
+    first-real-run    276  +5.4591pp  7.9237pp  -2.4646pp     0.3436     0.0000
+    seedcheck-77      320  +8.6658pp  7.3588pp  +1.3070pp     0.2341     0.0353
+    909-widened      1423  +1.8838pp  3.4896pp  -1.6059pp     0.0688     0.0000
+    seedcheck-404     645  +1.2656pp  5.1833pp  -3.9177pp     0.0438     0.0000
+
+    THE TEST: current  1.8397 vs 0.0688 -> champion WINS
+              proposed 0.9933 vs 0.0000 -> champion STILL WINS
+
+WHY: +20.41pp on 132 trades is ~4.7 SE and clears the K=32 bar of 11.46pp by
++8.95pp. K=32 is the WRONG K -- each genome also SELECTS ITS OWN TRADES via
+`entry_percentile` / `min_occurrences` / `min_abs_return`, so the effective
+multiplicity is far larger than the genome count and is not knowable from K.
+
+WHAT SURVIVES AS THE FIX: the only thing that has ever killed this artifact
+is the thing that already killed it once -- re-run the champion on a
+STRICTLY WIDER universe. Seed 909 went +20.41pp/132 -> +1.88pp/1423 with only
+the symbol count changed. [c2691536] is re-specified around mandatory widened
+revalidation, with the ga.py:285 saturation demoted to the second criterion.
+
+DATA CAUTION: `data/ga_runs.json` has 8 rows but 6 distinct results --
+`nullguard` duplicates `seedcheck-909` and `seedcheck-77` appears twice.
