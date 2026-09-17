@@ -7077,3 +7077,62 @@ confusion report at all ... confusion_never_loaded: True" alongside
 `confusion_stale: False`. A never-loaded report reads as NOT STALE, so any caller
 testing staleness to decide whether to trust it gets a green light on a report
 that does not exist.
+
+---
+
+## PASS 434 (Echo, senior) -- THE GHOST ROUTE IS UNREACHABLE, NOT SLOW. CLOSED.
+
+ROUTE TRIED: "widen the live gate's candidate set so a second strategy can
+qualify". CLOSED, NEGATIVE. Ran the gate's own qualification filter
+(ready AND ghost_reason_is_earned(reason) AND total_net_profit > 0) over all 41
+ledger strategies:
+
+    STRATEGIES THAT WOULD QUALIFY IF THE SET WERE WIDE OPEN: 0
+      rsi_reversal@1w   n=5  -0.1113
+      rsi_reversal@3d   n=4  -0.1273
+      atf_static_scout  n=3  +0.0059   <- only in-window positive, NO LIVE BRANCH
+      atf_static        n=1  stale_ghost_book
+      32 of 41 have ZERO in-window samples
+
+Do not spend another pass on "approve a second strategy".
+
+WHY STEP 6 BLOCKS, and it is NOT a bug: _live_gate_candidates() returns exactly
+['money_button']; _ghost_validation('money_button') is ready=True on
+cold_start_bootstrap with samples=0; _ghost_validation_for_live() correctly
+forces that to ready=False, reason 'no_qualified_strategy:cold_start_bootstrap'
+(pipeline.py:4721-4733). pipeline.py:6297 then reports ghost_validation_block
+because 'not ghost_ready' is the FIRST branch of the cascade. The gate is
+refusing a strategy with zero evidence, which is its job.
+
+ROUTE TRIED: "concentrate the evidence budget on one strategy". CLOSED,
+NEGATIVE, on arithmetic:
+    bar        = 25 TRADEABLE round trips, per strategy, inside 120h
+    conversion = 54 tradeable / 442 pooled = 12.2%
+    so one strategy needs 25/0.122 = 205 POOLED round trips in 5 days = 41/day
+    and the WHOLE SYSTEM produces 442/14.1d = 31/day pooled.
+The requirement for ONE strategy exceeds the entire system's output. There is no
+split of 31/day that gives anyone 41/day.
+
+WHAT IS STILL OPEN, and it is now the highest-leverage change available:
+RAISE THE TRADEABLE CONVERSION RATE by restricting the ghost universe to deep
+pools. At conversion ~1.0, 25 tradeable rows cost 25 pooled round trips instead
+of 205 -- inside a week at the rate we already have. This collapses two standing
+routes into ONE lever: the deep pool is both the CHEAP pool (WETH 0.04-0.11% vs
+AERO 0.64-4.35%) and the TRADEABLE pool. Filed [8a4ce92b].
+
+UNCHECKED CAVEAT, do not skip it: [583ba889] measured atf_static* taking 179 of
+~186 decision cycles in 6h (96%) while holding only 4 of the 20 gate-countable
+rows. If cycles are ALREADY 96% concentrated, concentration was never the
+bottleneck and conversion is the whole story. Not verified this pass.
+
+DO NOT LOWER min_trades=25. A zero-edge coin clears the graduation bar 29-41% of
+the time as it stands.
+
+ALSO FILED [74a12c84]: buy the 25 rows LIVE instead. 25 round trips on WETH at a
+$2 clip = $0.05 in round-trip fees, $0.51 expected loss at the measured -102bp
+live rate, and 25 ON-CHAIN RECEIPTS -- which ghost rows can never produce. Needs
+an OPERATOR decision, asked on the board, not an agent's.
+
+REJECTED [4c3d75cd] (omen shape-key census): the brain is OMEN_STRATEGY_ENABLED=0
+by standing instruction and its best held-out result is a significant LOSS
+(t=-5.97). Five points on a switched-off subsystem moves the scoreboard by zero.
