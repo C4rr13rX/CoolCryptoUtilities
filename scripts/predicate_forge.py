@@ -593,8 +593,9 @@ def main() -> int:
                          "a clip artifact, not a token cost. Off by default, printed always.")
     ap.add_argument("--fillable-only", action="store_true",
                     help="restrict the universe to symbols the live lane can actually fill. "
-                         "Predictability and fillability are measured ANTI-CORRELATED here, "
-                         "so an edge in a pool we cannot trade is not a result.")
+                         "An edge in a pool we cannot trade is not a result -- and this run "
+                         "prices what the restriction costs you: on 168h the permutation bar "
+                         "rose 2-3x and held-out survivors fell 11 to 1.")
     ap.add_argument("--fillable-source", choices=("census", "live-fills"), default="census",
                     help="census (default): a symbol is fillable if the round-trip census "
                          "priced a direct USDC pool for it through the one venue that answers "
@@ -676,9 +677,12 @@ def main() -> int:
               f"{len(fills_set - census_set)} symbols we DID fill are unquotable in the census")
         print(f"     ({', '.join(sorted(fills_set - census_set)) or 'none'}), so neither set is "
               f"a superset of the other.")
-        print(f"     WHY: predictability and fillability are measured ANTI-CORRELATED on this")
-        print(f"     tape (+15.77bp lift where we cannot fill, +0.88bp where we can). A result")
-        print(f"     from the full universe is mostly a result about pools we cannot trade.")
+        print(f"     WHY: a result from the full universe is mostly a result about pools we")
+        print(f"     cannot trade. WHAT IT COSTS, measured by this script on 168h: the")
+        print(f"     permutation bar ROSE 2-3x (4.65 -> 13.72bp at 2m) because fewer symbols")
+        print(f"     means fewer independent rows, and held-out survivors fell 11 to 1. Do not")
+        print(f"     cite the old '+15.77bp vs +0.88bp' pair for this -- pass 448 retroactively")
+        print(f"     bounded the +0.88bp deep-subset number as a concentration artifact.")
         if not by_symbol:
             print("  no fillable symbol is in the tape. nothing to screen.")
             return 1
