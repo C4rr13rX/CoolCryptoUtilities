@@ -7293,3 +7293,64 @@ it is free and may make the restart unnecessary.
 DO NOT LOWER MONEY_BUTTON_MIN_DIR_PROB. 0.52 is barely above a coin flip. A head
 whose output centres at 0.145 is mis-scaled, and dropping the floor to meet it
 spends real money on a number that means nothing. FIX THE LEVEL.
+
+## Pass 436 (Echo, senior) -- a 5-point item was built on the test suite's own output
+
+ROUTE: sprint item [df638247], "three settled live CBBTC-USDC BUYS have
+unreadable fills, real spent money has no booked basis, the symbol is
+entry-locked". Filed from logs/system.log.
+
+RESULT: REJECTED. Every criterion false, each disproved by one query against
+trading_ops:
+
+  * all four named tx have live-entry booking rows, executed=True,
+    size ~9.27e-06, quote_spent 0.75. The money had a basis all along.
+  * CBBTC-USDC was never entry-locked: newest rows 09-16 02:58 are ordinary
+    entry-arbitration / entry-refused-symbol-motion, and ZERO rows anywhere
+    cite an unreconciled settled buy.
+  * all 7,367 "cannot read fills from receipts" lines name _Swapper (6,428),
+    _OldSwapper (938) or _DeadSwapper (1) -- classes that exist only under
+    tests/. Production's SwapService HAS read_fill (services/swap_service.py
+    :151), so the `no_fill` branch is unreachable outside a test double.
+  * the acceptance test ("must fail against the current code") cannot fail:
+    the receipt path already works and already has three passing tests.
+
+CLOSED: the "CBBTC money is gone" route. It is not gone.
+
+WHAT GENERALISES, and it is the reason to read this entry: logs/system.log
+interleaves pytest output, CLI output and production output with nothing in the
+line marking which. This is already written down as a known trap and an item
+was filed against it anyway, at 5 points, and dealt to an agent. A warning did
+not stop it; a command might. Shipped scripts/tx_forensics.py (commit 1a9ea65,
+read-only):
+
+    --attribute REGEX   what wrote these log lines, production or pytest
+    --audit             every settled live entry with no booking row, ALL symbols
+    --symbol SYM        settled vs booked, and whether the symbol is really locked
+    --tx HASH           every store row mentioning one transaction
+
+MEASURED WITH IT, whole-store, replacing a one-symbol guess with a census:
+24 settled live entries, 20 booked, 4 UNBOOKED -- 0xfd133cfe (BASECAT),
+0xd4c2d4df (AERO), 0x9088fe4e (BASECAT), 0xf1c6c076 (CBBTC). All before
+2026-09-05; every cause already fixed in code. Two of the four are the exact
+transactions services/fill_receipt.py names in its OWN docstring as the trades
+it was written against -- the reader fixed the path forward, nobody re-booked
+the rows. Filed [4632c551] at 2 points / priority 4 with the honest note that
+booking them adds OPEN positions, not closed round trips, so it does NOT move
+realised live P/L.
+
+AUDITED [7a09a2e5] (CBETH phantom) with the same tool, two results:
+  * its attribution check PASSES -- 14,735 "phantom" lines, 0 test doubles. It
+    is production, unlike [df638247]. The tool confirms as well as it kills.
+  * but its shape was wrong: size 0.000262122199594547 is EXACTLY the booked
+    size of tx 0x5de159ef, entered 09-03 23:15 and EXITED 09-04 00:17. So it
+    is a stale copy of a CLOSED position, not an unbooked entry. Criteria
+    rewritten on the item.
+
+CLEARED, and worth recording because it looked bad: CBETH's 09-03 07:38 booking
+row still carries the corrupted quote_spent=7.5e-13 (0.75 USDC read as an
+18-decimal token), the exact corruption bot.py's _fill_price_disagrees_with_feed
+was written against, and that docstring warns it would book a ~10^12 return.
+CHECKED: trade_outcomes books that position at entry_price=2739.72, the CORRECT
+value, net +0.0104. The guard held. NO fabricated profit reached the live book.
+Do not re-open this as a P/L contamination route.
