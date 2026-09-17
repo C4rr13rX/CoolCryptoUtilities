@@ -11699,3 +11699,30 @@ Unpriced must return today's number **labelled and counted**, not refused.
 
 **Status: the cost measurement is CLOSED. Coverage is OPEN and is now the binding constraint** —
 a commit claiming "cost is per-symbol" is true for a fifth of the tape until `[15bce061]` runs.
+
+### Pass 461 correction — MY "19.2x TOO STRICT" WAS WRONG. THE NUMBER IS 4.4x, AND A WORKER CAUGHT IT
+
+Forge, building the per-symbol accessor, refused the census number I handed it and was right to.
+**The census quotes POOL COST ONLY** — its own `THESE_ARE_QUOTES_NOT_FILLS.not_modelled` lists
+*"gas (a dollar per leg, not a rate)"*. And `DEFAULT_FIXED_USD` 0.004047 **is** that gas: it
+equals the census's own `measured_gas_context.median_round_trip_usd` to nine digits. So the
+per-symbol rate is `FIXED/n + census_pool(symbol, n)` — the old formula with only the
+token-blind *proportional* term replaced. Returning the raw census number would have **deleted
+the gas charge from every symbol** (405bp at a $0.10 clip).
+
+**My published ratio compared a $6 gate rate against a $2 pool-only cost.** Two errors stacked in
+my favour: a clip mismatch and a missing gas term. Recomputed independently, apples-to-apples:
+
+    clip $2   FLAT 52.10bp | WETH 22.24 (2.34x) | AERO 33.27 (1.57x) | VIRTUAL 87.85 (0.59x)
+    clip $6   FLAT 38.62bp | WETH  8.79 (4.39x) | AERO 17.04 (2.27x) | VIRTUAL 187.62 (0.21x)
+
+**The direction of every finding survives; the magnitudes do not.** WETH and AERO are still
+over-charged and still the live cases. VIRTUAL is still under-charged and still the live
+counterexample. But "19.2x too strict on WETH" is **4.4x**, and anyone who repeats 19.2x is
+repeating my arithmetic error. The 1642x end-to-end spread across the full symbol set stands —
+that one was computed within a single clip.
+
+**The general trap, since this repo keeps stepping in it:** a cost that is `fixed + rate` cannot
+be corrected by swapping in a number that measures only the rate. Check what a census excludes
+before you treat it as a total. I read the file's own caveat block, quoted it approvingly on the
+board, and then did exactly what it warned against.
