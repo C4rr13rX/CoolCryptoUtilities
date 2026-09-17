@@ -8566,3 +8566,37 @@ robust to the cost assumption -- waiting 28 days buys evidence for a rule whose
 measured expectancy is negative. Both halves of the money_button route are now
 closed by measurement: it does not fire often enough, and when it fires it does
 not pay.
+
+### Pass 445, fourth result: "SHORTEN THE HOLD" is BACKWARDS on the deep-pool universe
+
+Standing instruction (c) says "the tradeable book is POSITIVE inside 15 minutes
+and negative after, so hold time may be worth more than signal." On the
+deep-pool majors the dip rule's expectancy moves the OTHER WAY. Same runs as
+above, $10 clip, mean net per round trip:
+
+    symbol       floor   5m        15m       30m       45m       60m
+    CBBTC-USDC   0.50%  -0.2865%  -0.2330%  -0.1973%  -0.1451%  -0.0613%
+    CBBTC-USDC   1.00%  -0.2775%  -0.2339%  -0.1738%  -0.1689%  -0.0490%
+    WETH-USDC    0.50%  -0.3077%  -0.2652%  -0.2452%  -0.2185%  -0.3347%
+    WETH-USDC    1.00%  -0.2391%  -0.1468%  -0.1553%  -0.0359%  -0.0809%
+
+CBBTC improves MONOTONICALLY from 5m to 60m at both floors, and WETH improves
+out to 45m. The best cell in the entire pass is the LONGEST hold, not the
+shortest. Nothing here is positive, but the gradient points the opposite way
+to the standing instruction.
+
+THE CONFOUND, STATED RATHER THAN BURIED: n FALLS as the horizon grows, because
+entries are non-overlapping (busy_until = ts + horizon). CBBTC 0.5% goes
+n=24 at 5m to n=9 at 60m. So the rows of that table are NOT independent samples
+and the longer horizons are a subset selected by the shorter ones having
+already consumed the tape. The direction is consistent across four
+(symbol, floor) pairs, which is why it is worth recording, but it is a GRADIENT
+OBSERVATION, not a measured hold-length effect.
+
+WHAT IT IS GOOD FOR: the "positive inside 15 minutes" finding is a property of
+the OLD ghost book -- thin tokens, contaminated rows, see
+[the-tradeable-book-is-positive-inside-fifteen-minutes] which was already
+CONTRADICTED once. It does NOT transfer to the deep-pool universe, and a pass
+spent shortening holds on deep pools would be aimed at a gradient that runs the
+wrong way. Route (c) is NOT closed, but it has no support on the deep subset
+and must not be started on the strength of the old ghost-book number.
