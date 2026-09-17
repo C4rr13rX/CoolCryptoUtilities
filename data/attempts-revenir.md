@@ -9680,3 +9680,82 @@ your own window and counts rather than reconciling against these.
 Same trap as tape-span-is-not-tape-coverage and ten-rows-set-the-books-sign, one
 level up: on a bursty feed a fixed-DURATION window is not a fixed SAMPLE. Prefer
 ratios in acceptance criteria; stamp the window on any absolute.
+
+
+## Pass 451 (Echo, senior) -- RESTRICT THE STREAM ON POOL DEPTH [eb269198]
+
+CLOSED NEGATIVE, AND THE REMEDY IS ACTIVELY HARMFUL. Route: gate the streamed
+symbol set on data/pool_depth_snapshot.json with a >=1M floor, UNRESOLVED
+excluded, exactly as the backlog item specified it.
+
+WINDOW: storage/trading_cache.db market_stream, now-168h, 148 symbols /
+33,275 ticks. Depth from data/pool_depth_snapshot.json (_taken 2026-09-16T21:31Z).
+
+THE PREMISE REPRODUCES. Tick share by base-token depth:
+    >=1M              3,289  ( 9.9%)    3 symbols
+    250k-1M           1,737  ( 5.2%)    7 symbols
+    <250k            13,343  (40.1%)   46 symbols
+    UNRESOLVED       14,522  (43.7%)   82 symbols
+    NOT IN SNAPSHOT     367  ( 1.1%)   10 symbols
+The item claimed 11.6% over 1M and 16.5% over 250k; I get 9.9% and 15.1% on a
+later window. Same story, window slid. The tape IS mostly untradeable.
+
+THE REMEDY INVERTS THE GOAL. Applying the filter as written:
+    AERO-USDC     3,021 ticks   91.8% of survivors   depth 33.4M
+    CBBTC-USDC      200 ticks    6.1%                depth  7.6M
+    LAPTOP-USDC      69 ticks    2.1%                depth  1.58M
+Three symbols. And it DELETES ETH-USDC 1444, ETH-USDT 1790, WETH-USDC 1432,
+WETH-USDT 1573 = 6,244 ticks, 18.8% OF THE TAPE.
+
+The operator-measured cost wall is WETH 0.04-0.11%, AERO 0.64-4.35% per round
+trip. This filter keeps the token that costs up to 40x more and deletes the only
+one whose cost sits below any edge ever measured here. It is anti-correlated
+with the thing that actually binds -- same conclusion as
+pool-depth-does-not-predict-round-trip-cost, arrived at from the stream side.
+And per pass 450 the entry funnel is already 186 of 200 directives on AERO;
+this takes it to ~100% by construction. It manufactures losing AERO round trips
+faster. DO NOT SHIP IT.
+
+WETH IS NOT THIN, IT WAS NEVER ASKED. scripts/pool_depth_sweep.py:64 skips any
+pool whose baseToken.symbol != the queried symbol, so a token on the QUOTE side
+of its deepest pool always reads null. That is the whole 43.7% UNRESOLVED
+bucket. WETH is 2.2M either-side. **UNRESOLVED means UNASKED.** Already filed
+as [205092e7] -- I filed a duplicate [7a86a33c] before checking and rejected it
+the same pass; evidence folded into [205092e7]. Upstream of SIX consumers.
+predicate_forge.py:387-397 is the one that bites: --min-depth excludes anything
+without a reading (deliberately, and it says so at :396), so every DEEP UNIVERSE
+screen ever run here structurally excluded the cheapest token in the repo. That
+is the "deep bar keeps 6 names, 1 live" result. The code is correct; the data
+is wrong.
+
+THE ITEM'S FILE DOES NOT EXIST. It declared services/market_data.py. There is no
+such file. The streamed set is chosen in trading/selector.py: all_ordered is
+split at :1349-1353 into ordered[:pair_limit] (full bots, :1355) and data_pairs
+(data-only streams, :1375). A filter belongs on all_ordered just after
+_sink_condemned (:1332) so one filter covers both tiers. Corrected on the item.
+
+CRITERION 3 IS UNANSWERABLE FROM THAT FILE. "Report how many deep pairs we do
+not stream" cannot be answered by the snapshot: it is a census OF the stream
+(_swept_symbols=153, "Swept for every symbol in market_stream"). It names
+exactly ONE unstreamed symbol over 1M -- CBXRP, 117.7M -- and that is an
+artifact of the sweep's input, not a fact about base. An outward sweep of base's
+deepest USDC pairs does not exist in this repo.
+
+ALREADY CLOSED, AND CLOSED HARDER THAN I FIRST WROTE. attempts-revenir.md:9267
+closes route (b) "restrict-the-universe-to-deep-pools" as a path to a profitable
+trade, and it is the STRONGEST form of that closure: it was "run properly for the
+first time (the previous versions were restricted to AERO by a broken sweep)" and
+still failed -- 31.49bp of round trip against a 4-11bp gross CENSORED OF AERO. So
+the closure does NOT depend on the sweep artifact I found; fixing the sweep does
+not reopen it. :8173 is narrower (closed for the DIP rule specifically) and :8239
+is the same verdict on [bb53fd2b]. That same passage states plainly that fixing
+the depth sweep "buys an honest measurement and a lower noise bar; it does not
+open the money path" -- so [205092e7] is a measurement-integrity item, NOT a
+route to profit, and should not be sold as one.
+
+This item re-litigated a closed route under a tape-contamination framing. The
+contamination concern is real and survives. The depth-filter remedy is closed and
+must not be re-opened without a COST-based rule rather than a DEPTH-based one.
+
+STATUS: [eb269198] BLOCKED on [7a86a33c], criteria rewritten. Nothing shipped;
+zero production code written, which is this seat's job.
