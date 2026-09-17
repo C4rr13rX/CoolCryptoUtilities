@@ -269,10 +269,12 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.census:
-        # Assign THROUGH the module. round_trip_pct's globals are dpr's, so
-        # rebinding here is what both readers see at call time.
+        # Install THROUGH dpr.set_active_census, never by assigning a local
+        # name. round_trip_pct's globals are dpr's, and set_active_census also
+        # covers the case where dpr was reached as __main__ as well as as
+        # scripts.deep_pool_reprice -- two module objects, one source file.
         try:
-            dpr.MEASURED_ROUND_TRIP_PCT, dpr.QUOTE_PROVENANCE = load_quote_census(args.census)
+            dpr.set_active_census(*load_quote_census(args.census))
         except CensusArtifactError as exc:
             print("FATAL: %s" % exc, file=sys.stderr)
             return 2

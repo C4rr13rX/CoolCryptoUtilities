@@ -266,6 +266,32 @@ def load_quote_census(path: Optional[str] = None
 
 MEASURED_ROUND_TRIP_PCT, QUOTE_PROVENANCE = load_quote_census()
 
+#: The import path the other reader uses. Kept as a constant so the rebind
+#: below cannot drift from the import in tradeable_book_repricing.py.
+_MODULE_NAME = "scripts.deep_pool_reprice"
+
+
+def set_active_census(table: Dict[str, List[Tuple[float, float]]],
+                      prov: Dict[str, Any]) -> None:
+    """Install a census as THE table both readers see, however they loaded it.
+
+    WHY THIS IS NOT JUST AN ASSIGNMENT. Run as a script, this file is the
+    ``__main__`` module; imported by tradeable_book_repricing.py it is
+    ``scripts.deep_pool_reprice``. Those are two module objects built from one
+    source file, each with its OWN module-level MEASURED_ROUND_TRIP_PCT, and a
+    ``global`` statement in one does not touch the other. Nothing in production
+    loads both today -- each script standalone sees exactly one, which is why
+    --census works -- but "one source" is only true by luck as long as the
+    override writes to whichever copy it happens to be in. This writes to both,
+    so there is one authoritative table no matter how the module was reached.
+    """
+    globals()["MEASURED_ROUND_TRIP_PCT"] = table
+    globals()["QUOTE_PROVENANCE"] = prov
+    other = sys.modules.get(_MODULE_NAME)
+    if other is not None and other.__dict__ is not globals():
+        other.MEASURED_ROUND_TRIP_PCT = table
+        other.QUOTE_PROVENANCE = prov
+
 
 def provenance_lines(prov: Optional[Dict[str, Any]] = None) -> List[str]:
     """The lines every report must print before it prints a cost.
@@ -576,6 +602,148 @@ CAVEATS -- these travel with every number above and are not footnotes.
 """ % MAX_CLIP_EXTRAPOLATION
 
 
+def self_test() -> int:
+    """Exercise the SEAM -- not the arithmetic -- and print PASS/FAIL per check.
+
+    WHY THIS IS A FLAG AND NOT A TEST FILE. The one-source-two-readers seam
+    shipped with no artifact on disk, so for its whole life both readers ran on
+    the legacy literal and the --census path was never executed. Checking it
+    required hand-writing an artifact, so nobody did, and four defects sat in
+    it: a bad --census path silently returned the legacy table and exited 0; the
+    quotes-not-fills caveat printed only if the writer supplied the key; the
+    displayed rate was one arbitrary row, so the two readers disagreed on the
+    same symbol; and a stale import-time alias sat under the name the read sites
+    want. Every check below is one of those, so they cannot come back unnoticed.
+
+    Uses a temp artifact only. Touches no database and writes nothing to data/.
+    """
+    import tempfile
+
+    fails: List[str] = []
+
+    def check(name: str, ok: bool, detail: str = "") -> None:
+        print("  %-4s %s%s" % ("PASS" if ok else "FAIL", name,
+                               ("  -- " + detail) if detail else ""))
+        if not ok:
+            fails.append(name)
+
+    doc = {
+        "generated_at_utc": "2026-01-01T00:00:00Z", "git_sha": "SELFTEST",
+        "chain": "base", "book_mode": "ghost", "clip_grid_usd": [1.0, 2.0],
+        "quoted": {
+            "ZZTESTA": {"points": [[1.0, 0.1111], [2.0, 0.2222]]},
+            "ZZEMPTY": {"points": []},
+            "ZZBADCLIP": {"points": [[0, 0.5], [-1, 0.5]]},
+        },
+        # ADVERSARIAL: rate-shaped fields in the buckets that must be ignored.
+        "unquotable": {"ZZUNQ": {"rows": 9, "points": [[1.0, 0.99]],
+                                 "assumed_pct": 0.99, "cost_pct": 0.99}},
+        "unresolved": {"ZZUNR": {"rows": 3, "cost_pct": 0.77}},
+    }
+    print("SEAM SELF-TEST -- one source, two readers")
+    with tempfile.TemporaryDirectory() as td:
+        good = Path(td) / "round_trip_quote_census_selftest.json"
+        good.write_text(json.dumps(doc), encoding="utf-8")
+
+        table, prov = load_quote_census(str(good))
+        check("artifact is read, not the legacy literal",
+              prov.get("source") == "artifact" and set(table) == {"ZZTESTA"},
+              "table=%s source=%s" % (sorted(table), prov.get("source")))
+        check("legacy symbols do NOT leak in alongside it",
+              not ({"WETH", "AERO", "KTA", "CBBTC", "SOL", "ETH"} & set(table)))
+        check("quoted-but-empty is charged NOTHING",
+              round_trip_pct("ZZEMPTY", 1.0, table) is None)
+        check("non-positive clips are rejected, not used as a rate",
+              round_trip_pct("ZZBADCLIP", 1.0, table) is None
+              and prov.get("rejected_points") == 2,
+              "rejected=%s" % prov.get("rejected_points"))
+        check("unquotable is charged NOTHING despite carrying "
+              "points/assumed_pct/cost_pct",
+              round_trip_pct("ZZUNQ", 1.0, table) is None)
+        check("unresolved is charged NOTHING despite carrying cost_pct",
+              round_trip_pct("ZZUNR", 1.0, table) is None)
+        check("a quoted symbol IS priced at its nearest clip",
+              round_trip_pct("ZZTESTA", 2.0, table) == 0.2222,
+              "got %r" % round_trip_pct("ZZTESTA", 2.0, table))
+        check("a clip beyond %gx from any quote is charged NOTHING"
+              % MAX_CLIP_EXTRAPOLATION,
+              round_trip_pct("ZZTESTA", 500.0, table) is None)
+
+        # The provenance contract: the caveat and the sha line are NOT
+        # contingent on the writer supplying the keys.
+        bare = Path(td) / "round_trip_quote_census_bare.json"
+        bare.write_text(json.dumps({"quoted": doc["quoted"]}), encoding="utf-8")
+        _t, bprov = load_quote_census(str(bare))
+        blines = provenance_lines(bprov)
+        check("provenance prints QUOTES-NOT-FILLS even with no caveat key",
+              any("QUOTES, NOT FILLS" in ln for ln in blines))
+        check("provenance prints a sha/stamp line even with neither key",
+              any("NOT STAMPED" in ln and "NO SHA" in ln for ln in blines))
+
+        # The silent no-op. Each of these used to return the legacy table.
+        for label, payload in (("missing path", None),
+                               ("malformed json", "{not json"),
+                               ("json with no 'quoted' key", '{"a":1}')):
+            p = Path(td) / ("bad_%s.json" % label.split()[0])
+            if payload is not None:
+                p.write_text(payload, encoding="utf-8")
+            try:
+                load_quote_census(str(p))
+                check("explicit --census raises on %s" % label, False,
+                      "it returned a table instead")
+            except CensusArtifactError:
+                check("explicit --census raises on %s" % label, True)
+
+        # A contradictory artifact must be NAMED, not quietly priced.
+        contra = Path(td) / "round_trip_quote_census_contra.json"
+        cdoc = dict(doc)
+        cdoc["unquotable"] = dict(doc["unquotable"], ZZTESTA={"rows": 1})
+        contra.write_text(json.dumps(cdoc), encoding="utf-8")
+        _t2, cprov = load_quote_census(str(contra))
+        check("a symbol in BOTH quoted and unquotable is flagged",
+              cprov.get("contradictions") == ["ZZTESTA"]
+              and any("CONTRADICTION" in ln for ln in provenance_lines(cprov)),
+              "contradictions=%s" % cprov.get("contradictions"))
+
+        # BOTH READERS, ONE SOURCE. The other reader must see an override
+        # installed here, and must derive the SAME rate from it. This is the
+        # check that would have caught "one source and ONE reader".
+        try:
+            import scripts.tradeable_book_repricing as tbr
+            saved_t, saved_p = MEASURED_ROUND_TRIP_PCT, QUOTE_PROVENANCE
+            set_active_census(table, prov)
+            try:
+                r2 = tbr.round_trip_pct("ZZTESTA", 1.0)
+                check("reader 2 (tradeable_book_repricing) sees the override",
+                      r2 == 0.1111, "got %r" % (r2,))
+                check("both readers derive the SAME rate from one source",
+                      r2 == round_trip_pct("ZZTESTA", 1.0),
+                      "reader1=%r reader2=%r"
+                      % (round_trip_pct("ZZTESTA", 1.0), r2))
+                check("reader 2 reads the table at CALL time, not import time",
+                      tbr.non_monotone_span("ZZTESTA") is None
+                      and tbr.non_monotone_span("AERO") is None)
+                check("reader 2 holds no stale import-time alias",
+                      not hasattr(tbr, "MEASURED_ROUND_TRIP_PCT"),
+                      "" if not hasattr(tbr, "MEASURED_ROUND_TRIP_PCT") else
+                      "tbr.MEASURED_ROUND_TRIP_PCT is back -- an import-time "
+                      "snapshot taken before any --census can run")
+            finally:
+                set_active_census(saved_t, saved_p)
+        except ImportError as exc:  # noqa: BLE001
+            check("reader 2 importable", False, str(exc))
+
+    print()
+    if fails:
+        print("SELF-TEST FAILED: %d of the seam's guarantees are broken: %s"
+              % (len(fails), "; ".join(fails)))
+        return 1
+    print("SELF-TEST PASSED. The seam carries the artifact, charges unquoted")
+    print("pools NOTHING, refuses a bad --census instead of falling back to the")
+    print("legacy literal, and prints its caveat unconditionally.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", default=os.environ.get("TRADING_DB_PATH", "storage/trading_cache.db"))
@@ -587,12 +755,17 @@ def main() -> int:
     ap.add_argument("--census", default=None,
                     help="path to a round_trip_quote_census artifact; default "
                          "is the newest under data/")
+    ap.add_argument("--self-test", action="store_true",
+                    help="exercise the census SEAM with a temporary synthetic "
+                         "artifact and exit; touches no database")
     args = ap.parse_args()
 
+    if args.self_test:
+        return self_test()
+
     if args.census:
-        global MEASURED_ROUND_TRIP_PCT, QUOTE_PROVENANCE  # noqa: PLW0603
         try:
-            MEASURED_ROUND_TRIP_PCT, QUOTE_PROVENANCE = load_quote_census(args.census)
+            set_active_census(*load_quote_census(args.census))
         except CensusArtifactError as exc:
             print("FATAL: %s" % exc, file=sys.stderr)
             return 2
