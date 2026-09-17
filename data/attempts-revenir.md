@@ -7948,3 +7948,57 @@ NOT as a reopening. Whoever revisits it needs live rows, not more replay.
 STILL UNMEASURED: the momentum plugin's own replay. The census script replays
 the DIP gate only. The plugin now holds the live arm alone on 2 ghost trades at
 net -0.0161, and nobody has ever measured it in isolation either.
+
+## Pass 441 (Echo, senior) -- the MOMENTUM money_button, measured for the first time
+
+ROUTE TRIED: replay `trading/strategies/money_button.py` -- the plugin that now
+holds the bare `money_button` id, and with it the operator's live arm -- over
+the same 168h tick store the dip rule was replayed against.
+
+Commit 13f1e77, `scripts/money_button_momentum_census.py`. The script CALLS
+`MoneyButtonStrategy().evaluate(state, ctx)` rather than reimplementing the
+gate, because that gate carries a feed-density guard, a mixed-denomination
+guard, a median-gap-scaled window unit, a volatility discount, a hold
+projection and a volume-fade guard. The dip census reimplements its gate; that
+was safe for seven thresholds on one path and would NOT have been safe here.
+
+    ./.venv/Scripts/python.exe scripts/money_button_momentum_census.py --hours 168
+
+    149 symbols, 29313 evaluations, 18 fires (0.061%), 18 resolved
+    16.7% win   mean NET   -0.7184%   sd 0.7578%   t=-4.022
+                mean GROSS -0.0184%   sd 0.7578%   t=-0.103
+                median hold 16.8 min, target hit 1 of 18
+
+**GROSS IS UNMEASURED, NOT NEGATIVE.** t=-0.10 on n=18. Anyone quoting
+"-0.0184%" as this rule's edge is quoting noise. The script now prints that
+caveat beside the mean so the number cannot be read as a verdict.
+
+**NET IS SIGNIFICANTLY NEGATIVE (t=-4.02) AND THE WHOLE GAP IS THE ROUND
+TRIP.** For this rule, the cost floor is not part of the loss -- it is the
+entire measured loss.
+
+THE CONTRAST WITH THE DIP RULE IS THE POINT:
+
+    money_button_dip   n=333   gross -0.3816%   loses BEFORE cost   CLOSED NEGATIVE
+    money_button       n=18    gross -0.0184%   t=-0.10, unmeasured; loss is 100% cost
+
+Two rules pooled under ONE ledger id until commit 70fc09c this morning, with
+OPPOSITE diagnoses. That is exactly what the shared id was hiding, and it is
+why the split had to precede any cost work rather than follow it.
+
+**CLOSED NEGATIVE: "restrict the universe to deep pools" does not rescue the
+momentum rule either -- for a NEW reason.** All 18 fires are COBEE-USDC and
+DRB-USDC at 0.70% round trip. This gate fired ZERO times in a cheap deep name
+in 168 hours. Restricting the universe to cheap pools does not make its trades
+cheaper; it removes essentially all of them. Cheap cost and this signal do not
+co-occur on our tape. That is a different objection from pass 439's (which
+closed the route on realised live per-token cost, n=21) and it stands
+independently of it.
+
+STILL UNMEASURED: whether the co-occurrence failure is a property of the
+SIGNAL or of the FEED. The cheap deep names may simply be streamed too sparsely
+to clear `window_too_short` / `feed_frozen`, which together are 22% of all
+declines. Nobody has split the decline census by token depth.
+
+UPPER BOUND: `market_stream` carries (ts, price) and no volume, so the
+volume-fade guard cannot fire in replay. Real fire counts are <= these.
