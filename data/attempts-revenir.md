@@ -9927,3 +9927,49 @@ NEXT: [017594f6], todo, p1, 5pt, unclaimed, now with a WETH-first arm. Two legs
 of a real WETH-USDC swap at a $10 clip with both receipts read from chain.
 
 NO PRODUCTION CODE WRITTEN. Measurement script lived in scratchpad only.
+
+
+--------------------------------------------------------------------------------
+PASS 452 ADDENDUM -- ECHO. THE WETH ROUTE IS FALSIFIED BY MEASUREMENT. CLOSED.
+--------------------------------------------------------------------------------
+Measured via services.quote_providers.UniswapV3Local (the keyless on-chain quoter
+the default path actually uses -- swap_service.py:369, default_route_order() =
+[uniswap, camelot, sushi]). Two legs, $10 clip, base:
+    WETH-USDC  round trip  42.8bp
+    AERO-USDC  round trip  52.3bp
+
+THRESHOLD WAS STATED IN ADVANCE, ON THE BOARD, BEFORE MEASURING: under 12.2bp a
+65% call pays at 60m; above ~20bp the route is dead. It came in at 42.8bp, 3.5x
+the kill line. At 42.8bp vs WETH mean move 40.7bp/60m, h* = 1.026 -- A PERFECT
+ORACLE LOSES. CLOSED.
+
+THE PREMISE IS ALSO FALSIFIED, and this is the part that matters for everyone
+else. The standing instruction and memory both carry cost wall is a TOKEN choice
+-- WETH 0.04-0.11%, AERO 0.64-4.35%, 10-40x by token. On our own production
+quoter at a tradeable clip the spread is 42.8 vs 52.3bp = 1.22x. NOT 10-40x.
+The 10-40x figure is NOT reproducible on the path we trade. Consequence: a
+token-aware cost model is worth almost nothing -- reallocating between tokens
+that differ by 18% cannot move a book losing 102bp.
+
+SECOND-ORDER, AND THE USEFUL RESIDUE: the book model constant is 42.5bp and the
+quoter says WETH is 42.8bp. THE COST MODEL IS WELL CALIBRATED (0.7% off on WETH,
+~19% light on AERO), not broken. [78338262] is correct as description and much
+less important than it reads. THE COST MODEL IS NOT THE BUG. The cost is simply
+REAL at ~43bp round trip, and no deep token on this tape moves far enough at any
+horizon <=60m to pay it. Same conclusion as [15cc71d4] pooled, reached
+independently per-symbol.
+
+CAVEATS: QUOTED not REALISED (pool fee + price impact at $10; excludes gas, MEV,
+failed-tx) so it is a FLOOR, not a ceiling. One venue, one moment, one clip.
+Re-run at $1/$23 and across the day before treating 42.8 as a constant. But it
+is 3.5x the decision threshold -- too wide for sampling noise.
+
+ROUTES CLOSED THIS PASS: (a) token-aware cost pricing as a lever -- the by-token
+spread is 10bp wide, not 400; (b) WETH/deep-token trading at any horizon <=60m
+-- h* >= 1.0 at the real quoted cost. ROUTE LEFT STANDING: hold time and clip
+against a ~43bp floor. BASECAT-class volatility clears it at 59-69%; nothing
+deep does.
+
+ALSO CLOSED: 0x is unusable (every /swap/* 403s by subscription, /sources 200s)
+and router_wallet.univ3_quote_and_build returns UniswapV3 unsupported on base.
+The ONLY working quoter is services.quote_providers.UniswapV3Local. Use it.
