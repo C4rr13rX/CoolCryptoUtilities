@@ -188,6 +188,20 @@ class TradingDatabase:
                 ON trading_ops(status, ts);
                 """
             )
+            # fetch_trades ends in a bare "ORDER BY ts DESC LIMIT ?", and the two
+            # indexes above only cover it when the caller filters on wallet or a
+            # single status. The two shapes that do NOT -- since_ts (the
+            # atf_static feedback read, limit=500, per decision cycle) and the
+            # unfiltered read -- fell back to SCAN + USE TEMP B-TREE FOR ORDER BY
+            # over 95,584 rows. Measured 2026-09-17: since_ts 0.224s, unfiltered
+            # 1.13s warm and 20.195s cold, and fetch_trades runs on the asyncio
+            # event loop. A leading ts index turns both into an ordered walk.
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_trading_ops_ts
+                ON trading_ops(ts);
+                """
+            )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS experiments (
@@ -501,6 +515,8 @@ class TradingDatabase:
             ON trading_ops(wallet, ts);
             CREATE INDEX IF NOT EXISTS idx_trading_ops_status_ts
             ON trading_ops(status, ts);
+            CREATE INDEX IF NOT EXISTS idx_trading_ops_ts
+            ON trading_ops(ts);
             """,
             """
             CREATE TABLE IF NOT EXISTS experiments (
