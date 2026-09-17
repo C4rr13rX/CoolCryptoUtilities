@@ -9532,3 +9532,32 @@ forecasts a bigger move and scores higher. 115 of 201 contested ticks discarded 
 candidate in favour of rsi_reversal@1w, which is then refused 97.7% of the time.
 Re-specified on [b3d087c7] with a criterion that forbids buying a lower refusal
 rate by admitting fewer candidates.
+
+### Pass 450, second correction to my own addendum: the silent set is TWO of four, not four.
+
+I claimed four sites set a decision status and never log_trade. I had inferred
+that from the absence of rows. Checked per-site instead:
+
+    bot.py:8550  entry-refused-long-horizon-capacity  LOGS at 8555 -> 0 rows: NEVER FIRES
+    bot.py:8594  guard-blocked                        LOGS at 8611 -> 0 rows: NEVER FIRES
+    bot.py:9443  entry-refused-implausible-basis      NO log_trade -> SILENT (return at 9446)
+    bot.py:9462  entry-refused-live-held              NO log_trade -> SILENT (return at 9465)
+
+This NARROWS the 179 rather than weakening it: two suspects are exonerated by
+their own logging -- they would have left rows and left none, so they are not on
+the path. The only two silent refusals on that stretch of the ghost entry path
+are :9443 and :9462.
+
+:9462 is the one to check first, and not as a guess: it fires when
+_release_position_for_entry (bot.py:13397) returns False, the "symbol held by a
+LIVE position" case. That function's docstring asserts "the refusal is loud and it
+is a measurement, not a guess" -- but the GHOST caller at :9462 discards the
+verdict and returns without writing anything, so the docstring is describing a
+different caller. With dark-feed-positions-are-immortal and
+stranded-positions-block-graduation already on record, the mechanism would be a
+stuck position slot silently refusing every later ghost entry on that symbol
+forever. AERO-USDC is 67% of the chaos refusals and is where to look for a stuck
+slot.
+
+NOT CONFIRMED, and not claimed. Measured: the 179, the complete census that fails
+to account for them, the two silent sites. The cause is BOUNDED, not named.
