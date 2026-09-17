@@ -1440,8 +1440,10 @@ class StrategyLedger:
     # The order gate: a licence is necessary, not sufficient
     # ------------------------------------------------------------------
 
-    def _losing_book_locked(self, sid: str) -> Optional[str]:
-        """Name the first RECORDED book of ``sid`` that lost money, or None.
+    def _losing_book_locked(
+        self, sid: str, *, modes: "tuple[str, ...]" = ("live", "ghost")
+    ) -> Optional[str]:
+        """Name the first RECORDED book of ``sid``, among ``modes``, that lost money.
 
         Each mode is judged ALONE and in its own units. Pooling ghost and live
         would add a sum struck at the ghost clip to a sum struck at the live
@@ -1455,12 +1457,20 @@ class StrategyLedger:
 
         LIVE is checked first so that when both books lose, the refusal names
         the one that lost real money.
+
+        ``modes`` narrows which books count. [f6055c6b] ``live_order_refusal``
+        passes ``("live",)`` for a sid that holds its OWN licence directly: the
+        ghost half of that book is exactly the record an operator already read
+        before hand-approving it, and re-refusing on the same evidence a human
+        already priced in would be a silent override of their decision, not a
+        new check. A borrower's own book, and a lender's book, are still read
+        in full -- nobody has looked at either in that light.
         """
         ent = self._data.get(sid)
         if not isinstance(ent, dict):
             return None
         floor = max(_env_int(_LIVE_ORDER_MIN_TRADES_ENV, 1), 1)
-        for mode_key in ("live", "ghost"):
+        for mode_key in modes:
             book = ent.get(mode_key)
             if not isinstance(book, dict):
                 continue
@@ -1518,15 +1528,25 @@ class StrategyLedger:
 
         TWO BOOKS ARE CONSULTED, AND ONLY TWO:
 
-        1. the id's OWN recorded book, always;
+        1. the id's OWN recorded book, always -- but not always in full. A sid
+           that holds ``live_approved`` on its OWN row is read on its LIVE half
+           only: the ghost half is the exact record an operator already read
+           before hand-approving it, so an automatic veto reusing that same
+           ghost evidence would silently override a human decision rather than
+           add a new one. A fresh LIVE loss is new evidence no human has
+           signed off on, and still refuses. A sid that is only a BORROWER (no
+           ``live_approved`` of its own) has earned no such carve-out and is
+           read on both halves.
         2. the book of the row LENDING it a licence, and only while the licence
-           is genuinely borrowed. Spending on someone else's approval means
-           being judged on the evidence behind it. An id that earns its own
-           ``live_approved`` is judged on its own book alone, which is why the
-           bare ``money_button`` -- the one row an operator hand-approved, in
-           full knowledge of its record -- is untouched by this. Refusing that
-           too would close the live lane outright, and that is a different act
-           needing a different mandate.
+           is genuinely borrowed, read on both halves. Spending on someone
+           else's approval means being judged on the full evidence behind it,
+           ghost included -- the borrower itself was never the thing a human
+           looked at. This is why the bare ``money_button`` -- the one row an
+           operator hand-approved, in full knowledge of its ghost record -- is
+           untouched by rule 2: it borrows nothing, so there is no lender book
+           to add. Refusing it on rule 1's ghost half too would close the live
+           lane outright, and that is a different act needing a different
+           mandate.
 
         EVALUATED AT ORDER TIME, EVERY ORDER. Never cached, never stamped onto
         a row, never evaluated once at arm time. A verdict computed once and
@@ -1553,14 +1573,14 @@ class StrategyLedger:
         """
         sid = (strategy_id or "").strip() or "unclassified"
         with self._lock:
-            reason = self._losing_book_locked(sid)
+            self_approved = self._approved(sid, self._data.get(sid))
+            own_modes = ("live",) if self_approved else ("live", "ghost")
+            reason = self._losing_book_locked(sid, modes=own_modes)
             if reason:
                 reason = f"measured negative expectancy: {reason}"
             else:
                 base = _LIVE_APPROVAL_BASE_IDS.get(sid)
-                borrowed = base and base != sid and not self._approved(
-                    sid, self._data.get(sid)
-                )
+                borrowed = base and base != sid and not self_approved
                 lent = self._losing_book_locked(base) if borrowed else None
                 if lent:
                     reason = (
