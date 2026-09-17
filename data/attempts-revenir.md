@@ -7536,3 +7536,50 @@ should be read as "measure whether this helps", not "this will help".
 METHOD NOTE, and this repo keeps paying for it: controlling for the confound you
 thought of is not the same as knowing what your dependent variable is. Break the
 outcome series down by status BEFORE correlating anything against it.
+
+## Pass 438 -- Echo (senior). The TF route is CLOSED, and the log trap caught me too.
+
+CLOSED NEGATIVE: "importing keras kills the interpreter, so no model can ever be
+trained on this box" [9bf8e153]. The premise is false as of today and the item
+conflated two different failure modes.
+
+  .venv/Scripts/python.exe -X faulthandler -c "import keras"  ->  POST 3.13.2, exit 0
+  .venv/Scripts/python.exe -m pytest --collect-only -q        ->  3324 tests, exit 0
+  scripts/pass_gate.py --check                                ->  723 passed, 0 failed
+
+Not an access violation, not OOM, not a broken wheel: tensorflow 2.20.0 was
+installed 2026-07-08 and keras 3.13.2 on 2026-03-14, both PREDATING the item, so
+nothing was repaired in between. The modern log string "No module named
+'tensorflow'" is reproduced EXACTLY by C:/Python313/python.exe and NOT by the
+venv -- it is a WRONG INTERPRETER, not a broken install. The older June lines
+("TF / DLL load failed", with a traceback) are a genuinely different failure.
+One log string, two causes, one item: that is why it sat unfixed.
+
+PRODUCTION IS IN THE WORKING STATE. PID 22664 is
+.venv/Scripts/python.exe -X utf8 -u main.py --action start_production, started
+09-16 14:48, and 09-17 carries ZERO TF-broken lines.
+
+THE NEAR-MISS, RECORDED BECAUSE IT IS THE EXPENSIVE ONE. Mid-pass I found
+"live readiness is judging with no confusion report at all" three times at
+00:19:34 and was one command from filing it as a step-6 RISK defect. It is test
+output -- from the pass_gate run I had started myself at 00:18:22. The tell is
+already written down at trading/pipeline.py:6800-6807: bursts of EXACTLY THREE
+identical lines inside one second, interleaved with AAA-USDC / SPARE-USDC /
+RuntimeError('rpc exploded') fixtures. Production ticks continuously; it does
+not emit in threes. A senior with this documented in memory still nearly filed
+it, which is the argument for fixing the contamination rather than remembering
+it: [656a76bc], now merged from three duplicate items.
+
+NOT ATTEMPTED, ARGUED INSTEAD -- the operator asked for a brute-force search
+that breeds its own algorithms. Search VOLUME is not the bottleneck and this
+repo has already measured why twice over: a 100x wider search costs under 2bp,
+and the GA's apparent edge fell apart against a best-of-N null at
+corr(variants, edge) = -0.84. What breaks a search here is the GRADER --
+roundtrip_cost_rate(notional) takes no symbol, is the entry gate at
+trading/swap_schedule.py:414, and is 3.5-9.6x too dear on WETH. A search scored
+by a broken fitness function breeds broken algorithms faster. Filed the grader
+as [3fd66841] p1 and the second-order search that depends on it as [abb55118].
+
+LIST NOTE: the backlog is at 107 todo items. Three of them were one defect.
+Collapsing duplicates is cheaper than working them, and a list nobody can reach
+the bottom of hides the two items that matter.
