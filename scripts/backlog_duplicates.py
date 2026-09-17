@@ -42,6 +42,8 @@ DEFAULT_BACKLOG = Path("D:/Projects/ContinuousRefinement/data/backlog-revenir.js
 # always named by the thing it lives in: a function, a module path, a call site.
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]{3,}(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 PATHY = re.compile(r"[A-Za-z_][\w./\\-]*\.py\b")
+# Backlog ids are 8 hex digits. An item quoting one is referring to it.
+ID_TOKEN = re.compile(r"^[0-9a-f]{8}$")
 
 # Words that appear in nearly every item on this board and therefore separate
 # nothing. Without this, "the", "trade" and "ghost" alone would cluster the
@@ -75,6 +77,12 @@ def tokens(item: dict) -> set[str]:
     for m in IDENT.findall(text):
         low = m.lower()
         if low in STOP or low.isdigit():
+            continue
+        # An item that CITES another item's id is a cross-reference, not a
+        # duplicate of it -- and a well-written backlog is full of them. Found
+        # live: [2a87591b] scored against [c4f16946] largely because its text
+        # names "c4f16946". Drop backlog-id-shaped tokens.
+        if ID_TOKEN.match(low):
             continue
         # A bare English word is weak evidence; a snake_case or dotted name is
         # strong, because nobody writes `roundtrip_cost_rate` by coincidence.
