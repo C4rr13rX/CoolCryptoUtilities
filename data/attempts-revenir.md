@@ -7499,3 +7499,40 @@ METHOD NOTE, the reusable part: when both the cause and the effect go to zero
 during an outage, ANY correlation between them is partly uptime. Drop the dead
 buckets before quoting the number. +0.802 became +0.540 here, and the raw
 figure would have been the third "too good" number this repo shipped.
+
+### Pass 437 CORRECTION -- the +0.540 above is 96.8% CANDIDATES. Do not use it.
+
+The breadth result two sections up controlled for uptime and then failed to
+check what the dependent variable WAS. `action='enter'` in trading_ops breaks
+down, last 48h, as:
+
+    316  ghost_candidate
+    255  ghost_candidate_quote_ok
+     19  ghost-entry
+
+So 96.8% of the series I correlated against symbol breadth were CANDIDATES.
+"More symbols streamed produce more candidate rows on those symbols" is close
+to mechanical, and +0.540 is not evidence that breadth produces entries.
+
+CLOSED: "breadth predicts entry production, therefore the governor clamp was
+costing entries." Not established. The breadth -> ENTRY link CANNOT be measured
+at this rate: 19 real ghost-entries in 48h, and only 8 of 36 hours contain even
+one. A series that is zero 78% of the time does not support an hourly
+correlation and none should be manufactured.
+
+WHAT THE BREAKDOWN DOES ESTABLISH, and it is worth more than the error:
+CANDIDATE SUPPLY IS NOT THE BOTTLENECK. 571 candidates / 48h (~286/day) convert
+to 19 entries -- 3.3% -- and quote_ok -> entry is 19/255 = 7.5%. Candidates are
+produced in bulk and almost none become entries. The lever is CONVERSION, not
+supply, which agrees with the ghost-route finding already on record.
+
+THIS TEMPERS THE GOVERNOR FIX AND THAT IS STATED DELIBERATELY: raising the pair
+cap 18 -> 40 raises candidate supply. At 3.3% conversion, more supply buys
+proportionally little. The fix is still correct -- shedding our own work on
+other programs' memory is a defect regardless, and the 18 vs 40 clamp is
+measured fact -- but its expected PAYOFF was oversold here, and [7a1b8684]
+should be read as "measure whether this helps", not "this will help".
+
+METHOD NOTE, and this repo keeps paying for it: controlling for the confound you
+thought of is not the same as knowing what your dependent variable is. Break the
+outcome series down by status BEFORE correlating anything against it.
