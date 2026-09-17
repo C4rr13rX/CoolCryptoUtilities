@@ -8316,3 +8316,67 @@ COMMAND THAT PROVES IT: scratchpad bd851275_n30.py, importing
 scripts/money_button_dip_expectancy.py's simulate()/load_ticks()/DEEP_POOLS
 unmodified; the 168h row reproduces with
 `python -X utf8 scripts/money_button_dip_expectancy.py --hours 168 --sweep --horizon-sec 900`.
+
+================================================================================
+PASS 444 AUDIT -- THE QUOTE-CLASS COST WAS CARRYING THE LAST CANDIDATE. AT THE
+FILL-CLASS COST THE ENTIRE GATE-ADMITTED UNIVERSE LOSES, AT EVERY HOLD.
+================================================================================
+
+Closing [bb53fd2b]/[bd851275] left exactly one name standing: WETH-USDC, the only
+symbol clearing its own MEASURED round trip in both windows. Before anyone funds
+a clip on it I recharged my own gross at the cost [c5c198b2] established as
+honest -- 0.31%, being the 0.0369% quote PLUS 27.8bp of REAL measured live
+slippage (n=12) -- because quotes are not fills. Same trades, same tape, same
+shipped simulate(); only the charge differs.
+
+  hold  cell             n   win   mean GROSS   net @0.110%   net @0.31%    t
+   5m   WETH-USDC       16   56%     +0.1596%     +0.0496%     -0.1504%  -1.56
+   5m   ETHER CLUSTER  106   24%            --           --    -0.2610%  -7.49
+  15m   WETH-USDC       10   60%     +0.2811%     +0.1711%     -0.0289%  -0.34
+  15m   ETHER CLUSTER   69   35%            --           --    -0.2176%  -4.58
+  30m   WETH-USDC        8   62%     +0.2582%     +0.1482%     -0.0518%  -0.47
+  30m   ETHER CLUSTER   49   37%            --           --    -0.2271%  -3.56
+  45m   WETH-USDC        7   57%     +0.2989%     +0.1889%     -0.0111%  -0.07
+  45m   ETHER CLUSTER   44   39%            --           --    -0.2520%  -3.18
+  60m   WETH-USDC        7   86%     +0.3169%     +0.2069%     +0.0069%  +0.06
+  60m   ETHER CLUSTER   39   41%            --           --    -0.2261%  -2.57
+
+THE ETHER CLUSTER LOSES AT EVERY HOLD AND IT IS NOT MARGINAL. t runs -2.57 to
+-7.49; at the 5-minute hold it is n=106, 24% win, -0.2610%, t=-7.49. This is by
+some distance the most statistically secure statement this line of work has
+produced, and it is a negative. The ether cluster is not an arbitrary grouping:
+it IS the gate-admitted, measured-cost universe -- the only trades production
+would take.
+
+WETH-USDC SPECIFICALLY: negative at 5, 15, 30 and 45 minutes, and +0.0069% with
+t=+0.06 at 60 minutes, on n=7. That is zero. The +0.1482% that made it look like
+a candidate was ENTIRELY the difference between the quote-class 0.110% and the
+fill-class 0.31%. The candidate was the cost assumption, not the symbol.
+
+ROUTE (c) "SHORTEN THE HOLD" IS CONTRADICTED ON THIS RULE, and the mechanism is
+worth stating because it is the opposite of the received wisdom here. Mean GROSS
+RISES monotonically with hold on WETH-USDC: +0.1596% at 5m to +0.3169% at 60m.
+The round trip is charged ONCE regardless of hold, so a longer hold amortises a
+fixed cost over a larger move. Shortening the hold shrinks the numerator and
+leaves the denominator alone. [book-is-positive-inside-fifteen-minutes] was
+measured on the tradeable GHOST book, a different population, so this does not
+retract it -- but it does mean route (c) must not be applied to the dip rule
+without re-measuring, and on the dip rule it points the WRONG WAY.
+
+WHAT THIS IS NOT. The 0.31% is itself an estimate from n=12 live slippage
+observations, and the gross figures are SIMULATED touches on stored ticks, not
+fills. Two honest readings exist and both are actionable: either the fill cost is
+really ~0.31%, in which case this rule cannot pay on any ether pair at any hold
+we can measure; or the fill cost is nearer the 0.110% quote, in which case the
+whole result turns on a number measured 12 times and measuring it properly is the
+highest-value thing left. THE ONE THING NOT AVAILABLE is to quote +0.1482% and
+fund a clip.
+
+VERDICT: no item closed by this audit -- it is evidence noted onto [c5c198b2],
+whose criterion 2 already requires the 0.31% charge. Route (a) "hand-approve one
+strategy at a minimum clip" has lost its best candidate unless the slippage
+number is wrong. Recommended next: settle the 27.8bp slippage figure, because it
+now decides the sign of everything.
+
+COMMAND: scratchpad weth_honest_cost.py, importing
+scripts/money_button_dip_expectancy.py's simulate()/load_ticks() unmodified.
