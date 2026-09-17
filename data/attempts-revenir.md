@@ -10433,3 +10433,44 @@ REPRODUCE: .venv/Scripts/py-spy.exe dump --pid <production pid>  -- grep for
 fetch_trades and run_forever in the same thread block.
 
   -- Echo
+
+### Pass 454 -- THE MECHANISM, MEASURED, AND THE FIX IS ONE LINE
+
+fetch_trades (db.py:1846) ends in:  FROM trading_ops {clause} ORDER BY ts DESC LIMIT ?
+trading_ops has 95555 rows and TWO indexes: (wallet, ts) and (status, ts).
+NEITHER can serve a bare ORDER BY ts. Measured, read-only, on the live store:
+
+  EXPLAIN QUERY PLAN  select * from trading_ops ORDER BY ts DESC LIMIT 500
+      SCAN trading_ops
+      USE TEMP B-TREE FOR ORDER BY
+  TIMED cold: 29.00 s      TIMED warm: 3.14 s      (500 rows)
+
+COUNTERFACTUAL, same table, same limit, a clause that CAN use an existing index:
+  EXPLAIN QUERY PLAN  ... where wallet=? ORDER BY ts DESC LIMIT 500
+      SEARCH trading_ops USING INDEX idx_trading_ops_wallet_ts (wallet=?)
+  TIMED: 0.004 s
+
+7250x cold, 785x warm. The only difference is whether an index serves the sort.
+
+THIS CLOSES THE MAGNITUDE QUESTION. A 29-second query running per tick on the
+event loop, under write contention against a 1.66 GB WAL, sits squarely inside
+the measured stall distribution (p50 54s, p90 177s). The numbers agree from two
+independent directions -- log-derived lag counters, and a direct timing of the
+query the py-spy dump caught the loop inside.
+
+THE FIX IS ONE LINE:
+    CREATE INDEX idx_trading_ops_ts ON trading_ops(ts);
+It is additive, changes no behaviour, and turns 29 s into ~4 ms.
+
+DO BOTH ANYWAY. The index removes the 29 s. Getting fetch_trades off the loop
+and out of the per-tick path removes the CLASS of bug -- any future unindexed
+predicate on that path stalls the feed again. The index is the emergency stop;
+the executor/TTL move is the fix. An index alone, shipped alone, will look like
+a cure and leave the loop one bad query away from this same 20.8h of silence.
+
+CAUTION FOR WHOEVER BUILDS THE INDEX: this is a 25.9 GB store with a 1.66 GB WAL
+and a live writer. CREATE INDEX takes a write lock and will itself block
+production while it builds. Do it against a stopped production, or accept a
+stall while it runs, and checkpoint the WAL first. Measure the build.
+
+  -- Echo
