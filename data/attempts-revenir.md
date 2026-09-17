@@ -9016,3 +9016,69 @@ one dirty source is one measurement, not two.** `scripts/tradeable_book.py` DOES
 censor (24 references), which is why its numbers never matched the raw censuses —
 that gap was the guard working, not a bug. Before counting two sources as
 independent, check whether they share a table.
+
+
+## Pass 447 (Echo, senior) -- the money button's dip supply, measured on the rule production actually runs
+
+**ROUTE TRIED:** size the money button's dip supply and the fraction of it that
+is fillable, per item [06a55c0e]. **RESULT: the item's own headline is wrong by
+5.9x, and the gate it blames is not the gate doing the work.** Commit 9a82cf1,
+`scripts/money_button_dip_admission_ladder.py`.
+
+**TWO DEFECTS IN THE PASS-426 SOURCE.** (1) `scripts/money_button_dip_supply.py`
+never imports `services`, so `os.getenv("MONEY_BUTTON_MIN_DRAWDOWN", "0.02")`
+returns the literal default. `services/env_loader.py:377` setdefaults it to
+`0.005` and no `.env` key sets it, so that import IS the production value -- it
+replayed a 2-5% band against a scheduler running 0.5-5%. This is the same
+missing-import class as pass 445. (2) Its docstring places the cost and
+net-expected-return gates DOWNSTREAM of the slope check. In
+`scheduler._money_button_candidate` the order is drawdown -> headroom -> NET
+EXPECTED -> slope -> take-profit, so its "knife guard is a 38.1% tax" describes
+a population production never sends to the knife.
+
+**THE LADDER AT THE PRODUCTION BAND** (95,905 ticks with a full 2h lookback):
+band 24,535 -> headroom 16,268 -> **net expected 1,307** -> slope 521 ->
+take-profit 521. The cost rung refuses **60.98%** of the band; the knife refuses
+60.14% of the 1,307 that reach it. **521 fully admissible ticks, not 3,049.**
+
+**THE 0.5% BAND FLOOR IS INERT -- predicted, then confirmed.** `reversion_target`
+is capped at the 2h peak, so `expected_return <= |dd|/(1-|dd|)`, while the net
+gate demands `fee_rate 0.0125 + min_net 0.005 = 0.0175`. That needs
+**|dd| >= 1.720% by arithmetic alone**. 70.47% of band admissions sit below it and
+the shallowest survivor measures **1.729%**. `env_loader` lowered the band to
+0.5% commented "lets ghost fire on minor pullbacks"; nothing below 1.72% can ever
+fire, so that setting buys exactly nothing.
+
+**PER-TICK DEPTH IS UNAVAILABLE, stated rather than faked.** `market_stream` is
+(id, ts, chain, symbol, price, volume, raw) with no liquidity column; `raw`
+carries only ts/symbol/chain/price/volume/rest/consensus_confidence; `ohlcv_bars`
+and `ohlcv_datasets` are both EMPTY. Depth can only be a snapshot, so every split
+is an inference and is labelled one. At a **$1,000,000** bar, **30 of the 521**
+admissible ticks are fillable -- 2.1/day.
+
+**VALIDATION:** `--force-legacy-band` reproduces pass 426's drawdown rung at
+5,902 vs their 5,841 (1.0% apart; the store grew 98,358 -> 103,111 rows).
+
+**ROUTE (b) PRICED FOR THE FIRST TIME** (commit 43be440, `--fee-rate` sweep).
+Admissible ticks over 14.3 days / subset in pools at or above $1M:
+125bp (prod) 521/30 | 90bp 574/28 | 60bp 901/90 | 35bp 1965/327 | 20bp 2592/514.
+At 35bp fillable dip supply goes 2.1/day -> 22.9/day, an **11x**. `fee_rate`
+(scheduler.py:806) is flat and takes no symbol, so a WETH-class pool measured at
+4-11bp is charged the same 125bp as KTA -- an 11-30x overcharge on exactly the
+subset route (b) says to trade. This is the supply number item [84e62c6d] has
+always lacked.
+
+**NOT CLOSED, AND NOT A FORECAST.** A cheaper fee ADMITS A WORSE ENTRY SET: the
+fee sits inside the admission test, so the marginal ticks those rows count are by
+construction the ones with the least reversion headroom. The sweep is a CEILING
+ON OPPORTUNITY and says nothing about the sign of the edge. Pass 445 closed the
+fee route for the dip signal on the POOLED tape (zero slippage still only reached
+t=+1.07); this is a different claim -- the fee being wrong BY SYMBOL on the deep
+subset -- and the first does not close the second.
+
+**AUDIT:** [cae445dc] ("every standalone money_button census replays a rule
+production does not run") was marked DONE with one file missed, and it is the one
+the repo quotes. Reopened. Screened the other twelve censuses first: seven read no
+overridden key with a divergent literal, three already import env, only
+`money_button_dip_supply.py` diverges. Screen was regex over `os.getenv` literal
+pairs, so a key read via a variable would be missed.
