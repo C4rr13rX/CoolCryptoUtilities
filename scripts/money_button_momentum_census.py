@@ -83,6 +83,10 @@ def main() -> int:
     ap.add_argument("--hours", type=float, default=168.0)
     ap.add_argument("--fee", type=float, default=None,
                     help="one-way fee handed to the GATE; default TRADE_FEE_RATE or 0.003")
+    ap.add_argument("--min-evals", type=int, default=50,
+                    help="skip symbols thinner than this in the per-token table")
+    ap.add_argument("--top", type=int, default=18,
+                    help="rows of the per-token table to print, cheapest first")
     ap.add_argument("--horizon-min", type=float, default=15.0,
                     help="forward hold ceiling; MONEY_BUTTON_HOLD_MINUTES ceiling is 15")
     args = ap.parse_args()
@@ -101,7 +105,16 @@ def main() -> int:
     # a fresh instance per tick would discard any internal debounce.
     strategy = MoneyButtonStrategy()
 
+    # DENSITY declines mean the FEED could not present a window; DIRECTION
+    # declines mean the feed was fine and the signal was absent. Telling them
+    # apart per token is what decides whether "trade only cheap deep names"
+    # is a fixable ingest problem or a dead route.
+    DENSITY = {"window_too_short", "feed_frozen", "too_few_samples",
+               "feed_too_sparse_for_hold", "window_exceeds_lookback"}
+    DIRECTION = {"momentum_not_aligned", "move_exhausted", "slope_not_positive"}
+
     census: Dict[str, int] = defaultdict(int)
+    per_symbol: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
     fires: List[dict] = []
     evaluated = 0
     started = time.time()
@@ -126,9 +139,14 @@ def main() -> int:
                 census[f"RAISED:{type(exc).__name__}"] += 1
                 continue
             if result is None:
-                census[str(getattr(strategy, "last_decline", "") or "declined")] += 1
+                reason = str(getattr(strategy, "last_decline", "") or "declined")
+                census[reason] += 1
+                per_symbol[symbol][reason] += 1
+                per_symbol[symbol]["_evals"] += 1
                 continue
             census["(candidate produced)"] += 1
+            per_symbol[symbol]["FIRED"] += 1
+            per_symbol[symbol]["_evals"] += 1
             directive = result["directive"]
             target = float(getattr(directive, "target_price", 0.0) or 0.0)
             fires.append({
@@ -236,6 +254,38 @@ def main() -> int:
         print(f"{symbol:<24}{len(group):>5}{win:>6.0f}%"
               f"{100.0 * g.mean():>11.3f}%{100.0 * nt.mean():>10.3f}%"
               f"{100.0 * group[0]['cost']:>9.2f}%")
+    # ---- density vs direction, bucketed by cost -------------------------
+    print()
+    print("--- WHY it declines, by token: FEED (density) or SIGNAL (direction) ---")
+    print(f"{'symbol':<18}{'cost':>7}{'evals':>7}{'density':>9}{'direction':>11}{'fired':>7}")
+    print("-" * 59)
+    buckets: Dict[str, List[float]] = defaultdict(list)
+    rows_pt = []
+    for symbol, tally in per_symbol.items():
+        ev = tally.get("_evals", 0)
+        if ev < args.min_evals:
+            continue
+        dens = sum(v for k, v in tally.items() if k in DENSITY)
+        dirn = sum(v for k, v in tally.items() if k in DIRECTION)
+        rows_pt.append((round_trip_for(symbol), symbol, ev,
+                        100.0 * dens / ev, 100.0 * dirn / ev, tally.get("FIRED", 0)))
+    for cost, symbol, ev, dens, dirn, fired in sorted(rows_pt)[:args.top]:
+        print(f"{symbol:<18}{100.0 * cost:>6.2f}%{ev:>7}{dens:>8.1f}%{dirn:>10.1f}%{fired:>7}")
+    print()
+    for label, keep in (("CHEAP  (<=0.20% round trip)", lambda c: c <= 0.0020),
+                        ("DEARER ( >0.20% round trip)", lambda c: c > 0.0020)):
+        grp = [r for r in rows_pt if keep(r[0])]
+        if not grp:
+            continue
+        ev = sum(r[2] for r in grp)
+        dens = sum(r[2] * r[3] for r in grp) / ev
+        dirn = sum(r[2] * r[4] for r in grp) / ev
+        print(f"{label}: {len(grp):>3} symbols, {ev:>6} evals, "
+              f"density {dens:>5.1f}%, direction {dirn:>5.1f}%, "
+              f"fired {sum(r[5] for r in grp)}")
+    print()
+    print("A cheap cohort with LOW density and HIGH direction is the dead-route")
+    print("answer: the feed served those names best and the signal was absent.")
     return 0
 
 
