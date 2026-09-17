@@ -7628,3 +7628,34 @@ report) may be built on test output -- those lines arrived at 00:19:34 in bursts
 of exactly three inside one second, the fixture signature. It was NOT rejected,
 because that is not proof; a first criterion now requires the evidence be
 attributed before any other work on it.
+
+### Pass 438 second addendum -- correcting the addendum above
+
+The addendum above says the backlog "is roughly 25 defects filed four or five
+times each." WITHDRAW THAT NUMBER. It was an extrapolation, not a measurement.
+
+What was actually measured is TWO families: five ids for roundtrip_cost_rate
+taking no symbol, four for the test suite writing into logs/system.log. Nine
+ids, two defects. Turning that into a rate and applying it to 107 items is the
+same error this repo has already paid for twice -- generalising from the windows
+that happened to be looked at.
+
+There is now a measurement. scripts/backlog_duplicates.py scores every open item
+against every other on identifier and file-path tokens rather than prose, and
+clusters transitively. Calibrated against the two hand-collapsed families: at
+min-score 0.12 it recovers 3 of the 4 log ids and 3 of the 5 cost ids without
+being told which they were -- recall 6 of 9, stated rather than hidden.
+
+  ON THE REMAINING 111 OPEN ITEMS IT FINDS 3 CLUSTERS, ALL OF SIZE 2.
+
+So the honest position: two families were badly duplicated and are now collapsed
+(ten ids closed, zero work lost); the rest of the list is far LESS duplicated
+than claimed. The backlog is long because it is long, not because it is mostly
+copies. Announcing the opposite would have invited a rejection spree the
+evidence does not support, which is why this correction is here rather than
+quietly dropped.
+
+THE RULE SURVIVES THE CORRECTION: run the finder before scrum.py add, and refine
+an existing id with scrum.py accept rather than filing a new one, because a new
+id orphans the diagnosis on the old. That stands on the two families measured;
+it never needed the 25.
