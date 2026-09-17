@@ -9154,3 +9154,40 @@ are missing from a six-row table. Measure them; if either lands under 35bp it
 joins the universe AND it is a deep pool, which is what route (b) has been asking
 for and has never been able to name. **Do NOT widen the 35bp bar** -- it is what
 keeps AERO at 435bp out. The defect is the empty table behind it.
+
+**A COLUMN NAMED `fee_cost` IS NOT A COST UNTIL YOU READ THE LINE THAT ASSIGNS
+IT.** Late in pass 447 I measured `fee_cost / notional` from `trade_outcomes`,
+split by the `mode` field inside `details`, and got AERO live median 46.5bp
+(n=9) against `TOKEN_ROUND_TRIP["AERO"] = 435bp`. I posted that as a 9.4x
+disagreement. **It is not one, and the alarm is WITHDRAWN.** `trading/bot.py`
+has two branches:
+
+    LIVE   bot.py:10333  fee_cost = total_gas_native_realized * native_price_usd
+                         GAS ONLY -- no venue fee, no slippage
+    GHOST  bot.py:10388  fee_cost = notional * fees + roundtrip_gas_usd * gas_share
+                         a MODEL: constant fee rate plus modelled gas
+
+So a live row's `fee_cost/notional` is **gas as a fraction of notional**, which at
+these $0.75-$1.75 clips is large and unrelated to what the venue charges.
+`TOKEN_ROUND_TRIP` claims both legs plus gas plus **slippage**, and slippage is
+the dominant term on AERO. On the live path slippage lands in `gross_profit` --
+`quote_received` is the actual fill -- so it is never in `fee_cost` at all. Two
+different quantities. The 435bp row stands. The recurring 65.0bp is likewise just
+the ghost model reproducing its own constant, not an echo contaminating a
+measurement; that alarm is withdrawn too.
+
+**CONSEQUENCE FOR [e0d52af3], and it reverses what I posted earlier in the pass.**
+I said the data exists locally and no chain call is needed. **Wrong.** True
+round-trip cost including slippage is NOT recoverable from `fee_cost` on either
+branch. Measuring CBBTC or CBXRP properly means comparing EXPECTED price against
+REALISED fill (entry fill vs quote, `exit_price_effective` vs quote) -- different
+columns, different computation, and only 4 live CBBTC rows and 1 live CBXRP row
+to do it on. The item's first criterion should therefore be: establish whether
+realised-vs-expected fill prices are recoverable for these symbols at all, and if
+not, close it as unmeasurable from local data rather than adding a TOKEN_ROUND_TRIP
+row derived from a gas figure.
+
+**THE PATTERN ACROSS ALL THREE OF THIS PASS'S CORRECTIONS.** Pass 426 trusted a
+threshold it never loaded. I trusted a ladder that was missing its first rung.
+Then I trusted a column name. Every one was fixed by reading what WRITES the
+value instead of what reads it.
