@@ -204,6 +204,8 @@ def main() -> int:
     print("   " + "  ".join(f"${c:g}" for c in (0.75, 2, 6, 20, 100)))
     print("   " + "  ".join(f"{roundtrip_cost_rate(c) * 1e4:.1f}bp" for c in (0.75, 2, 6, 20, 100)))
     print("  real on-chain costs (operator, 2026-09-11): WETH 4-11bp, AERO 64-435bp, KTA to 7498bp.")
+    print("  so at a $6 clip the flat charge is 3.5-9.6x TOO DEAR on WETH and 1.7-11.3x TOO CHEAP")
+    print("  on AERO (194x on KTA). Wrong in OPPOSITE directions on the two tokens we trade most.")
     return 0
 
 
