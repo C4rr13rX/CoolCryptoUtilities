@@ -7235,3 +7235,61 @@ return-None exits is no_opportunity_bias -- MONEY_BUTTON_REQUIRE_OPPORTUNITY
 defaults to "1" and demands an OpportunityTracker buy-low bias per symbol -- and
 that is NOT what the broken census names (it names drawdown_outside_dip_window,
 n=1, DRB-USDC). Do not act on that name.
+
+--------------------------------------------------------------------------------
+PASS 435 (cont.) -- Echo. THE GATE IS NAMED, AND THE FIX IS ALREADY IN THE SOURCE.
+--------------------------------------------------------------------------------
+
+THE GATE THAT REFUSES money_button IS tf_direction_or_confidence, NOT the
+opportunity gate and NOT the drawdown gate the broken census names.
+
+    scheduler.py:1761   min_dir_prob = MONEY_BUTTON_MIN_DIR_PROB, default 0.52
+    scheduler.py:1791   if direction_prob < min_dir_prob -> refuse
+
+    MEASURED, 6,077 organism_snapshots / 24h:
+      min 0.0727  p10 0.0951  MEDIAN 0.1452  p90 0.3148  max 0.9190  mean 0.1822
+      >= 0.52 : 168/6077 = 2.76%     >= 0.50 : 4.11%     >= 0.30 : 12.01%
+
+    97.24% refused on direction_prob ALONE. The is_tf_neutral bypass
+    (scheduler.py:1786-1790) cannot save it: it demands EXACT equality to 0.5
+    within 1e-6 on a continuous quantity. Both branches close.
+
+THE SAME-VALUE CHAIN IS PROVEN, NOT INFERRED -- check it before doubting the
+number, because the obvious objection is that I measured a different variable:
+    bot.py:6135   scheduler.evaluate(sample, pred_summary, ...)
+    bot.py:12551  _record_organism_snapshot(..., pred_summary=pred_summary)  SAME OBJECT
+    services/organism_state.py:28  prediction_payload = _sanitize(pred_summary)
+    services/organism_state.py:82  snapshot['prediction'] = prediction_payload
+    scheduler.py:742  direction_prob = pred_summary.get('direction_prob', 0.5)
+    scheduler.py:814  -> _money_button_candidate(direction_prob=direction_prob)
+
+THIS IS A LEVEL FAILURE, NOT A BEARISH MODEL. A direction PROBABILITY should
+centre near 0.5. This one centres at 0.145. It is mis-scaled, not pessimistic.
+
+AND THE FIX IS ALREADY IN THE FILE. bot.py:5781-5828 carries a prior pass's
+diagnosis and repair: the Platt fit measured 2026-09-07 over 1,324 clean
+evaluations is logit_out = 0.9806*logit_in - 2.0784, so the calibrator's neutral
+is sigmoid(-2.0784) = 0.111 while every threshold treats 0.5 as "no opinion".
+The repair re-centres: centred = sigmoid(scaled - cal_offset), bot.py:5822-5828.
+
+PUT THE PREDICTIONS NEXT TO THE TAPE (all from that comment's own numbers, model
+median raw output 0.5985):
+    re-centring WORKING   -> median direction_prob 0.5966
+    re-centring ABSENT    -> median direction_prob 0.1562
+    broken neutral        -> 0.1112
+    MEASURED IN PRODUCTION-> 0.1452
+THE TAPE SITS ON THE UNCORRECTED NUMBER. THE FIX IS IN THE FILE AND NOT IN THE
+NUMBERS. Filed as [0059b1a5].
+
+TWO CAUSES, NOT YET SEPARATED, AND I COULD NOT SEPARATE THEM FROM DISK:
+  (a) production serves stale code until restarted (13 min boot) -- not loaded;
+  (b) use_calibration is FALSE (needs cal_scale AND cal_offset present and off
+      identity by >1e-3, bot.py:5776-5780), so the else-branch temperature path
+      runs and re-centring is skipped BY DESIGN.
+I searched data/*.json for a persisted calibration_scale/offset: NONE EXISTS, so
+this needs the RUNNING instance. Print pipeline.calibration_scale/offset first --
+it is free and may make the restart unnecessary.
+
+DO NOT LOWER MONEY_BUTTON_MIN_DIR_PROB. 0.52 is barely above a coin flip. A head
+whose output centres at 0.145 is mis-scaled, and dropping the floor to meet it
+spends real money on a number that means nothing. FIX THE LEVEL.
