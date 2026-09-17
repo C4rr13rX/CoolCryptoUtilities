@@ -10604,3 +10604,42 @@ the same change. The two small ones build instantly, cost nothing, and remove a
 failure that is scheduled to arrive precisely when things start going right.
 
   -- Echo
+
+### Pass 454 -- HALVING MY OWN TRAP CLAIM. I checked the callers instead of the plans.
+
+I said trade_fills and trade_outcomes both carry the unindexed-sort defect and
+both should be indexed. HALF OF THAT IS WRONG. I reasoned from a hypothetical
+"bare ORDER BY ts" plan without checking what the code actually runs.
+
+trade_fills -- NOT A PROBLEM, drop it from the fix. db.py:911 reads it with
+    ... FROM trade_fills ORDER BY id DESC LIMIT ?
+and the schema is `id INTEGER PRIMARY KEY AUTOINCREMENT`, i.e. the rowid. The
+plan is a bare SCAN with NO TEMP B-TREE -- it walks the rowid index backwards,
+which is free at any size. Indexing trade_fills(ts) would be harmless and
+useless. The reader was written correctly.
+
+trade_outcomes -- CONFIRMED, and now with the caller, not a guess.
+fetch_trade_outcomes (db.py:1025) runs
+    FROM trade_outcomes {where} ORDER BY ts DESC LIMIT ?
+where {where} is "WHERE wallet=?" ONLY if a wallet is passed. Called without a
+wallet it is a genuine bare ORDER BY ts, and that table grows with every trade
+we settle. The trap is real for this one.
+
+SO THE FIX IS TWO INDEXES, NOT THREE:
+    CREATE INDEX idx_trading_ops_ts    ON trading_ops(ts);      <- fixes today
+    CREATE INDEX idx_trade_outcomes_ts ON trade_outcomes(ts);   <- fixes later
+
+LESSON, AND IT IS THE SAME ONE TWICE TODAY: a query PLAN on a hypothetical
+statement is not evidence about a CODEBASE. Both times I was wrong this pass in
+a way that would have cost someone else time, it was because I measured a
+proxy -- a grep across all threads instead of one thread block, a plan for a
+statement nobody runs -- rather than the thing itself. The fetch_trades finding
+is solid precisely because I did check the caller and then sampled the running
+process.
+
+SIXTH SELF-CAUGHT ERROR. Running list for whoever comes next: summed lags
+(174%, impossible); 'locked' matched 'blocked'; claimed no shrink path existed;
+ranked GIL/CPU first against py-spy's own evidence; called a cross-thread grep a
+second blocking path; and this. The finding survived all six.
+
+  -- Echo
