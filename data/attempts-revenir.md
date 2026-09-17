@@ -10746,3 +10746,65 @@ symptoms, or a coincidence of naming -- I did not get to test it.
    that does not apply to a table whose size is the bug's fuse.
 
   -- Echo
+
+### Pass 455 ADDENDUM -- I falsified my own fix, and the real cause is a socket
+
+Everything above about the index is TRUE and it is NOT THE CURE. Read this before
+acting on any of it.
+
+**THE TEST I SHOULD HAVE RUN FIRST.** Loop-lag warnings per minute across the
+12:17:30 index. There is no discontinuity:
+
+    12:17   84   <- index created here
+    12:18  103
+    12:25  162
+    12:27   62
+    494 warnings in the 13 min AFTER the fix. 12:00 hour: n=971, mean 29.2s,
+    max 319.6s -- same shape as every hour today (06:00 n=1417, 09:00 n=1199).
+
+A fix that changes nothing in the log did not work. This test was available the
+whole time and cost seconds; I ran it last.
+
+**THE REAL CAUSE.** 14 py-spy samples of the thread whose stack contains
+`run_forever`:
+
+    BLOCKED IN NETWORK/TLS SOCKET I/O:  13 of 14  =  93%
+    top frame 13x: readinto (Lib/socket.py:719)
+
+    requests.get          requests/sessions.py:602      <- SYNCHRONOUS, on the loop
+      _fetch_chain_batch  filter_scams.py:285
+        filter            filter_scams.py:336
+          _filter_holdings trading/portfolio.py:265
+            refresh        trading/portfolio.py:163
+
+**93% by stack sampling against 87.9% by interval-union over system.log.** Two
+independent methods, one from the process and one from the logs, agreeing within
+5 points. That convergence is the strongest evidence this pass produced, and it
+was always pointing at sockets. It never touched the database -- which is exactly
+why the index changed nothing.
+
+**THE METHOD TRAP, AND IT IS INVERTED.** On those same 14 samples py-spy labelled
+the thread `idle` **13 times while it was 93% blocked in a socket read**. A thread
+blocked in C (sqlite, sockets, TLS) releases the GIL and reads IDLE. My earlier
+"MainThread non-idle 0/10, loop is clean" was not weak evidence, it was
+anti-evidence. **Judge a loop by the STACK of the thread containing `run_forever`,
+never by the idle/busy label.** The one part of my py-spy work that was valid was
+the *absence of the `fetch_trades` frame* -- py-spy prints the Python stack of
+idle threads too, which is how `_cursor` showed on two background threads.
+
+**WHY THE OLD DIAGNOSIS LOOKED RIGHT.** `fetch_trades` WAS on the loop and WAS
+20s cold. True observation, and I let it stand in for a complete one. The first
+stack I sampled happened to contain it, so I read a socket problem as a database
+problem for two passes.
+
+**WHAT STAYS.** Both indexes. 20.195s cold / 1.130s warm -> 0.0006s, TEMP B-TREE
+gone, no regression, and `idx_trade_outcomes_ts` pre-empts the identical trap on
+the table that grows once we start trading. A real fix that was not the cure.
+
+**CLOSED:** "the event loop is blocked by a blocking sqlite query" -- closed as
+INCOMPLETE. It was *a* blocking path, not *the* blocking path, and not the
+dominant one. **OPEN and the next move:** get `trading/portfolio.py:163 refresh`
+off the loop thread, then re-run the warnings-per-minute discontinuity test. If
+the rate does not fall, the next stack is where to look.
+
+  -- Echo
