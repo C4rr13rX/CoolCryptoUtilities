@@ -43,6 +43,7 @@ Units, stated once: everything here is a FRACTION of notional (0.0065 ==
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import statistics
@@ -120,14 +121,45 @@ def _is_echo(ratio: float, fallback: float = None) -> bool:
     return abs(ratio - abs(fallback)) < 1e-9
 
 
-def real_fee_ratios(limit: int = 0, *, db_path: Optional[Path] = None,
-                    fallback: Optional[float] = None) -> List[float]:
-    """Fee-to-notional ratios that are actual evidence, oldest first.
+def _provenance(details: Optional[str]) -> str:
+    """``'live'`` or ``'ghost'`` for one ``trade_outcomes`` row.
 
-    Excludes the echo of the constant, rows below ``MIN_NOTIONAL``, rows with
-    no fee, and absurd ratios. Returns ``[]`` rather than raising when the
-    book is missing -- a cost read must never be able to take the money path
-    down with it.
+    A row is live only if it SAYS it is. ``details.mode`` is the field the
+    executor writes, and anything unreadable or absent is counted ghost --
+    a row that cannot prove it was live must never inflate the live count,
+    because the whole point of the count is to say how much of the cost
+    floor rests on fills that actually paid gas.
+    """
+    if not details:
+        return "ghost"
+    try:
+        blob = json.loads(details)
+    except (TypeError, ValueError):
+        return "ghost"
+    if not isinstance(blob, dict):
+        return "ghost"
+    return "live" if str(blob.get("mode", "")).lower().startswith("live") else "ghost"
+
+
+def fee_ratio_samples(limit: int = 0, *, db_path: Optional[Path] = None,
+                      fallback: Optional[float] = None
+                      ) -> List[Tuple[float, str]]:
+    """``(ratio, 'live'|'ghost')`` for every fee that is actual evidence.
+
+    Oldest first. Excludes the echo of the constant, rows below
+    ``MIN_NOTIONAL``, rows with no fee, and absurd ratios. Returns ``[]``
+    rather than raising when the book is missing -- a cost read must never
+    be able to take the money path down with it.
+
+    THE PROVENANCE IS THE POINT. Measured 2026-09-17 over the 123 real fees
+    in the book: 105 ghost, 18 live -- but the WINDOW that actually sets the
+    charged cost, the last 20, was 20 ghost and 0 live. Ghost rows are
+    written ~10x more often than live ones, so recency alone buries every
+    live fee below the window, and the cost floor that gates entries had
+    zero live evidence in it while 18 live measurements sat in the book.
+    They do not agree: live p75 0.8647% against the 0.4613% being charged.
+    Understating cost is the direction that loses money, so a caller that
+    cannot see this split cannot see that it is being lied to.
     """
     path = db_path or _db_path()
     if not Path(path).exists():
@@ -137,18 +169,32 @@ def real_fee_ratios(limit: int = 0, *, db_path: Optional[Path] = None,
                                timeout=5.0)
     except sqlite3.Error:
         return []
+    # A BOOK WITHOUT ``details`` MUST STILL PRICE. Asking for a column that
+    # is not there raises, and the except returns [] -- which does not read
+    # as "no provenance", it reads as "no fees in the book" and silently
+    # drops every gate onto the fallback constant. The provenance is the new
+    # thing here; the cost is the old thing, and the old thing must not be
+    # able to fail because the new thing is unavailable.
+    has_details = True
     try:
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT ts, entry_price, quantity, fee_cost FROM trade_outcomes "
-            "ORDER BY ts"
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                "SELECT ts, entry_price, quantity, fee_cost, details FROM "
+                "trade_outcomes ORDER BY ts"
+            ).fetchall()
+        except sqlite3.Error:
+            has_details = False
+            rows = conn.execute(
+                "SELECT ts, entry_price, quantity, fee_cost FROM "
+                "trade_outcomes ORDER BY ts"
+            ).fetchall()
     except sqlite3.Error:
         return []
     finally:
         conn.close()
 
-    ratios: List[float] = []
+    samples: List[Tuple[float, str]] = []
     for row in rows:
         try:
             notional = abs(float(row["entry_price"]) * float(row["quantity"]))
@@ -160,8 +206,27 @@ def real_fee_ratios(limit: int = 0, *, db_path: Optional[Path] = None,
         ratio = fee / notional
         if ratio > ABSURD or _is_echo(ratio, fallback):
             continue
-        ratios.append(ratio)
-    return ratios[-limit:] if limit and limit > 0 else ratios
+        samples.append(
+            (ratio, _provenance(row["details"]) if has_details else "ghost"))
+    return samples[-limit:] if limit and limit > 0 else samples
+
+
+def real_fee_ratios(limit: int = 0, *, db_path: Optional[Path] = None,
+                    fallback: Optional[float] = None) -> List[float]:
+    """Fee-to-notional ratios that are actual evidence, oldest first.
+
+    The ratios alone, for callers that do not care where they came from.
+    ``fee_ratio_samples`` is the same population carrying its provenance;
+    use that one if you are about to charge somebody the answer.
+    """
+    return [ratio for ratio, _ in
+            fee_ratio_samples(limit, db_path=db_path, fallback=fallback)]
+
+
+def provenance_counts(samples: List[Tuple[float, str]]) -> Tuple[int, int]:
+    """``(live, ghost)`` over ``fee_ratio_samples`` output."""
+    live = sum(1 for _, kind in samples if kind == "live")
+    return live, len(samples) - live
 
 
 def _quantile(values: List[float], fraction: float) -> float:
@@ -178,20 +243,27 @@ def measure(*, db_path: Optional[Path] = None) -> Tuple[float, str]:
     number to a population.
     """
     fallback = fallback_cost()
-    ratios = real_fee_ratios(WINDOW, db_path=db_path)
+    samples = fee_ratio_samples(WINDOW, db_path=db_path)
+    ratios = [ratio for ratio, _ in samples]
+    live, ghost = provenance_counts(samples)
+    # THE COUNT TRAVELS WITH THE COST, on every path including the two
+    # fallbacks. A cost with no provenance is how this window came to be
+    # 20 ghost rows and 0 live ones without anybody noticing.
+    provenance = f"[{live} live / {ghost} ghost]"
     if len(ratios) < MIN_SAMPLES:
         return fallback, (
-            f"only {len(ratios)} real fees in the book (need {MIN_SAMPLES}); "
-            f"using the {fallback:.4%} fallback")
+            f"only {len(ratios)} real fees in the book (need {MIN_SAMPLES}) "
+            f"{provenance}; using the {fallback:.4%} fallback")
     measured = _quantile(ratios, QUANTILE)
     if not (FLOOR <= measured <= CEILING):
         return fallback, (
-            f"measured {measured:.4%} is outside [{FLOOR:.4%}, {CEILING:.4%}]; "
-            f"the book is malformed, using the {fallback:.4%} fallback")
+            f"measured {measured:.4%} is outside [{FLOOR:.4%}, {CEILING:.4%}] "
+            f"{provenance}; the book is malformed, using the "
+            f"{fallback:.4%} fallback")
     return measured, (
         f"p{QUANTILE * 100:.0f} of the last {len(ratios)} real fees = "
-        f"{measured:.4%} (median {statistics.median(ratios):.4%}, "
-        f"fallback {fallback:.4%})")
+        f"{measured:.4%} {provenance} (median "
+        f"{statistics.median(ratios):.4%}, fallback {fallback:.4%})")
 
 
 def round_trip_cost(*, db_path: Optional[Path] = None) -> float:
@@ -218,9 +290,18 @@ def reset_cache() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover
-    ratios = real_fee_ratios()
+    samples = fee_ratio_samples()
+    ratios = [r for r, _ in samples]
+    live, ghost = provenance_counts(samples)
     cost, reason = measure()
-    print(f"real fees in the book : {len(ratios)}")
+    print(f"real fees in the book : {len(ratios)}  ({live} live / {ghost} ghost)")
+    win_live, win_ghost = provenance_counts(samples[-WINDOW:])
+    print(f"  the window that sets the cost: {win_live} live / {win_ghost} ghost")
+    for kind in ("live", "ghost"):
+        only = [r for r, k in samples if k == kind]
+        if only:
+            print(f"  {kind:<5s} median {statistics.median(only):.4%}  "
+                  f"p75 {_quantile(only, 0.75):.4%}  n={len(only)}")
     if ratios:
         print(f"  median              : {statistics.median(ratios):.4%}")
         print(f"  p75 of last {WINDOW:<3d}     : "
