@@ -10987,3 +10987,82 @@ routing was therefore meaningless and has been corrected to
 `services/streamed_symbol_candidates.py`.
 
   -- Echo
+
+---
+
+## Pass 456 addendum -- five agents, and THREE standing beliefs falsified
+
+Echo ran as senior with five worker agents. Six commits. **Three things this loop
+has been acting on for multiple passes turned out to be false.** All three were
+falsified by running commands, not by argument.
+
+### 1. THE LIVE LANE IS HALTED BY BEING ARMED (`bfcd95f`, Quill) -- the finding of the pass
+
+    bot.py:6220-6227   if self.live_trading_enabled:
+                           if plan_flags["halt_live"]: risk_budget = 0.0
+    bot.py:6237        if risk_budget <= 0:  scheduler.evaluate() never runs
+
+The zeroing sits **inside** `if self.live_trading_enabled`. A ghost-only bot keeps
+a 0.25 budget and keeps deciding; a live-armed bot goes to 0.0 and **stops
+deciding**. Arming the lane is what switched the decision path off.
+
+**It writes no `trading_ops` row doing it.** Zero `entry-refused-*` rows of any
+kind since the 2026-09-16 14:48 boot, against 4,890 lattice refusals in the 7d
+window. That silence is why twelve days of passes could not see it. Filed
+`[f3c79f1f]`, p1.
+
+**Corrects a standing note:** "`[FAIL] 6 RISK` is the POOLED verdict and
+money_button separately reads READY, so it is not gating the approved strategy."
+It IS gating it -- one layer higher than `_strategy_live_approved`, via
+`pipeline.py:6657` `halt_live` -> `pipeline.py:6299` `ghost_validation_block`.
+
+**Second, independent blocker -- do not claim the lane is fixed without it:**
+money_button is offered **0 of 3,656 arbitration ticks in 7d** and reads
+`no_signal` **642/642** on rows carrying a skip map. It never fires. Fixing the
+halt alone produces nothing.
+
+### 2. "NO TX HASH EXISTS; LIVE P/L IS UNVERIFIABLE" IS FALSE (`12a9fee`, Tor)
+
+Hashes live in **`trading_ops.details` as JSON** -- 84 rows, 47 distinct. The old
+"zero of 60" was *accurate about the columns it queried* (`trade_fills` 38 live
+legs + `trade_outcomes` 22 live rows, neither has a hash column) and wrong about
+the store. **An absence proven in one table is not an absence in the store.**
+
+Verified read-only on Base: **47/47 found, 46 `status=1`**; the one `status=0` is
+the row already labelled `live-swap-reverted`. Median |block_ts - recorded ts| =
+**1 second**. Decoding the ERC-20 Transfer logs, the books reproduce the chain
+exactly -- BPAD gross -0.249893 both sides, BSTONK +0.255767 both sides. **The
+-0.186371 is real, and provable on chain.** Route CLOSED: do not build hash
+persistence-from-scratch or a chain backfill. Remaining work is 3 one-line dict
+additions, filed `[6ed52be6]`.
+
+### 3. "THE COST WALL IS WETH 0.04-0.11% vs AERO 0.64-4.35%" IS FALSE ON FILLS (`c3d8290`, Rune)
+
+`trading/scheduler.py:1777-1787` gates money_button on
+`services.round_trip_cost.TOKEN_ROUND_TRIP`. Measured against real fills:
+
+    AERO      charged 435bp  REFUSED   measures 10.8bp (16 legs)
+    CBBTC     charged  70bp  REFUSED   measures  2.2bp ( 9 legs)
+    CBETH     charged  30bp  ADMITTED  measures 62.4bp ( 4 legs)
+    WETH/ETH  charged  11bp  ADMITTED  NEVER FILLED LIVE (0 legs)
+
+**We refuse the cheap tokens and admit the expensive one.** AERO's 435bp is
+traceable to **line 6161 of this very file** -- the $10 point of the quote sweep
+pass 452 retracted as unsound. Filed `[80136f0c]`.
+
+**AND THERE IS STILL NO EDGE.** 317 cells, bar = `SE*sqrt(2 ln 317)`,
+non-overlapping windows, concentration-censored. One cell clears -- but h* < 1 is a
+**perfect-oracle** bound and our realised hit rate is **0.476 +/- 0.033 over 227
+round trips, below a coin flip**. 0 of 88 book cells reach n=30.
+**"Positive inside 15 minutes" is UNRESOLVABLE** (n=23, CI ~ [-196, +194]) -- stop
+citing it in either direction; it justifies a route in our own instructions.
+**Caveat that must travel with the 10.8bp: all 16 AERO legs traded $0.64-$2.91.**
+
+### Echo's own errors this pass, recorded
+
+Called Rune's result "the edge" (it is no edge; corrected in four minutes).
+Floated `liquidity_usd=0.0` as the deep-pool gate cause -- tested it, **no gate
+reads that field**, retracted. Briefed a 30.8%-deep baseline that is the MIXED
+ghost+live book; the ghost-lane figure is 27.2% (56/206) with sigma 89.6bp.
+
+  -- Echo
