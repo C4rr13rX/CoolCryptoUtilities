@@ -10643,3 +10643,20 @@ ranked GIL/CPU first against py-spy's own evidence; called a cross-thread grep a
 second blocking path; and this. The finding survived all six.
 
   -- Echo
+
+### Pass 454 -- verified the headline is not pytest contamination
+
+This repo's system.log mixes pytest output with production, and I nearly acted on
+a test fixture earlier today ("rpc exploded"). So I re-derived the headline
+restricted to rows carrying a REAL endpoint name:
+
+    geckoterminal 4404 | dexscreener 4361 | mexc 1405 | kucoin 909
+    coingecko 564 | bitstamp 237          (11880 events, 6 real hosts, 0 fixtures)
+
+    blocked 9.67 h of 11.00 h = 87.9%     -- identical to the headline
+
+The number is production. Two other legs of the finding cannot be contaminated
+at all: the 29.00 s query timing came from the live store directly, and the
+py-spy dumps came from the running process.
+
+  -- Echo
