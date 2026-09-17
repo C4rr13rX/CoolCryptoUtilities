@@ -63,14 +63,35 @@ from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import scripts.deep_pool_reprice as dpr  # noqa: E402
 from scripts.deep_pool_reprice import (  # noqa: E402
-    MEASURED_ROUND_TRIP_PCT,
+    MAX_CLIP_EXTRAPOLATION,
+    CensusArtifactError,
     _base_symbol,
     _move_pct,
     _notional,
+    load_quote_census,
     load_rows,
+    provenance_lines,
     round_trip_pct,
 )
+
+# ONE SOURCE, TWO READERS. The cost table is not defined here and is not
+# defined in deep_pool_reprice.py either: both read
+# data/round_trip_quote_census_<UTC stamp>.json, written by
+# scripts/routing_arbitrage_census.py --round-trip-census.
+#
+# DO NOT RE-ADD `MEASURED_ROUND_TRIP_PCT = dpr.MEASURED_ROUND_TRIP_PCT` HERE.
+# That line stood at this spot until pass 458. It was never read -- every site
+# in this file goes through `dpr.` and so does the imported round_trip_pct,
+# whose globals are dpr's, which is why --census did work end to end (verified
+# with a synthetic artifact: the AERO rate moved 0.6395 -> 0.2222, BASECAT
+# entered the priced table, CBBTC/SOL left it). But it was a loaded gun: a
+# module-level SNAPSHOT sitting under the exact name the read sites want, taken
+# at IMPORT time, i.e. before any --census override at line ~261 can run. Any
+# future `MEASURED_ROUND_TRIP_PCT.get(...)` written here would silently read the
+# legacy six-symbol literal and every printed number would be the legacy table.
+# Read the table through `dpr.MEASURED_ROUND_TRIP_PCT` at CALL time, always.
 
 DEPTH_SNAPSHOT = "data/pool_depth_snapshot.json"
 
@@ -108,7 +129,7 @@ def non_monotone_span(symbol: str) -> Optional[Tuple[float, float]]:
     size rises, or None when the curve is monotone. A trip priced inside this
     span could have been charged a wildly different rate at a nearby clip.
     """
-    table = MEASURED_ROUND_TRIP_PCT.get(_base_symbol(symbol))
+    table = dpr.MEASURED_ROUND_TRIP_PCT.get(_base_symbol(symbol))
     if not table or len(table) < 2:
         return None
     pts = sorted(table)
@@ -242,7 +263,19 @@ def main() -> int:
                     choices=["ghost", "live", "all"],
                     help="which book. trade_outcomes holds BOTH; 'all' is the "
                          "old contaminated behaviour, kept only for comparison")
+    ap.add_argument("--census", default=None,
+                    help="path to a round_trip_quote_census artifact; default "
+                         "is the newest under data/")
     args = ap.parse_args()
+
+    if args.census:
+        # Assign THROUGH the module. round_trip_pct's globals are dpr's, so
+        # rebinding here is what both readers see at call time.
+        try:
+            dpr.MEASURED_ROUND_TRIP_PCT, dpr.QUOTE_PROVENANCE = load_quote_census(args.census)
+        except CensusArtifactError as exc:
+            print("FATAL: %s" % exc, file=sys.stderr)
+            return 2
 
     mode = None if args.mode == "all" else args.mode
     st = build(args.db, args.depth_bar, args.max_move_pct, mode)
@@ -268,29 +301,74 @@ def main() -> int:
     print("selector's symbol mix.")
     print()
 
+    for line in provenance_lines(dpr.QUOTE_PROVENANCE):
+        print(line)
+    print()
+
     # --- 1. per symbol, measured cost --------------------------------------
     priced = [r for r in rows if r["rate"] is not None]
     print("-" * W)
-    print("1. THE 6 QUOTED SYMBOLS, PRICED AT THEIR OWN CURVE")
-    print(f"{'SYMBOL':<14}{'n':>4}{'rate%':>8}{'gross':>10}{'feeBOOK':>10}"
-          f"{'feeMEAS':>10}{'netBEFORE':>11}{'netAFTER':>10}")
+    print("1. THE %d QUOTED SYMBOLS, PRICED AT THEIR OWN CURVE"
+          % len({r["base"] for r in priced}))
+    # COVERAGE FIRST. The net below is over PRICED rows only, so the share of
+    # the book it speaks for is part of the number, not a footnote. Without
+    # this line a reader sees a net and cannot tell it covers a third of the
+    # book.
+    unpriced = [r for r in rows if r["rate"] is None]
+    print(f"  COVERAGE: {len(priced)} of {len(rows)} kept rows carry a quoted "
+          f"cost ({len(priced)/max(1,len(rows))*100:.1f}%).")
+    print(f"  The other {len(unpriced)} rows are charged NOTHING and cannot "
+          f"enter any net below.")
+    if unpriced:
+        by_un = collections.Counter(r["base"] for r in unpriced)
+        print("  unpriced, largest first: " + ", ".join(
+            "%s(n=%d)" % (s, c) for s, c in by_un.most_common(8)))
+    uq = dpr.QUOTE_PROVENANCE.get("unquotable") or {}
+    ur = dpr.QUOTE_PROVENANCE.get("unresolved") or {}
+    if uq:
+        print("  the census TRIED and could not price: " + ", ".join(
+            "%s(rows=%s)" % (s, (d or {}).get("rows")) for s, d in sorted(uq.items())))
+    if ur:
+        print("  UNRESOLVED (router not answering, verdict withheld): "
+              + ", ".join(sorted(ur)))
+    print(f"{'SYMBOL':<14}{'n':>4}{'effRATE%':>10}{'rate span':>18}{'gross':>10}"
+          f"{'feeBOOK':>10}{'feeMEAS':>10}{'netBEFORE':>11}{'netAFTER':>10}")
     by_sym = collections.defaultdict(list)
     for r in priced:
         by_sym[r["symbol"]].append(r)
     for sym in sorted(by_sym, key=lambda s: -len(by_sym[s])):
         g = by_sym[sym]
-        print(f"{sym:<14}{len(g):>4}{g[0]['rate']:>8.4f}"
+        # NOT g[0]['rate']. One symbol's rows draw DIFFERENT rates because they
+        # sit at different clips on a quoted curve -- AERO's 39 priced rows drew
+        # three. Printing the first row's rate as the symbol's rate made this
+        # script disagree with deep_pool_reprice.py on the SAME artifact
+        # (0.2222 here, 0.3333 there, measured pass 458). The effective rate is
+        # notional-weighted, so it reconciles with feeMEAS by construction.
+        notional = sum(x["notional"] for x in g)
+        fee_m = sum(x["fee_meas"] for x in g)
+        eff = (100.0 * fee_m / notional) if notional > 0 else float("nan")
+        rs = sorted({x["rate"] for x in g})
+        span = (f"{rs[0]:.4f}-{rs[-1]:.4f} ({len(rs)})" if len(rs) > 1
+                else f"{rs[0]:.4f} (1)")
+        print(f"{sym:<14}{len(g):>4}{eff:>10.4f}{span:>18}"
               f"{sum(x['gross'] for x in g):>10.4f}"
               f"{sum(x['fee_book'] for x in g):>10.4f}"
-              f"{sum(x['fee_meas'] for x in g):>10.4f}"
+              f"{fee_m:>10.4f}"
               f"{sum(x['net_before'] for x in g):>11.4f}"
               f"{sum(x['net_after'] for x in g):>10.4f}")
     tb = sum(r["net_before"] for r in priced)
     ta = sum(r["net_after"] for r in priced)
-    print(f"{'TOTAL':<14}{len(priced):>4}{'':>8}{sum(r['gross'] for r in priced):>10.4f}"
+    print(f"{'TOTAL':<14}{len(priced):>4}{'':>10}{'':>18}"
+          f"{sum(r['gross'] for r in priced):>10.4f}"
           f"{sum(r['fee_book'] for r in priced):>10.4f}"
           f"{sum(r['fee_meas'] for r in priced):>10.4f}{tb:>11.4f}{ta:>10.4f}")
+    print("  effRATE% is NOTIONAL-WEIGHTED across that symbol's priced rows and")
+    print("  is the only single rate that reproduces feeMEAS. 'rate span' is the")
+    print("  min-max of the per-row quotes and, in brackets, how many DISTINCT")
+    print("  rates the symbol drew: >1 means its rows straddle quoted clips and")
+    print("  the symbol HAS no single rate.")
     print(f"  SUBSTITUTION EFFECT: net {tb:+.4f} -> {ta:+.4f}  ({ta - tb:+.4f})")
+    print(f"  ...over the {len(priced)} priced rows only, NOT the {len(rows)}-row book.")
     print()
 
     # --- 2. restricted universe vs full ------------------------------------
@@ -315,16 +393,23 @@ def main() -> int:
     print("-" * W)
     print("3. NON-MONOTONE EXPOSURE -- not smoothed away")
     nm_syms = {s for s in by_sym if non_monotone_span(s)}
+    worst = 0.0
     for s in sorted(nm_syms):
         span = non_monotone_span(s)
-        tbl = MEASURED_ROUND_TRIP_PCT[_base_symbol(s)]
+        tbl = dpr.MEASURED_ROUND_TRIP_PCT.get(_base_symbol(s)) or []
+        vals = [b for _a, b in tbl if b > 0]
+        if len(vals) >= 2:
+            worst = max(worst, max(vals) / min(vals))
         print(f"  {s:<14} curve inverts over ${span[0]:g}-${span[1]:g}: "
               + " ".join(f"${a:g}={b:.4f}%" for a, b in sorted(tbl)))
+    if not nm_syms:
+        print("  no quoted symbol's cost curve inverts on this grid.")
     print(f"  {len(nm)} of {len(priced)} priced trips ({len(nm)/max(1,len(priced))*100:.1f}%) "
           f"sit at a clip INSIDE an inverted span.")
     print("  Their cost is therefore uncertain by the full width of that")
-    print("  inversion -- up to 70x for AERO -- and that is a real uncertainty")
-    print("  in the answer, not a rounding detail.")
+    print(f"  inversion -- up to {worst:.0f}x across the quoted clips of the worst")
+    print("  symbol -- and that is a real uncertainty in the answer, not a")
+    print("  rounding detail.")
     print()
 
     # --- 4. the gross question, on the WHOLE book, by depth -----------------
@@ -356,20 +441,33 @@ def main() -> int:
     print("-" * W)
     print("5. DOES POOL DEPTH PREDICT ROUND-TRIP COST? -- checking our own proxy")
     depths = load_depths(DEPTH_SNAPSHOT)
+    table = dpr.MEASURED_ROUND_TRIP_PCT
     chk = []
-    for s, tbl in sorted(MEASURED_ROUND_TRIP_PCT.items()):
+    for s, tbl in sorted(table.items()):
         dep = depths.get(s)
-        c = dict(tbl)
+        pts = sorted(tbl)
         if dep is None:
-            print(f"  {s:<7}{'(no depth reading)':>18}")
+            print(f"  {s:<9}{'(no depth reading)':>20}  "
+                  + "  ".join(f"${a:g}={b:.4f}%" for a, b in pts[:4]))
             continue
-        print(f"  {s:<7}{dep:>18,.0f}  rt@$2={c.get(2.0):.4f}%  "
-              f"@$10={c.get(10.0):.4f}%  @$50={c.get(50.0):.4f}%")
-        chk.append((dep, c.get(2.0)))
-    print(f"  Only {len(chk)} of {len(MEASURED_ROUND_TRIP_PCT)} quoted symbols have a")
-    print("  depth reading, so this cannot be a correlation -- it is a spot check,")
-    print("  and it FAILS: AERO sits in a pool 4x deeper than CBBTC and costs 9x")
-    print("  more to round-trip at $2 (0.6395% vs 0.0728%).")
+        print(f"  {s:<9}{dep:>20,.0f}  "
+              + "  ".join(f"${a:g}={b:.4f}%" for a, b in pts[:4]))
+        chk.append((dep, pts[0][1], s))
+    print(f"  Only {len(chk)} of {len(table)} quoted symbols have a")
+    print("  depth reading, so this cannot be a correlation -- it is a spot")
+    print("  check on whichever symbols the census reached.")
+    if len(chk) >= 2:
+        ranked = sorted(chk, key=lambda t: -t[0])
+        deepest, shallowest = ranked[0], ranked[-1]
+        print(f"  deepest pool  {deepest[2]:<9} {deepest[0]:>16,.0f}  "
+              f"smallest-clip rt {deepest[1]:.4f}%")
+        print(f"  thinnest pool {shallowest[2]:<9} {shallowest[0]:>16,.0f}  "
+              f"smallest-clip rt {shallowest[1]:.4f}%")
+        if deepest[1] > shallowest[1]:
+            print("  IT FAILS on this sample: the DEEPER pool round-trips DEARER.")
+        else:
+            print("  It is consistent on this sample, which is not the same as")
+            print("  established -- two points cannot carry a proxy.")
     print("  CONSEQUENCE: DexScreener pool liquidity is NOT established as a")
     print("  proxy for round-trip cost, and the only rows where we can check it")
     print("  disagree with the assumption. The variance result in section 4 is")
@@ -382,15 +480,22 @@ def main() -> int:
     print("CAVEATS THAT TRAVEL WITH EVERY NUMBER ABOVE")
     print("  1. QUOTES, NOT FILLS. Slippage and MEV are NOT modelled. Every")
     print("     'after' figure is a COST FLOOR, the best case, never a realised")
-    print("     P/L. The live lane measured ~27.8bp of slippage (n=12) that no")
-    print("     ghost row carries.")
+    print("     P/L. The live lane measured ~27.8bp of round-trip slippage")
+    print("     (21.73 buy + 6.04 sell, n=12) that no ghost row carries. A")
+    print("     second read of trade_fills puts it at ~13.5bp pooled; the two")
+    print("     disagree, so the unmodelled band is 13.5-27.8bp, not one end.")
     print("  2. SELECTION. The symbol mix is the current selector's. See the")
     print("     one-sentence statement at the top.")
-    print("  3. Only 6 symbols were ever quoted. Unquoted symbols are charged")
-    print("     NOTHING and appear only in the gross/depth table, never in a")
-    print("     net. A default rate on an unquoted pool is an assumption in a")
-    print("     measurement's clothes.")
+    print("  3. Only the symbols in the PROVENANCE block were quoted. Unquoted")
+    print("     symbols are charged NOTHING and appear only in the gross/depth")
+    print("     table, never in a net. So is any row whose clip sits more than")
+    print("     %gx from the nearest quoted clip. A default rate on an"
+          % MAX_CLIP_EXTRAPOLATION)
+    print("     unquoted pool is an assumption in a measurement's clothes.")
     print("  4. Depth is POINT-IN-TIME (2026-09-16T21:31Z). Pools drain.")
+    print("  5. FILLS BEAT QUOTES. trade_fills holds 38 real executed legs.")
+    print("     Where a quote here disagrees with a fill for the same symbol,")
+    print("     THE QUOTE IS THE SUSPECT.")
 
     if args.json_out:
         Path(args.json_out).write_text(json.dumps({
