@@ -8660,3 +8660,55 @@ mean gross is **0.2807%** against a clip-invariant rate floor of **0.3149%**.
 At an INFINITE clip -- gas amortised to nothing -- WETH still loses **3.4 bps**
 per round trip. Size cannot reach it, because the floor is a percentage.
 SIGNAL SETS THE SIGN, NOT SIZE. [c5c198b2]'s answer is unchanged.
+
+### Pass 445, FINAL AND BEST RESULT: the signal is REAL at +17.7bp, and the cost floor is 31.5bp
+
+I tested whether my own negative was SIGNIFICANT or merely UNMEASURED, because
+"the rule loses" and "we cannot tell" are different findings and this repo has
+mistaken the second for the first before. Pooled across the WHOLE 14-symbol
+deep universe at the shipped config, censored at |20%|, not two symbols:
+
+    clip   hold    n   mean net      t      95% CI            GROSS    t(gross)  t vs 0.3149% floor
+    $ 2    5m    101   -0.4603%   -4.44  [-0.663,-0.257]    +0.0831%    +0.80        -2.24
+    $ 2   30m     51   -0.4599%   -2.20  [-0.869,-0.051]    +0.0835%    +0.40        -1.11
+    $10    5m     99   -0.1837%   -3.58  [-0.284,-0.083]    +0.1769%    +3.45        -2.69
+    $10   30m     51   -0.1524%   -1.59  [-0.340,+0.035]    +0.2082%    +2.17        -1.11
+
+THREE STATEMENTS, AND THE FIRST ONE IS THE GOOD NEWS THIS LOOP HAS NOT HAD:
+
+1. **THERE IS A REAL DIRECTIONAL EDGE.** At $10/5m the GROSS mean is +0.1769%
+   with **t = +3.45 on n=99**. The dip rule predicts. This is not a
+   coin-flip result and it is not one lucky row -- the censor removed nothing
+   and the sample is the whole deep universe over 21.5 days. The money_button
+   dip predicate is NOT exhausted in the way the price-action predicate work
+   concluded; on DEEP pools at a REAL clip it carries signal.
+
+2. **THE EDGE IS SIGNIFICANTLY SMALLER THAN THE COST FLOOR.** Tested against
+   the 0.3149% rate floor directly: t = -2.69. The gap is 13.8 bps and it is
+   not noise.
+
+3. **SO THE NET IS SIGNIFICANTLY NEGATIVE**: -0.1837%, t = -3.58,
+   95% CI [-0.284%, -0.083%] -- the interval excludes zero.
+
+WHAT THIS CHANGES. The route is NOT "find a signal" -- we have one, measured,
+at +17.7 bps with t=+3.45. The route is **GET THE ROUND-TRIP FLOOR BELOW
+17.7 BPS**, and the floor is 3.69 bps of quote plus **27.8 bps of slippage**.
+Slippage is 88% of the wall and the entire gap.
+
+AND THE SLIPPAGE NUMBER IS THE WEAKEST ONE WE OWN. Measured earlier this pass:
+38 live legs, 7 symbols, median notional $0.75-$1.36, **not one WETH-USDC
+fill**, and CBBTC's own figure is 10.98 bps -- 2.5x under the composite it is
+charged. If true deep-pool slippage at a $10 clip is single-digit bps, the
+floor lands near 9-13 bps and the +17.7 bps edge clears it.
+
+DO NOT CELEBRATE THAT YET, AND HERE IS THE COUNTER-EVIDENCE FROM THIS SAME
+PASS: repricing CBBTC at its own 10.98 bps did NOT flip its sign, because the
+fee sits inside the admission test and a cheaper fee admits a worse entry set
+(n 24 -> 37, gross 0.1276% -> 0.0919%). Whether a cheaper floor survives that
+dilution across the POOLED universe is UNTESTED -- the dilution test was one
+symbol, this significance result is 14.
+
+THE ONE MEASUREMENT THAT DECIDES THE ROUTE: real realised slippage on
+deep-pool pairs at a $10 clip. It cannot come from the tape -- it needs live
+fills or a quoter probe at size. That is the next pass's highest-value work
+and it belongs to exec.
