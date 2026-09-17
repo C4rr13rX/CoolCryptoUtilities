@@ -55,14 +55,19 @@ except Exception:  # noqa: BLE001 - never let a costing import stop the scout
     def _ghost_clip_usd() -> float:  # type: ignore[misc]
         return 2.0
 
-    def _roundtrip_cost_usd(notional: float | None = None) -> float:  # type: ignore[misc]
+    # The shims take ``symbol`` and ignore it. Nothing here can price a token
+    # -- the census lives in the module that failed to import -- so they are
+    # honest about being token-blind rather than pretending otherwise, and the
+    # signature stays call-compatible so a costing outage degrades to the old
+    # behaviour instead of raising TypeError inside the exit loop.
+    def _roundtrip_cost_usd(notional: float | None = None, symbol: object = None) -> float:  # type: ignore[misc]
         return 0.004047 + 0.003187 * float(notional or 2.0)
 
-    def _roundtrip_cost_rate(notional: float | None = None) -> float:  # type: ignore[misc]
+    def _roundtrip_cost_rate(notional: float | None = None, symbol: object = None) -> float:  # type: ignore[misc]
         n = float(notional or 2.0)
         return max(_roundtrip_cost_usd(n) / n, 0.003187)
 
-    def _net_profit_usd(return_pct: float, notional: float | None = None) -> float:  # type: ignore[misc]
+    def _net_profit_usd(return_pct: float, notional: float | None = None, symbol: object = None) -> float:  # type: ignore[misc]
         n = float(notional or 2.0)
         return float(return_pct) * n - _roundtrip_cost_usd(n)
 
@@ -859,12 +864,20 @@ def _run_ghost_quote_scout(
             continue
         age = now - _float(pos.get("entry_ts"), now)
         profit = (mark / entry) - 1.0
-        # What this round trip costs, as a fraction of the clip it is priced
-        # at. Every "is this position worth closing" test below compares
+        # What THIS SYMBOL's round trip costs, as a fraction of the clip it is
+        # priced at. Every "is this position worth closing" test below compares
         # against THIS, never against zero -- a position marked out at a return
         # smaller than one round trip is not a winner, it is a fee.
+        #
+        # The symbol matters, and until 2026-09-17 this asked without it. Pool
+        # cost quoted at a $2 clip runs 2.01bp on WETH and 3301.53bp on COMP
+        # -- a factor of 1,642 -- against one constant 31.87bp. Asking blind
+        # set the "is this a win" floor 16x too high on the cheapest symbol
+        # this account trades and 104x too low on the dearest, so a COMP exit
+        # at +0.5% booked as a target_hit was a 32% loss to the pool. A symbol
+        # the census never priced still gets the constant, and says so.
         clip_usd = _ghost_clip_usd()
-        cost_rate = _roundtrip_cost_rate(clip_usd)
+        cost_rate = _roundtrip_cost_rate(clip_usd, symbol)
         target_return = _float(pos.get("target_return"), _float((sig or {}).get("expected_return"), 0.0))
         reason = ""
         # ``cost_rate`` joins the floor so a mis-set ATF_STATIC_GHOST_MIN_EXIT_PROFIT

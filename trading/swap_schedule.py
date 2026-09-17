@@ -128,6 +128,38 @@ try:
 except Exception:  # noqa: BLE001 - a missing gate must not stop planning
     def _symbol_edge_refusal(_symbol: str):  # type: ignore[misc]
         return None
+try:
+    from services.symbol_motion_gate import refusal_reason as _symbol_motion_refusal
+except Exception:  # noqa: BLE001 - a missing gate must not stop planning
+    def _symbol_motion_refusal(_symbol: str):  # type: ignore[misc]
+        return None
+try:
+    from services.roundtrip_cost import roundtrip_cost_rate_detail as _roundtrip_cost_detail
+except Exception:  # noqa: BLE001 - a missing costing module must not stop planning
+    def _roundtrip_cost_detail(_notional=None, _symbol=None):  # type: ignore[misc]
+        return (0.0, "unpriced_default")
+
+
+def _symbol_roundtrip_cost(clip_usd: float, symbol: Any, fallback: float) -> Tuple[float, str]:
+    """This symbol's round trip, or the caller's number if nobody measured it.
+
+    ``build_schedule`` receives ONE cost rate for the whole batch because the
+    function that computes it takes a notional and no symbol. That number is
+    the entry gate -- a leg is refused unless its prediction clears it -- and
+    it is wrong by up to two orders of magnitude in both directions at once.
+
+    Returns the caller's ``fallback`` UNCHANGED for any symbol the census
+    never priced, so a token nobody has measured keeps exactly the behaviour
+    it has today, and returns the source alongside so the rejection record can
+    say which it was.
+    """
+    try:
+        rate, source = _roundtrip_cost_detail(float(clip_usd), symbol)
+    except Exception:  # noqa: BLE001 - costing must never stop the schedule
+        return (float(fallback), "unpriced_default")
+    if source != "census" or not (rate > 0.0):
+        return (float(fallback), "unpriced_default")
+    return (float(rate), "census")
 
 
 def _env_int(name: str, default: int) -> int:
@@ -345,6 +377,11 @@ def predictions_to_candidates(
         # is exactly this case: 37 closed round trips at mean -0.0517.
         if _symbol_edge_refusal(str(symbol)):
             continue
+        # Nor around one that cannot move far enough to cover the round trip.
+        # A leg planned on CBBTC-USDC (0.7% of 15-minute windows clear a 0.65%
+        # cost) is capital reserved for a buy the entry gate will refuse.
+        if _symbol_motion_refusal(str(symbol)):
+            continue
         out.append({
             "symbol": symbol,
             "label": str(entry.get("label") or ""),
@@ -398,21 +435,40 @@ def build_schedule(
         resolve_ts = float(cand.get("resolve_ts") or 0.0)
         hold_sec = max(1.0, resolve_ts - moment)
 
+        # WHAT THIS LEG COSTS, not what a leg costs.
+        #
+        # ``roundtrip_cost_rate`` arrives as ONE number for the whole batch,
+        # because the function that produced it takes a notional and no
+        # symbol. It is not close on any token: quoted USDC->token->USDC at
+        # this clip, pool cost runs 2.01bp on WETH and 3301.53bp on COMP, a
+        # factor of 1,642, against a constant 31.87bp. So the batch number
+        # simultaneously refuses WETH legs worth taking and admits COMP legs
+        # that lose a third of the trade to the pool.
+        #
+        # Priced per symbol where the census has measured one. Where it has
+        # not, the caller's number stands -- unchanged behaviour, and
+        # ``cost_source`` on the rejection says which of the two it was, so a
+        # default is never read back as a measurement.
+        symbol = cand.get("symbol")
+        leg_cost, cost_source = _symbol_roundtrip_cost(clip_usd, symbol, roundtrip_cost_rate)
+
         # A leg must clear what the round trip costs. Confidence in a forecast
         # is not the same as the forecast being worth acting on: +0.1% at a
         # 0.75% round-trip cost is a loss the model is sure about.
-        if predicted <= roundtrip_cost_rate:
+        if predicted <= leg_cost:
             schedule.rejected.append({
-                "symbol": cand.get("symbol"),
+                "symbol": symbol,
                 "label": cand.get("label"),
                 "reason": (f"predicted {predicted:.4%} does not clear the "
-                           f"{roundtrip_cost_rate:.4%} round trip"),
+                           f"{leg_cost:.4%} round trip"),
+                "roundtrip_cost_rate": leg_cost,
+                "cost_source": cost_source,
             })
             continue
 
         # Return per dollar per hour held: what makes two legs comparable when
         # they tie up the same capital for different lengths of time.
-        density = (predicted - roundtrip_cost_rate) / (hold_sec / 3600.0)
+        density = (predicted - leg_cost) / (hold_sec / 3600.0)
         scored.append((density, cand))
 
     scored.sort(key=lambda pair: pair[0], reverse=True)
