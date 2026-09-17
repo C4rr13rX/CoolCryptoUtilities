@@ -8473,3 +8473,47 @@ CENSORING: ZERO round trips exceeded |20%| in ANY of the 80 cells. The
 deep-pool phenomenon -- it lives entirely in the thin tokens.
 
 No gate changed, no trade placed; the script opens the store mode=ro.
+
+### Pass 445 follow-up: I tried to overturn the result above and FAILED, which strengthens it
+
+SUSPICION. The whole negative rests on a 0.3149% rate, 88% of which is a
+27.8 bps slippage composite. So I broke that composite down by symbol and
+notional (trade_fills, 38 legs carrying nonzero slippage, all live_entry /
+live_exit):
+
+    symbol            n   med notional   med |slip| bps
+    AERO-USDC        16        $0.7503            18.72
+    CBBTC-USDC        9        $0.8570            10.98
+    CBETH-USDC        5        $0.7500            31.45
+    BSTONK-USDC       2        $0.8972           622.31
+    BASECAT-USDC      2        $0.7396            88.09
+    CBXRP-USDC        2        $0.7472            85.72
+    BPAD-USDC         2        $1.3559           227.01
+
+TWO FACTS. (1) THERE IS NOT ONE WETH-USDC FILL IN THE ENTIRE SAMPLE. Every
+time this repo has charged WETH 27.8 bps of slippage it was applying a number
+measured on other tokens. (2) CBBTC-USDC has its OWN measured figure and it is
+10.98 bps, 2.5x cheaper than the composite it is charged. The composite median
+is held up by thin-token legs -- BSTONK at 622 bps is the same symbol whose
+tick series jumps >5% between adjacent ticks.
+
+SO I REPRICED CBBTC AT ITS OWN NUMBER, EXPECTING THE SIGN TO FLIP. IT DID NOT.
+Cost fell from 0.3606% to 0.1924%, 16.8 bps, and the net barely moved:
+
+    floor  hold   n(own)  mean gross   net@own    net@27.8bp
+    0.50%   30m       26    +0.1170%   -0.0754%    -0.1973%
+    0.50%   60m       21    +0.1203%   -0.0721%    -0.0613%   <- WORSE
+    1.00%   60m        7    +0.2023%   +0.0099%    -0.0490%
+
+THE MECHANISM, AND IT IS THE REAL FINDING: the dip rule's admission test is
+`expected_return - fee >= min_net`, so the fee is INSIDE the entry decision. A
+cheaper fee lowers the bar and admits a WORSE entry set -- at the 0.5% floor
+n goes 24 -> 37 and mean gross falls from +0.1276% to +0.0919%. The rule
+dilutes its own edge by exactly about as much as the cost saving. At 60m the
+net actually gets WORSE because n went 9 -> 21.
+
+CONSEQUENCE FOR [a044e46e]: for THIS rule the 27.8 bps figure does NOT set the
+sign, because the expectancy is near-invariant to it. That item stays live for
+anything charging a FIXED threshold, and is defused for the dip rule.
+CONSEQUENCE FOR THE ROUTE: the negative on the deep-pool dip is now robust to
+the cost assumption I most distrusted. CLOSED, and closed harder.
