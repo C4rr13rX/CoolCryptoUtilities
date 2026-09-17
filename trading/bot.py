@@ -401,6 +401,119 @@ class _InsufficientHistory(RuntimeError):
     """
 
 
+#: Process-wide state for the wizard-brain live-tick push. Module level, NOT
+#: per-bot: one bot exists per streamed symbol and they all share one event
+#: loop, so per-bot single-flight would still allow one in-flight push per
+#: symbol -- exactly the thread churn ``pipeline._offload_confusion_refresh``
+#: documents as a fork bomb. One push in flight per PROCESS is the bound.
+_BRAIN_TICK_PUSH_STATE: Dict[str, Any] = {
+    "enabled": None,        # tri-state cache of the env gate; None = unread
+    "thread": None,
+    "last_dispatch": 0.0,
+    "dispatched": 0,
+    "coalesced": 0,
+}
+_BRAIN_TICK_PUSH_LOCK = threading.Lock()
+
+#: Floor on the gap between dispatches, process-wide. ``push_live_tick`` already
+#: throttles to one push per symbol per second, but that throttle lives BEHIND
+#: this dispatch, so without a gap here every tick across every symbol would
+#: still mint a thread just to be dropped on the far side.
+_BRAIN_TICK_PUSH_MIN_GAP = float(os.getenv("WIZARD_LIVE_TICK_PUSH_MIN_GAP", "0.25") or 0.25)
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _brain_tick_push_enabled() -> bool:
+    """Is the per-tick push to the wizard node wanted at all?
+
+    Default OFF, because the wizard brain is switched off in this repo
+    (``WIZARD_BRAIN_STRATEGY_ENABLED=0``, ``OMEN_STRATEGY_ENABLED`` unset ->
+    "0") and its shipped held-out result is a significant LOSS. Measured
+    2026-09-17 on the live production process (py-spy, 60 samples of the
+    asyncio loop thread over ~8 min): 17/60 = 28.3% of the money loop's wall
+    clock sat in ``socket.readinto`` under
+    ``wizard_trainer._consolidate_pairs:519`` -- a SYNCHRONOUS
+    ``getresponse()`` on the loop thread, at an 8s per-POST timeout, feeding a
+    subsystem no live decision reads. All 17 carried the identical stack, down
+    to ``push_live_tick -> _handle_sample``. Pass 455 measured the same stack
+    at 15/30.
+
+    The brain is PAUSED, not deleted, so this is a gate and not a removal:
+    set ``WIZARD_LIVE_TICK_PUSH=1`` (or re-enable either strategy flag) and
+    the push returns -- on a worker thread, never on the loop.
+
+    Brain learning does not stop either way: ``scripts/run_brain_feeder.py``
+    runs as its own process and pushes ~1.7k OHLCV observations per cycle,
+    which is orders of magnitude more corpus than a 2-candle tick batch.
+    """
+    cached = _BRAIN_TICK_PUSH_STATE.get("enabled")
+    if cached is not None:
+        return bool(cached)
+    explicit = (os.getenv("WIZARD_LIVE_TICK_PUSH") or "").strip().lower()
+    if explicit:
+        enabled = explicit in _TRUTHY
+    else:
+        enabled = any(
+            (os.getenv(name, "0") or "0").strip().lower() in _TRUTHY
+            for name in ("WIZARD_BRAIN_STRATEGY_ENABLED", "OMEN_STRATEGY_ENABLED")
+        )
+    _BRAIN_TICK_PUSH_STATE["enabled"] = bool(enabled)
+    return bool(enabled)
+
+
+def _dispatch_brain_tick_push(
+    symbol: str, price: float, volume: float, ts: float
+) -> bool:
+    """Hand a live tick to the brain on a WORKER thread. Never blocks.
+
+    Returns True when a worker was started, False when the tick was gated off
+    or coalesced into an in-flight push. Nothing downstream reads the result:
+    ``push_live_tick`` returns a bool the only caller has always discarded, and
+    its side effects (``_LIVE_TICK_STATE``, ``trainer._latest_candles``,
+    ``trainer.last_push_stats``) are read only by the trainer itself, by
+    ``query_regime`` -- which synthesises a candle from the live price when the
+    cache is empty -- and by dashboards. No gate, entry or exit depends on this
+    having happened by the time the tick returns.
+    """
+    if not _brain_tick_push_enabled():
+        return False
+    now = time.time()
+    with _BRAIN_TICK_PUSH_LOCK:
+        thread = _BRAIN_TICK_PUSH_STATE.get("thread")
+        if thread is not None and thread.is_alive():
+            _BRAIN_TICK_PUSH_STATE["coalesced"] = (
+                int(_BRAIN_TICK_PUSH_STATE.get("coalesced", 0)) + 1
+            )
+            return False
+        if now - float(_BRAIN_TICK_PUSH_STATE.get("last_dispatch", 0.0)) < _BRAIN_TICK_PUSH_MIN_GAP:
+            _BRAIN_TICK_PUSH_STATE["coalesced"] = (
+                int(_BRAIN_TICK_PUSH_STATE.get("coalesced", 0)) + 1
+            )
+            return False
+        _BRAIN_TICK_PUSH_STATE["last_dispatch"] = now
+
+        def _runner() -> None:
+            try:
+                from trading.wizard_trainer import push_live_tick
+
+                push_live_tick(symbol, price, volume, ts=ts)
+            except Exception:
+                # Best-effort telemetry into a paused subsystem: a failure here
+                # must never surface on the money path.
+                pass
+
+        worker = threading.Thread(
+            target=_runner, name="brain-tick-push", daemon=True
+        )
+        _BRAIN_TICK_PUSH_STATE["thread"] = worker
+        _BRAIN_TICK_PUSH_STATE["dispatched"] = (
+            int(_BRAIN_TICK_PUSH_STATE.get("dispatched", 0)) + 1
+        )
+        worker.start()
+    return True
+
+
 class TradingBot:
     """
     High-level orchestrator that ties together the market stream, the training
@@ -5972,15 +6085,32 @@ class TradingBot:
 
             # Live-tick → brain push.  Runs BEFORE the TF gate so the
             # brain keeps learning from live market data even when TF
-            # prediction is broken.  Throttled per-symbol so a high-
-            # frequency tick stream doesn't slam the brain endpoint.
+            # prediction is broken.
+            #
+            # IT DOES NOT RUN ON THIS THREAD, AND WHEN THE BRAIN IS OFF IT
+            # DOES NOT RUN AT ALL.  This used to call ``push_live_tick``
+            # inline.  That reaches ``_consolidate_pairs``, which POSTs to
+            # the wizard node over a plain ``HTTPConnection`` with an 8s
+            # timeout and blocks in ``socket.readinto`` -- on the asyncio
+            # loop thread that also polls every price endpoint and runs
+            # every gate.  py-spy on the live process, sampling the thread
+            # whose stack holds ``run_forever``: 15/30 samples in that one
+            # socket read (pass 455), 17/60 = 28.3% on a re-measure
+            # 2026-09-17 where the blocked frame was literally this call
+            # site.  Judge it by the STACK -- py-spy labels the thread
+            # "idle" while it is blocked in that socket.
+            #
+            # The subsystem being paid for is switched OFF
+            # (``WIZARD_BRAIN_STRATEGY_ENABLED=0``) and its shipped
+            # held-out result is a significant loss, so the gate defaults
+            # to skipping entirely; ``scripts/run_brain_feeder.py`` keeps
+            # feeding the brain from its own process regardless.
             try:
-                from trading.wizard_trainer import push_live_tick
-                push_live_tick(
+                _dispatch_brain_tick_push(
                     sample.get("symbol", ""),
                     float(sample.get("price", 0) or 0),
                     float(sample.get("volume", 0) or sample.get("net_volume", 0) or 0),
-                    ts=now,
+                    now,
                 )
             except Exception:
                 pass
