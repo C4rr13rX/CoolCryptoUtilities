@@ -37,6 +37,7 @@ import argparse
 import os
 import sqlite3
 import statistics
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -44,6 +45,32 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# [cae445dc] LOAD PRODUCTION'S ENVIRONMENT BEFORE READING A SINGLE THRESHOLD.
+#
+# This script used to import no repo module, so services/env_loader never ran,
+# so every os.getenv below returned its DEFAULT. services/env_loader.py:377
+# sets MONEY_BUTTON_MIN_DRAWDOWN to 0.005 -- so this census replayed a 2% dip
+# floor while production admits at 0.5%, a rule 4x deeper than the one on the
+# money path, and nothing in the output said so.
+#
+# MEASURED pass 442: MIN_DRAWDOWN is the ONLY one of this script's eight
+# parameters that disagreed. env_loader leaves MAX_DRAWDOWN, MIN_NET_RETURN,
+# REVERSION_FRACTION, SLOPE_FLOOR, SLOPE_WINDOW_SEC, LOOKBACK_SEC and
+# TRADE_FEE_RATE unset, so those defaults already matched. One parameter --
+# but the one that decides how many candidates EXIST.
+#
+# The resolved values are printed in the header below. A census that does not
+# say which rule it replayed is not evidence.
+try:
+    import services.env_loader  # noqa: F401  (import side effect: loads .env)
+    _ENV_LOADED = True
+except Exception as exc:  # pragma: no cover - diagnostic path
+    _ENV_LOADED = False
+    _ENV_ERROR = str(exc)
+
 DB_PATH = "file:%s?mode=ro" % (ROOT / "storage" / "trading_cache.db")
 
 # Per-token round-trip cost, measured on chain and recorded in the project
@@ -198,7 +225,30 @@ def main() -> int:
     print("%.0fh of stored ticks, gate fee %.4f, dip window %.0f%%-%.0f%%, horizon 30m"
           % (args.hours, fee, min_dd * 100, max_dd * 100))
     print("%d symbols, %d evaluations" % (len(ticks), evaluated))
-    print("NOTE: the MONEY_BUTTON_REQUIRE_OPPORTUNITY buy-low bias gate is NOT")
+
+    # [cae445dc] SAY WHICH RULE THIS REPLAYED. A number without its parameters
+    # is not reproducible, and this script silently replayed a 2% dip floor
+    # against a production that runs 0.5% until pass 442.
+    print("\nRESOLVED THRESHOLDS -- this is the rule that was replayed:")
+    if _ENV_LOADED:
+        print("  production environment: LOADED (services/env_loader)")
+    else:
+        print("  production environment: *** NOT LOADED (%s) ***" % _ENV_ERROR)
+        print("  every value below is an os.getenv DEFAULT and may not be production's.")
+    for name, value, env_key in (
+        ("min_drawdown", min_dd, "MONEY_BUTTON_MIN_DRAWDOWN"),
+        ("max_drawdown", max_dd, "MONEY_BUTTON_MAX_DRAWDOWN"),
+        ("min_net_return", min_net, "MONEY_BUTTON_MIN_NET_RETURN"),
+        ("reversion_fraction", rev_frac, "MONEY_BUTTON_REVERSION_FRACTION"),
+        ("slope_floor", slope_floor, "MONEY_BUTTON_SLOPE_FLOOR"),
+        ("slope_window_sec", slope_win, "MONEY_BUTTON_SLOPE_WINDOW_SEC"),
+        ("lookback_sec", lookback, "MONEY_BUTTON_LOOKBACK_SEC"),
+        ("fee_rate", fee, "TRADE_FEE_RATE"),
+    ):
+        origin = "from env" if os.getenv(env_key) is not None else "DEFAULT (env unset)"
+        print("  %-20s %-12s %s" % (name, ("%g" % value), origin))
+
+    print("\nNOTE: the MONEY_BUTTON_REQUIRE_OPPORTUNITY buy-low bias gate is NOT")
     print("      replayed (live scheduler state) -- these are UPPER BOUNDS.\n")
 
     print("%-26s %9s %8s" % ("gate", "declines", "share"))
