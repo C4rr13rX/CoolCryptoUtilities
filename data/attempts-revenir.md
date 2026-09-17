@@ -10383,3 +10383,53 @@ the frame; faulthandler.dump_traceback_later on the loop gets it without a new
 dependency. That is 10 minutes of work and it ends the guessing.
 
   -- Echo
+
+### Pass 454 -- CAUSE FOUND AND PROVEN BY DIRECT SAMPLING. 4 of 4 samples, same frame.
+
+Stopped guessing and sampled the loop thread. .venv/Scripts/py-spy.exe, read-only,
+PID 32632 (the real production worker -- NOT 22664). Four independent dumps, and
+the event-loop thread was in the SAME frame every time:
+
+    _handle_sample            trading/bot.py:6175      <- PER-TICK handler, on the loop
+      _maybe_transition_to_live  trading/bot.py:4560
+        _ghost_validation_for_live trading/pipeline.py:4702
+          _ghost_validation        trading/pipeline.py:4761
+            ghost_trade_snapshot   trading/metrics.py:387
+              fetch_trades         db.py:1846
+                _cursor            db.py:654           <- BLOCKING sqlite, on the loop
+
+A SYNCHRONOUS SQLITE QUERY AGAINST THE 25.9 GB STORE (1.66 GB WAL, synchronous=
+FULL) IS RUNNING DIRECTLY ON THE ASYNCIO EVENT LOOP, INSIDE THE PER-TICK SAMPLE
+HANDLER. Not in an executor. Not awaited. On the loop.
+
+A SECOND blocking DB path is on the same loop in every sample:
+    record_metrics db.py:1660 -> _maybe_prune_metrics db.py:1688 -> _cursor db.py:654
+
+WHY THIS IS THE ANSWER AND NOT ANOTHER SUSPECT:
+  - it is ON THE LOOP THREAD, so it produces loop_lag. Executor/DNS starvation
+    (my suspect c) cannot -- it makes requests time out without lagging the loop.
+    Suspect (c) is now CLOSED as a cause of the lag.
+  - it DOES NOT LOG, which is exactly what my 384-stall elimination predicted.
+  - py-spy marks the thread "idle", i.e. blocked on I/O, not burning CPU. So
+    GIL/CPU starvation (my suspect a, which I had ranked FIRST) is WRONG as the
+    mechanism. I had the right shortlist and the wrong order; the 90005 CPU-s on
+    32632 is real but is not what stalls the loop.
+  - the 1.66 GB WAL (suspect b) is not the cause but is the AMPLIFIER: it is what
+    makes each fetch_trades slow enough to stall the loop for minutes.
+
+THREE SYMPTOMS, ONE CAUSE -- which is what the standing instructions predicted:
+  step 1  FEED   "no ticks in 10min"      -> the loop running the market streams
+                                             is blocked by this query
+  step 6  RISK   "ghost_validation_block" -> the SAME _ghost_validation call
+  step 10 PROFIT 0 fills / 0 outcomes 20.8h -> nothing executes on a stalled loop
+
+THE SHAPE OF THE FIX (for exec, not decided here): get fetch_trades off the loop
+and stop calling it per tick. It is a ghost-evidence aggregate feeding a
+transition decision -- it does not need to be recomputed on every sample, and it
+must not be recomputed synchronously on the loop. Cache it with a TTL, or move
+it to a worker. Checkpointing the WAL will make it faster and will NOT fix it.
+
+REPRODUCE: .venv/Scripts/py-spy.exe dump --pid <production pid>  -- grep for
+fetch_trades and run_forever in the same thread block.
+
+  -- Echo
