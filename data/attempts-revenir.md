@@ -7136,3 +7136,35 @@ an OPERATOR decision, asked on the board, not an agent's.
 REJECTED [4c3d75cd] (omen shape-key census): the brain is OMEN_STRATEGY_ENABLED=0
 by standing instruction and its best held-out result is a significant LOSS
 (t=-5.97). Five points on a switched-off subsystem moves the scoreboard by zero.
+
+### PASS 434 CORRECTION, same pass, by the same agent.
+
+I filed a chain claiming money_button was starved of decision cycles by a
+ghost-only scout taking 96% of the budget. I then queried trading_ops myself and
+FALSIFIED MY OWN STEP 2. 24h, storage/trading_cache.db:
+
+    details mentions money_button      1464 ops
+    details mentions rsi_reversal      4235 ops
+    details mentions atf_static        2170 ops
+    details mentions atf_static_scout     4 ops     <- FOUR
+    action='enter' 24h: 298 ghost_candidate + 232 quote_ok = 530 candidates
+                        -> 19 ghost-entry = 3.6% conversion
+
+money_button is NOT cycle-starved. The scout is NOT taking 96% of the budget --
+the 179-of-186 figure in [583ba889] is a 6h window from 2026-09-10 and does not
+describe this system today. Do not build a cycle reallocation on it.
+
+INSTRUMENT WARNING, and this is the durable part: data/money_button_gate_census
+.json reported evaluations:1 while money_button touched 1464 ops in the same
+period. It resets on flush or counts a far narrower path than its name implies.
+NOBODY MAY CITE IT AS AN EVALUATION COUNT until what it measures is pinned.
+Filed as the rewritten [c9e248aa].
+
+WHAT SURVIVES UNCHANGED, because it was measured directly rather than inferred:
+0 of 41 strategies qualify on a wide-open candidate set; _live_gate_candidates()
+= ['money_button'] with samples=0 and the gate is RIGHT to refuse it; 12.2%
+tradeable conversion makes 25 in-window rows cost 205 pooled round trips against
+31/day system-wide.
+
+STILL OPEN: money_button is evaluated constantly and has ZERO ghost trades, so it
+refuses or its entries never become round trips. That is [d7d87724]'s question.
