@@ -9369,3 +9369,57 @@ multiple fee tiers and the census treats "uniswap" as one venue, so it has never
 compared the 0.05% / 0.30% / 1.00% pools against each other. That is a real
 cost-reduction question with a real second price, and it is the only live remnant
 of this route. Filed.
+
+### Pass 449, found while auditing: EVERY live trade was placed below this repo's own break-even.
+
+Not a route attempt -- an audit result, and it reframes the scoreboard.
+
+`.env` lines 275-324 (written 2026-09-05) compute break-even at **$3.25** and
+predict, from the repo's own cost model:
+
+    N = $0.75   cost 1.434% of N   net -$0.00644   <- "every live entry so far"
+    N = $3.00   cost 0.598% of N   net -$0.00065
+    N = $6.00   cost 0.458% of N   net +$0.00707
+
+`LIVE_MIN_CLIP_USD=6.00` and `LIVE_FIRST_TRANCHE_USD=6.00` are live and have been
+since that comment was written. MEASURED TODAY from `storage/trading_cache.db`
+`trade_outcomes`, `details.mode=='live'`, notional derived as
+`quantity * entry_price` (there is no notional column and it is not in details):
+
+    live settled rows            22
+    notional  min $0.0007   median $0.7500   max $3.0000
+    >= $3.25 (the break-even)    :  0 of 22
+    >= $6.00 (the shipped clip)  :  0 of 22
+    newest live settled row      :  2026-09-05 21:00
+    net_profit sum -0.331986, median -0.005180, positive 6/22
+
+**THE CLIP FIX SHIPPED TWELVE DAYS AGO AND HAS NEVER BEEN EXERCISED ONCE.** Zero
+live round trips have settled since; `live_trades_today` and `live_trades_1h` are
+both 0. The maximum notional ever placed is $3.00 -- this repo got within 25 cents
+of its own break-even and stopped. So the published -0.186371 is not evidence that
+the strategy loses; it is evidence that the SIZE loses, and the distinction has
+never been tested.
+
+THREE CAVEATS, and they must travel with the number:
+
+  1. **22 is not 18.** The ladder reports 18 trades and applies a live-tradeable
+     predicate; 22 is the raw live row count. Do not mix the denominators.
+  2. **The book is not -0.331986.** The published scoreboard is -0.186371 over 18.
+     The sum here is over a WIDER set and is not a restatement of it.
+  3. **Two rows exceed the whole sum.** BPAD -0.25493 at $1.50 and BSTONK -0.14287
+     at $0.75 total -0.398, against BSTONK +0.24203 pulling back. Only the
+     NOTIONAL DISTRIBUTION is robust, because it is a count and not a mean.
+
+WHAT TO CHECK NEXT, because "raise the clip" is already done: the max ever placed
+is $3.00 against a $6.00 min clip, so something OTHER than the min clip is
+binding -- `first_tranche_cap_usd`, `live_capital_cap_usd`, or the $23.18 wallet.
+Name it before assuming the clip is what limits size.
+
+Filed [7e547445] with criterion 1 pre-verified so nobody re-measures it. The path
+to one settled $6.00 round trip runs through [508bba78] (make the money_button
+census aggregate across scheduler instances) then [d7d87724] (step 3 GHOST),
+both returned to TODO this pass with their stated blockers discharged.
+
+DO NOT loosen a gate to obtain the trade. `.env` is explicit that $0.75 was
+"a guaranteed loss, not a cautious one"; manufacturing a trade at the wrong size
+is precisely what produced twelve days of uninformative data.
