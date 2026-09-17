@@ -521,6 +521,12 @@ class TradingBot:
     intentionally outside the scope to keep this module simulation-friendly.
     """
 
+    #: The raw arm: ENABLE_LIVE_TRADING / auto-promotion / the operator arm.
+    #: Read it through the ``live_trading_enabled`` property, which also
+    #: applies the plan's ``halt_live`` demotion. Declared at class scope so
+    #: the property is safe to read at any point during __init__.
+    _live_trading_armed: bool = False
+
     def __init__(
         self,
         *,
@@ -745,7 +751,10 @@ class TradingBot:
         autonomous = os.getenv("AUTONOMOUS_MODE", "1").lower() in {"1", "true", "yes", "on"}
         default_auto_promote = "1" if autonomous else "0"
 
-        self.live_trading_enabled: bool = os.getenv("ENABLE_LIVE_TRADING", "0").lower() in {"1", "true", "yes", "on"}
+        # The ARM, not the effective state. `live_trading_enabled` is a
+        # property that ANDs this with "the plan is not halting live" -- see
+        # the property below for why halt_live must demote and not stop.
+        self._live_trading_armed = os.getenv("ENABLE_LIVE_TRADING", "0").lower() in {"1", "true", "yes", "on"}
         self.auto_promote_live: bool = os.getenv("AUTO_PROMOTE_LIVE", default_auto_promote).lower() in {"1", "true", "yes", "on"}
         # Slightly more achievable defaults than the original 0.9 / 120 / $50.
         # The accuracy gate still has to clear MIN_GHOST_WIN_RATE (0.55)
@@ -799,28 +808,46 @@ class TradingBot:
         # so brain_candidate returns None ('available_quote <= 0'),
         # money_button returns None, and no directive ever reaches
         # the bot. Patch portfolio.get_quantity / get_native_balance
-        # to consult sim balances first when in ghost mode. Live
-        # trading flips this off via the live_trading_enabled gate.
-        if not self.live_trading_enabled:
-            try:
-                _real_get_quantity   = self.portfolio.get_quantity
-                _real_get_native_bal = self.portfolio.get_native_balance
-                _sim_quote = self.sim_quote_balances
-                _sim_native = self.sim_native_balances
-                def _sim_aware_get_quantity(symbol, chain="ethereum"):
-                    sim_val = _sim_quote.get((chain.lower(), str(symbol).upper()), None)
-                    if sim_val is not None and sim_val > 0:
-                        return float(sim_val)
+        # to consult sim balances first when in ghost mode. A LIVE bot
+        # reads the wallet, gated on live_trading_enabled per call.
+        #
+        # The wrapper is installed UNCONDITIONALLY and decides per call, where
+        # it used to be installed only when the bot was ghost at construction
+        # time. That mattered the moment `halt_live` started demoting a
+        # live-armed bot to ghost instead of halting it: the demoted bot needs
+        # the sim bankroll for exactly the reason above -- its candidate
+        # functions ask `portfolio.get_quantity` what it can trade -- but the
+        # patch had already been skipped at boot and could never be applied
+        # afterwards, so a demoted bot would size its GHOST candidates against
+        # the real $6.98 wallet and get `available_quote <= 0` on every chain
+        # it holds nothing on. selector.py:1322/:1651 flip the same flag at
+        # runtime and had the same hole.
+        #
+        # On a bot that IS live the wrapper delegates straight through, so live
+        # sizing still reads the wallet and nothing changes.
+        try:
+            _real_get_quantity   = self.portfolio.get_quantity
+            _real_get_native_bal = self.portfolio.get_native_balance
+            _sim_quote = self.sim_quote_balances
+            _sim_native = self.sim_native_balances
+            def _sim_aware_get_quantity(symbol, chain="ethereum"):
+                if self.live_trading_enabled:
                     return _real_get_quantity(symbol, chain)
-                def _sim_aware_get_native(chain="ethereum"):
-                    sim_val = _sim_native.get(chain.lower(), None)
-                    if sim_val is not None and sim_val > 0:
-                        return float(sim_val)
+                sim_val = _sim_quote.get((chain.lower(), str(symbol).upper()), None)
+                if sim_val is not None and sim_val > 0:
+                    return float(sim_val)
+                return _real_get_quantity(symbol, chain)
+            def _sim_aware_get_native(chain="ethereum"):
+                if self.live_trading_enabled:
                     return _real_get_native_bal(chain)
-                self.portfolio.get_quantity = _sim_aware_get_quantity   # type: ignore[method-assign]
-                self.portfolio.get_native_balance = _sim_aware_get_native  # type: ignore[method-assign]
-            except Exception:
-                pass
+                sim_val = _sim_native.get(chain.lower(), None)
+                if sim_val is not None and sim_val > 0:
+                    return float(sim_val)
+                return _real_get_native_bal(chain)
+            self.portfolio.get_quantity = _sim_aware_get_quantity   # type: ignore[method-assign]
+            self.portfolio.get_native_balance = _sim_aware_get_native  # type: ignore[method-assign]
+        except Exception:
+            pass
         self._ensure_runtime_state()
 
     async def start(self) -> None:
@@ -1048,6 +1075,13 @@ class TradingBot:
         return state
 
     def __setstate__(self, state: Dict[str, Any]) -> None:  # pragma: no cover - exercised via ensure method
+        state = dict(state)
+        # `live_trading_enabled` used to be a plain field and so appeared in
+        # __dict__. It is a data descriptor now, which outranks __dict__, so a
+        # v1 blob's entry would sit there unread and the arm would silently
+        # come back False. Migrate it onto the arm instead.
+        if "live_trading_enabled" in state:
+            self._live_trading_armed = bool(state.pop("live_trading_enabled"))
         self.__dict__.update(state)
         self._ensure_runtime_state()
 
@@ -1871,6 +1905,96 @@ class TradingBot:
             )
         except Exception:
             pass
+
+    def _live_halt_active(self) -> bool:
+        """Is the current transition plan halting LIVE trading?
+
+        Derived from ``_transition_plan`` on every read rather than latched
+        into a field: the plan is rebuilt every cycle and a latch would have
+        to be cleared by hand, which is how a halt becomes permanent.
+        """
+        plan = getattr(self, "_transition_plan", None)
+        if not isinstance(plan, dict):
+            return False
+        flags = plan.get("risk_flags")
+        if not isinstance(flags, dict):
+            return False
+        return bool(flags.get("halt_live"))
+
+    @property
+    def live_trading_armed(self) -> bool:
+        """The arm alone, ignoring any plan halt.
+
+        Use this where the question is "did somebody turn live trading on",
+        not "may real money move right now".
+        """
+        return bool(self._live_trading_armed)
+
+    @property
+    def live_trading_enabled(self) -> bool:
+        """May real money move on this bot RIGHT NOW?
+
+        ``halt_live`` DEMOTES the bot to ghost; it does not switch it off.
+        This is the whole point of the property, and it is the difference
+        between a dark lane and a dead bot.
+
+        It used to be a plain field, and the scheduler applied ``halt_live``
+        by hand, like this::
+
+            if self.live_trading_enabled:
+                if plan_flags.get("halt_live"):
+                    risk_budget = 0.0
+            ...
+            if risk_budget <= 0:
+                # mark halted, write a feedback row, DECIDE NOTHING
+
+        Note where the halt sat: INSIDE ``if self.live_trading_enabled``. So
+        arming the live lane was what switched the bot OFF. A ghost-only bot
+        never entered that branch, ignored ``halt_live``, and kept deciding; a
+        live-armed bot zeroed its ENTIRE risk budget -- not just its live
+        allocation -- halted the scheduler and wrote no decision row at all.
+
+        And ``halt_live`` IS set today: ``pipeline.py`` raises it on
+        ``not ghost_ready`` and publishes ``halt_reason='ghost_validation_block'``,
+        which is the reason ``scripts/graduation_status.py`` prints at step 6.
+        So the old shape was a trap with the arm as its trigger -- arming the
+        live lane would have stopped the bot deciding, and the halt's own cure
+        is ghost evidence the stopped bot could no longer earn.
+
+        WHAT THIS IS NOT, measured 2026-09-17 so nobody re-derives it from the
+        comment above. The running process (PID 32632, 23.0h uptime) booked 0
+        trade_outcomes and 0 trade_fills rows against 8,016 ticks, and that was
+        FIRST attributed to this line and then falsified: over the same window
+        trading_ops carries 1,327 rows including 8 ghost-entry and 6 ghost-exit.
+        The scheduler is deciding, entering and exiting, so that bot is not on
+        this branch -- it is not live-armed. The zero evidence rate is a
+        BOOKING failure between ghost-exit and trade_outcomes and is filed
+        separately. What this line explains is the LIVE lane's 0 rows in 12
+        days, and why arming it could not have helped.
+
+        Routing the halt through the flag every money path already consults
+        makes the arm safe. The four seams that spend real money all read
+        ``live_trading_enabled and _strategy_live_approved(directive)``
+        (entry_will_be_simulated, entry_spends_real_money, entry_is_live,
+        live_approved), so a demoted bot cannot place a live ENTRY through any
+        of them, and ``_get_quote_balance`` / ``_consume_sim_gas`` /
+        ``_total_stable`` / the gas-replenishment branch all switch to the sim
+        bankroll with it -- a demoted bot behaves exactly like a ghost bot.
+
+        Exits are deliberately NOT demoted. A real holding must stay sellable
+        on a disarmed bot, which is why the exit path keys on ``pos_is_live``
+        rather than on this flag; see ``use_sim`` and the live-exit branch.
+
+        Flipping this flag to False is also the demotion mechanism the rest of
+        the codebase already uses (selector.py, and the live circuit breaker
+        below), so this reuses a seam that is already exercised rather than
+        inventing a second notion of "demoted".
+        """
+        return bool(self._live_trading_armed) and not self._live_halt_active()
+
+    @live_trading_enabled.setter
+    def live_trading_enabled(self, value: Any) -> None:
+        self._live_trading_armed = bool(value)
 
     def _ghost_halt_is_per_strategy(self) -> bool:
         """Should a global ghost halt be ignored in favour of per-strategy gates?
@@ -4693,6 +4817,12 @@ class TradingBot:
         plan_flags = plan_snapshot.get("risk_flags", {}) if isinstance(plan_snapshot, dict) else {}
         capital_plan = plan_snapshot.get("capital_plan", {}) if isinstance(plan_snapshot, dict) else {}
         recommended_ratio = capital_plan.get("recommended_live_ratio")
+        # This ratchet only ever shrinks (min against itself), so it must not
+        # fire on a bot the plan is halting: such a plan publishes
+        # recommended_live_ratio 0, which would pin global_risk_budget and
+        # max_trade_share at the 0.05 floor permanently, for the whole GHOST
+        # lane, with no path back. `live_trading_enabled` reads False under
+        # halt_live now, which closes that.
         if self.live_trading_enabled and recommended_ratio is not None:
             try:
                 cap = max(0.05, float(recommended_ratio))
@@ -6217,6 +6347,30 @@ class TradingBot:
                 ghost_multiplier = max(0.0, min(1.0, ghost_multiplier))
             except Exception:
                 ghost_multiplier = 1.0
+            # `halt_live` is NOT applied here any more. It used to read
+            #
+            #     if plan_flags.get("halt_live"):
+            #         risk_budget = 0.0
+            #
+            # inside this very branch, so arming the live lane was what
+            # switched the bot off -- and since `risk_budget <= 0` halts the
+            # whole scheduler below, a live-armed bot with halt_live decided
+            # nothing and could not earn the ghost evidence that clears its own
+            # `ghost_validation_block`. halt_live is set in production today,
+            # so the arm was a trap, and the live lane has 0 rows in 12 days.
+            #
+            # It is NOT what stopped the ghost lane: the running bot books
+            # ghost-entry and ghost-exit rows, so it is not live-armed and
+            # never reached this branch. See the property for the measurement.
+            #
+            # The halt now travels through `live_trading_enabled` (see the
+            # property), which every money path already consults, so a halted
+            # bot is DEMOTED to ghost rather than stopped. That also makes
+            # this branch read False under a halt, which is deliberate: the
+            # live-ratio clamp is a LIVE allocation cap, and a plan that halts
+            # live publishes `recommended_live_ratio` 0 -- applying it to a
+            # demoted bot would crush the ghost budget to the 0.05 floor for
+            # no reason. A demoted bot gets the ghost budget, unclamped.
             if self.live_trading_enabled:
                 if plan_capital.get("recommended_live_ratio") is not None:
                     try:
@@ -6224,8 +6378,6 @@ class TradingBot:
                         risk_budget = min(risk_budget, cap)
                     except Exception:
                         risk_budget = self.global_risk_budget
-                if plan_flags.get("halt_live"):
-                    risk_budget = 0.0
             risk_budget *= ghost_multiplier
             if plan_flags.get("bus_actions_pending"):
                 risk_budget = min(risk_budget, 0.25)

@@ -6654,6 +6654,24 @@ class TrainingPipeline:
                 # Dropping the clause loses no genuine block: when pending actions
                 # SHOULD stop live, the rule above already sets recommended_ratio
                 # to 0, and `recommended_ratio <= 0` is still in this disjunction.
+                #
+                # WHAT THE CONSUMER DOES WITH THIS, as of 2026-09-17: halt_live
+                # DEMOTES the bot to ghost. trading/bot.py routes it through the
+                # `live_trading_enabled` property, so a halted bot keeps deciding
+                # and keeps booking GHOST rows; it just cannot place a live entry.
+                #
+                # It used to zero the bot's whole risk budget, which halted that
+                # bot's scheduler outright -- and `not ghost_ready` is a disjunct
+                # here, published with halt_reason 'ghost_validation_block'. So
+                # arming the live lane was what switched the bot off, and the
+                # halt's own cure was ghost evidence the stopped bot could no
+                # longer earn. Only a LIVE-ARMED bot ever hit it, which is why
+                # the ghost lane kept booking throughout; the live lane has 0
+                # rows in 12 days.
+                #
+                # So a disjunct added here costs GHOST NOTHING now, but it still
+                # stops real money. Keep the bar for adding one at "real money
+                # should not move", not "something looks off".
                 "halt_live": tail_block
                 or drawdown_breach
                 or not ghost_ready
