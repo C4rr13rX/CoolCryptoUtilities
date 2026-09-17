@@ -29,6 +29,24 @@ except Exception:  # noqa: BLE001 - a missing gate must not narrow the funnel
     def _strategy_edge_refusal(_strategy_id: str):  # type: ignore[misc]
         return None
 
+#: Ledger identity for the BUY-THE-DIP rule implemented by
+#: ``_money_button_candidate`` below.
+#:
+#: This rule used to emit ``strategy_id='money_button'``, which is also the
+#: id declared by :class:`trading.strategies.money_button.MoneyButtonStrategy`
+#: -- and the two rules trade in OPPOSITE directions. The plugin is momentum
+#: continuation: it declines unless the 5m, 10m and 30m returns are all
+#: POSITIVE (``momentum_not_aligned``). This rule declines unless price is
+#: 2-5% BELOW its recent peak (``MONEY_BUTTON_MIN_DRAWDOWN`` /
+#: ``MAX_DRAWDOWN``). One id therefore pooled the outcomes of buying strength
+#: and buying weakness into a single ledger row, so neither rule could ever
+#: graduate -- or be demoted -- on its own evidence, and a win from one
+#: cancelled a loss from the other.
+#:
+#: Only the LABEL changes here. Every ``MONEY_BUTTON_*`` threshold this rule
+#: reads is untouched.
+MONEY_BUTTON_DIP_STRATEGY_ID = "money_button_dip"
+
 HORIZON_DEFAULTS: List[Tuple[str, int]] = [
     ("5m", 5 * 60),
     ("15m", 15 * 60),
@@ -1901,7 +1919,7 @@ class BusScheduler:
             expected_return=float(net_expected),
             reason=f"money_button dip {drawdown:.2%} -> target {take_profit_return:.2%}",
             tier=tier,
-            strategy_id="money_button",
+            strategy_id=MONEY_BUTTON_DIP_STRATEGY_ID,
         )
         self._mb_gate_pass += 1
         self._mb_flush_gate_census()
@@ -1909,7 +1927,7 @@ class BusScheduler:
             "directive": directive,
             "score": float(net_expected),
             "meta": {
-                "strategy": "money_button",
+                "strategy": MONEY_BUTTON_DIP_STRATEGY_ID,
                 "confidence": float(directive.confidence),
                 "direction_prob": float(direction_prob),
                 "risk_factor": float(min(1.0, max(net_expected / max(min_net_return, 1e-9), 0.0))),
