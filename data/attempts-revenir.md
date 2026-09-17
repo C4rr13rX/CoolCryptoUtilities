@@ -9082,3 +9082,32 @@ the repo quotes. Reopened. Screened the other twelve censuses first: seven read 
 overridden key with a divergent literal, three already import env, only
 `money_button_dip_supply.py` diverges. Screen was regex over `os.getenv` literal
 pairs, so a key read via a variable would be missed.
+
+**CORRECTION to the route (b) pricing above, same pass.** The sweep is a GLOBAL
+sensitivity and must not be read per-symbol. Asked which symbols the 30
+deep-pool admissible ticks actually are: **AERO-USDC 25, CBXRP-USDC 3,
+CBBTC-USDC 2.** AERO is **83%** of the fillable dip supply, and AERO's measured
+round trip is 64-435bp against the 125bp charged — the flat fee UNDERCHARGES it,
+so a symbol-true cost SUBTRACTS most of those 25 rather than multiplying them.
+For the bulk of the deep-pool supply, [84e62c6d] is a subtraction.
+
+The half that survives is still worth doing, and it is WETH. WETH-USDC has 200
+band admissions and **zero** past the cost rung; WETH-USDT 202 and zero.
+Per-symbol admissible at 125bp / 35bp / 10bp: WETH-USDC 0/5/19, WETH-USDT
+0/19/33, CBBTC 2/26/47, CBXRP 3/41/159, AERO 25/260/565. The cheap deep names
+contribute **5 today and ~258 at a symbol-true cost**; that is the real prize,
+smaller and in a different place than the global table implies.
+
+**AND THE DEFECT THAT HID IT.** `data/pool_depth_snapshot.json` has
+`WETH: null` and `ETH: null` — 90 of its 160 symbols are null, which the file's
+own comment defines as ASKED AND UNRESOLVED, not thin. **Every depth-bar count
+this repo has produced — the 30 above, and items [a38cf462], [23bb42fd],
+[4327cfba] — structurally excludes WETH**, the cheapest deepest asset on Base and
+the whole premise of route (b). A symbol with no depth number cannot clear a
+depth bar, so the deep universe has been silently defined as
+everything-except-the-best-symbol. Filed **[205092e7]**, 3pt, p1.
+
+**STATUS: route (b) NOT closed, but re-aimed.** It is not "restrict to deep
+pools and supply multiplies"; it is "charge each symbol its own cost, which
+removes AERO and admits WETH" — and it cannot be evaluated at all until the
+depth snapshot can resolve WETH.
