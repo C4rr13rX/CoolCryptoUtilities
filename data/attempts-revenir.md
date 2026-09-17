@@ -8055,3 +8055,36 @@ NET POSITION ON THE ONE APPROVED STRATEGY, both halves now measured alone:
   money_button      n=18   gross -0.0184% t=-0.10  loss is 100% cost,
                                                    and no signal cheap CLOSED
 Neither half has a route to profit on this tape that this pass could find.
+
+## Pass 442 (Echo, senior) -- RESTRICT THE DIP UNIVERSE TO DEEP POOLS [9329b42f]
+
+ROUTE TRIED: standing-instruction route (b), "attack the cost floor first --
+restricting the tradeable universe to deep pools may beat any amount of signal
+work." Shipped as a refusal in the dip rule on base-token round-trip cost.
+
+THE NUMBER, at the parameters production actually runs (MIN_DRAWDOWN=0.005):
+    ALL              138 trades  34% win  mean -1.315%  total -181.45%
+    ADMITTED<=0.35%   32 trades  47% win  mean -0.037%  total   -1.17%
+
+VERDICT: CLOSED AS INSUFFICIENT, not closed as wrong. The restriction removes
+~97% of the per-trade bleed and does NOT turn the rule positive. A mean of
+-0.037% on n=32 is indistinguishable from zero. Cost was the largest term and
+not the only one -- consistent with the pass-441 finding that the dip rule
+loses BEFORE cost (gross -0.38%, n=333). Do not re-run this route expecting a
+different sign; re-run it only if the dip rule acquires a gross edge.
+
+DO NOT QUOTE: at the old lo=0.02 the admitted cell is 4 trades / 100% win /
++0.414%. n=4. It is a selection artifact of a 4-symbol universe.
+
+SIDE FINDING, worth more than the route (filed [cae445dc]): the census scripts
+import no repo module, so services/env_loader never runs, so they replay
+MONEY_BUTTON_MIN_DRAWDOWN=0.02 while env_loader.py:377 sets production to
+0.005. Every dip supply/expectancy number this repo has published describes a
+rule 4x deeper than the one on the money path. Caught by a control -- adding
+ONE import moved ALL from 84 to 138 trades with zero logic change.
+Still affected: scripts/money_button_dip_census.py, money_button_dip_supply.py.
+
+STRUCTURAL: there was no per-token cost source in production at all.
+round_trip_cost() is a book-wide scalar taking no symbol; roundtrip_cost_rate()
+takes only a notional. The table now lives once, in
+services/round_trip_cost.token_round_trip_cost, read by both gate and census.
