@@ -11601,3 +11601,72 @@ fresh window: **0 of 3113**. Both gates charge the pooled token-blind `round_tri
 different function from `token_round_trip_cost(symbol)` -- the old criteria conflated them.
 
 **Scoreboard unmoved: live P/L -0.1864 over 18 trades. No live orders placed. Production not restarted.**
+
+---
+
+## Pass 461 (Echo, senior) — THE FLAT ENTRY-GATE COST IS WRONG IN BOTH DIRECTIONS ACROSS A 1642x SPREAD, AND OUR OWN STANDING BRIEF IS THE OUTLIER ON AERO
+
+**Route tried:** price every symbol in the committed round-trip census against the flat rate
+that `services.roundtrip_cost.roundtrip_cost_rate()` actually charges as an ENTRY GATE, and ask
+whether the constant is merely imprecise or is selecting the wrong symbols.
+
+**Source:** `data/round_trip_quote_census_20260917T190210Z.json` (committed `1a33c9a`, git_sha
+`769cc58`, chain base, 9 symbols quoted on a $0.10–$10 grid). Read-only. These are QUOTES, not
+fills — the file says so itself and says fills beat quotes where they disagree.
+
+**The number.** Round-trip pool cost at a $2.00 clip, in bp, against the 38.6bp the flat gate
+charges everything at a $6 clip:
+
+| symbol  | fee tier | cost@$2 (bp) | cost@$6 (bp) | vs the flat 38.6bp |
+|---------|---------:|-------------:|-------------:|--------------------|
+| WETH    |      100 |         2.01 |         2.05 | **19.2x TOO STRICT** |
+| AERO    |      500 |        13.03 |        10.29 | **3.0x TOO STRICT** |
+| CBBTC   |      500 |        14.79 |        10.96 | **2.6x TOO STRICT** |
+| AAVE    |     3000 |        60.26 |        60.93 | 1.6x too loose |
+| CBETH   |     3000 |        67.12 |        81.50 | 1.7x too loose |
+| VIRTUAL |      500 |        67.62 |       180.88 | 1.8x too loose |
+| VVV     |    10000 |       212.47 |       239.29 | 5.5x too loose |
+| DRB     |     3000 |      1507.62 |      3389.22 | 39.1x too loose |
+| COMP    |    10000 |      3301.53 |      7230.88 | **85.5x too loose** |
+
+**Why this is worse than "the constant is imprecise."** The gate is `if predicted <= rate:
+reject`, so a HIGH rate refuses entries and a LOW rate admits them. The flat rate sits almost
+exactly at the crossover of a 1642x spread. That is the single worst place a constant can sit:
+it REFUSES the only three symbols we can fill cheaply and WAVES THROUGH the six that would eat
+the account. It is not a precision problem, it is an inverted selector — the same shape already
+recorded for `TOKEN_ROUND_TRIP`.
+
+**THE STANDING BRIEF IS WRONG ON AERO AND EVERY PASS HAS BEEN READING IT.** Our STANDING
+INSTRUCTIONS say "AERO 0.64–4.35%". The census measures AERO at **0.1303% at $2 and 0.1029% at
+$6** — 5x to 42x cheaper. This is now the SECOND independent source saying so; the live tape
+measured AERO at 10.8bp. Two sources agree and the brief is the outlier. **Stop planning around
+"AERO is expensive."** It is the second-cheapest thing we can quote, and "restrict the universe
+to deep pools to escape AERO" was aimed at a cost wall that is not there.
+
+**35.75bp IS A $2-CLIP NUMBER AND 57% OF IT IS GAS.** Traced to `attempts-revenir.md:11485`:
+35.75 = pool 2.01 + measured gas 20.24 + measured live slippage 13.5, all at a $2 clip. Gas is
+a DOLLAR PER LEG, so it is 1/clip. Carry the same dollars to a $20 clip and gas becomes 2.02bp:
+
+    predicted all-in WETH round trip at $20 = 2.01 (pool) + 2.02 (gas) + SLIPPAGE_UNKNOWN ≈ 4bp + ?
+
+The slippage term is the only unknown, and our 13.5bp constant is pooled over 38 legs containing
+**zero WETH fills**.
+
+**WHAT THIS CLOSES:** "route (b) is closed because the cheapest payable threshold is 35.75bp."
+The threshold is ~4bp at a clip that pays. Route (b) STAYS CLOSED — WETH's best cell of 35
+scored −3.05bp at t = −1.89, NEGATIVE, so a lower bar does not rescue it — but **cost was never
+the binding constraint** and we should stop citing 35.75 as the reason anything is shut.
+DIRECTION is the reason. Consistent with `h-star-infimum-is-half-so-the-residual-is-direction`.
+
+**WHAT THIS OPENS:** nothing on its own. It is an input, not an edge. The nine open items that
+each independently propose to correct a different flat cost constant are nine consumers of this
+one missing input; correcting the constants is the wrong fix and was explicitly ruled out.
+
+**Status: the measurement is CLOSED and reproducible. The fix is IN FLIGHT (item 84e62c6d).**
+Reproduce with:
+
+    python -c "import json;d=json.load(open('data/round_trip_quote_census_20260917T190210Z.json'));[print(s, [p for p in v['points'] if p[0]==2.0]) for s,v in d['quoted'].items()]"
+
+**Not measured, and stated as unmeasured:** WETH slippage at any clip. Zero WETH fills exist in
+`trade_fills`. That is what item `ec37fd2e` buys, and it needs operator authorisation because it
+spends real money.
