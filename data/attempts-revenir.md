@@ -10183,3 +10183,50 @@ ARE SELL LEGS. live_entry records gas_spent_native with no native price
 (fill_cost.py:17-22), and 3 further legs price ETH gas at the TRADED PAIR's
 price ($0.4877, $0.5018, $80884.98). Fixing the buy-leg native price doubles the
 evidence base.
+
+
+--- PASS 453 FINAL: FOUR ELIMINATIONS, AND ONE SUSPECT LEFT STANDING ---
+Having found that sizing was already fixed and never exercised, I spent the rest
+of the pass eliminating the cheap explanations for "nothing has traded in 11.7
+days". Each with a command, so nobody re-runs them:
+
+  STALE CODE        DEAD.  git merge-base --is-ancestor bc479f3 HEAD -> TRUE.
+                    Production PID 22664 (main.py --action start_production)
+                    started 2026-09-16 14:48, NINE DAYS after the fix, up 20.1h.
+  FEED BLACKOUT     DEAD.  7652 market_stream ticks in that 20.1h window, ZERO
+                    dark hours of 21, hourly range 35-949.
+  SIZING            DEAD.  pipeline.py:6072-6079 raises min_clip_usd to $2.2322.
+  GHOST-VALIDATION  DEAD.  scripts/ghost_gate_forensics.py:
+                      money_button  READY   reason=cold_start_bootstrap  n=0
+                      POOLED        BLOCKED reason=insufficient_samples  n=21
+                    money_button READS READY. The ladder's [FAIL] 6 RISK is the
+                    POOLED verdict, exactly as memory said.
+
+So the lane was ASKED thousands of times, on a live feed, with a correct clip,
+with an approved strategy reading READY, and placed nothing.
+
+THE SUSPECT LEFT STANDING -- TENSORFLOW IS MISSING. ghost_gate_forensics.py
+prints, before any verdict:
+    model_definition unavailable (TF broken?): No module named 'tensorflow'
+    confusion refresh raised: RuntimeError('model_definition unavailable
+      (TF / DLL load failed)')  pipeline.py:5714 -> 4399 -> 6728 -> 6833 -> 1193
+    live readiness is judging with NO CONFUSION REPORT AT ALL --
+      'confusion_never_loaded': True. 1 readiness verdict(s) decided on it.
+Confirmed directly: python -c "import tensorflow" -> ModuleNotFoundError. This
+is memory's tf-windows-wheel-bug.md, the cp313 wheel.
+
+HYPOTHESIS, NOT A RESULT: TF missing -> ensure_active_model() raises at
+pipeline.py:1193 -> no confusion report -> the model precision gate cannot pass
+-> no live entry. I ran out of clock before tracing whether that gate actually
+REFUSES or FAILS OPEN, and I am not claiming it as the answer. If it holds, it
+may also subsume three separately-filed memory items -- model-precision-gate-
+blocks-live, served-model-is-untrained, model-heads-collapsed-nothing-can-enter
+-- into one missing wheel.
+
+ALSO WORTH THE NEXT PASS'S ATTENTION, from the same output: money_button and
+atf_static both read READY via reason=cold_start_bootstrap on an n=0 book, and
+pipeline.py itself calls that "evidence of nothing". The one approved strategy
+is approved on zero trades.
+
+NEXT PASS STARTS AT: [3dd03e6a], p1, 5pt, todo, unclaimed. Four eliminations and
+the TF suspect are written onto its acceptance criteria.
