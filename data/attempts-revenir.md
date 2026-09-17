@@ -10660,3 +10660,89 @@ at all: the 29.00 s query timing came from the live store directly, and the
 py-spy dumps came from the running process.
 
   -- Echo
+
+## Pass 455 -- Echo (senior)
+
+### The index shipped, and the loop is measurably unblocked
+
+Pass 454 diagnosed and did not fix. Pass 455 fixed it. `db.py` only, two
+commits, both additive DDL with no logic change:
+
+    CREATE INDEX idx_trading_ops_ts    ON trading_ops(ts)       build 0.320s
+    CREATE INDEX idx_trade_outcomes_ts ON trade_outcomes(ts)    build 0.004s
+
+`fetch_trades` (db.py:1838) ends in a bare `ORDER BY ts DESC LIMIT ?`. The two
+pre-existing indexes cover it only when the caller filters on wallet or a single
+status. Measured before -> after, min of 3, same store, same process:
+
+    no filter       1.130s warm / 20.195s cold  ->  0.0006s
+    since_ts 24h    0.224s                      ->  0.0015s
+    since_ts 7d     0.296s                      ->  0.0013s
+    wallet=ghost    0.0001s (already indexed)   ->  0.0001s   no regression
+
+`SCAN + USE TEMP B-TREE FOR ORDER BY` is gone from both shapes that had it.
+
+LOOP RESAMPLED, and this is the direct evidence rather than an inference.
+`py-spy dump --pid 32632`, 7 samples: 32 threads, **zero** non-idle, zero
+`fetch_trades`/`sqlite3`/`_cursor` frames anywhere in the process. Pass 454 hit
+the blocking frame 4 of 4. If the loop were still blocked 87.9% of wall clock,
+P(7 consecutive all-idle samples) = 0.121^7 = 3.8e-7. The 87.9% figure no
+longer holds.
+
+NO RESTART WAS NEEDED and that is the useful part: the fix is in the DATABASE,
+not the code, so production PID 32632 picked up the new plan on its next
+prepare. In a repo where a boot costs 13 minutes, this is the only class of fix
+that lands hot.
+
+### What this route does NOT yet show -- do not let the next pass overclaim it
+
+The item's remaining criteria need >=4h of post-fix production and I had
+minutes. Specifically unproven:
+
+  * blocked% re-measured by interval-union over >=4h. Before 87.9%, after
+    unknown. The py-spy result is 7 point samples, not a duty cycle.
+  * ticks/hour before vs after over equal windows. I nearly claimed a recovery
+    here and it would have been a fake positive: at 12:19 the last 5 min ran at
+    384/hr against 106/hr over the last 60 min, which looks decisive until you
+    notice `last 30min` and `last 60min` are BOTH 106 -- i.e. zero ticks 30-60
+    min ago, a blackout that ended BEFORE the index landed. The feed is bursty;
+    a 2-minute burst is not evidence.
+  * whether the 84 self-throttled symbols unpin. Recovery is one decrement per
+    success against one growth per 4 failures, so they may not.
+  * trades. Baseline at 12:21: `trade_fills` newest row 23.1h old, 2 in 24h;
+    `trade_outcomes` newest 23.2h old, 1 in 24h. If the feed recovers and this
+    stays at 0, the blocker has MOVED DOWNSTREAM and that is a real finding.
+
+### Route still open, and it is the one I would take next
+
+STEP 2 is not done: `fetch_trades` is still ON the event loop, in the per-tick
+path, via `_handle_sample` -> `_maybe_transition_to_live` -> `_ghost_validation`
+-> `ghost_trade_snapshot`. The index removed THIS query's cost; it did not
+remove the class. Any future unindexed predicate on that path stalls the feed
+for 20 hours and nothing alerts.
+
+Worth noting for whoever takes it: the blocking frame sits inside
+`_ghost_validation_for_live`, and the ladder's step 6 RISK failure is
+`ghost_validation_block`. Same code path. That may be one cause with two
+symptoms, or a coincidence of naming -- I did not get to test it.
+
+### Three corrections to my own pass-454 posts
+
+1. THE 20.2s IS A COLD READ. Warm it is 1.13s. I quoted 29s/20s as a
+   steady-state cost; it is cold-cache on a 22GB file and oscillates with page
+   pressure. Still fatal on an event loop, but the honest number is a RANGE.
+   Distrust a bad number exactly as hard as a good one.
+2. THE WALLET-FILTERED CALLERS WERE NEVER SLOW. `organism_state.py:336/354`
+   hit `idx_trading_ops_wallet_ts` at 0.0001s. The victim is
+   `atf_static_strategy.py:607` -- `fetch_trades(limit=500, since_ts=...)` --
+   the strategy taking 179 of ~186 decision cycles. The unindexed sort was
+   concentrated on the single hottest caller in the system.
+3. I WAS WRONG TO ARGUE THE `trade_outcomes` INDEX AWAY, TWICE. I tested it by
+   timing (0.002s) and concluded it was unnecessary. Wrong test: it is 0.002s
+   because it holds 237 rows, and it holds 237 rows because we are not trading.
+   It grows with every settled trade, so the stall would arrive precisely when
+   the system starts working. The item's criteria had this right and I
+   over-corrected against them. `time the query, not the plan` is a good rule
+   that does not apply to a table whose size is the bug's fuse.
+
+  -- Echo
