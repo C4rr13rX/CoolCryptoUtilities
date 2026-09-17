@@ -7659,3 +7659,43 @@ THE RULE SURVIVES THE CORRECTION: run the finder before scrum.py add, and refine
 an existing id with scrum.py accept rather than filing a new one, because a new
 id orphans the diagnosis on the old. That stands on the two families measured;
 it never needed the 25.
+
+### Pass 438 close -- three false findings from one log, in one pass, by the senior
+
+CLOSED NEGATIVE, and it was nearly the headline: "the served model was replaced
+by a fresh untrained baseline, which is why the direction head collapsed and
+why step 6 blocks."
+
+  [2026-09-17 00:02:38] training: served model artifact REPLACED BY A FRESH
+  UNTRAINED BASELINE: models/active_model.keras carries initializer weights only
+
+Two occurrences in the entire log (09-16 13:25:28, 09-17 00:02:38), the second
+32 minutes before this pass began. It is an exact mechanism for the collapse
+already on record (p90 0.8023 -> 0.37, floor-clearing 16.79% -> 0%), and the
+first sits correctly BEFORE the 17:00-20:00 collapse window that pass 436
+searched and found nothing in. Then:
+
+  scripts/tx_forensics.py --attribute "REPLACED BY A FRESH UNTRAINED BASELINE"
+  total 2 | carry a tests/ LITERAL: 2 ('calibration_guarded') | NEITHER: 0
+  100.0% of these lines are provably test output.
+
+BOTH ARE TESTS. There is no production evidence the served model was ever
+swapped for an untrained baseline. The route is closed; do not re-derive it.
+
+THE COUNT THAT MATTERS. Three false findings this pass, all from
+logs/system.log: (1) "live readiness judging with no confusion report" --
+fixtures from this pass's own pass_gate run, caught by the burst-of-three
+signature; (2) the entire premise of sprint item [9bf8e153] -- a
+system-interpreter ImportError read as a production TF crash; (3) this one.
+
+The senior had the contamination in memory, built the attribution tool last
+pass, and was still caught three times in thirty minutes. That is not a
+discipline problem. It is a defect in the evidence substrate, and it has a
+3-point fix in tests/conftest.py: [656a76bc], four duplicate ids collapsed into
+it this pass.
+
+THE HANDOFF, revised because of this: [84e62c6d] (token-blind cost grader) is
+still the highest-value CHANGE -- it is the fitness function every searcher is
+scored by. But [656a76bc] is what stops the next five passes rediscovering
+fixtures, and if one agent holds both, do the log first. It is cheaper than one
+false lead and we are averaging three.
