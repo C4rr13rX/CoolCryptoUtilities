@@ -6987,3 +6987,79 @@ NOT CLOSED, AND IT OUTRANKS BOTH: there is still no transaction hash anywhere in
 the store. 38 live rows, zero receipts. [50288149], services/swap_service.py
 already carries tx_hash and polls mined receipts; it is never passed to the
 writer at db.py:961. No schema migration needed.
+
+## Pass 433 (Echo, senior) -- the ghost gate's block reason, and what 94% of the book's loss actually is
+
+ROUTE: work the first failing link. Step 6 RISK reports `ghost_validation_block`,
+and every pass has read that as an evidence-RATE problem. Measured it instead of
+reading it, by calling the real gate:
+
+    TrainingPipeline(db=get_db())._ghost_validation(None)
+
+RESULT -- the pooled verdict:
+
+    ready = False, reason = insufficient_samples
+    samples 20 (min 25) | win_rate 0.10 (min 0.55)
+    profit_factor 0.063 (min 0.95) | net -0.4929
+    stale = False, last_trade_age_sec = 68
+
+CLOSED: "raise the evidence RATE" as the fix for step 6. pipeline.py:5288-5312 is
+a strict elif cascade that names only the FIRST failing guardrail. At 20 samples
+it says `insufficient_samples`; at 25 it will say `low_win_rate`, because 0.10 <
+0.55, and then `negative_margin`, `non_positive_net_profit`, `weak_profit_factor`.
+Five more ghost round trips (~1.3 days at 3.9 tradeable/day) buys a different
+error string, not a live trade. Filed as [78d58404].
+
+CLOSED: route (c), "shorten the hold". FALSIFIED on this window. Of the 20 rows
+the gate reads, ALL 15 with hold <= 1800s LOST -- across 11 symbols and 6
+strategies. Both winners are long holds (+0.0279 at 53.7 min, +0.0051 at 118.9
+min). Shortening the hold drives the win rate to ZERO, not up. The standing note
+that "the tradeable book is POSITIVE inside 15 minutes" does not hold here; it was
+measured on a different book and needs that caveat.
+
+OPEN AND PROMOTED: route (b), the cost floor. `roundtrip_cost_rate(notional_usd)`
+takes NO symbol and is wired in as an ENTRY GATE (swap_schedule.py:414,
+atf_static_strategy.py:867, bot.py:1998), not just as accounting. Flat curve:
+85.8bp at a $0.75 clip, 38.6bp at $6.00, asymptoting to ~32bp -- it never drops
+below the 5-20bp band of every edge measured on this repo, at any clip size.
+Against the operator's on-chain census (WETH 4-11bp, AERO 64-435bp, KTA to
+7498bp) it is 3.5-9.6x TOO EXPENSIVE on WETH and ~17x TOO CHEAP on AERO. Both
+sides lose money: it rejects real WETH edges and admits AERO trades that cannot
+pay. Filed as [84e62c6d], priority 1.
+
+THE NUMBER THAT MATTERS, AND IT IS NOT A WIN. The ghost book IS charged with this
+model -- `price_book_at_live_clip` (pipeline.py:844) routes every row through
+`net_profit_usd` = `ret*notional - roundtrip_cost_usd(notional)`
+(roundtrip_cost.py:187), symbol-blind. Inverting it (gross = net + 0.0232):
+
+                    NET      GROSS
+    win rate       0.100     0.350      (bar 0.55)
+    total         -0.4929   -0.0296
+    mean return      -82bp    -2.5bp
+    median                    -2.3bp
+
+94% of the book's loss is the fee, and five gross winners are booked as net
+losers. AND THE GROSS BOOK IS STILL NEGATIVE: -2.5bp mean, 0.350 win rate against
+0.55. AT ZERO TRADING COST THESE STRATEGIES STILL LOSE. Fixing the cost model does
+NOT open the gate -- it removes a 38.6bp distortion that is swamping a 2.5bp
+signal, so that strategy work can be measured truthfully. That is why it goes
+first, not because it pays by itself.
+
+NOT CLOSED, STILL OUTRANKS EVERYTHING: no transaction hash anywhere in the store.
+
+SIDE FINDING, filed as [162ee48d]: three DRB-USDC rows record a gross return of
+EXACTLY 0.000000 -- entry price == exit price to the last digit, three times.
+That is a frozen feed, not a market outcome, and it is 15% of the book the live
+gate judges. May share a cause with the global feed blackouts in [8c3c6910].
+
+SIDE FINDING: `_ghost_validation('money_button')` returns ready=True on reason
+`cold_start_bootstrap` with samples=0. The one APPROVED strategy has a literal
+zero-trade ghost book and passes on the bypass that pipeline.py:660-676 calls
+"evidence of nothing". "APPROVED: money_button" means "one strategy has never
+traded", not "one strategy has proven itself".
+
+[b62ad282] REPRODUCED: the same probe emits "live readiness is judging with no
+confusion report at all ... confusion_never_loaded: True" alongside
+`confusion_stale: False`. A never-loaded report reads as NOT STALE, so any caller
+testing staleness to decide whether to trust it gets a green light on a report
+that does not exist.
