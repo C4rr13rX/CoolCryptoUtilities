@@ -9423,3 +9423,27 @@ both returned to TODO this pass with their stated blockers discharged.
 DO NOT loosen a gate to obtain the trade. `.env` is explicit that $0.75 was
 "a guaranteed loss, not a cautious one"; manufacturing a trade at the wrong size
 is precisely what produced twelve days of uninformative data.
+
+#### Pass 449 correction, same pass: the stale-plan hypothesis is WITHDRAWN. The size is fine; the LANE is the blocker.
+
+I wrote above that `_live_clip_usd` reads the transition plan rather than the env,
+so the plan might carry a stale `first_tranche_cap_usd=3.00` and that would
+explain twelve days of zero trades. **That is wrong.** The builders:
+
+    trading/pipeline.py:6028   min_clip_usd      = getenv("LIVE_MIN_CLIP_USD", "10")
+    trading/pipeline.py:6262   first_tranche_cap = getenv("LIVE_FIRST_TRANCHE_USD", "50")
+
+Both fields are rebuilt from the environment in `_build_transition_plan`, and
+`.env` sets both to 6.00. **The sizing path is correct and configured to $6.00
+today.** The `$3.0000` maximum is the cap as it stood when those 22 rows were
+placed -- the correct reading of a historical maximum, not evidence about the
+present configuration. I over-read it and this is the retraction.
+
+WHAT SURVIVES, and it is a cleaner statement of the problem: the size is already
+right and waiting. No live entry has been **attempted** since 2026-09-05, so the
+blocker is the LANE, not the SIZE. Work [508bba78] then [d7d87724].
+
+THE ONE CAVEAT THAT SURVIVES: production serves stale code until restarted and
+the plan is built at runtime, so an instance that started before `.env` changed
+still holds 3.00 in memory. That is one read on the running process and it is the
+only remaining route by which the old cap could still bind.
