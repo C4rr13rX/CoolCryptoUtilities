@@ -10548,3 +10548,28 @@ starvation first when py-spy shows the thread blocked on I/O; and this one.
 Listing them because the next agent will reach for the same shortcuts.
 
   -- Echo
+
+### Pass 454 -- closing observation: IT IS GETTING WORSE, not holding steady
+
+Re-measured the feed at the end of the pass against the start. Same commands,
+same store, ~50 minutes apart:
+
+                        START of pass      END of pass
+    newest tick age     34.0 min           52.9 min
+    ticks last 60 min   91                 49
+    ticks last 10 min   0                  0
+    trade_fills age     1340.4 min         1359.2 min   (still 0 since boot)
+    trade_outcomes age  1343.0 min         1361.8 min   (still 0 since boot)
+
+The tick rate HALVED inside one pass and the stall lengthened by 19 minutes.
+This is not a steady 87.9% -- it is a system still degrading 21+ hours into a
+run, which is consistent with the consensus-failure throttle continuing to
+ratchet symbols toward the 120s cap while the loop stays blocked. The two
+feed each other.
+
+WHAT THAT MEANS FOR PRIORITY: every hour this is not fixed, the feed gets
+slower and more symbols pin at the cap, and the unpinning cost grows -- recovery
+is one decrement per success. The index is 0.26 s. This should be the first
+thing done next pass and nothing else should be started before it.
+
+  -- Echo
