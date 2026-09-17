@@ -735,45 +735,132 @@ class TokenDownloadSupervisor:
     #: knowing WHICH of the seven calls inside it is stuck.
     SLOW_WORKER_SEC = float(os.getenv("DOWNLOAD_SUPERVISOR_SLOW_WORKER_SEC", "60"))
 
+    #: Seconds one worker may take before run_cycle STOPS WAITING FOR IT.
+    #: Naming the wedged call (SLOW_WORKER_SEC, above) did not make the task
+    #: return: measured over 0.8 days, 78 runs beat their budget and the worst
+    #: single call was static:optimism at 6443.9s, so `data_ingest` sat inside
+    #: one HTTP read for 107 minutes and the scheduler declined to start a
+    #: second copy for that whole time (346 task_overrun events in 6h).
+    #: Nothing here can interrupt that call -- it is a synchronous socket read
+    #: in someone else's library -- so the deadline is enforced by running the
+    #: worker on its own thread and WALKING AWAY from it. The cycle returns on
+    #: time; the wedged call is left to finish or rot on a daemon thread.
+    WORKER_DEADLINE_SEC = float(os.getenv("DOWNLOAD_SUPERVISOR_WORKER_DEADLINE_SEC", "300"))
+
+    def _abandoned_workers(self) -> Dict[str, tuple]:
+        """label -> (thread, started) for workers we stopped waiting for.
+
+        Lazily built so a supervisor constructed with __init__ bypassed (which
+        is how the tests build one) still has it.
+        """
+        existing = getattr(self, "_abandoned", None)
+        if existing is None:
+            existing = {}
+            self._abandoned = existing
+        return existing
+
     def _run_worker(self, label: str, fn) -> float:
-        """Run one worker, naming it before and timing it after.
+        """Run one worker under a deadline, naming it before and timing it after.
 
         Measured 2026-09-11 (pass 120): `data_ingest`, the scheduler's feed
         task, was abandoned for up to 6879 seconds -- 114 minutes with the feed
         task not running at all -- and the wedged worker could not be named,
         because run_cycle called seven workers in a row and recorded nothing
         about which one it was inside. `in_flight` is that record.
+
+        The deadline is the second half. Without it the naming is a post-mortem:
+        we know which call is stuck and the cycle waits on it anyway. With it
+        the cycle returns after WORKER_DEADLINE_SEC and the remaining workers
+        still get their turn.
+
+        The abandoned thread is REMEMBERED, not forgotten, and that is the part
+        that matters: a supervisor that re-ran a wedged worker every cycle would
+        pile up one leaked thread per cycle against a source that is already not
+        answering. While the old thread is alive its label is skipped, so at
+        most ONE thread per worker is ever outstanding.
         """
-        started = time.time()
-        self.in_flight = (label, started)
-        try:
-            fn()
-        except Exception as exc:
-            log_message("download-supervisor", f"{label} cycle error: {exc}", severity="error")
-        finally:
-            elapsed = time.time() - started
-            self.in_flight = None
-            self.last_worker_sec[label] = elapsed
-            if elapsed >= self.SLOW_WORKER_SEC:
+        abandoned = self._abandoned_workers()
+        stale = abandoned.get(label)
+        if stale is not None:
+            thread, since = stale
+            if thread.is_alive():
                 log_message(
                     "download-supervisor",
-                    "slow worker: %s took %.1fs (budget %.0fs) -- the whole "
-                    "data_ingest task waits on this" % (label, elapsed, self.SLOW_WORKER_SEC),
+                    "skipping %s: the previous run has been wedged for %.0fs and is "
+                    "still alive -- not starting a second copy"
+                    % (label, time.time() - since),
                     severity="warning",
                 )
+                return 0.0
+            abandoned.pop(label, None)
+            log_message(
+                "download-supervisor",
+                "%s recovered after %.0fs wedged; resuming it"
+                % (label, time.time() - since),
+                severity="info",
+            )
+
+        started = time.time()
+        self.in_flight = (label, started)
+
+        def _call() -> None:
+            try:
+                fn()
+            except Exception as exc:
+                log_message("download-supervisor", f"{label} cycle error: {exc}", severity="error")
+
+        runner = threading.Thread(target=_call, name=f"dl-{label}", daemon=True)
+        runner.start()
+        runner.join(self.WORKER_DEADLINE_SEC)
+
+        elapsed = time.time() - started
+        self.in_flight = None
+        self.last_worker_sec[label] = elapsed
+        if runner.is_alive():
+            abandoned[label] = (runner, started)
+            log_message(
+                "download-supervisor",
+                "DEADLINE: %s did not return in %.0fs -- run_cycle is leaving it "
+                "and continuing, so data_ingest is not stranded behind it"
+                % (label, self.WORKER_DEADLINE_SEC),
+                severity="error",
+            )
+        elif elapsed >= self.SLOW_WORKER_SEC:
+            log_message(
+                "download-supervisor",
+                "slow worker: %s took %.1fs (budget %.0fs) -- the whole "
+                "data_ingest task waits on this" % (label, elapsed, self.SLOW_WORKER_SEC),
+                severity="warning",
+            )
         return elapsed
 
     def wedged(self) -> Optional[Dict[str, Any]]:
-        """Which worker is run_cycle inside right now, and for how long?
+        """Which worker is stuck right now, and for how long?
 
-        None when no cycle is running. This is what turns an unattributable
-        6879-second stall into a named one.
+        Reports the worker run_cycle is currently inside; failing that, the
+        oldest worker it gave up waiting for and walked away from. None when
+        nothing is stuck. This is what turns an unattributable 6879-second
+        stall into a named one -- and a worker past its deadline is MORE
+        interesting than one inside it, not less, so it keeps being reported
+        after the cycle that started it has moved on.
         """
         flight = self.in_flight
-        if not flight:
+        if flight:
+            label, started = flight
+            return {"worker": label, "running_for_sec": round(time.time() - started, 1)}
+        live = [
+            (since, label)
+            for label, (thread, since) in self._abandoned_workers().items()
+            if thread.is_alive()
+        ]
+        if not live:
             return None
-        label, started = flight
-        return {"worker": label, "running_for_sec": round(time.time() - started, 1)}
+        since, label = min(live)
+        return {
+            "worker": label,
+            "running_for_sec": round(time.time() - since, 1),
+            "abandoned": True,
+        }
 
     def run_cycle(self) -> None:
         cycle_started = time.time()
