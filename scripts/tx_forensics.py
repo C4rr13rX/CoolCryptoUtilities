@@ -3,7 +3,7 @@
 WHY THIS EXISTS. Sprint item [df638247] was filed, estimated at 5 points, and
 dealt to an agent on the strength of this line in ``logs/system.log``:
 
-    SETTLED BUY 0x0dfedf3a...0959 for CBBTC-USDC CANNOT BE MEASURED (no_fill);
+    SETTLED BUY <hash> for CBBTC-USDC CANNOT BE MEASURED (no_fill);
     refusing to guess its fill, and refusing new entries on this symbol until
     it can be read -- the money is already gone.
 
@@ -28,7 +28,7 @@ a full sprint item, so this makes the check cheap to avoid:
 
     python -X utf8 scripts/tx_forensics.py --audit
     python -X utf8 scripts/tx_forensics.py --symbol CBBTC-USDC
-    python -X utf8 scripts/tx_forensics.py --tx 0x0dfedf3a...0959
+    python -X utf8 scripts/tx_forensics.py --tx <full 66-char 0x hash>
     python -X utf8 scripts/tx_forensics.py --attribute "cannot read fills"
 
 ``--audit`` is the one that generalises: it walks EVERY symbol and reports each
