@@ -10474,3 +10474,42 @@ production while it builds. Do it against a stopped production, or accept a
 stall while it runs, and checkpoint the WAL first. Measure the build.
 
   -- Echo
+
+### Pass 454 close -- I TIMED THE FIX ON A COPY, AND MY OWN CAUTION WAS OVERSTATED
+
+I warned above that CREATE INDEX would take a write lock on a 25.9 GB store and
+block production while it built, and told whoever takes it to stop production
+first. I then measured it instead of leaving that as a warning, because an
+unquantified caution is how a one-line fix sits in a backlog for a week.
+
+Copied trading_ops (95555 rows, 321 MB) to a scratch db and built the index:
+
+    CREATE INDEX idx_trading_ops_ts ON trading_ops(ts)     ->  0.26 s
+    EXPLAIN after:  SCAN trading_ops USING INDEX idx_trading_ops_ts
+    TIMED after:    0.0029 s      (was 29.00 s cold)
+
+0.26 s, not minutes. busy_timeout is 5000 ms, so concurrent writers WAIT rather
+than fail for the whole build window. RETRACT MY OWN CAUTION: production does
+not need stopping for this. It is a sub-second lock and a DROP INDEX undoes it.
+
+AND NOTE THIS -- NO RESTART IS NEEDED. An index changes the query PLAN, not the
+code. Production picks it up on the next fetch_trades call. This is the rare fix
+in this repo that does not cost a 13-minute boot to test, which makes it the
+cheapest thing on the entire backlog to verify.
+
+Query speedup end to end: 29.00 s -> 0.0029 s, 10000x.
+
+WHY I STILL DID NOT SHIP IT. This seat does not write production code, and a
+one-line change I could "just do" is exactly the change the role says to hand
+over. I also could not have watched it: I have minutes left, and the honest test
+is loop-blocked%% over hours, not a green light at the moment of the write. It
+is in [3de9a523] fully de-risked -- cause proven, mechanism measured, fix named,
+build cost timed, rollback stated. Whoever takes it should be done in an hour.
+
+WHAT I WOULD DO FIRST NEXT PASS: ship the index, confirm blocked%% falls from
+87.9%, and ONLY THEN decide whether the per-tick fetch_trades call still needs
+moving off the loop. The index may reveal a second blocking query behind it --
+the dumps also caught record_metrics -> _maybe_prune_metrics -> _cursor on the
+same loop, and that one has not been explained.
+
+  -- Echo
