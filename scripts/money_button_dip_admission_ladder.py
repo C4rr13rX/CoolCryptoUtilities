@@ -102,6 +102,9 @@ def main() -> int:
     ap.add_argument("--top", type=int, default=14)
     ap.add_argument("--force-legacy-band", action="store_true",
                     help="re-run pass 426's 2%%-5%% band for a back-to-back comparison")
+    ap.add_argument("--fee-rate", type=float, default=None,
+                    help="override the 125bp flat fee_rate to size what a cheaper "
+                         "cost model would re-admit (sensitivity, NOT a claim it is reachable)")
     args = ap.parse_args()
 
     path = args.db or os.environ.get(
@@ -132,6 +135,9 @@ def main() -> int:
                         _env_float("GAS_ROUNDTRIP_FEE_RATIO", 0.0025))
     slip_bps = _env_float("SCHEDULER_SLIPPAGE_BPS", 50.0)
     fee_rate = fee_buffer + tax_buffer + gas_rt + (slip_bps / 10000.0)
+    fee_overridden = args.fee_rate is not None
+    if fee_overridden:
+        fee_rate = float(args.fee_rate)
 
     conn = sqlite3.connect("file:%s?mode=ro" % path, uri=True)
     cur = conn.cursor()
@@ -220,8 +226,13 @@ def main() -> int:
     print("env   : %s" % _ENV_SOURCE)
     print("band  : drawdown %.3f%%-%.2f%% over %.0fs" % (100 * min_dd, 100 * max_dd, lookback))
     print("        (pass 426 measured %.2f%%-%.2f%% -- see docstring)" % (2.0, 100 * max_dd))
-    print("cost  : fee_rate %.4f = fee %.4f + tax %.4f + gas %.4f + slip %.1fbp"
-          % (fee_rate, fee_buffer, tax_buffer, gas_rt, slip_bps))
+    if fee_overridden:
+        print("cost  : fee_rate %.4f  *** OVERRIDDEN via --fee-rate (production is %.4f) ***"
+              % (fee_rate, fee_buffer + tax_buffer + gas_rt + (slip_bps / 10000.0)))
+        print("        this is a SENSITIVITY run, not a claim that this cost is reachable")
+    else:
+        print("cost  : fee_rate %.4f = fee %.4f + tax %.4f + gas %.4f + slip %.1fbp"
+              % (fee_rate, fee_buffer, tax_buffer, gas_rt, slip_bps))
     print("        min_net_return %.4f  ->  expected_return must reach %.4f (%.2f%%)"
           % (min_net, fee_rate + min_net, 100 * (fee_rate + min_net)))
     print("knife : slope floor %.5f/min over %.0fs" % (slope_floor, slope_window))
