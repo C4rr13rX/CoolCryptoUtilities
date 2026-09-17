@@ -9242,3 +9242,31 @@ tokens on the operator's cost table (WETH 0.04-0.11%) and SELECTS the most expen
 (AERO 0.64-4.35%). **Pool depth is not fillability.** AERO-USDC's gross at 12m is
 +3.53bp against a 60.5-435bp AERO round trip -- dead on both sides. The fillable-subset
 question cannot be answered properly until those nulls resolve ([205092e7]).
+
+**PREVIEW OF THE CORRECTED UNIVERSE (pass 448, same run).** WETH was hand-resolved
+to $2,201,677 in a scratchpad copy of the snapshot and the screen re-run against it
+(`--depth-json`); nothing in the repo was edited. Universe grows to 9 symbols /
+19,327 ticks. The selection bar FALLS at short horizons (2m 7.13->5.51bp,
+3m 6.52->5.72bp) and rises at the long end (12m 32.42->55.91bp), so the artifact
+killed above would not clear the bar on the corrected universe either.
+
+Best held-out survivor per horizon, net at the measured 31.49bp floor:
+
+    2m   r3<q0.05  n=367  gross +12.67  NET -18.82   AERO 72%, censored +7.93
+    3m   r3<q0.05  n=387  gross +15.12  NET -16.37   AERO 87%, censored +4.05
+    5m   r3<q0.05  n=376  gross +17.33  NET -14.16   AERO 72%, censored +10.33
+    8m   r3<q0.05  n=394  gross +17.57  NET -13.92   AERO 70%, censored +11.15
+    12m  nothing holds out of sample
+
+`r3<q0.05` is the DIP. It is the best survivor at every horizon that holds, its
+gross rises monotonically with horizon, and **censored of AERO it is still positive
+everywhere (+4.05 to +11.15bp)**. A 393-predicate brute-force search that was never
+told about dips rediscovered the dip -- and it is 3-7x too small to pay the round
+trip. Independent confirmation of [[the-dip-signal-is-real-and-138bp-too-small]].
+
+**CLOSED: route (b), restrict-the-universe-to-deep-pools, as a path to a profitable
+trade.** Run properly for the first time (the previous versions were restricted to
+AERO by a broken sweep), it does not clear the cost floor at any horizon. The gap is
+not signal discovery: it is 31.49bp of round trip against a 4-11bp censored gross.
+Fixing the depth sweep ([205092e7]) buys an honest measurement and a lower noise
+bar; it does not open the money path.
