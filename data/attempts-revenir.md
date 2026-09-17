@@ -8967,3 +8967,29 @@ guard instead of a hand threshold.
 **STANDING RULE FROM THIS: no depth-bucket number from this repo should be
 quoted uncensored again.** Pipe rows through `outcome_plausibility.partition`
 first, every time.
+
+### Pass 446 postscript: TWO plausibility guards, and the one that catches the damage is unwired
+
+    trading/strategies/ledger.py:178  _is_implausible(profit, relative_to=...)
+        ON the money path (called at ledger.py:615 inside record()). Judges a
+        DOLLAR PROFIT vs an absolute floor AND the strategy's own recent scale.
+        Filters outsized GAINS ONLY, deliberately — its docstring records that an
+        earlier version rejected a -10.0 loss and laundered a losing record into
+        a graduation.
+
+    services/outcome_plausibility.py  is_implausible / partition, IMPLAUSIBLE_RET=0.50
+        Judges a RETURN RATIO. **Zero call sites in trading/ or services/** —
+        grep across both trees returns only comments.
+
+The six rows that set the sign of every depth bucket are caught by the SECOND
+guard and are sitting in `trade_outcomes` having passed the FIRST. Same shape as
+`two-cost-modules-one-underscore-apart`: two modules, one question, one wired in.
+
+NOT filed as a new item — [7990930f] and `trade-outcomes-has-no-plausibility-guard`
+already cover this territory and the backlog is ~45 todo. Flagged on the board
+for whoever takes [236f960c], since it is eight lines from the accumulator they
+will be editing.
+
+**NOT ESTABLISHED, and it is the first thing to check next pass:** whether those
+six rows are inside graduation's banked `tradeable` accumulator. If they are, the
+bar is standing on them and (per ledger.py:328-334) cannot be un-stood on.
