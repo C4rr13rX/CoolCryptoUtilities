@@ -8112,3 +8112,58 @@ other seven parameters unset, so those defaults already matched production.
 scripts/money_button_dip_supply.py was suspected and is NOT affected -- the
 140-script audit clears it. 14 of 140 scripts read production env keys without
 loading env; the rest of them read keys env_loader leaves unset.
+
+## Pass 443 (Echo, senior) -- BOTH ROUTES ON [67e0df30] ARE CLOSED, AND THE CAUSE IS AT STEP 2
+
+ROUTE TRIED: the item offered two ways to open step 6 (RISK, ghost_validation_block):
+(a) let money_button record real ghost round trips, or (b) an explicit operator
+arm that bypasses _ghost_validation_for_live for ONE strategy at ONE clip.
+Both are now MEASURED, and neither is taken. Nothing was changed.
+
+THE CAUSE, measured over 168h of trading_ops at HEAD:
+    contests mentioning money_button        1468
+      money_button in OFFERED                  0
+      money_button CHOSEN                      0
+      money_button in SKIPPED               1468   reason: no_signal (1468/1468)
+
+money_button emits no_signal in EVERY contest. The strategy declines; nothing
+downstream ever gets to refuse it.
+
+CORRECTION TO A RECORDED MEMORY. "Arbitration refuses money_button 100%" is
+WRONG and this pass retracts it. Arbitration does not refuse it -- it is never
+offered. The 1,464/1,468 `hold`/`entry-arbitration` rows that produced that
+claim match on `details LIKE '%money_button%'`, and money_button appears in
+those rows only inside the `skipped` map. The hold reason on every one of them
+is `one_tick_was_offered_to_many_and_spent_by_one`, which is the generic record
+written for EVERY contest, about whichever strategy DID win it (tf_forecast in
+the sampled row). The refusal is at the GATE, not at arbitration.
+
+ROUTE (a) -- ARITHMETICALLY UNREACHABLE, not slow. Ledger ghost book for
+money_button is 2 trades, 1 win, 1 loss, total -0.016149, last_ts 12.77 DAYS old.
+    bar (services live gate)          supply (measured)        shortfall
+    25 samples inside a 48h window    0.140 trades/day             89x
+    = 12.5 trades/day
+    book fresher than 24h             12.8x past the guard
+    total_net_profit > 0.0            -0.0161 (negative)       fails at ANY n
+Three independent guards each fail, and the sample count in the current window
+is 0. This does not close in 62 days; at the observed rate it does not close.
+
+ROUTE (b) -- IT IS A NO-OP, AND THAT IS THE REASON TO REJECT IT, not the cost.
+An operator arm grants PERMISSION. money_button produced 0 signals in 1,468
+consecutive opportunities, so an armed money_button places no order. You cannot
+trade a permission. Bypassing _ghost_validation_for_live changes the verdict at
+step 6 and leaves the live P/L at -0.1864 over the same 18 trades, because no
+19th trade is generated. Cost was going to be the argument against it -- the
+clip is a percentage tax, ~0.933% round trip at $0.75 vs 0.404% at wallet size,
+against a momentum gross of t=-0.10 at n=18 -- but cost never gets to apply.
+
+VERDICT: [67e0df30] CLOSED as measured-and-refused. Step 6 is a SYMPTOM of
+step 2 (SIGNALS), which the ladder already reports FAILING. No guardrail was
+widened: GHOST_EARNED_READY_REASONS, GHOST_MIN_TRADES and the cold_start branch
+are untouched, and trading/pipeline.py is unmodified this pass.
+
+WHAT IS STILL OPEN: which guard inside MoneyButtonStrategy.evaluate returns
+no_signal. The gate carries a feed-density guard, a mixed-denomination guard,
+a median-gap-scaled window unit, a volatility discount, a hold-time projection
+and a volume-fade guard, and `no_signal` names none of them. Filed as a
+per-guard histogram over the same 1,468 contests.
