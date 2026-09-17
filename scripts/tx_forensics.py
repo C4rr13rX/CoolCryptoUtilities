@@ -35,6 +35,13 @@ a full sprint item, so this makes the check cheap to avoid:
 settled live entry that has no booking row, which is the measurable form of
 "real money with no booked basis" for the whole store at once.
 
+``--attribute`` is one-sided in ONE direction only: a hit proves the line is
+test output, a miss proves nothing. Its literal scan is O(fixtures x lines) and
+takes tens of seconds on a pattern matching 10k+ lines -- it is working, not
+hung. Swept across the blocked backlog on 2026-09-16, the phrases behind
+[7a09a2e5], [3550bc30] and [d7d87724] came back 0% test, so [df638247] was an
+outlier and not a symptom of a poisoned backlog.
+
 Read-only. Opens the store with mode=ro and never writes.
 """
 
@@ -250,17 +257,58 @@ def show_tx(conn: sqlite3.Connection, tx: str) -> None:
         print(f"  {_ts(row['ts'])}  {row['symbol']:<14} {row['status']:<26} {extra}")
 
 
+#: A quoted literal in tests/ this long is distinctive enough that a log line
+#: containing it was almost certainly printed by the suite. Shorter literals
+#: ("ok", "base", "entry") appear in production strings too and would tag
+#: everything.
+MIN_FIXTURE_LEN = 12
+
+
+def _test_fixture_literals(tests_dir: str = "tests") -> set[str]:
+    """Distinctive string literals that appear in tests/.
+
+    THIS IS THE HALF THE FIRST VERSION OF THIS TOOL GOT WRONG. Matching only
+    test-double CLASS NAMES scored 1,922 ``RuntimeError('rpc exploded')`` lines
+    as 0% test output -- and that string is a fixture in three test files. A
+    detector whose negative reads as "production" is worse than none, so the
+    corpus of literals is the second, broader signal.
+    """
+    out: set[str] = set()
+    if not os.path.isdir(tests_dir):
+        return out
+    literal = re.compile(r"""["']([^"'\n]{%d,120})["']""" % MIN_FIXTURE_LEN)
+    for name in os.listdir(tests_dir):
+        if not name.endswith(".py"):
+            continue
+        try:
+            with open(os.path.join(tests_dir, name), "r", encoding="utf-8", errors="replace") as fh:
+                body = fh.read()
+        except OSError:
+            continue
+        for match in literal.findall(body):
+            text = match.strip()
+            # A bare hex hash is a REAL transaction used as a fixture; it is
+            # also what a production line would carry. Not a tell either way.
+            if text and not re.fullmatch(r"0x[0-9a-fA-F]+", text):
+                out.add(text)
+    return out
+
+
 def attribute(pattern: str, log_path: str) -> None:
     """Did production write these log lines, or did the test suite?
 
-    A line naming a test double was written by pytest. This is the check that
-    [df638247] skipped.
+    Two signals, both one-sided: a line that names a test double, and a line
+    carrying a distinctive string literal from tests/. A HIT is conclusive --
+    that line is test output. A MISS is NOT proof of production; it only means
+    neither signal fired. Verify the remainder against the store with --tx.
     """
     if not os.path.exists(log_path):
         sys.exit(f"no log at {log_path!r}")
     rx = re.compile(pattern, re.IGNORECASE)
+    fixtures = _test_fixture_literals()
     total = 0
     doubles: Dict[str, int] = {}
+    by_fixture: Dict[str, int] = {}
     samples: List[str] = []
     with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
@@ -271,24 +319,35 @@ def attribute(pattern: str, log_path: str) -> None:
             if hit:
                 for name in hit:
                     doubles[name] = doubles.get(name, 0) + 1
+                continue
+            fixture = next((f for f in fixtures if f in line), None)
+            if fixture is not None:
+                by_fixture[fixture] = by_fixture.get(fixture, 0) + 1
             elif len(samples) < 5:
                 samples.append(line.rstrip())
-    tagged = sum(doubles.values())
+
+    tagged_double = sum(doubles.values())
+    tagged_fixture = sum(by_fixture.values())
+    tagged = tagged_double + tagged_fixture
     print(f"=== lines matching {pattern!r} in {log_path} ===")
-    print(f"total           : {total}")
-    print(f"name a TEST DOUBLE: {tagged}")
+    print(f"total                    : {total}")
+    print(f"name a TEST DOUBLE class : {tagged_double}")
+    for name, count in sorted(doubles.items(), key=lambda kv: -kv[1])[:6]:
+        print(f"    {name:<18} {count}")
+    print(f"carry a tests/ LITERAL   : {tagged_fixture}")
+    for name, count in sorted(by_fixture.items(), key=lambda kv: -kv[1])[:6]:
+        print(f"    {name[:46]!r:<50} {count}")
+    print(f"NEITHER signal fired     : {total - tagged}")
     if total:
-        print(f"                  ({100.0 * tagged / total:.1f}% -- these are pytest output)")
-    for name, count in sorted(doubles.items(), key=lambda kv: -kv[1]):
-        print(f"    {name:<16} {count}")
-    print(f"unattributed    : {total - tagged}")
+        print(f"\n{100.0 * tagged / total:.1f}% of these lines are provably test output.")
+    if tagged and not (total - tagged):
+        print("EVERY matching line is test output. This pattern is not evidence")
+        print("about production.")
     if samples:
-        print("\nlines NOT naming a test double (check these against the store):")
+        print("\nNOT ATTRIBUTED -- this is NOT proof they are production, only that")
+        print("neither signal fired. Check any hash they name with --tx:")
         for line in samples:
             print(f"  {line[:200]}")
-    elif total:
-        print("\nEVERY matching line names a test double. This log pattern is")
-        print("test output and is not evidence about production.")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
