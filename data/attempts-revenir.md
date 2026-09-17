@@ -6919,3 +6919,71 @@ ALSO MEASURED, feeding [8c3c6910]: blackouts are GLOBAL, not per-symbol. Across 
 17:14 (31.4min) and 16:47 (16.3min) gaps, 14 of 15 and 19 of 24 symbols resumed the
 SAME set afterwards. Nothing rotated out. Do not spend a pass on upstream providers
 or per-symbol source health; instrument db.py:1534 and its driving loop.
+
+## Pass 432 (Echo, senior) -- the download-worker deadline, and pricing the operator's brute-force request
+
+ROUTE TRIED: bound the wedged download worker so `data_ingest` stops being
+stranded behind it. STATUS: code shipped, NOT yet measured in production.
+
+Commit 64744c9. `TokenDownloadSupervisor._run_worker` now runs each worker on its
+own daemon thread and joins with WORKER_DEADLINE_SEC (default 300, env
+DOWNLOAD_SUPERVISOR_WORKER_DEADLINE_SEC). Past the deadline the cycle walks away
+and the workers after it -- including `market`, which writes the prices table --
+still get their turn. The abandoned thread is remembered per label and that label
+is SKIPPED while it is alive, so at most ONE thread per worker is ever
+outstanding; the skip lifts by itself when the call returns. Checked the two ways
+this could have been wrong: db.py:78 builds ONE sqlite connection with
+check_same_thread=False behind a lock, so running workers on fresh threads has no
+thread-affinity problem and leaks no per-thread connection.
+
+NOT CLAIMED: that the wedged call is killed. It cannot be -- synchronous socket
+read in a third-party library. The cycle stops waiting; the call is left to rot.
+
+PROOF the test discriminates: replaying the OLD synchronous `_run_worker` under
+the six new tests fails 3 of 6, headline "AssertionError: 30.01573419570923 not
+less than 5.0 -- run_cycle waited on the wedged worker instead of returning on
+its deadline". Old behaviour ran the file in 210s, new behaviour in 6.06s.
+
+STILL OPEN, filed as [5ffabff3]: the overrun measurement needs a RESTARTED
+production (13min boot) plus >=6h of logs, against the 346-overruns-per-6h /
+6879s baseline. Neither this deadline nor pass 431's DOWNLOAD_WORKER_CHAINS=base
+is live until that restart, so any measurement on the current process is
+meaningless. If zero "DEADLINE:" lines appear post-restart, that means 300s is
+ABOVE the real tail and should be lowered -- not that the bound worked.
+
+----
+
+ROUTE PRICED, NOT YET TRIED: the operator's request (2026-09-16) for
+calculus-level structure and brute-forcing history "like brute forcing a
+password". Commit d3bb492, scripts/derivative_feature_feasibility.py.
+
+PRECONDITION CLEARED: a second derivative needs three ticks at comparable
+spacing and this feed takes 16-59min global blackouts. Counting only runs of
+three consecutive ticks whose gaps are each within 2x that symbol's median:
+51,807 usable triples across 353 symbols = 51.9% of all market_stream rows. The
+second-order feature class IS computable here and is not blackout-limited.
+
+THE NUMBER THAT CHANGES THE PLAN: the multiple-comparisons bar is
+SE*sqrt(2 ln K), which grows as sqrt(log K). On the fillable pairs (CBETH+CBBTC,
+n=4508, sigma 97bp, SE 1.44bp) the total bar is 11.04bp at K=50 and 12.96bp at
+K=5000. A HUNDREDFOLD WIDER SEARCH COSTS UNDER 2bp. Brute force is nearly free
+once the fitness function subtracts the bar as it goes -- which the current GA
+does not do, and is why its edge correlates -0.84 with the number of candidates
+tried. It was measuring its own search width.
+
+WHAT IS EXPENSIVE IS THE PAIR, NOT THE SEARCH: the same search must clear 12.4bp
+on a deep pair and 98bp on AERO (n=4136, sigma 590bp a tier down, 64bp cost
+floor). The symbol choice is worth 7.9x the entire search. We have been spending
+the evidence budget on AERO, the hardest place here to prove anything.
+
+CONCLUSION FOR THE NEXT PASS: pick the pair FIRST, then search as wide as the CPU
+allows. Filed as [ca395016] with second-order features, the in-fitness noise bar,
+a null run on shuffled labels, and the operator's 16:42 instruction written into
+the criteria -- a candidate clearing null, bar and cost floor goes to a live test
+at minimum clip even if the number is startling; write down what would falsify it
+rather than rejecting it on plausibility.
+
+NOT CLOSED, AND IT OUTRANKS BOTH: there is still no transaction hash anywhere in
+the store. 38 live rows, zero receipts. [50288149], services/swap_service.py
+already carries tx_hash and polls mined receipts; it is never passed to the
+writer at db.py:961. No schema migration needed.
