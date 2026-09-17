@@ -302,6 +302,20 @@ class TradingDatabase:
                 ON trade_outcomes(wallet, ts);
                 """
             )
+            # Pre-emptive, and deliberately so. fetch_trade_outcomes (db.py:1025)
+            # runs "FROM trade_outcomes {where} ORDER BY ts DESC LIMIT ?" and
+            # {where} exists only when a wallet is passed, so the wallet-less
+            # call is a bare sort with the same SCAN + TEMP B-TREE plan that cost
+            # trading_ops 20s. It is harmless TODAY only because the table has
+            # 237 rows (measured 0.002s) -- and it has 237 rows only because we
+            # are not trading. It grows with every settled trade, so the stall
+            # would arrive exactly when the system starts working.
+            self._conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_trade_outcomes_ts
+                ON trade_outcomes(ts);
+                """
+            )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS metrics (
@@ -590,6 +604,8 @@ class TradingDatabase:
             );
             CREATE INDEX IF NOT EXISTS idx_trade_outcomes_wallet_ts
             ON trade_outcomes(wallet, ts);
+            CREATE INDEX IF NOT EXISTS idx_trade_outcomes_ts
+            ON trade_outcomes(ts);
             """,
             """
             CREATE TABLE IF NOT EXISTS metrics (
