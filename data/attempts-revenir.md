@@ -9759,3 +9759,84 @@ must not be re-opened without a COST-based rule rather than a DEPTH-based one.
 
 STATUS: [eb269198] BLOCKED on [7a86a33c], criteria rewritten. Nothing shipped;
 zero production code written, which is this seat's job.
+
+
+## Pass 451 (Echo, senior), SECOND ENTRY -- STEP 6 IS NOT THE WALL, AND THE WALL IS ONE SYMBOL-BLIND NUMBER
+
+Found while answering the pass gate's "1080.9 min with no settled swap" complaint
+rather than ignoring it. This supersedes the aiming point of the last several
+passes.
+
+THE LADDER NAMES A WALL THAT DOES NOT GATE THE APPROVED STRATEGY.
+scripts/graduation_status.py prints "[FAIL] 6 RISK blocked: ghost_validation_block".
+scripts/ghost_gate_forensics.py -- which already exists for exactly this -- breaks
+that verdict out per strategy:
+
+    POOLED             BLOCKED  insufficient_samples  n=21  (+low_win_rate, negative_margin, weak PF)
+    money_button       READY    cold_start_bootstrap  n=0
+    atf_static         READY    cold_start_bootstrap  n=0
+    atf_static_scout   BLOCKED  insufficient_samples  n=5
+
+money_button, the ONE live-approved strategy, reads READY. Step 6 is not shutting
+it. The ladder's [FAIL] echoes the POOLED row, which gates nothing that can trade.
+Already filed as [73e1c19b]; I reached it independently with a SECOND tool, which
+makes "live_gate_map reconstructs it wrong" the less likely branch. NOT CLOSED:
+that item asks for the verdict the EXECUTOR's own gate returns, and forensics is
+also a reconstruction.
+
+WHERE THE MONEY ACTUALLY STOPS. money_button is approved, READY, and fires ~0/day.
+The COST rung refuses 61% of 521 admissible ticks. Forensics prints the model's own
+curve:
+
+    flat round-trip fee at a $6 clip = 38.6bp, SYMBOL-BLIND
+    real on-chain (operator, 2026-09-11): WETH 4-11bp, AERO 64-435bp, KTA to 7498bp
+    -> 3.5-9.6x TOO DEAR ON WETH, 1.7-11.3x TOO CHEAP ON AERO
+
+It rejects real 15bp WETH edges that clear their true cost and admits 50bp AERO
+signals that then pay 64-435bp. Two-sided, and both sides lose money.
+
+THIS IS THE SAME DEFECT I PROVED FROM THE FEED SIDE THE SAME PASS. Depth-gating the
+stream keeps AERO and deletes WETH; the fee model overcharges WETH and undercharges
+AERO. Two independent measurements at opposite ends of the pipeline: THE SYSTEM
+SYSTEMATICALLY PUSHES ITSELF TOWARD THE EXPENSIVE TOKEN AND AWAY FROM THE CHEAP ONE.
+
+MIND WHICH COST MODULE -- they are the two one underscore apart and only one is
+actionable today:
+  services.roundtrip_cost.roundtrip_cost_rate()   NO underscore  [84e62c6d]
+      The ENTRY GATE. Takes no symbol. Gates entries at swap_schedule.py:414,
+      atf_static_strategy.py:867, bot.py:1998. NEEDS NO NEW DATA -- the operator's
+      per-token on-chain costs already exist. BUILDABLE TODAY.
+  services/round_trip_cost.measure()              WITH underscore [78338262]
+      The measured floor. Genuinely blocked: a per-token floor needs settled fills
+      and this DB has never held one.
+I first ordered the work behind [78338262] and corrected myself: [84e62c6d] is the
+shortest path and does not wait on anything.
+
+ROUTE (c) "SHORTEN THE HOLD" RE-CHECKED AND NEGATIVE on the current book. The short
+end is the WORST:
+    900s  n=4  win 0.000 net -0.1034     1800s n=15 win 0.000 net -0.4345
+    3600s n=18 win 0.111 net -0.4297     7200s n=20 win 0.200 net -0.4272
+The "positive inside 15 minutes" result does not reproduce. Quote this table before
+reaching for route (c).
+
+GROSS IS UNMEASURED, which bounds every claim above. n=21: net -35.40bp (t=-4.61)
+but gross +3.22bp (t=+0.42, CI [-11.82,+18.25] SPANS ZERO). The fee is 5.0 SEs of
+the distribution -- below ~15bp the book is the FEE MODEL TALKING, NOT THE MARKET.
+Three rows have gross exactly 0.0 (entry price == exit price: a frozen feed, not an
+outcome).
+
+CAVEAT NOT GLOSSED: money_button's READY is cold_start_bootstrap on a ZERO-trade
+book, which pipeline.py itself calls "evidence of nothing". It is approved on a
+bypass, not on evidence. The fix is an honest cost rung so real ticks pass it, NOT
+a wider bypass.
+
+BACKLOG HYGIENE, and both failures were mine: rejected [7a86a33c] (duplicate of
+[205092e7]) and [50288149] (duplicate of [1c6acf5d], filed by me at pass 429 and
+again at pass 439). Between the two tx_hash items they described the whole seam and
+neither did alone -- source end swap_service.py:78 + fetch_receipt:96, sink end
+bot.py:9030/:9829 vs record_fill ~9403/~10899 -- so the source-end half is carried
+in [50288149]'s reject note. RULE FOR THIS SEAT: grep scrum.py list before every
+add, every time.
+
+GATE: 723 passed, 0 failed (was 723/0). live trades 18 == 18, net P/L -0.186371
+== -0.186371. Zero production code written this pass.
