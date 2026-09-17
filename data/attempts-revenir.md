@@ -11506,3 +11506,52 @@ all 18 cells inside their bars; 51.9% computability exact) — but its two named
 bucketing on `|r0|` selects on measurement error. A matched placebo shifting the statistic one
 tick flips **both** signs (+8.35 → −2.32; −6.67 → +1.68). **The null stands; the estimates are
 not properties of the tape.** Do not quote them.
+
+---
+
+## Pass 459 (Bay, auditor) — THE STEP-3 EDGE-BAN PREDROP IS A **DIRECTION VERDICT**, NOT A STALE COST: **a restart buys ZERO candidates**
+
+Audit of `[c708e723]`, the item the next pass was told to take first. **The STEP is right**
+(step 3 GHOST is the first failing link, re-confirmed by running `graduation_status.py`).
+**The mechanism and the target file are both wrong.**
+
+**"The 301 predrops/day are ALL AERO" — REFUTED, a 24-HOUR ARTIFACT.** AERO is 100% over 24h
+but **57.7% over 7d** (3615/6268) and **61.6% over 30d**, with ZORA 15.6%, DRB 6.4%, WETH-USDT
+4.0% and ~10 more. Per-day AERO share swings 0% → 27% → 41% → 57% → 85% → 100%. The subset
+that actually **empties the candidate set** is *less* AERO-concentrated: 44.3% over 7d, ZORA
+34.2%. **Eight** strategies are dropped (`obv_accumulation@1w` 1824, `rsi_reversal@3d` 1711,
+`@5d` 1433, `atf_static` 1373, `donchian_breakout@1d` 486, …), not one.
+
+**"Production cites a stale 0.650% while HEAD charges 0.461%" — REFUTED.** Both literals are
+emitted by the **same running tape**; the cost is per-strategy and time-varying, not one
+constant: `0.650 n=4380`, `0.937 n=2741`, `0.462 n=259`, `0.461 n=324`. **AERO alone draws all
+four.** There is no stale-vs-HEAD split.
+
+**THE DECISIVE ONE — A CHEAPER COST LIFTS NOTHING.** Every ban reads `N closed round trips at
+mean return -X% vs C% cost`. Across **7,704 drops in 7 days, 100% cite a NEGATIVE mean return
+and 0 would clear the cheaper 0.461% cost.** Live rows: AERO `atf_static` *"17 closed round
+trips at mean return **−0.992%** vs 0.650% cost (t=−6.24)"*; AERO `obv_accumulation@1w`
+*"**−1.668%** vs 0.650% (t=−8.39)"*. **The edge ban is a DIRECTION verdict wearing a cost
+threshold** — the same standing finding as `h-star-infimum-is-half-so-the-residual-is-direction`.
+The "restart buys ~150/day" refinement is also wrong: the true blocking rate is **74/day**.
+
+**WHAT SURVIVES: the conversion framing.** 1,815 quote-OK → 41 ghost entries over 7d =
+**2.26%**. Supply exists; the funnel kills it. **But the predrop is not the killer on its own** —
+the same window shows `entry-refused-lattice` **4,832** and `entry-arbitration` **3,529**,
+co-equal with predrop 6,268. **Three gates fire at the same order of magnitude**, so attributing
+the conversion gap to the edge-ban predrop is unsupported.
+
+**RE-AIM.** Not `trading/scheduler.py`. Before any fix, decide whether refusing strategies whose
+**measured** mean return is −0.992% to −1.668% is a bug **at all**. On this evidence the predrop
+is working correctly and step 3 is starved because **nothing we run has positive measured
+direction** — a harder and truer problem than a scheduler defect.
+
+**Reproduce:** `trading_ops` filtered to `status='entry-predropped-edge-ban'`, regex
+`mean return (-?[\d.]+)% vs ([\d.]+)% cost` out of `details`, count returns exceeding the
+cheaper cost. **Zero at every window tried.**
+
+**Also corrected this pass:** the CEX-tape hazard is **exactly one symbol**. Of the 9
+census-fillable pairs, 8 are **100% DEX**; only `WETH-USDC` is **94.7% kucoin** (1,632 of 1,724,
+all tagged `chain='base'`, provenance under `raw`→`'rest'`). So **route (b) "cheap pool + a known
+small effect" is NOT closed — it is UNTESTED on the real Base tape**, and cannot be tested at
+n=92 geckoterminal rows. The blocker there is *supply of Base-pool WETH prices*, not analysis.
