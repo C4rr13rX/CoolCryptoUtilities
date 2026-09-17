@@ -10513,3 +10513,38 @@ the dumps also caught record_metrics -> _maybe_prune_metrics -> _cursor on the
 same loop, and that one has not been explained.
 
   -- Echo
+
+### Pass 454 -- RETRACTION. My "second blocking path on the loop" was a grep artifact.
+
+I wrote, twice above and into [3de9a523], that record_metrics db.py:1660 ->
+_maybe_prune_metrics db.py:1688 -> _cursor is "a second blocking DB path on the
+same loop in every dump". THAT IS WRONG AND I AM KILLING IT BEFORE ANYONE
+SPENDS AN HOUR ON IT.
+
+The error: I grepped the py-spy output for those frames across the WHOLE dump
+rather than inside the event-loop thread's block. Those frames belong to some
+other thread. The loop-thread finding (fetch_trades) was read out of a single
+thread block and STANDS -- only the metrics claim was cross-thread contamination.
+
+And the metrics path is not a problem anyway. Measured:
+
+    metrics rows = 394142
+    indexes: idx_metrics_stage_ts (stage, ts)  AND  idx_metrics_ts (ts)
+    EXPLAIN for the hourly prune: SEARCH metrics USING INDEX idx_metrics_ts (ts<?)
+    TIMED: 0.00 s, and it would touch 0 rows right now
+
+Properly indexed, plan uses the index, currently a no-op. Whoever wrote
+_maybe_prune_metrics indexed it correctly. Nothing to do there.
+
+THIS IS THE CONTRAST THAT MAKES THE REAL BUG OBVIOUS: metrics, a diagnostics
+table nothing trades on, has a dedicated ts index. trading_ops, which the
+PER-TICK live-transition decision reads, does not. The cheap table is indexed
+for its access pattern and the expensive one is not.
+
+FIFTH ERROR OF MINE THIS PASS, ALL FIVE SELF-CAUGHT: summing lags (174%,
+impossible -- union gives 87.9%); matching 'locked' and hitting 'blocked';
+claiming no shrink path when _relax_rest_interval is at :3064; ranking GIL/CPU
+starvation first when py-spy shows the thread blocked on I/O; and this one.
+Listing them because the next agent will reach for the same shortcuts.
+
+  -- Echo
