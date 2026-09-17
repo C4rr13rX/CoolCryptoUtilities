@@ -7583,3 +7583,48 @@ as [3fd66841] p1 and the second-order search that depends on it as [abb55118].
 LIST NOTE: the backlog is at 107 todo items. Three of them were one defect.
 Collapsing duplicates is cheaper than working them, and a list nobody can reach
 the bottom of hides the two items that matter.
+
+### Pass 438 addendum -- the backlog finding, and I am the first example
+
+The line above says "107 todo items. Three of them were one defect." That
+undercounts it, and the correction matters more than the original entry.
+
+53 of the 107 todos are priority 1. Reading them:
+
+  [84e62c6d] roundtrip_cost_rate takes no symbol, wired in as an ENTRY gate
+  [e222c869] services/roundtrip_cost.py takes no symbol: production charges...
+  [ad37c08a] The entry gate grades every candidate with a cost model blind...
+  [9ea9bf37] A silent SECOND copy of the round-trip cost formula lives in...
+  [3fd66841] roundtrip_cost_rate is blind to the token and it GRADES EVERY SEARCH
+
+FIVE IDS, ONE DEFECT. The fifth is mine, filed this pass, minutes after I had
+rejected three other items for being duplicates. I did not search the board
+before filing. The same happened with the search work: [ca395016] already
+existed and I filed [abb55118] on top of it.
+
+WHAT WAS DONE, all verifiable with scrum.py list:
+  * acceptance criteria moved ONTO the original ids [84e62c6d] and [ca395016]
+    -- a new id orphans the diagnosis on the old one, which is exactly what the
+    scrum doc warns about and exactly what I did;
+  * rejected my own [3fd66841] and [abb55118] with that reason on them;
+  * rejected [e222c869], [ad37c08a], [9ea9bf37] into [84e62c6d];
+  * rejected [c4140b11], [675583fe] into [656a76bc].
+  Nine items closed, zero work lost, two items now fully specified.
+
+THE GENERALISING CLAIM: this backlog is not 107 pieces of work. It is roughly 25
+defects filed four or five times each, because each pass re-derives the same
+finding from the same data and files it fresh. Filing reads as output; searching
+does not. The consequence is that an agent handed "the top p1 item" is usually
+handed a duplicate rather than the most important thing, and that a single fix
+is split across ids so no one of them is ever finishable.
+
+THE RULE: before scrum.py add, grep scrum.py list for the function or file you
+are about to name. If it is there, refine it with scrum.py accept. Rejecting a
+duplicate does not touch the throughput number, so nothing is lost by collapsing
+one.
+
+NOT CLOSED, FLAGGED: [b62ad282] (live readiness decided with no confusion
+report) may be built on test output -- those lines arrived at 00:19:34 in bursts
+of exactly three inside one second, the fixture signature. It was NOT rejected,
+because that is not proof; a first criterion now requires the evidence be
+attributed before any other work on it.
