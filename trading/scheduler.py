@@ -45,6 +45,23 @@ except Exception:  # noqa: BLE001 - a missing gate must not narrow the funnel
 #:
 #: Only the LABEL changes here. Every ``MONEY_BUTTON_*`` threshold this rule
 #: reads is untouched.
+#:
+#: [c1bd5cb7] THE LABEL IS ALSO THE LICENCE, AND THE SPLIT ALMOST LOST IT.
+#: ``money_button`` is the single id an operator hand-approved for live, and
+#: ``StrategyLedger.is_live_approved`` is an exact lookup on the id a directive
+#: carries. Renaming the rule therefore de-armed the one variant that actually
+#: fires (333 dip evaluations last pass against 18 momentum) -- silently, since
+#: ``bot.py:_strategy_live_approved`` returns a bare False and logs nothing
+#: naming the id. It had not fired only because production has not rebooted
+#: since 70fc09c landed.
+#:
+#: The licence is carried across in ``trading/strategies/ledger.py``, by the
+#: explicit variant->base table ``_LIVE_APPROVAL_BASE_IDS``, which is keyed by
+#: THIS STRING. The evidence books stay split; only the licence is shared, and
+#: the variant's own demotion still refuses it. If you rename or retire this
+#: constant, update that table in the same commit --
+#: ``tests/test_the_ledger_lends_a_variant_id_its_base_licence.py`` fails if
+#: the two drift apart.
 MONEY_BUTTON_DIP_STRATEGY_ID = "money_button_dip"
 
 HORIZON_DEFAULTS: List[Tuple[str, int]] = [

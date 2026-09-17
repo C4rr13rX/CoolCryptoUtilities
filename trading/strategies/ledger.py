@@ -87,6 +87,44 @@ def _ghost_only_ids() -> set:
     return {part.strip() for part in raw.split(",") if part.strip()}
 
 
+#: Variant ids whose LIVE ELIGIBILITY is the base strategy's, keyed
+#: variant -> base. EVIDENCE stays split; only the licence is shared.
+#:
+#: [c1bd5cb7] WHY THIS EXISTS. Commit 70fc09c split the BUY-THE-DIP rule in
+#: ``trading/scheduler.py`` out under its own id -- ``money_button_dip``, the
+#: constant ``scheduler.MONEY_BUTTON_DIP_STRATEGY_ID`` -- because it and the
+#: momentum plugin that owns the bare ``money_button`` name trade in OPPOSITE
+#: directions and one pooled row could describe neither. That split was right.
+#:
+#: What it did not carry across was the LICENCE. ``money_button`` is the one
+#: row an operator hand-approved for live ("Dune (exec) pass 424, on USER
+#: instruction 2026-09-16 13:10"), and the dip rule is the variant that
+#: actually fires -- measured last pass, 333 dip evaluations against 18
+#: momentum. ``is_live_approved`` is an exact dict lookup, so from the next
+#: boot the only variant that fires would have asked for live eligibility
+#: under an id this store has never heard of and been refused, silently:
+#: ``bot.py:_strategy_live_approved`` returns a bare False and nothing logs a
+#: refusal that names the id. Measured on this ledger before the fix::
+#:
+#:     is_live_approved('money_button')     = True
+#:     is_live_approved('money_button_dip') = False
+#:
+#: The table is an EXPLICIT allow-list, not a suffix rule, and that is the
+#: whole safety argument: ``rsi_reversal@5h`` must not inherit from
+#: ``rsi_reversal`` just because its name starts the same way. Exactly one id
+#: resolves differently because of this table, and adding a second is a
+#: deliberate act with an operator's approval behind it.
+#:
+#: Held in code rather than as a copied ledger row for the same reason as
+#: ``_GHOST_ONLY_DEFAULT`` above, plus one more: a copied ``live_approved``
+#: row would keep the licence after the base was demoted. Resolving through
+#: the base at call time means the variant is approved EXACTLY when the base
+#: is, demotion included.
+_LIVE_APPROVAL_BASE_IDS: Dict[str, str] = {
+    "money_button_dip": "money_button",
+}
+
+
 #: Absolute ceiling on a single ghost outcome, in quote units. The account
 #: this runs against holds single-digit dollars, so any individual trade
 #: clearing this is a bookkeeping artifact rather than a fill.
@@ -1328,10 +1366,51 @@ class StrategyLedger:
             self._demote_locked(sid, reason, permanent=True)
             self._save()
 
+    def _inherits_live_approval_locked(self, sid: str) -> bool:
+        """Does this variant id inherit its base strategy's live licence?
+
+        See ``_LIVE_APPROVAL_BASE_IDS``. Only ids in that explicit table can
+        reach the base row at all; every other id returns False here and the
+        exact-match answer stands.
+
+        The variant's OWN bars still win. A variant that was demoted on its
+        own evidence, or permanently blocked, stays refused -- inheriting past
+        a demotion would make the base row a way to undo one, which is the
+        opposite of what this is for.
+        """
+        base = _LIVE_APPROVAL_BASE_IDS.get(sid)
+        if not base or base == sid:
+            return False
+        if sid in _ghost_only_ids():
+            return False
+        ent = self._data.get(sid)
+        if isinstance(ent, dict):
+            if ent.get("graduation_blocked"):
+                return False
+            try:
+                demotions = int(ent.get("demotions", 0) or 0)
+            except (TypeError, ValueError):
+                # An unreadable demotion count is not evidence of none.
+                return False
+            if demotions > 0:
+                return False
+        return self._approved(base, self._data.get(base))
+
     def is_live_approved(self, strategy_id: str) -> bool:
         with self._lock:
             sid = (strategy_id or "").strip() or "unclassified"
-            return self._approved(sid, self._data.get(sid))
+            if self._approved(sid, self._data.get(sid)):
+                return True
+            # NOTE the asymmetry with approved_ids()/any_live_approved()
+            # below, which is deliberate and not an oversight. This method is
+            # the one the money path asks -- bot.py:_strategy_live_approved ->
+            # bot.py's live-entry conjunction -- and it answers "may THIS
+            # directive spend?". The other two enumerate rows that HOLD a
+            # licence, and pipeline.py:_live_gate_candidates uses that list to
+            # pick whose ghost book the live gate judges. Adding the variant
+            # there would change which book is judged, which is a separate
+            # decision with its own evidence, so it is left alone.
+            return self._inherits_live_approval_locked(sid)
 
     def any_live_approved(self) -> bool:
         with self._lock:
