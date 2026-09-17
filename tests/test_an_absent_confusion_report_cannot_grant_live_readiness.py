@@ -89,8 +89,13 @@ def test_a_never_stamped_pipeline_reports_absent_not_an_age() -> None:
 
     assert freshness["confusion_never_loaded"] is True
     assert freshness["confusion_age_sec"] is None
-    # ABSENT is not STALE. Stale means an age was measured and breached.
-    assert freshness["confusion_stale"] is False
+    # [b62ad282] ABSENT has no AGE (still None, not an epoch-derived duration)
+    # but it DOES count as STALE: a report this process never loaded cannot be
+    # trusted as current, and confusion_stale is the field a caller reaches
+    # for to ask exactly that. This assertion's value is inverted from its
+    # original form -- see test_a_never_loaded_report_is_also_reported_stale
+    # below for the fail-open that the original value produced in production.
+    assert freshness["confusion_stale"] is True
 
 
 def test_the_warning_for_a_never_stamped_pipeline_prints_no_epoch(captured_logs) -> None:
@@ -265,3 +270,87 @@ def test_no_model_on_disk_is_refused_the_same_way(captured_logs, monkeypatch) ->
 
     assert report["ready"] is False, report
     assert report["mini_ready"] is False, report
+
+
+# ---------------------------------------------------------------- failure (4)
+#
+# [b62ad282] A FOURTH FAILURE, FOUND LATER, SAME FILE BECAUSE SAME SUBJECT.
+#
+# confusion_never_loaded=True was published next to confusion_stale=False in
+# the same details dict (logs/system.log 2026-09-17 17:11:18, still emitting
+# in production at the time this was filed). "Never loaded" read as "not
+# stale" -- i.e. as fresh -- to any caller that checks confusion_stale alone,
+# which is exactly what the field's name invites and is the only one of the
+# two that a consumer outside this module has ever had reason to check.
+#
+# Caller audit (grep -rn "confusion_stale|confusion_never_loaded" --include=
+# *.py .): zero hits outside this module and its sibling test file. Every
+# reader of live_readiness_report() (trading/bot.py, trading/selector.py,
+# production.py, the web dashboard views) reads `ready`/`mini_ready`/`reason`,
+# never these two keys, so the fail-open does not currently flip a trading
+# permission bit -- but the two keys ARE persisted verbatim into
+# data/reports/live_readiness.json every cycle and served raw by the
+# dashboard API, so the record a human or a future consumer would trust is
+# self-contradictory. The tests below pin the fix (never_loaded folds into
+# confusion_stale) and pin that it changes nothing else.
+
+
+def test_a_never_loaded_report_is_also_reported_stale() -> None:
+    """The field named for "can I trust this" must not say yes for nothing."""
+    pipeline = _pipeline_stub()
+
+    freshness = pipeline.confusion_freshness()
+
+    assert freshness["confusion_never_loaded"] is True
+    assert freshness["confusion_stale"] is True
+
+
+def test_a_never_stamped_refresh_is_stale_even_with_a_report_in_memory() -> None:
+    """The fold-in keys off the refresh stamp, not off whether some dict
+    happens to be sitting in ``_last_confusion_report``. A report this
+    process never verified as current must not read as fresh just because it
+    is non-empty.
+    """
+    pipeline = _pipeline_stub()
+    pipeline._last_confusion_report = {"5m": {"precision": 0.4}}
+    # Left at the stub's 0.0 deliberately -- neither writer has run.
+
+    freshness = pipeline.confusion_freshness()
+
+    assert freshness["confusion_never_loaded"] is True
+    assert freshness["confusion_stale"] is True
+
+
+def test_a_measured_fresh_report_is_still_not_stale() -> None:
+    """The fold-in must not make everything stale. A real, recent stamp still
+    reads as trustworthy -- this is the case the fail-open must not break.
+    """
+    pipeline = _pipeline_stub()
+    pipeline._last_confusion_report = {"5m": {"precision": 0.4}}
+    pipeline._last_confusion_refresh = time.time()
+
+    freshness = pipeline.confusion_freshness()
+
+    assert freshness["confusion_never_loaded"] is False
+    assert freshness["confusion_stale"] is False
+
+
+def test_never_loaded_does_not_change_the_ready_verdict(captured_logs, monkeypatch) -> None:
+    """The fix is scoped to the staleness telemetry. Folding never_loaded into
+    confusion_stale must not change ready/mini_ready/reason: neither branch of
+    live_readiness_report reads confusion_stale back to compute them -- both
+    decide from the anchor or the fallback candidate-feedback metrics and
+    merge this dict in afterwards. This guards against turning an honest
+    telemetry fix into an accidental live-lane closure.
+    """
+    pipeline = _pipeline_stub()
+
+    report = _fallback_report(pipeline, captured_logs, monkeypatch, has_model=True)
+
+    # Unchanged from the pre-existing no-model-evidence rule (failure 3 above).
+    assert report["ready"] is False, report
+    assert report["mini_ready"] is False, report
+    assert report["reason"] == "no_model_evidence", report
+    # ...while the staleness telemetry now tells the truth about it.
+    assert report["confusion_never_loaded"] is True, report
+    assert report["confusion_stale"] is True, report

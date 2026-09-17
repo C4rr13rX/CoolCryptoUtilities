@@ -4412,23 +4412,42 @@ class TrainingPipeline:
             max_age = float(os.getenv("CONFUSION_REFRESH_MAX_AGE", "900") or 900.0)
         except ValueError:
             max_age = 900.0
-        # ABSENT IS NOT STALE, AND PRINTING ONE AS THE OTHER PRINTS THE EPOCH.
+        # ABSENT HAS NO AGE, AND PRINTING ONE AS AN AGE PRINTS THE EPOCH.
         #
         # _last_confusion_refresh is initialised to 0.0 and only the two writers
         # that adopt a report stamp it. When neither has run, `now - 0.0` is the
         # unix epoch, and the warning line rendered it as a duration:
         # logs/system.log:5833140 at 06:27:39 reads "judging on a confusion
         # report 1789122459s old" -- 56 years. That number is a SENTINEL saying
-        # the field was never stamped, not an age.
+        # the field was never stamped, not an age. `confusion_age_sec` stays
+        # None for this case below -- absent is still not aged. Whether it
+        # should read as trustworthy is a different question; see confusion_stale.
         stamp = float(getattr(self, "_last_confusion_refresh", 0.0) or 0.0)
         never_loaded = stamp <= 0.0
         age_sec = None if never_loaded else max(0.0, time.time() - stamp)
+        age_stale = bool(age_sec is not None and max_age > 0 and age_sec > max_age)
+        # NEVER LOADED MUST NOT PRESENT AS "NOT STALE" -- THAT READS AS FRESH.
+        #
+        # [b62ad282] logs/system.log 2026-09-17 17:11:18 published
+        # confusion_never_loaded=True next to confusion_stale=False in the same
+        # details dict. The two fields disagree about the one question either
+        # exists to answer -- can this report be trusted right now -- and
+        # confusion_stale is the name a consumer reaches for to answer it. A
+        # caller that checks confusion_stale alone (exactly what the name
+        # invites, and no caller today checks confusion_never_loaded without
+        # it) got a green light for a report that does not exist: a fail-open
+        # on a live-money readiness gate's own telemetry.
+        #
+        # Folding never_loaded in here is a no-op on `ready`/`mini_ready`:
+        # every path in live_readiness_report decides those from the anchor or
+        # the fallback candidate-feedback metrics and merges this dict in
+        # afterwards with **freshness -- nothing reads confusion_stale back to
+        # compute them. This closes the telemetry fail-open without touching
+        # what live trading is allowed to do.
         return {
             "confusion_age_sec": None if age_sec is None else round(age_sec, 1),
             "confusion_max_age_sec": max_age,
-            "confusion_stale": bool(
-                age_sec is not None and max_age > 0 and age_sec > max_age
-            ),
+            "confusion_stale": bool(age_stale or never_loaded),
             "confusion_never_loaded": never_loaded,
         }
 
