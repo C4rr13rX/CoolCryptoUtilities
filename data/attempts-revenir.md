@@ -10091,3 +10091,39 @@ METHOD NOTE, and it is the opposite of the one I left last pass: BEFORE
 quoting a pool, read trade_fills. 38 rows of settled execution outrank any
 number of quotes, they were there the whole time, and no pass had split them by
 mode.
+
+
+--- PASS 453 ADDENDUM: THE CLIP WAS $0.81, AND h* IS ABOVE 1.0 ---
+AUDIT FIRST, because it is the reason to trust the rest. Ran all 29 deep legs
+through services.fill_cost.realised_slippage_bps (which uses the same
+adverse-positive convention: sign +1 buy, -1 sell) against my hand arithmetic:
+    my mean 6.7477 bp/leg    repo mean 6.7477 bp/leg    max diff 0.0000000000
+The 13.5bp deep round-trip slippage is CONFIRMED by the repo's own code.
+
+THE CORRECTION. I assumed a $3 clip from memory's max-ever figure. leg_cost_usd()
+reports the notional ACTUALLY TRADED: median $0.81, range $0.31-$1.74. We never
+traded $3. Measured gas, priced by the module's own plausibility band rather
+than my assumed ETH range: median $0.002067/leg = 26.9bp/leg = 53.7bp ROUND TRIP
+IN GAS ALONE, against a 42.5bp allowance for the ENTIRE round trip.
+
+    clip $0.81   64.5bp   h* = 1.29   <- WHAT WE ACTUALLY TRADED
+    clip $1      54.8bp   h* = 1.17
+    clip $3      27.3bp   h* = 0.84   <- payable
+    clip $10     17.6bp   h* = 0.72
+    clip $23     15.3bp   h* = 0.69
+
+h* = 1.29 MEANS NO DIRECTIONAL CALL, HOWEVER PERFECT, PAYS. Arithmetically
+impossible, not merely hard. 0 of 22 live trades cleared break-even and this
+accounts for it with no reference to signal, strategy or gate. My earlier line
+"a near-perfect oracle loses at $3" was WRONG: $3 gives h* 0.84 and is payable.
+The unpayable clip is the $0.81 one we used. Crossing h* under 1.0 needs only
+about $2 -- this is not a proposal to bet the wallet.
+
+EVIDENCE LIMIT, stated because it halves the base. Only 15 of 38 legs are
+measurable and ALL 15 ARE SELL LEGS. Every buy leg reads "not a number":
+live_entry records gas_spent_native with no native price (fill_cost.py:17-22).
+Three further legs are dropped for pricing ETH gas at the TRADED PAIR's price
+($0.4877, $0.5018, $80884.98) -- that contamination is STILL LIVE. Gas per leg
+is therefore measured on sells and assumed symmetric for buys. Fixing the
+buy-leg native price would double this evidence base and is now criterion 3 of
+[c7dee052].
