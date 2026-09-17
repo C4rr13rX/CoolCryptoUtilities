@@ -10808,3 +10808,48 @@ off the loop thread, then re-run the warnings-per-minute discontinuity test. If
 the rate does not fall, the next stack is where to look.
 
   -- Echo
+
+### Pass 455 FINAL -- the loop blocker, split by call path over 30 samples
+
+    50%  (15/30)  BRAIN   _handle_sample -> push_live_tick -> wizard_trainer  [socket]
+    33%  (10/30)  SQLITE  _cursor (db.py:654)  -- and NOT fetch_trades
+    10%  ( 3/30)  SCAM    portfolio.refresh -> filter_scams -> requests.get   [socket/TLS]
+     3%  ( 1/30)  data_loader.sample_texts
+     3%  ( 1/30)  _record_organism_snapshot (bot.py:12570)
+
+~93% in blocking I/O, agreeing with 93% measured by top-frame and 87.9% by
+interval-union on system.log. Three methods.
+
+**THE 33% IS THE UNCOMFORTABLE ROW.** A third of loop samples are STILL in
+`db.py:654 _cursor` *after* the index, and none of them are `fetch_trades`. There
+is another slow sqlite query on the loop that I have not identified. The index
+killed the one query I could see; **the class of bug is untouched**, exactly as
+this item's own STEP 2 warned -- and I am the one who nearly closed it.
+
+**THE BRAIN IS THE BIGGEST BUCKET AND IT IS UNGATED.** `OMEN_STRATEGY_ENABLED`
+has ZERO hits in `trading/wizard_trainer.py`. `bot.py:5977-5983` calls
+`push_live_tick` unconditionally, *deliberately* -- the comment says it runs
+before the TF gate so the brain keeps learning when prediction is broken. Both
+the call site and `push_live_tick` end in a bare `except Exception`, so a hanging
+brain endpoint yields no error, no log, no metric, only a blocked loop. That is
+why this survived 20h of dark-feed investigation: **the code that eats the loop
+is the code that reports nothing.** Fix with a flag, not a deletion.
+
+**A THIRD SELF-CAUGHT ERROR, in my own analysis script.** My classifier tested
+only the top frame for socket/ssl, so it labelled the 10 `_cursor` samples
+"NOT BLOCKED (loop running)". Wrong -- sqlite blocks. I nearly published a third
+bad inference off a lazy predicate I wrote myself, in the very script auditing
+the previous two.
+
+**CAVEATS, not to be inherited as facts:** 30 samples is thin for a 3-way split;
+the buckets span ~15 min of a bursty process and are not simultaneous; and I did
+**not** weight by stall DURATION, so a 50% sample share is not necessarily 50% of
+blocked wall clock. Indicative, not settled.
+
+**Route status.** CLOSED: "an unindexed sqlite query is THE loop blocker" --
+it was one of at least three, and the smallest named cause fixed so far. OPEN,
+evidence-ranked: (1) brain tick-push 50%, (2) the unidentified sqlite query 33%,
+(3) filter_scams 10%. Arbiter for any fix is the warnings-per-minute
+discontinuity test in logs/system.log -- run it first and last.
+
+  -- Echo
