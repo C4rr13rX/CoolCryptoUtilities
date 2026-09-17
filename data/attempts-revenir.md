@@ -8256,3 +8256,63 @@ COMMAND THAT PROVES IT: scratchpad ether_disjoint.py, which imports
 scripts/money_button_dip_expectancy.py's simulate()/load_ticks()/DEEP_POOLS
 unmodified and re-groups the output; the shipped census reproduces the ALL cell
 with `python -X utf8 scripts/money_button_dip_expectancy.py --hours 168`.
+
+================================================================================
+PASS 444 -- [bd851275] THE ONLY POSITIVE CELL EVER MEASURED HERE DECAYS TO ZERO
+AND CROSSES IT. "DEEP POOLS + 2% FLOOR + 15m HOLD" IS DEAD.
+================================================================================
+
+Dune, pass 425, measured deep pools at a 2% floor and a 15-minute hold: 9 trades,
+89% win, +0.429% mean net after per-token cost. It is the single most attractive
+number this repo has produced, it was correctly filed as "n=9, WHICH IS NOT AN
+EDGE", and criterion 1 was to grow it to n>=30 before anyone sized a clip on it.
+Grown, on the same shipped simulate(), same floor, same horizon, longer tape:
+
+  window   n   win    mean net      SE       t
+   168h    9   89%   +0.4286%  0.1471%   +2.91   <- Dune's cell, reproduced EXACTLY
+   336h   16   75%   +0.1947%  0.1515%   +1.28
+   526h   18   67%   -0.0677%  0.2368%   -0.29   <- full span of market_stream
+
+Monotone in all three statistics. Win rate 89 -> 75 -> 67. Mean +0.429 -> +0.195
+-> -0.068. t +2.91 -> +1.28 -> -0.29. The lead does not shrink toward a smaller
+positive; it crosses zero. No row was censored to get there -- the |return|>20%
+artifact filter removes ZERO rows in every window, so this is not the outlier
+story, it is the whole sample.
+
+CRITERION 1 CANNOT BE SATISFIED AND HERE IS WHY, PLAINLY: at the full 526.1h of
+market_stream the cell reaches n=18, not n=30. The tape to take it to 30 does not
+exist. But the item does not need it: criterion 2 asked whether the mean stays
+positive as n grows and said "a lead that dies at n=30 is a complete and valuable
+result". It died at n=18.
+
+WHERE THE POSITIVE CAME FROM, and it is a clock artifact. Every winning symbol is
+identical across all three windows -- ETH-USDC(1), ETH-USDT(2), WETH-USDT(1),
+LINK-USDC(2), LDO-USDC(3). Extending the tape backwards adds only OP-USDC(2,
++0.335%), CBETH-USDC(3, -0.446%) and AAVE-USDC(4, -1.102%). The nine winners are
+ALL inside the most recent 168h and the nine trades before them are net negative.
+Dune did not pick a favourable window; the most recent 168h simply was one.
+
+CRITERION 3, THE COST SOURCE PER PAIR, WHICH NOBODY HAD NAMED: of the 8 symbols
+that trade this cell, 4 are priced on a MEASURED round trip (ETH/WETH 0.110%,
+CBETH 0.300%) and 4 on the 0.70% DEFAULT (LINK, LDO, OP, AAVE). The 0.70% default
+exceeds MONEY_BUTTON_MAX_ROUND_TRIP_COST=0.35%, so the shipped dip gate REFUSES
+all four. The gate-admitted sub-cell -- the only trades production could actually
+have taken -- is n=7, +0.1604%, t=+0.61 at both 336h and 526h. Seven trades, and
+it stops growing because CBETH's feed went dark 12.5h before measurement.
+
+VERDICT: [bd851275] DONE, as a dead lead. Nobody sizes a clip on +0.429%; the
+same configuration on all available history returns -0.068%. Combined with
+[bb53fd2b] closed the same pass, route (b) "restrict the tradeable universe to
+deep pools" is closed for the DIP rule at BOTH the production floor (0.005, 30m:
+-0.1321%, t=-1.71, n=65) and this item's tuned floor (0.02, 15m: -0.0677%,
+t=-0.29, n=18). Two floors, two horizons, one answer.
+
+REOPENING THIS REQUIRES NEW TAPE, NOT NEW ANALYSIS. The honest condition: about
+11 more days of deep-pool streaming, and the thin deep pools staying alive --
+AAVE, CBETH, SOL, CRV and WBTC were dark 12-17h at measurement, which is itself
+why n stops growing.
+
+COMMAND THAT PROVES IT: scratchpad bd851275_n30.py, importing
+scripts/money_button_dip_expectancy.py's simulate()/load_ticks()/DEEP_POOLS
+unmodified; the 168h row reproduces with
+`python -X utf8 scripts/money_button_dip_expectancy.py --hours 168 --sweep --horizon-sec 900`.
