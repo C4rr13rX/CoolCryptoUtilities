@@ -8600,3 +8600,63 @@ CONTRADICTED once. It does NOT transfer to the deep-pool universe, and a pass
 spent shortening holds on deep pools would be aimed at a gradient that runs the
 wrong way. Route (c) is NOT closed, but it has no support on the deep subset
 and must not be started on the strength of the old ghost-book number.
+
+### Pass 445 SELF-CORRECTION: my own harness ran a 4x TIGHTER RULE THAN PRODUCTION
+
+I walked straight into the error this repo already has a memory for
+("the replay harness ran a different rule than production"). Recording it
+against myself, with the corrected numbers, because three of my four results
+above quote the wrong floor.
+
+THE BUG, and it is a one-line import. `os.getenv("MONEY_BUTTON_MIN_DRAWDOWN",
+"0.02")` returns the literal default UNLESS something has loaded the repo's
+dotenv first. Importing anything under services/ does that as a side effect.
+scripts/money_button_dip_expectancy.py imports services.round_trip_cost and so
+gets the SHIPPED value; my scripts/clip_size_expectancy.py imported only numpy
+and sqlite3 and so got the literal.
+
+    BEFORE any repo import:  MONEY_BUTTON_MIN_DRAWDOWN = None
+    AFTER  services.round_trip_cost:  '0.005'
+
+**PRODUCTION'S DIP FLOOR IS 0.5%, NOT 2%.** I caught it only because the two
+harnesses printed different bands for the same rule -- mine "[-5%, -2%]", the
+existing census "[-5%, -0%]". Fixed by importing services.round_trip_cost in
+clip_size_expectancy.py, with a comment saying the import is for its side
+effect so nobody deletes it as unused.
+
+WHAT IS RETRACTED:
+
+1. "THE PRODUCTION DIP RULE CANNOT FIRE ON WETH-USDC AT ALL" -- **WRONG, and
+   it was the pass's headline.** True only at a 2% floor, which production does
+   not use. At the shipped 0.5% floor WETH-USDC fires: n=5 at 5m, 3 at 15m,
+   2 at 30m over 515.6h. The underlying tape fact stands -- WETH's deepest 2h
+   drawdown is -1.992% and it never reaches 2% -- but the conclusion drawn from
+   it does not.
+
+2. "0.88 ENTRY CANDIDATES/DAY on the deep universe" -> **2.37/day** at the
+   shipped config (51 entries over 21.5d). Per symbol: LDO 1.14, LINK 0.58,
+   OP 0.35, ETH-USDT 0.25, AAVE/CBETH/CBBTC/WETH-USDT ~0.23, ETH-USDC 0.21,
+   CAKE 0.19, WETH-USDC 0.09, and WBTC/SOL/CRV still ZERO.
+   The VERDICT IS UNCHANGED: [8a4ce92b]'s own branch test calls ~2/day
+   SIGNAL-LIMITED, and 2.37 is that number almost exactly. Do not build the
+   deep-pool restriction. The wait on step 6 corrects from 28.4 days to
+   **10.5 days** (25 / 2.37), still assuming every candidate becomes a
+   countable round trip, which it does not.
+
+WHAT SURVIVES, AND IT SURVIVES STRONGER. Re-run at the shipped floor, $10 clip:
+
+    symbol      hold   n   mean gross     cost    mean net
+    WETH-USDC     5m   5     +0.2807%   0.3606%   -0.0799%
+    WETH-USDC    15m   3     +0.2830%   0.3606%   -0.0776%
+    WETH-USDC    30m   2     +0.2918%   0.3606%   -0.0688%
+    CBBTC-USDC    5m  14     +0.0857%   0.3606%   -0.2749%
+    CBBTC-USDC   60m   3     +0.2579%   0.3606%   -0.1027%
+
+Every cell with n>=2 is still NEGATIVE at both clips. The only positive cells
+are still n=1 and still the same WETH round trip (+0.8795%).
+
+AND THE CLEANEST STATEMENT OF THE PASS SURVIVES THE CORRECTION: WETH's best
+mean gross is **0.2807%** against a clip-invariant rate floor of **0.3149%**.
+At an INFINITE clip -- gas amortised to nothing -- WETH still loses **3.4 bps**
+per round trip. Size cannot reach it, because the floor is a percentage.
+SIGNAL SETS THE SIGN, NOT SIZE. [c5c198b2]'s answer is unchanged.

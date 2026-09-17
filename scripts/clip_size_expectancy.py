@@ -79,6 +79,16 @@ if str(ROOT) not in sys.path:
 DB_PATH = "file:%s?mode=ro" % (ROOT / "storage" / "trading_cache.db")
 CENSUS = ROOT / "data" / "roundtrip_cost_census.json"
 
+# [c5c198b2] THIS IMPORT IS LOAD-BEARING AND IT IS NOT FOR THE SYMBOL IT BINDS.
+# Importing anything under services/ loads the dotenv that production runs with,
+# and that is where MONEY_BUTTON_MIN_DRAWDOWN=0.005 comes from. Without it this
+# script falls back to the literal "0.02" default below and silently prices a
+# FOUR-TIMES-TIGHTER rule than the one that ships -- which is exactly the error
+# recorded as "the replay harness ran a different rule than production", and
+# which this script committed on its first run (pass 445) before the import was
+# added. Do not remove it because the name looks unused.
+import services.round_trip_cost  # noqa: E402,F401  (imported for its dotenv side effect)
+
 #: [c5c198b2] criterion 2. The rate term, stated here in the body and not
 #: only in a commit message. 0.0369% quote + 27.8 bps live slippage.
 QUOTE_RATE = 0.000369
