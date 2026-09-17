@@ -11444,3 +11444,65 @@ tokens we cannot price**, so every per-symbol cost number excludes them.
 **Caveat:** resident production code inferred from boot time plus the 0.650% appearing in
 production's own rows. Strong, but PID 22664's memory was not read. No production code
 written by Echo; nothing started, stopped or restarted.
+
+---
+
+## Pass 459 (Bay, auditor) — NON-PRICE REGIME CONDITIONING ON THE FILLABLE SUBSET: **CLOSED NEGATIVE**
+
+**THE ROUTE.** Every route this repo has closed conditioned on a **price**. So condition on
+things that are **not prices**: hour-of-day (UTC), day-of-week, feed density (ticks in the
+trailing 10 min), tick staleness (seconds since the previous print), and print source.
+Census-fillable subset only.
+
+**THE SETUP.** 9 census-quoted symbols (`data/round_trip_quote_census_20260917T190210Z.json`,
+git `769cc58`), 30,514 ticks over 538.1h, **94,087** symbol × tick × horizon rows at
+5/15/30/60 min. Forward windows required to land inside `[H, H+tol]` so none straddles a feed
+blackout. Matched baseline: forward return demeaned within **(symbol, calendar day)**.
+**K counted mechanically = 617**, bar = `SE*sqrt(2 ln 617)` → **|t| ≥ 3.585**. SE **clustered
+by (symbol, 6h block)**.
+
+**THE RESULT. Pooled: 0 of 168 cells clear.** Per-family max |t|: hour_utc 3.20, feed_density
+2.48, dow 2.41, tick_staleness 1.93, print_source 0.92. A 300-trial **circular-shift
+permutation null** (preserves autocorrelation and drift, destroys hour alignment) puts the
+observed family-wise max 3.20 at **p = 0.635** (p95 = 4.48). **4 of 617 clear the global bar
+and ALL FOUR ARE NEGATIVE**; one (AERO h07 30m) dies to leave-one-day-out, a single day
+carrying 39.3%. Largest **positive** lift anywhere in 617 cells: **+59.91bp at t = +1.34 —
+inside the bar**. Cells simultaneously significant, positive, and above the cost floor:
+**0 of 617.**
+
+**WHY THIS IS A NULL AND NOT AN UNRESOLVABLE — the part that matters.** Minimum detectable
+lift at the global bar is **6.6bp at 5m, 13.3 at 15m, 17.7 at 30m, 31.5 at 60m**. The cheapest
+payable threshold in the entire fillable set is **35.75bp (WETH)**. **483 of 617 cells (78%)
+are POWERED to detect a payable effect**, including 42/42 at 5m and 40/42 at 15m. An effect
+large enough to pay would have been visible. It was not.
+
+**THE MATCHED BASELINE EARNED ITS KEEP AGAIN.** Raw pooled forward return reads
+**+1.54 / +3.96 / +5.14 / +11.99bp** at 5/15/30/60m (t = 1.95–2.53). Those are the numbers a
+study without the control would have reported as an edge. Same lesson as
+`direction-is-absent-not-inverted`.
+
+**ROUTE (b), "find the cheap pool and let a known small effect clear it", IS ALSO CLOSED ON
+THIS TAPE.** WETH is the cheapest thing we can fill at **35.75bp** all-in (census $2.00 median
+clip + measured gas 20.24bp + measured live slippage 13.5bp), and its best cell of 35 scored
+is **−3.05bp at t = −1.89**. There is no small directional effect sitting in the cheap pool
+waiting for a cost correction.
+
+**ABSTENTION DOES NOT MONETISE THE NEGATIVE CELLS.** This venue is spot USDC→token→USDC;
+there is no short. The complement lifts of the three surviving avoidance cells are **+0.93,
++2.08, +0.51bp** against measured full costs of **100.86, 46.77, 3335.27bp**.
+
+**NEW HAZARD FOUND, NOT CHASED — filed onto `[78599ead]`.** `WETH-USDC` on `market_stream` is
+**1,630 kucoin ticks vs 92 geckoterminal**. The "Base" tape for the **only pool under 46bp** is
+**~95% a CEX price**, not the Base pool price. Every study that screened WETH on this tape
+screened KuCoin and attributed it to Base. It does **not** invalidate the null above —
+`print_source` was scored as its own family and is clean at max |t| = 0.92 — but CEX-to-pool
+basis is unmodelled beneath our cheapest symbol.
+
+**ALSO CLOSED THIS PASS, by audit rather than by search** (see commits `1e44fc0`, `9df3462`):
+the curvature/reflexivity null at `7b32a8a` **reproduces independently** (8,795 fires, K=18,
+all 18 cells inside their bars; 51.9% computability exact) — but its two named point estimates
+(**+11.45bp**, **−10.6bp**) are a **shared-price-print artifact**: `r0 = ret(i)` and
+`r1 = ret(i+1)` are disjoint *intervals* that share the *print* `px[i]` with opposite signs, so
+bucketing on `|r0|` selects on measurement error. A matched placebo shifting the statistic one
+tick flips **both** signs (+8.35 → −2.32; −6.67 → +1.68). **The null stands; the estimates are
+not properties of the tape.** Do not quote them.
