@@ -9493,3 +9493,42 @@ value.
 WHERE THE WORK ACTUALLY IS: [b3d087c7], unblocked this pass on the above. The
 population proposes horizons the feed cannot carry. That is the cause; the chaos
 gate is the symptom doing its job.
+
+### Pass 450 ADDENDUM, same pass, correcting the entry above: there are TWO walls.
+
+The section above says the 94% drop is one correct gate. That is true and
+incomplete, and the missing half is the important one. I wrote "200 survive to the
+guards below" and stopped there. Those 200 are the only population that CAN trade,
+and 179 of them vanish.
+
+    chaos-gate survivors                              200
+    ghost-entry                                        13
+    entry-refused-duplicate                             8
+    LEFT NO ROW OF ANY STATUS                         179   <-- WALL 2
+
+The complete 24h status census is ten statuses totalling 3578 rows and not one of
+them accounts for the 179. Those survivors are 93% rsi_reversal BASE -- the only
+strategy the chaos gate never refuses (186 chosen, 0 refused, 0.0%).
+
+BOUNDED TO FOUR NAMED SITES. Between the lattice gate and the ghost-entry write,
+trading/bot.py sets a decision status at exactly four refusing sites, and NONE of
+these four statuses appears anywhere in trading_ops in 24h:
+
+    trading/bot.py:8550  entry-refused-long-horizon-capacity
+    trading/bot.py:8594  guard-blocked
+    trading/bot.py:9443  entry-refused-implausible-basis
+    trading/bot.py:9462  entry-refused-live-held
+
+They set decision["status"] and never call self.db.log_trade. THIS IS WHY FOUR
+PASSES HAVE HUNTED THIS FUNNEL AND FOUND NOTHING: 90% of the drop on the only
+strategy that clears the chaos gate is unlogged by construction. Filed [32f75564]
+-- make the refusal countable, change no guard's verdict.
+
+AND THE ARBITRATOR MAKES WALL 1 WORSE ON PURPOSE. Every suffixed horizon in the
+registry is >=5h (5x@1w 5x@1d 5x@12h 4x@5d 4x@5h 3x@3d, 19 base, n=45) against a
+0.5-1.6 min decay limit, so 26 of 45 strategies can never enter -- and the
+max_score tiebreak (577 of 772 ticks) PREFERS them, because a longer horizon
+forecasts a bigger move and scores higher. 115 of 201 contested ticks discarded a
+candidate in favour of rsi_reversal@1w, which is then refused 97.7% of the time.
+Re-specified on [b3d087c7] with a criterion that forbids buying a lower refusal
+rate by admitting fewer candidates.
