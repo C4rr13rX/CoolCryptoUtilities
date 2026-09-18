@@ -13791,3 +13791,26 @@ dexscreener, which writes 46% of everything.
 NOT CLAIMED: that this fixes the feed. The measurable prediction is WETH and ETH
 moving from ~95 rows/12h toward the 300-500 band. The 22.4s median event-loop
 block sits underneath it and remains [a2bfd079].
+
+### Pass 476 addendum 3 -- the limit of the _WS_POOL fix, stated before anyone over-claims it
+
+trade_outcomes, last 30d: AERO 55, BASECAT 37, COMP 16, BSTONK 16, CBBTC 12,
+CBETH 9, CBXRP 7, VVV 6. Every one except COMP is in the FED (dexscreener-served)
+shift. The book already trades the symbols that have a tape.
+
+WETH over NINETY days: WETH-USDC 5 outcomes / 9 fills; ETH-USDC 0 / 0;
+WETH-USDT 1 / 2; LDO-USDC 1 / 2; UNI-USDC 1 / 1. AERO books 55 outcomes in 30
+days against WETH's 5 in 90. The two cheapest round trips we own are effectively
+absent from the book.
+
+WHAT THE FIX BUYS, PRECISELY: WETH and ETH from ~95 rows/12h to the 300-500
+band. What it does NOT establish is that tape is what kept WETH out of the book.
+A symbol at 3.2 ticks/hour cannot produce a signal, so starvation is a
+SUFFICIENT explanation, but a second gate behind it is not ruled out and the
+ladder still fails at step 6 RISK on ghost_validation_block, which is not a feed
+problem.
+
+CONSEQUENCE FOR HOW TO JUDGE THE NEXT PASS: if the change lands and WETH reaches
+300+ rows but still books nothing, that is a SUCCESS for [eb269198] and the
+blocker is one layer up. Do not read it as the fix failing and do not revert it.
+The DONE WHEN is a row count and a source census, not a trade, deliberately.
