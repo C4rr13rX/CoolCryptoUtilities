@@ -12340,3 +12340,40 @@ The lesson is one my own memory index already carries and I walked into anyway:
 **a matching count across two books is not a join.** The n=21 kill test that
 closed the scout-promotion route is unaffected — it compared `profit` against
 `roundtrip_cost_usd` **within each row**, never across books.
+
+### Pass 465 final -- the third writer, and a caveat on my own kill test
+
+**THE THIRD WRITER IS `services/atf_static_strategy.py:140`**, the scout's own
+module: `StrategyLedger().record(strategy_id, profit=float(profit),
+mode="ghost", symbol=symbol, held_sec=...)`. Its docstring says why it exists:
+*"This loop runs its own ghost cycle rather than going through `bot.py`'s exit
+path, which is the only other place that calls `StrategyLedger.record()`. Without
+this the outcomes were written to `trading_ops` and nowhere else: 196 closed
+trades over four days that the graduation gate never saw."*
+
+So there are **three** writers into the ledger, not two, and the scout's 253-trade
+book comes from its own module — neither `bot.py:10834` nor the backfill. Folded
+into `[4c267abe]` and `[d5fbddfc]`.
+
+**CAVEAT ON MY OWN NUMBER, same file, line 970:**
+
+    "roundtrip_cost_usd": _roundtrip_cost_usd(clip_usd)      # NO symbol
+
+The symbol-aware two-arg form is used twelve lines earlier at `:880`
+(`_roundtrip_cost_rate(clip_usd, symbol)`) and is **not** used for the field
+written onto the row. So the cost stamped on every evidence row is the
+**symbol-blind constant** — this is
+[[roundtrip-cost-rate-is-blind-to-the-token-and-gates-entries]] surfacing inside
+the evidence book, and it is why the field reads ~0.0232 on a 6.0 clip on every
+token.
+
+**Therefore my 19.0% net win rate is not precise.** It is computed against a
+symbol-blind cost, and for VIRTUAL-USDC (81% of the 21 rows) the true round trip
+could sit either side of it. I should not have described it as "the cost it
+recorded itself" without saying what that cost is made of.
+
+**THE ROUTE STAYS CLOSED REGARDLESS, and that is the point of having had two
+criteria.** The first needs no cost model: **gross is −0.0203, already negative
+before anything is subtracted.** A strategy that loses money gross is not
+rescued by a better cost estimate. The conclusion survives the defect I just
+found in its own input.
