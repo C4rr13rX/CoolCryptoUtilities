@@ -11965,3 +11965,53 @@ and CBETH's does not.
 before computing any cost statistic on `trade_fills`.* 87% of AERO's rows are ghost and **every one
 of them reads as a perfect fill**, so any naive average over that table is biased toward zero cost —
 the direction that makes trading look cheaper than it is.
+
+## Pass 463 — the permutation bar is anti-conservative (Echo, senior)
+
+**Route:** audit the null that `scripts/predicate_forge.py` scores every predicate
+against, before building the second null `[fa1e7361]` asked for.
+
+**Finding:** the null already exists — `permutation_bar()` at line 344 — but line 367
+is `yp[idx] = yp[rng.permutation(idx)]`, an **i.i.d. shuffle within symbol**. It
+destroys serial dependence that the real series carries.
+
+Pre-registered kill test: if |rho| is inside the 2/sqrt(n) band at every lag, the
+i.i.d. shuffle is defensible and the item should be rejected. Measured on the exact
+forward-return series the function shuffles (168h, 30,895 ticks, 68 symbols):
+
+| horizon | n | band | lag1 | lag2 | lag3 | lag4 | lag5 |
+|---|---|---|---|---|---|---|---|
+| 2m | 21,690 | ±0.0136 | +0.2856 | +0.1161 | +0.0940 | +0.0565 | +0.0471 |
+| 3m | 23,827 | ±0.0130 | +0.3939 | +0.1364 | +0.0938 | +0.0659 | +0.0417 |
+| 5m | 26,514 | ±0.0123 | +0.5461 | +0.2720 | +0.1672 | +0.1155 | +0.1015 |
+| 8m | 27,254 | ±0.0121 | +0.5562 | +0.3281 | +0.2085 | +0.1507 | +0.1136 |
+| 12m | 27,477 | ±0.0121 | +0.6339 | +0.4638 | +0.3323 | +0.2386 | +0.1718 |
+
+Every cell outside the band; lag-1 at 12m is 52x it. Crude n_eff = n(1-rho)/(1+rho)
+= 0.23n at 12m, so the bar is computed as if 4.4x more independent observations
+existed — roughly **2x too narrow in SE terms**. The script's printed 4.65bp and
+13.72bp bars are floors, not bars.
+
+**The caveat that keeps this honest:** rho rises monotonically with horizon
+(0.29 → 0.63 as 2m → 12m), the signature of **overlapping forward windows**, not
+necessarily market memory. I cannot separate the two here and do not claim to.
+It does not change the conclusion: the real series has the dependence and the
+shuffled one does not, so the fix (block bootstrap) and the direction of the
+error (anti-conservative) are identical either way. Overlap makes it worse, not
+better, because overlap is guaranteed rather than contingent.
+
+**Status: OPEN, not closed.** `[fa1e7361]` refined with these numbers and line
+references rather than rejected. Reproduce: import `predicate_forge`, call
+`load_ticks(168.0)` then `build_features`, autocorrelate `fwd[H]` within `sid`.
+
+**Also measured this pass, unrelated and both worth carrying forward:**
+- `[f6055c6b]` **EXISTS** (commit `4ab7a48`). The standing "do not restart
+  production until it lands" block is **satisfied and was stale**.
+- `scripts/live_lane_refusal_census.py` **contradicts itself**: prints
+  `is_live_approved(money_button_dip) = True`, then a NOTE below concludes it
+  returns False. The NOTE predates `f211df8` and was never updated.
+- `data/strategy_ledger.json` holds **one** entry, `money_button`. `money_button_dip`
+  **is not in the ledger at all** — its approval is inherited by alias, never granted.
+- Same census, §5: `EXECUTE_LIVE_TRADES` and `LIVE_TRADES_DRY_RUN` both unset, so
+  the dry-run default wins — **the executor is in DRY RUN**. Approved and armed
+  still places no order.
