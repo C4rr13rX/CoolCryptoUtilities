@@ -13347,3 +13347,25 @@ tick counts or median cadence reports this tape healthy.
 
 `eb269198` carries the baseline. Done when max_gap < 15.0 min for WETH, AERO,
 CBBTC, ZORA. **AERO alone** from 65.8 → under 15 is real partial credit.
+
+**ROOT CAUSE, and it supersedes the handover two paragraphs up.** The gaps are
+**GLOBAL, not per-symbol**: 6h / 4067 rows / 1-min buckets → **178 of 360 minutes
+have ZERO ticks of ANY symbol (49.4%)**, longest runs 52, 31, 15, 15, 13, 11, 10,
+6 min. During AERO's worst 65.8-min gap the *entire* feed produced 20 rows across
+6 symbols — dark, not busy elsewhere.
+
+**So restricting the symbol set is the wrong FIRST move** — concentrating tick
+budget does nothing when nothing arrives for 52 minutes. `eb269198` is real but
+second. Filed `a2bfd079` (p1, 5pt) for the blackout itself.
+
+The cause is already on record: the event loop is **~90% blocked by a SYNCHRONOUS
+socket read** (memory `blocking-sqlite-query-runs-on-the-event-loop` — its title
+names sqlite and its own finding says it is *not* sqlite). Judge that loop by the
+**stack**. Full measured chain:
+
+    blocked event loop → global blackouts 49.4% of minutes, up to 52 min
+      → max tick gap > 15 min on every symbol but CBETH
+      → route (c) dead: exit check runs ON A TICK; book only positive inside 15 min
+      → route (b) dead: WETH gets 19 ticks/6h, so only AERO is left
+      → classical universe collapses to AERO, correctly edge-banned
+      → funnel reads 51.82h of zero entries with nothing actually broken
