@@ -12620,3 +12620,38 @@ has measured, which is worse. CONFIRM THEY ARE THE SAME FIELD FIRST -- one code
 read in trading/scheduler.py.
 
 STATUS: open. This is the first thing [c9e248aa] should settle.
+
+### Pass 466 sixth addendum -- CONFIRMED from the code: confidence IS exit_conf on the path that matters. And a SECOND writer uses the same key.
+
+One code read, no edits:
+
+  trading/scheduler.py:778    confidence = float(pred_summary.get("exit_conf", 0.5))
+  trading/scheduler.py:1046   "confidence": confidence,
+  trading/scheduler.py:1116   "confidence": confidence,
+
+So the `confidence` field in trading_ops details IS exit_conf on that path, the
+0.6 floor gates the same quantity I measured, and THE CONTRADICTION IS REAL:
+~190 candidates/day clear 0.6 and none enter, while all 7 that do enter are
+below it.
+
+THE SECOND WRITER, and it is this repo's oldest trap:
+
+  trading/scheduler.py:224    payload["confidence"] = float(self.confidence)
+  trading/scheduler.py:1987   "confidence": float(directive.confidence)
+  trading/scheduler.py:2114   "confidence": float(directive.confidence)
+  trading/scheduler.py:2150   confidence=float(entry["confidence"])
+
+directive.confidence is NOT pred_summary["exit_conf"]. Two different quantities
+are written to one key name in one file. My census read the KEY, not the WRITER,
+so it cannot tell them apart. SPLIT THE 741 ROWS BY WRITER before trusting the
+72%-clear-and-none-enter number. If the 264 high-confidence ghost_candidate rows
+are directive.confidence and the 7 entries are exit_conf, the contradiction
+dissolves into a units bug and the fix is to stop writing two quantities to one
+key. Same shape as the two cost modules.
+
+FREE FINDING: line 778 defaults exit_conf to 0.5 when ABSENT, and money button's
+min_exit_conf defaults to 0.52 (line 1839). A MISSING exit_conf fails the floor
+by 0.02 and is indistinguishable in the log from a measured decline. Count how
+many refusals are missing-input rather than low-input.
+
+STATUS: open, and now precisely scoped. This is the first move on [c9e248aa].
