@@ -13590,3 +13590,41 @@ observation -- does a `MarketDataStream(symbol="WETH-USDC")` instance exist?
 
 FIVE HYPOTHESES DIED THIS PASS, ALL MINE, AND ALL FIVE WERE AIMED AT SELECTION.
 That pattern is itself the finding: stop testing selection.
+
+### Pass 475 FINAL -- ANSWERED. The streams are alive; the ticks are discarded before the DB.
+
+`logs/services/market-stream.log`, most recent 4MB, 19,264 lines from 09:00:33
+to 18:33:23 on 09-18:
+
+    WETH-USDC   341 LOG LINES   vs   19 DATABASE ROWS over the same 6h
+    ETH 325, OP 404, CAKE 366, UNI 315, LDO 329, VIRTUAL 326
+
+EVERY SYMBOL I CALLED "DEPARTED" IS STILL STREAMING. The streams were never
+missing. This is not a selection, ranking, gate, glob, config or dedupe problem
+-- six hypotheses, all aimed at selection, all dead.
+
+THE DISCARD IS NAMED IN THE LOG: **2,810 "no live price available" warnings** in
+that window. That is the synthetic-drop path at `trading/data_stream.py:1445` --
+it increments `_synthetic_drops` and RETURNS, before `insert_market_sample` at
+`:1496`. A dropped tick writes no row and leaves a hole only in `market_stream`,
+which is exactly why every upstream gate looked innocent.
+
+AND IT IS THE SAME DEFECT AS `[a2bfd079]`, FROM THE OTHER END. The last warnings
+in the window:
+
+    REST timeout on api.dexscreener.com while our event loop was blocked
+      10.1s of a 10s budget; not charging
+    REST timeout on api.kucoin.com while our event loop was blocked
+      10.1s of a 10s budget; not charging
+    unable to obtain consensus price during REST poll cycle -> LAPCAT-USDC
+    unable to obtain consensus price during REST poll cycle -> SICK-USDC
+
+The event loop blocks past its own REST budget, BOTH price endpoints time out,
+consensus fails, the tick is dropped. Pass 474 measured that blockage with py-spy
+and could not connect it to anything downstream. THIS IS THE DOWNSTREAM. The feed
+gaps and the GIL contention are ONE defect.
+
+NEXT MEASUREMENT: count `_synthetic_drops` per symbol against rows written. If
+WETH drops ~300 and writes 19, the fix is in the consensus/timeout path -- raise
+the REST budget above the measured block time, or admit a single-source price
+when consensus cannot be reached -- and measure the tape after a restart.
