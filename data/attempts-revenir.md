@@ -12725,3 +12725,67 @@ ALSO CHECKED THIS PASS (so nobody re-derives them):
   * `[e40ea91e]` PARTLY OVERTAKEN: BPAD and BSTONK are now in
     `data/token_addresses.json` with real addresses. Only BASECAT is absent.
   * `[c720dcdc]` HOLDS: WAL is 1.66 GB against a 27.17 GB store.
+
+## Pass 468 (Echo) -- the round-trip cost gate is switched OFF in .env for anything held >45 min
+
+ROUTE TRIED: work [ebdd47e5], "the ghost exit booking branch raises
+UnboundLocalError at bot.py:9211". The premise had already moved (pass 467);
+the single real failure was
+`test_a_stale_position_is_not_closed_below_its_own_cost` reading
+`live-exit-blocked` where it expected `hold-negative`.
+
+NUMBER PRODUCED, causally, one variable both directions:
+
+    MAX_HOLD_FORCE_SECONDS=0     -> hold-negative, exit_cost populated, PASSES
+    MAX_HOLD_FORCE_SECONDS=2700  -> cost gate SKIPPED, exit proceeds, FAILS
+
+and `.env:169` ships `MAX_HOLD_FORCE_SECONDS=2700`.
+
+At held_sec 4749 >= 2700, `forced_by_age` is True and the cost gate at
+`trading/bot.py:10251` is never consulted. The gate had priced that close at:
+
+    est_gross_profit_usd  -0.0010425
+    est_fee_cost_usd      +0.0107566
+    est_gas_usd           +0.0043193
+    est_net_profit_usd    -0.0117991   (1.57% of 0.75 notional)
+
+In the test only `bridge_unavailable` (`bot.py:10315`, no wallet key) stops the
+close. Production has a bridge, so it closes. This is the AERO regression the
+test file was written to pin -- 4749s held, -0.139% move, closed anyway -- live
+again, via config rather than code.
+
+THE MECHANISM THAT HID IT, and it is the reusable part: `monkeypatch.delenv`
+does NOT unset an env var in this repo, it RESTORES the `.env` value.
+`MAX_HOLD` is in `_OPERATIONAL_PREFIXES` (`services/env_loader.py:138`) and
+`_overlay_operational_env` does `os.environ.setdefault(key, val)`
+(`env_loader.py:222`) on every EnvLoader call -- one fires inside the decision
+path. Measured across a single `_exit_tick`:
+
+    after the autouse fixtures   None
+    after _bot()                 None
+    after _exit_tick()           '2700'
+
+So the fixture written to make the file hermetic is what made it read
+production config. Every `delenv` in tests/ on a prefixed key
+(MAX_HOLD, MIN_HOLD, GHOST_, STRATEGY_, EXIT_, ENABLE_, WALLET_, SCHEDULER_,
+MONEY_BUTTON_, ...) has the same defect.
+
+CLOSED / OPEN:
+  * CLOSED: the test failure. Fixed at `111e74e`, one line, `setenv "0"`.
+    22 passed 0 failed; pass_gate 723 passed 0 failed. No production code.
+  * OPEN [4d656d4c]: the same `delenv` defect across the rest of tests/.
+    Three more sit on the COST path and were deliberately NOT touched for want
+    of a measurement: `test_trading_triggers.py:91`, and ROUNDTRIP_GAS_USD /
+    MICRO_FIXED_COST_USD at `test_a_close_must_cover_its_own_gas.py:111-113`.
+  * OPEN [c16ff77f]: whether `.env` should say 2700 at all. NOT flipped -- the
+    hatch is also how a dark-feed position stops being immortal
+    (`bot.py:12972`, `test_a_dark_feed_position_is_never_immortal.py`), so 0 may
+    strand positions. Operator decision. NOTE `.env` is gitignored, so whoever
+    flips it cannot commit it -- this paragraph is the tracked record.
+
+ALSO CLOSED, a negative on my own pass-467 handover: I committed
+`scripts/exit_conf_vs_realised_margin.py` and told the next pass to run it
+first. It completes, exit 0, and matches NOTHING -- 0 symbols indexed, 0
+snapshots carrying `exit_conf` AND a symbol, 237 outcomes unmatched. The join
+is broken at the SYMBOL, so widening `--max-stale-sec` (my own advice) cannot
+help. Do not run it as instructed.
