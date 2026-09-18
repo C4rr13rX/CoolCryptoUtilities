@@ -13123,3 +13123,30 @@ has mtime 09-16 17:02:15 and has not moved, four minutes before the first unbook
 entry. Probably an artifact — shm is memory-mapped and Windows does not reliably
 update its mtime, and the main db and -wal are both being written now. Do not
 build on it without a second source.
+
+ROUTE ARGUMENT, pass 472 — the graduation ETA is not 60 days, it is undefined.
+
+The status line reads "tradeable evidence rate: 4.2/day; nearest graduation
+~60.4 days". That 4.2 is a stale average straddling the outage. Measured on
+trailing windows against trade_outcomes:
+
+  last 24h     0 rows    0.00/day
+  last 48h     0 rows    0.00/day
+  last 72h    16 rows    5.33/day
+  last 7d     17 rows    2.43/day
+  last 15d   148 rows    9.87/day
+
+The evidence rate has been ZERO for 51 hours. 20 remaining trades divided by a
+rate of zero is not 60.4 days, it is undefined. Every pass quoting 60.4 days —
+including mine — quoted a rate the system stopped producing on 09-16.
+
+The loop has defaulted to the graduation funnel every pass on the grounds that
+it is slow but converging. That premise is measurably false right now. Route (a)
+— hand-approve ONE strategy at a minimum clip and let real fills be the evidence
+— is no longer merely "faster than 60 days", it is the only route currently
+producing anything. Wallet holds $23.18 deployable, money path proven on chain,
+a $10 clip risks pennies. See [23ad8727] and [74a12c84].
+
+NOT ACTIONED BY THIS PASS: approving live capital is the operator's call, on a
+strategy demoted 7x with live P/L -0.1585 over 17 trades. Number placed in front
+of the decision, decision not taken.
