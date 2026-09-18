@@ -13894,3 +13894,69 @@ posting, not after.
 CLOSED: "restrict/repair the stream universe" as a route to more WETH tape. The
 tape is not the binding constraint on WETH. [a2bfd079], the blocked event loop,
 is the item that matters.
+
+## PASS 477 (Echo, senior) -- THE LIVE LANE IS BLOCKED, NOT DEAD, AND STEP 6 IS THE INTERLOCK
+
+ROUTE TRIED: I opened by measuring the live book before reading my assignment,
+and the assignment ([eb269198], feed tape) did not survive the number.
+
+MEASURED, two independent tables, no log parsing:
+
+    trade_fills     38 live rows, newest 09-05 17:10  = 13.1 days ago
+    trade_outcomes  22 live rows, newest 09-05 17:00  = 13.1 days ago
+
+Live fills per day 09-06 -> 09-18: 0,0,0,0,0,0,0,0,0,0. Ghost fills ran the
+whole time (19 on 09-18). The process was alive and deciding; only the LIVE
+half stopped.
+
+RULED OUT #1 -- "the ladder would have told us". It cannot. graduation_status.py
+prints `[PASS] 9 LIVE 38 executed live rows`, and 38 is an ALL-TIME cumulative
+count that has not moved since 09-05. A lifetime counter cannot fail, so a lane
+silent for a fortnight reads PASS. Inverse of the failure in
+short-window-on-a-slow-process-reads-as-death. Filed [a9d6a354]. CLOSED as a
+reporting defect, not a lane defect.
+
+RULED OUT #2 -- "the operator disarmed it on 09-05". Pre-registered this as the
+complement to my own hypothesis BEFORE testing. Refuted: `.env:40` sets
+ENABLE_LIVE_TRADING=1 and `.env` mtime is 09-16, not 09-05. CLOSED.
+
+RULED OUT #3, AND IT KILLED MY OWN TEST -- "both env vars unset means dry-run
+means safe". This is the summary three passes have restated and I inherited it
+into the branch conditions of my kill test, so the test returned the wrong
+verdict. The function does not say it:
+
+    bot.py:1550  _live_trades_dry_run()
+    bot.py:1551    EXECUTE_LIVE_TRADES truthy                -> False (LIVE)
+    bot.py:1557    LIVE_TRADES_DRY_RUN is None
+                     AND self._auto_execute_approved         -> False (LIVE)
+    bot.py:1559    else default "1"                          -> True (dry run)
+
+Both-unset implies dry-run ONLY WHILE `_auto_execute_approved` is False. That
+flag is the actual gate and no prior summary named it. It inits False at :597,
+is set True at :1893 once readiness plus an approved strategy line up, is gated
+by AUTO_EXECUTE_ON_GRADUATION which DEFAULTS TO "1" at :1885, and is rehydrated
+from persisted ghost state at :12847. CLOSED NEGATIVE: the env grep is neither
+necessary nor sufficient and must stop being cited as the gate.
+
+THE FINDING. The gate HOLDS today -- no file under `data/` contains
+`auto_execute_approved` (Grep, data/**/*.json, no matches), so it boots False.
+But `money_button` is ALREADY ledger-approved and step 5 PASSES. The only thing
+holding the flag False is step 6's `ghost_validation_block`. Therefore:
+
+    STEP 6 IS SIMULTANEOUSLY THE THING BLOCKING A LIVE TRADE AND THE ONLY THING
+    KEEPING THIS SYSTEM IN DRY RUN.
+
+Whoever fixes step 6 as a one-liner gets real-money execution in the same boot,
+no env var set, no second human decision. Filed [f6b04c09] as the SAFETY
+PRECONDITION: pin LIVE_TRADES_DRY_RUN=1 explicitly first, because :1557 tests
+`is None` and an unset var does not survive the flag flipping True.
+
+SECONDARY, AND UNRESOLVED: two counts of the live book disagree. Briefing says
+-0.1864 over 18 trades; `details.mode=='live'` gives -0.3320 over 22 rows
+(gross -0.2180, fees 0.1140). Nobody has declared which filter is canonical.
+Also 81.4% of total |net| is in 5 of 22 rows; BPAD-USDC atf_static stop_loss is
+-0.2549 alone, larger than the whole reported book (drop it: -0.0771 over 21).
+7 of 22 live rows carry strategy_id None. NOT CLOSED -- needs an owner.
+
+SHIPPED: no production code (senior). Backlog [eb269198] scope-cut from an
+uncompletable 7-day-census DONE WHEN to a one-pass one; priority dropped to 3.
