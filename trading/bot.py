@@ -9871,8 +9871,20 @@ class TradingBot:
                         "notional_usd": float(quote_spent),
                     },
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                # MEASURED ECHO PASS 470. This handler discarded EVERY ghost
+                # fill for 49.6h. 17 ghost-entry rows reached trading_ops at
+                # 9848 and not one reached trade_fills at 9853, while
+                # trading_ops, organism_snapshots and market_stream kept
+                # writing -- so the database was healthy and the failure died
+                # here, silently. Three passes read that silence as an entry
+                # outage and diagnosed the scheduler. A booking break that
+                # emits nothing is indistinguishable from a supply famine from
+                # the outside, which is the whole reason this cost two days.
+                print(
+                    "[ghost] FILL WRITE FAILED %s entry: %s: %s"
+                    % (symbol, type(exc).__name__, exc)
+                )
             return decision
 
         if should_exit and pos is not None:
@@ -11241,8 +11253,16 @@ class TradingBot:
                             "outcome_id": outcome_id,
                         },
                     )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # Same swallow as the entry leg at 9874, and the reason
+                    # trade_fills and trade_outcomes went dark within THREE
+                    # MINUTES of each other: two writers, one silent handler
+                    # shape, one shared upstream failure. Instrumented
+                    # together so a future outage names itself on both legs.
+                    print(
+                        "[ghost] FILL WRITE FAILED %s exit: %s: %s"
+                        % (symbol, type(exc).__name__, exc)
+                    )
             # Post-operational brain feedback — strict per-trade evolution.
             # Wire (features_at_entry → outcome_at_exit) into the substrate
             # so the next entry-time query_confidence call reads against a
