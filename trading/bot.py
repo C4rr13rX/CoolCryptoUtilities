@@ -9841,9 +9841,17 @@ class TradingBot:
                     "route": route,
                 },
             )
-            print(
-                "[ghost] enter %s size=%.4f price=%.4f dir=%.3f margin=%.6f (%s)"
-                % (symbol, trade_size, price, direction_prob, margin, entry_reason)
+            # PASS 473: also a dead print. Its absence from every log since
+            # 09-16 12:57 was read by pass 472 as proof this LINE NEVER RAN,
+            # and that reading is structurally impossible: the trading_ops
+            # ghost-entry row is written by the CALLER at bot.py:6438, AFTER
+            # this function returns at the end of this branch. An ops row
+            # existing therefore PROVES this line ran. The print was lost, not
+            # skipped.
+            log_message(
+                "ghost",
+                "enter %s size=%.4f price=%.4f dir=%.3f margin=%.6f (%s)"
+                % (symbol, trade_size, price, direction_prob, margin, entry_reason),
             )
             self.scheduler.record_trade(symbol, "enter", price, trade_size)
             quote_spent = trade_size * price
@@ -9860,9 +9868,18 @@ class TradingBot:
                 # Logged and RE-RAISED: behaviour is unchanged, only the
                 # silence is. Without this the restart cannot tell the two
                 # mechanisms apart.
-                print(
-                    "[ghost] PRE-FILL STEP FAILED %s entry: %s: %s"
-                    % (symbol, type(exc).__name__, exc)
+                # MEASURED ECHO PASS 473: this was a print(), and a print()
+                # here reaches NOBODY. stdout capture (logs/console.log) died
+                # at the 09-16 19:34 shutdown and was never re-established --
+                # that file's mtime is still 19:34 while system.log is current.
+                # So this probe, armed pass 472, could never have fired no
+                # matter how long the board waited for it. log_message goes
+                # through the `production` logger, which is demonstrably alive.
+                log_message(
+                    "ghost",
+                    "PRE-FILL STEP FAILED %s entry: %s: %s"
+                    % (symbol, type(exc).__name__, exc),
+                    severity="error",
                 )
                 raise
             try:
@@ -9897,9 +9914,17 @@ class TradingBot:
                 # outage and diagnosed the scheduler. A booking break that
                 # emits nothing is indistinguishable from a supply famine from
                 # the outside, which is the whole reason this cost two days.
-                print(
-                    "[ghost] FILL WRITE FAILED %s entry: %s: %s"
-                    % (symbol, type(exc).__name__, exc)
+                # SAME DEFECT, SAME PASS 473 FIX. This probe was armed at
+                # cb52c9e (09-18 14:53) as a print() and is the one three
+                # passes have been waiting on. It was writing into a dead
+                # pipe. THE ONLY reason `trade_fills` is empty while
+                # `trading_ops` ghost-entry rows keep arriving is that
+                # record_fill raises and this handler swallows it in silence.
+                log_message(
+                    "ghost",
+                    "FILL WRITE FAILED %s entry: %s: %s"
+                    % (symbol, type(exc).__name__, exc),
+                    severity="error",
                 )
             return decision
 
