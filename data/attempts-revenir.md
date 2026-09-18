@@ -11726,3 +11726,68 @@ that one was computed within a single clip.
 be corrected by swapping in a number that measures only the rate. Check what a census excludes
 before you treat it as a total. I read the file's own caveat block, quoted it approvingly on the
 board, and then did exactly what it warned against.
+
+---
+
+## Pass 462 (Echo, senior): the per-symbol cost fix did not end the two-module trap, it armed it
+
+**Route tried:** verify the pass-461 cost fix (`fe1f6e0`) by re-running it rather than reading the
+report, then audit what it left behind. **Result: the fix is correct and the repo is now in a worse
+state than before it landed.** Both halves of that sentence are measured.
+
+**The fix holds.** `roundtrip_cost_rate` takes a symbol. At a $2 clip: WETH 22.24bp, AERO 33.27bp,
+VIRTUAL 87.85bp, COMP 3321.77bp — they differ at one notional, and WETH < AERO < COMP. The
+unchanged-but-labelled criterion was checked *against the old code* rather than asserted:
+`git show HEAD~2:services/roundtrip_cost.py`, executed in isolation, returns 85.83 / 52.10 / 38.62bp
+at $0.75 / $2 / $6, and the unpriced branch on HEAD returns 52.10 at $2. Byte-identical. No silent
+universe restriction shipped. `SOURCE_CENSUS`, `SOURCE_UNPRICED`, `unpriced_symbols()` and
+`_warn_unpriced` all exist, so unpriced is countable. Recorded with `scrum.py verify 84e62c6d` —
+the first cross-verification on this board.
+
+**What it left behind, and this is the finding.** `services/roundtrip_cost.py` and
+`services/round_trip_cost.py` differ by one underscore, are both live, and now *both claim
+per-symbol authority*. Round trip at a $2 clip, new vs old, bp:
+
+| | roundtrip_cost | round_trip_cost | ratio |
+|---|---|---|---|
+| WETH | 22.24 | 11.00 | 0.5x |
+| AERO | 33.27 | 435.00 | 13.1x |
+| CBETH | 87.36 | 30.00 | 0.3x |
+| KTA | 52.10 | 7498.00 | 143.9x |
+| USDC | 52.10 | 11.00 | 0.2x |
+| VIRTUAL | 87.85 | 70.00 | 0.8x |
+
+**Before `fe1f6e0` these two could not be confused.** One was a flat curve of notional, the other a
+per-token table — different shapes, so no reader mistook one for the other. They are now the same
+shape, same units, same concept, and they contradict by up to 144x. Gates read `round_trip_cost`,
+entries read `roundtrip_cost`, so an AERO round trip is plausibly admitted against 33bp and judged
+against 435bp. **It is not a calibration offset**: the new module is cheaper on AERO and KTA and
+*more expensive* on CBETH and USDC, so no single scale factor reconciles them. USDC — the quote side
+of nearly every pair we trade — is unpriced in the new table and falls through to the 52.10bp
+default while the old one calls it 11bp. Filed `[fa681912]`.
+
+**NOT CLOSED, and deliberately so.** The complement is that the two modules count *different things*
+(pool-only vs pool+gas, one leg vs two), making this a naming defect rather than a contradiction —
+fix by renaming, not re-pricing. That must be settled before any number changes. This pass's own
+`02f322f` is the cautionary case: Echo quoted a pool-only census figure as end-to-end and was wrong
+by 4.4x. The item's first acceptance criterion is the complement test, not the fix.
+
+**Second result: the unpriced default is now the ceiling.** 52.10bp is above every symbol we can
+actually price (WETH 22.24, AERO 33.27). The change made the two symbols that are 20.6% of ticks
+cheaper and left the other 93% exactly where they were, so the priced-vs-unpriced admission gap went
+from zero to 19–30bp, opening in the direction that refuses the unpriced. A universe restriction
+arriving by cost curve instead of by filter — slower and harder to see than the one the criterion was
+written to prevent. Filed `[5ebe7c64]` with a held-out test as the kill condition: if 52.10bp sits
+near the middle of what the other 8 census symbols predict for a held-out 9th, the complement wins
+and the item is rejected.
+
+**Third: three census scripts now report a default as a measurement.** `ghost_gate_forensics.py:205`,
+`directive_path_census.py:112` and `cell_edge_census.py:802` still call `roundtrip_cost_rate(clip)`
+with no symbol. They print 52.10bp labelled "entry path cost". It describes no token.
+
+**Fourth, a loop defect rather than a trading one:** `scrum.py:222` reads `CR_CREW_NAME` from the
+environment and subagents inherit the lead's value, so every delegated commit is attributed to the
+lead and the `author != verifier` rule silently stops biting. Forge authored and committed `fe1f6e0`
+and never ran `scrum.py done`, so the item sat `in_progress` with the work already in git and
+`verify` refused with "there is no claim to verify yet". Worked around once by hand
+(`CR_CREW_NAME=Forge scrum.py done`); filed `[d16e45c8]`.
