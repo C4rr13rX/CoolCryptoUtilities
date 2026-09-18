@@ -111,7 +111,19 @@ def _no_gas_cache(monkeypatch):
     monkeypatch.delenv("ROUNDTRIP_GAS_USD", raising=False)
     monkeypatch.delenv("ROUNDTRIP_GAS_USD_BASE", raising=False)
     monkeypatch.delenv("MICRO_FIXED_COST_USD", raising=False)
-    monkeypatch.delenv("MAX_HOLD_FORCE_SECONDS", raising=False)
+    # NOT delenv: deleting this RESTORES the .env value rather than unsetting
+    # it. `MAX_HOLD_FORCE_SECONDS` starts with `MAX_HOLD`, which is in
+    # `_OPERATIONAL_PREFIXES` (services/env_loader.py:138), and
+    # `_overlay_operational_env` does `os.environ.setdefault(key, val)` at
+    # env_loader.py:222 on every EnvLoader call -- one of which fires inside
+    # the decision path. Measured 2026-09-18 across a single `_exit_tick`:
+    # after the fixtures None, after `_bot()` None, after `_exit_tick()`
+    # '2700', straight from .env:169. So the delenv that was here to make this
+    # file hermetic was what made it read production config, and at
+    # held_sec 4749 >= 2700 `forced_by_age` skipped the cost gate at
+    # bot.py:10251 entirely -- the exact gate this file exists to pin.
+    # "0" is the code default (`os.getenv("MAX_HOLD_FORCE_SECONDS", "0")`).
+    monkeypatch.setenv("MAX_HOLD_FORCE_SECONDS", "0")
     yield
     _clear_roundtrip_gas_cache()
 
