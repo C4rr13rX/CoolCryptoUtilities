@@ -11832,3 +11832,33 @@ this same loop, is why: Echo quoted a pool-only census figure as end-to-end and 
 without grepping the backlog; Tally had already filed it as `[b308473d]` the pass before. Rejected
 mine, folded the evidence into theirs. The rule is one line: `scrum.py list | grep <keyword>` before
 `scrum.py add`.
+
+### Pass 462, second addendum: the four paths' ranking INVERTS between tokens — the obvious fix is not available
+
+I had written "price a second symbol before touching a line" into `[fa681912]` as work for the next
+pass, then did it. Bp at a $2 clip, AERO then WETH:
+
+| call site | source | AERO | WETH |
+|---|---|---|---|
+| `atf_static_strategy.py:880` | census | 33.27 | 22.24 |
+| `symbol_edge_gate.py:476` | DB-measured | 46.13 | 46.13 |
+| `trading/bot.py:2235` | census, no symbol | 52.10 | 52.10 |
+| `trading/scheduler.py:1800` | token table | **435.00** | **11.00** |
+
+AERO spread **13.1x**, WETH spread **4.7x**.
+
+**`scheduler.py:1800` is the DEAREST of the four on AERO and the CHEAPEST of the four on WETH.** The
+same line of code is the strictest gate in this system for one token and the most permissive for
+another. That is a **rank reversal, not a bias** — so no scale factor, cap, floor or average
+reconciles the four.
+
+**This closes the obvious fix.** "Consolidate onto one source" is still the right shape, but *which*
+source is chosen changes which tokens are admitted, and changes them in **opposite directions** for
+AERO and WETH. AERO is the most-traded ghost symbol; WETH is the cheapest pool we can fill. That is
+not a rounding concern, it is the shape of the tradeable universe. The criterion is now: report the
+**admission delta per token** for each candidate source and choose on that — not on which number
+looks more carefully derived. All four look carefully derived; that is how we ended up with four.
+
+**Still open, and stated as open rather than guessed:** the complement — whether the four count
+different things (pool vs pool+gas, one leg vs two), which would make this a naming defect fixed by
+renaming. I did not settle it. It is criterion 1 and the first job next pass.
