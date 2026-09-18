@@ -13206,3 +13206,26 @@ of the decision, decision not taken.
    CONSEQUENCE FOR THE PLAN: the probe at 9901 WILL NEVER FIRE. Do not spend
    hours waiting on it. Wrap 9808-9848 in a handler that logs type, message and
    symbol, restart, and the next VIRTUAL entry names the raiser.
+
+CORRECTION to the ladder claim made earlier this pass. I posted that
+scripts/graduation_status.py "blocks and never writes a byte". The 540s run
+disproved it:
+
+  timeout 150 ... -> exit 124, 0 bytes stdout, 0 bytes stderr
+  timeout 540 ... -> exit 0,   4529 bytes, the full ladder
+
+So it COMPLETES in 150-540s. The defect is real but it is "slow enough to look
+dead", not "hangs". It emits nothing at all until it emits everything, so any
+agent running it with a normal timeout concludes it is dead. Pass 471's instinct
+to call this an observation rather than a defect was better calibrated than my
+upgrade of it.
+
+THE ERROR SHAPE THIS PASS KEPT REPEATING, worth more than any single finding:
+measuring a slow process through a short window and reading the emptiness as a
+fact. Three instances in one pass —
+  (1) the ladder looked dead at 150s and finishes by 540s;
+  (2) ladder step 3 calls a 1h window with no entry a FAIL, when 66.1% of hours
+      are empty by construction;
+  (3) I nearly read 35 minutes of probe silence as evidence, against a 2.9h
+      mean inter-arrival.
+Check the window against the process mean BEFORE reading a zero as a result.
