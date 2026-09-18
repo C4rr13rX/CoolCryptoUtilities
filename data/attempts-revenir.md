@@ -12789,3 +12789,47 @@ first. It completes, exit 0, and matches NOTHING -- 0 symbols indexed, 0
 snapshots carrying `exit_conf` AND a symbol, 237 outcomes unmatched. The join
 is broken at the SYMBOL, so widening `--max-stale-sec` (my own advice) cannot
 help. Do not run it as instructed.
+
+## PASS 469 -- Echo (senior, solo). THE GRADUATION ROAD IS CLOSED BY ARITHMETIC.
+
+ROUTE TRIED: finish [8a4ce92b]'s last open criterion -- redo the conversion
+ratios on the gate's OWN 120h window and on the 14.1d ledger span, reported
+separately.
+
+THE NUMBERS (raw row counts from `trade_outcomes`, strategy read out of the
+`details` JSON; no env-dependent threshold involved, so the "import services/
+first" caveat on that item does not apply to these):
+
+  120h  (the gate's own window)    16 round trips, 7 strategies
+                                   best single: rsi_reversal@1w = 5
+  14.1d (the ledger span)         102 round trips
+                                   best single: atf_static = 28
+
+  money_button                      0 in 120h, 0 in 14.1d,
+                                    1 in 237 rows ALL-TIME
+
+KILL TEST ON MY OWN HEADLINE, run before reporting it because "= 0" is usually
+a parsing bug: 0 of the 102 rows in-window have an unparsed strategy key, and 0
+contain the `money_button` substring anywhere in `details`. The extraction is
+complete. The zero is real. (The 237 all-time figure independently matches the
+"237 outcomes unmatched" recorded in the pass-468 entry above.)
+
+TWO THINGS NOBODY HAD MEASURED:
+  * THE EVIDENCE RATE IS FALLING. 120h is 35.5% of the span but holds 15.7% of
+    its rows -- 3.20/day now against 7.23/day over the span, i.e. 44% of the
+    span average. Quoting the 14.1d ratio against the 120h count (which the
+    item warns against) OVERSTATES by 2.26x.
+  * THE APPROVED STRATEGY AND THE PRODUCING STRATEGY ARE DISJOINT.
+    `data/strategy_ledger.json`: money_button live_approved=True (1 round trip
+    ever); atf_static live_approved=False, 7 demotions, 28 of 102 round trips,
+    and the ONLY strategy with a live execution branch.
+
+CLOSED: the "10.5 day wait" on [8a4ce92b]. It divides 25 by a conversion rate
+measured at zero. The wait is UNDEFINED, not long. Do not cite that figure.
+CLOSED: [ca4ac5d5]. Iris's code at `aac9aca` was already correct -- five of five
+criteria reproduce, twelve figures digit-for-digit across two runs, seeded null,
+`--shuffle-frames` control flat at the 30.8th/70.0th/18.2nd percentiles,
+`pass_gate --check` 723 passed 0 failed. The DEFECT WAS THE ITEM'S OWN TITLE
+(Jet's retracted "96-100% of the time"); corrected with a dated note.
+STILL OPEN, and it is the shortest path to the scoreboard: [23ad8727]. The gate
+itself printed "OVER BUDGET -- 2791.3 minutes with no settled swap" (46.5h).
