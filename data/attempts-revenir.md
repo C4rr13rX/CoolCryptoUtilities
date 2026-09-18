@@ -12015,3 +12015,35 @@ references rather than rejected. Reproduce: import `predicate_forge`, call
 - Same census, §5: `EXECUTE_LIVE_TRADES` and `LIVE_TRADES_DRY_RUN` both unset, so
   the dry-run default wins — **the executor is in DRY RUN**. Approved and armed
   still places no order.
+
+### Pass 463 addendum — the correction is measured, not estimated: 1.7x to 2.6x
+
+The `n_eff` argument above predicted the bar is "roughly 2x too narrow in SE
+terms". That was an analytic estimate. Measured it directly instead, by a second
+and independent method: hold ONE fixed predicate (`r6` top-quintile, the
+momentum-shaped one), and compare the sampling SD of its lift under the i.i.d.
+within-symbol shuffle `predicate_forge.py:367` uses against a **circular block
+shift** within symbol, which preserves serial structure. 300 resamples each:
+
+| horizon | n(P) | SD i.i.d. | SD circular | ratio |
+|---|---|---|---|---|
+| 2m | 4,197 | 0.41bp | 0.69bp | **1.69x** |
+| 3m | 4,609 | 0.45bp | 0.81bp | **1.78x** |
+| 5m | 5,147 | 0.49bp | 1.07bp | **2.16x** |
+| 8m | 5,326 | 0.52bp | 1.28bp | **2.44x** |
+| 12m | 5,398 | 0.63bp | 1.63bp | **2.59x** |
+
+**The shipped null is 1.7–2.6x too narrow, rising with horizon**, and the 12m
+figure (2.59x) lands on the independent `n_eff` prediction (~2x). Two methods,
+one answer.
+
+**Two caveats that bound the claim.** A circular shift is not a block bootstrap —
+it preserves structure but resamples nothing, so it is a *lower* bound on how
+much a proper block bootstrap would widen things, not a drop-in. And this is ONE
+fixed predicate, whereas the shipped bar is a **max over a whole screen**; the
+max statistic need not scale by the same factor as a single lift. So read
+1.7–2.6x as the size of the effect, not as a correction factor to multiply the
+published bars by. Getting the real number is `[fa1e7361]`.
+
+Reproduce: scratchpad `bar.py`, read-only, imports `predicate_forge` without
+modifying it.
