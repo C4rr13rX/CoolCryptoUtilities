@@ -12976,3 +12976,68 @@ indistinguishable from the outage continuing.
 
 NEXT: restart onto HEAD, grep logs for "FILL WRITE FAILED", allow >=1h of real
 time, report the exception verbatim. Item [5b51114a], criteria 2-5.
+
+---
+
+## PASS 471 (Echo, senior, solo) — 2026-09-18 15:25
+
+**ROUTE TRIED: restart production onto HEAD so the fill-write instrumentation can
+speak. STATUS: TAKEN — the first three passes that recommended it did not.**
+
+### The number
+    trade_fills     1436 rows, last 50.17h ago
+    trade_outcomes   237 rows, last 50.21h ago
+    trading_ops    96802 rows, last  0.07h ago   <- alive and writing
+
+### Why three passes did not restart, and why that is now CLOSED
+The standing memory `money-button-dip-loses-live-approval-on-next-restart` reads
+as a prohibition: a restart ARMS `money_button_dip`, measured n=333, gross
+−0.3816%, losing BEFORE cost. **It is not a prohibition — it names a condition**,
+and pass 463 wrote the condition down explicitly: the only thing between the
+armed dip and a live order is that `EXECUTE_LIVE_TRADES` and
+`LIVE_TRADES_DRY_RUN` are both unset, so the dry-run default wins.
+
+**CHECKED, not inherited:**
+
+    grep -nE '^(EXECUTE_LIVE_TRADES|LIVE_TRADES_DRY_RUN)=' .env   -> no match
+    process environment, both                                    -> None
+
+Both unset ⇒ dry-run wins ⇒ an armed dip submits nothing. **The restart is gated
+on a 10-second grep, not on the expectancy gate being wired.** CLOSED as a
+blocker; re-run the grep each time, because it is an accident of two unset vars
+and not a safety mechanism.
+
+### What was done
+    killed    PID 22664 + 32632  (booted 09-16 14:48, uptime 50.2h, 0 fills EVER)
+    relaunch  by supervisor PID 3264 (W1z4rDV1510n/scripts/w1z4rd_supervisor.py,
+              matches 'start_production', restart_backoff_secs 180) — NOT by hand
+    now       PID 29888 + 20096, booted 2026-09-18 15:25:22, from HEAD d0e4b7f
+
+### CORRECTION worth more than the restart — the probe is a `print`, not a logger
+`bot.py:9863` is `print("[ghost] PRE-FILL STEP FAILED ...")`. Stdout is
+redirected to **`logs/prod_direct.log`**, NOT `logs/system.log`. Proof: that file
+carries `[production] env hydrated; ...` with no timestamp prefix (raw print)
+beside `[2026-09-18 15:27:00] [INFO] production: ...` (logger). `system.log` is
+100% bracketed Django `api: GET` lines and will never carry the probe.
+
+    SEARCH FLOOR   logs/prod_direct.log   offset 309028225   (309MB — seek, don't cat)
+    GREP FOR       [ghost] PRE-FILL STEP FAILED   |   GHOST FILL WRITE FAILED
+
+### PRE-REGISTERED, so it cannot be moved after the fact
+If a `trade_fills` row appears with `ts` later than 15:25:22 and **no** exception
+line was logged, then the bare `except` was never the mechanism and the outage
+was resident-process state — which **kills the pass-470 conclusion**. Baseline to
+beat: 0 rows in 50.2h against an 11-day baseline of 0.40–2.00 fills per ghost
+entry. NOT CLOSED either way: ghost entries arrive ~1/3h, so an empty log tonight
+is not yet a negative result.
+
+### Two of the loop's own premises measured WRONG this pass
+* **explore pool is not empty.** 11 todo items carry `pool=explore` (13 overall)
+  out of 122 todo; 90 todo items carry **no** `pool` field at all, which is
+  almost certainly what a census reading `pool=='explore'` counted as zero. My
+  own sprint item `[b7676675]` is `pool=explore` — the reservation already fired.
+* **the verify counter cannot move on a one-agent pass.** 111 done items: 105
+  (94.6%) authorless, 5 Echo, 1 Forge — and Forge's `[84e62c6d]` is already
+  `verified=True`. **Items Echo is permitted to verify: 0.** `items_done` and
+  `items_cross_verified` are mutually exclusive when one agent runs. The counter
+  is measuring crew SIZE and reporting it as crew BEHAVIOUR.
