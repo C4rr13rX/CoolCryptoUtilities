@@ -11897,3 +11897,41 @@ command persisted, so it landed in `ContinuousRefinement/data/attempts-revenir.m
 so `git status` showed nothing and the commit failed with "pathspec did not match"). Removed from
 that file and re-appended here. **The failed commit is what surfaced it; a silent append would not
 have.** Use absolute paths in compound commands that `cd`.
+
+### Pass 462, fourth addendum: per-token slippage IS measurable, and it convicts the token table on AERO too
+
+I listed "per-token slippage was not measured" as not-done. It took one query against
+`trade_fills` — `avg(abs(executed_price - expected_price)/expected_price)`:
+
+| symbol | n | slippage | clip |
+|---|---|---|---|
+| AERO-USDC | 122 | **2.89bp** | $2.107 |
+| CBBTC-USDC | 32 | 4.52bp | $1.549 |
+| BSTONK-USDC | 62 | 20.07bp | $1.084 |
+| CBETH-USDC | 51 | **198.46bp** | $1.061 |
+
+**AERO slippage is 2.89bp at the right clip, not the pooled 27.8bp.** So AERO's full round trip is
+the 33.27bp census floor plus a round trip of that — roughly **39bp against the 435bp the token
+table charges**. Wrong by ~11x, on the most-traded ghost symbol, in the direction that *refuses*
+trades.
+
+**Both halves now convict `TOKEN_ROUND_TRIP` at `scheduler.py:1800`.** WETH was already impossible
+(an 11.00bp full estimate sitting below a 22.24bp floor of the same quantity); AERO is now ~39bp
+measured against 435bp charged. That is no longer a guess.
+
+**Two caveats, not skippable.** (1) Seven symbols report *exactly* 0.0bp — CP, COMP, TYBG, VIRTUAL,
+BASEPEPE, OPENHUMAN and others. Zero is not a measurement, it is `executed_price == expected_price`,
+and **ghost fills cannot carry slippage** (`bot.py:9576`). This table mixes live and ghost rows and I
+did **not** split them; a ghost-heavy average is biased *down*. AERO's 2.89 is non-zero so some AERO
+rows are live, but I have not established what fraction. (2) CBETH at 198.46bp over 51 fills is
+either a real disaster or an artifact — and CBETH is the one symbol where the census is *dearer*
+than the table (87.36 vs 30.00). Not investigated.
+
+**Clip dependence still applies:** every clip above is under $3, and this repo already records that
+cost is not monotone in clip (WETH flat, AERO falls, VIRTUAL rises 9x). 2.89bp at $2.11 does not
+license a number at $20.
+
+**Route status.** The measurement route is CLOSED: four cost paths, both symbols, slippage from real
+fills, and a named wrong constant. The *fix* is open and is a worker's item (`[fa681912]`) — it is
+not "correct the table", it is "make four call sites read one source", and which source is chosen
+changes admission in opposite directions for AERO and WETH.
