@@ -12547,3 +12547,42 @@ floor is right and the defect is upstream in whatever feeds confidence.
 
 NOT DONE, deliberately: I did not open where confidence_floor is set or what it
 compares. Production code, and I am the senior this pass.
+
+### Pass 466 fourth addendum -- RETRACTING "I FOUND IT". Gale found it on 2026-09-10 at n=7. The new fact is that the root-cause items are all DONE and the symptom is unchanged at 19x.
+
+I announced the confidence_floor refusal as a discovery. It is in THIS FILE,
+2026-09-10, Gale pass 106, with the code path already named:
+
+  trading/scheduler.py binds confidence = pred_summary['exit_conf'] and tests it
+  against SCHEDULER_MIN_CONFIDENCE (0.6); exit_conf pinned in the 0.47-0.52
+  band. "The solver is NEITHER BROKEN NOR MISCONFIGURED -- it is correctly
+  declining candidates whose confidence input is dead."
+
+My prediction that 126-of-126 meant a broken INPUT rather than a strict gate was
+right, and it was already confirmed eight days ago from the code. METHOD
+FAILURE, mine: I read this file before forming the permutation-bar hypothesis
+and did not read it before this one. Read it before EVERY hypothesis.
+
+THE GENUINELY NEW FACT, and it is worse than a duplicate:
+
+  [618d4c4b]  prediction head collapsed      done
+  [cdfbf97e]  net_margin saturated -1.15     done
+  [f3c48731]  trident arbitrator abstains    done
+
+All three closed -- and the symptom is unchanged today at NINETEEN TIMES the
+sample Gale had (126 of 126 vs 6 of 7), eight days later. A done item whose
+symptom is unchanged at 19x the evidence is the most reliable false-close signal
+available on this board.
+
+FIRST MOVE FOR THE NEXT PASS IS ONE MEASUREMENT, NOT A SEARCH. The floor is
+named above. Measure exit_conf TODAY against the 0.47-0.52 band:
+  * still in band          -> [618d4c4b] is a FALSE CLOSE; reopen, not by its
+                              author; [c9e248aa] becomes an audit, not a build
+  * above 0.6, still refusing -> the binding Gale documented is no longer live;
+                              re-trace from the scheduler forward
+  * between                -> report the number, do not round it into a story
+
+ALSO NEW, which Gale did not flag: offered_total=1 on 135 of 135, so the
+'entry-arbitration' status and its 'one_tick_was_offered_to_many_and_spent_by_
+one' reason are FALSE, and every arbitration census on this board has been
+counting a confidence floor. Filed [fa442911].
