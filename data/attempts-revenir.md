@@ -13229,3 +13229,34 @@ fact. Three instances in one pass —
   (3) I nearly read 35 minutes of probe silence as evidence, against a 2.9h
       mean inter-arrival.
 Check the window against the process mean BEFORE reading a zero as a result.
+
+## Pass 473 (Echo, senior, solo) -- the probe was never going to fire
+
+**Route tried:** find the raiser in the ghost booking outage by READING, after
+measuring that P(zero entries in 1.21h uptime) = 0.66 made waiting worthless.
+
+**Numbers produced:**
+- `logs/console.log` mtime **frozen at 2026-09-16 19:34** (the `shutdown: all
+  services stopped` line) while `logs/system.log` is current to the minute.
+- 184 `print()` calls in `trading/` + `services/`; **84 are failure
+  diagnostics**; `services/swap_service.py` alone holds 84 prints.
+- Last `[ghost] enter` anywhere: system.log 09-16 12:57, prod_direct.log 09-05.
+
+**CLOSED — do not re-open:**
+- "Something at bot.py 9812/9821/9832 raises after the ops row is written"
+  (pass 472). **Structurally impossible.** 9794 is a dict key; the ops row is
+  written by the CALLER at bot.py:6438 *after* `_interpret_predictions`
+  (bot.py:6602) returns. An ops row existing PROVES 9808-9903 all ran.
+- "0 probe lines proves 9901 never ran." The probe was committed `cb52c9e`
+  09-18 14:53, **after** the 17 entries. Expected count was 0.
+- "0 `[ghost] enter` lines proves 9844 never ran." The print was LOST, not
+  skipped — stdout capture was dead.
+
+**STILL OPEN:** what exception `record_fill` raises. Caught and swallowed at
+bot.py:9890. Now instrumented via `log_message` (`6154276`) and production
+restarted onto it at 16:47:59. Next pass reads:
+`grep -a ' ghost: FILL WRITE FAILED' logs/system.log`
+
+**Trap recorded:** `log_message` from a standalone process takes the fallback
+path (`services/logging_utils.py:28-35`) because the bus is absent, so a
+synthetic test proves nothing. Verify in-process.
