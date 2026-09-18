@@ -12377,3 +12377,49 @@ criteria.** The first needs no cost model: **gross is −0.0203, already negativ
 before anything is subtracted.** A strategy that loses money gross is not
 rescued by a better cost estimate. The conclusion survives the defect I just
 found in its own input.
+
+## Pass 466 (2026-09-18) -- Echo, senior. The selection bar itself was the artifact.
+
+ROUTE TRIED: score the price-action predicate space against an HONEST null,
+because the null it had been scored against was i.i.d. and the data is not.
+
+NUMBER PRODUCED. `permutation_bar()` in scripts/predicate_forge.py shuffled
+forward returns i.i.d. within symbol. Those returns carry lag-1 rho +0.256 (2m)
+to +0.621 (15m) against a +-0.012 band, largely because a forward return at
+tick i and at tick i+1 SHARE PRICE PRINTS whenever the ticks are closer than
+the horizon. Replaced with a circular block bootstrap, block length from the
+data (max of horizon-in-ticks from each symbol's own median inter-tick gap, and
+the integrated autocorrelation time). Both bars printed side by side:
+
+  horizon          i.i.d. 95th   block 95th   correction   survivors
+  2m                   2.69bp       4.81bp       1.79x       11 -> 5
+  15m (--only r)       9.31bp      22.40bp       2.41x       15 -> 2
+  15m (--only z)       8.94bp      23.82bp       2.66x       19 -> 5
+
+CLOSED, and closed HARDER than before. Zero momentum-family predicates clear
+the honest bar out of sample AND pay their measured round trip, at either
+horizon. The two that clear in sample are 72-97% ONE SYMBOL (TN100X-USDC).
+"Price-action predicates are exhausted" now rests on a null that is not rigged
+in its favour. Do not reopen this space without new features -- the bar moved
+against it, not for it.
+
+WHAT THIS CLOSES ELSEWHERE: any predicate survivor quoted from a run BEFORE
+commit 45af22f was scored against a bar roughly 2x too narrow. Re-run it; do
+not rescale it, because the correction is horizon-dependent (1.79x at 2m,
+2.4-2.9x at 15m) and there is no single factor to apply.
+
+INTEGRITY CHECK THAT WAS NOT DESIGNED FOR AND PASSED: the correction GROWS with
+horizon. That is what the overlap mechanism predicts and nothing in the code
+forces it. Any future change to this null that does not reproduce the gradient
+is wrong.
+
+COMMAND: python -X utf8 scripts/predicate_forge.py --hours 168 --perms 60
+         --horizons 2,15 --only r        (and --only z)
+COMMIT:  45af22f, scripts/predicate_forge.py only. Read-only; nothing writes.
+
+SEPARATE MEASUREMENT, SAME PASS, NOT A ROUTE: trade_outcomes newest row is
+42.70h old while trading_ops wrote 0.03h ago. Production is ALIVE and booking
+ZERO evidence -- those are different failures and the briefing's "tradeable
+evidence rate: 4.1/day, nearest graduation ~60.8 days" is computed over a book
+that has not moved in nearly two days. The rate is zero and the ETA is
+undefined, not 60.8 days.
