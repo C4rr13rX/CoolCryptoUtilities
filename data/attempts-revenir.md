@@ -12237,3 +12237,34 @@ Unmoved: live P/L **-0.1864 over 18 live trades**, 0 live trades today. No
 production code written this pass (senior). Honest negative: one route closed
 with a number, one wrong diagnosis of my own retracted with a number, one
 done-claim reopened.
+
+### Pass 465 addendum -- I qualified my own headline by checking it
+
+I filed [4c267abe] as *"the bar reads GROSS"* and then went to name the lines,
+because criterion 1 of my own item told me to. The lines say something more
+specific, and worse.
+
+    BAR   trading/strategies/ledger.py:888
+          trades >= min_trades and (wins/max(trades,1)) >= min_winrate
+          and profit > min_profit  ->  _grant_live_licence(...)
+    WIN   trading/strategies/ledger.py:804   if profit > 0: sub["wins"] += 1
+
+**Two writers feed `record()` different quantities:**
+
+    PRODUCTION  trading/bot.py:10834               profit=economic_profit  NET
+    BACKFILL    scripts/backfill_ghost_ledger.py:157  profit=profit        GROSS
+
+The production path is CORRECT. The backfill reads the raw `trading_ops`
+`details["profit"]`, and on a real scout row that is +0.02204 against a
+`roundtrip_cost_usd` of 0.02317 **on the same row** — a net loss booked as a win.
+
+**So the bar does not read gross. It reads a counter that MIXES gross and net**,
+which cannot be corrected with a multiplier and cannot tell you which trades are
+wrong. Headline corrected in the item and in memory.
+
+**NOT PROVEN, and I am not estimating it:** that the scout's 20 tradeable ledger
+trades came from the backfill. It is only the leading candidate, because the
+scout never reaches `bot.py:10834` at all. Naming the writer, and counting how
+much of the whole ledger was written gross vs net, is criterion 3 of
+`[4c267abe]`. If most of it was backfilled gross then the 55% bar has never once
+been evaluated on net profit, and that explains 66.7 → 19.0 with no new bug.
