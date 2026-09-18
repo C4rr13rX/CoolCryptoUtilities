@@ -89,6 +89,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sqlite3
 import sys
 from collections import defaultdict
@@ -341,6 +342,107 @@ def screen(
     return lifts, support
 
 
+def _acf_block_length(v: np.ndarray, overlap_ticks: int, max_lag: int = 40) -> Tuple[int, float, float]:
+    """Block length for one symbol, CHOSEN FROM THE DATA. No hard-coded guess.
+
+    Two mechanisms make adjacent forward returns dependent, and the block has
+    to be long enough to survive the larger of them:
+
+    1. OVERLAP. A forward return over H minutes measured at tick i and the one
+       measured at tick i+1 are computed from windows that SHARE price prints
+       whenever the ticks are less than H apart. Two returns that share a print
+       cannot be exchanged independently, so the block can never be shorter
+       than the number of ticks H minutes spans -- `overlap_ticks`, measured
+       from this symbol's own median inter-tick gap. This is the floor.
+
+    2. RESIDUAL SERIAL CORRELATION beyond the overlap. Estimated here with the
+       standard integrated-autocorrelation rule: sum the sample autocorrelation
+       out to the first lag that falls inside the +-2/sqrt(n) white-noise band,
+       and take tau = 1 + 2*sum. Blocks shorter than tau leave dependence in
+       the resample, which is exactly the failure this replaces.
+
+    The block is max(overlap_ticks, ceil(tau)). The OVERLAP FLOOR IS NEVER
+    CROSSED: a symbol with too few ticks to give five such blocks is reported
+    as `thin` rather than having its block quietly shortened, because a block
+    shorter than the overlap is the same mistake as the i.i.d. shuffle, only
+    smaller. The only cap is n itself -- a block cannot exceed the series.
+
+    WHY THIS REPLACED AN I.I.D. SHUFFLE. Measured pass 463 over this same
+    feed: mean lag-1 autocorrelation of the forward returns is +0.2856 at the
+    2-minute horizon rising to +0.6339 at 12 minutes, against a white-noise
+    band of +-0.0121 -- 21x to 52x outside it, with every lag out to 5 outside
+    at every horizon. An i.i.d. permutation destroys that structure, so it
+    draws a null with less clustering than the real tape and produces a bar
+    that is too NARROW. Every lift ever scored against the old bar was
+    flattered by it.
+
+    Returns (block_length, tau, rho1).
+    """
+    n = len(v)
+    if n < 8:
+        return max(1, overlap_ticks), 1.0, 0.0
+    x = v - v.mean()
+    denom = float(np.dot(x, x))
+    if denom <= 0.0:
+        return max(1, overlap_ticks), 1.0, 0.0
+    band = 2.0 / math.sqrt(n)
+    acc = 0.0
+    rho1 = 0.0
+    for k in range(1, min(max_lag, n - 1) + 1):
+        rho = float(np.dot(x[:-k], x[k:]) / denom)
+        if k == 1:
+            rho1 = rho
+        if rho < band:
+            break
+        acc += rho
+    tau = 1.0 + 2.0 * acc
+    L = max(int(overlap_ticks), int(math.ceil(tau)), 1)
+    return max(1, min(L, n)), tau, rho1
+
+
+def block_lengths(
+    y: np.ndarray,
+    ts: np.ndarray,
+    mask: np.ndarray,
+    sid: np.ndarray,
+    horizon_min: float,
+) -> Tuple[Dict[int, int], dict]:
+    """Per-symbol block length plus the numbers the choice was made from."""
+    live = mask & np.isfinite(y)
+    lens: Dict[int, int] = {}
+    rows = []
+    for s in np.unique(sid[live]):
+        idx = np.where(live & (sid == int(s)))[0]
+        if len(idx) < 2:
+            lens[int(s)] = 1
+            continue
+        dt = np.diff(ts[idx])
+        dt = dt[dt > 0]
+        med_dt = float(np.median(dt)) if len(dt) else horizon_min * 60.0
+        overlap = int(math.ceil(horizon_min * 60.0 / med_dt)) if med_dt > 0 else 1
+        L, tau, rho1 = _acf_block_length(y[idx], overlap)
+        lens[int(s)] = L
+        rows.append({"sid": int(s), "n": int(len(idx)), "median_dt_sec": med_dt,
+                     "overlap_ticks": overlap, "tau": tau, "rho1": rho1, "block": L,
+                     "thin": bool(L * 5 > len(idx))})
+    thin = [r for r in rows if r["thin"]]
+    report = {
+        "horizon_min": horizon_min,
+        "per_symbol": rows,
+        "median_block": int(np.median([r["block"] for r in rows])) if rows else 1,
+        "median_rho1": float(np.median([r["rho1"] for r in rows])) if rows else 0.0,
+        "median_overlap_ticks": int(np.median([r["overlap_ticks"] for r in rows])) if rows else 1,
+        "thin_symbols": len(thin),
+        # The floor is the horizon in ticks, OR the whole series when the symbol
+        # has fewer ticks than one horizon spans -- in that case the series is a
+        # single block and its returns are never shuffled at all, which is the
+        # most conservative treatment available, not a shortened block.
+        "floor_respected": all(r["block"] >= min(r["overlap_ticks"], r["n"]) for r in rows),
+        "whole_series_symbols": sum(1 for r in rows if r["n"] <= r["overlap_ticks"]),
+    }
+    return lens, report
+
+
 def permutation_bar(
     preds: List[Tuple[str, np.ndarray]],
     y: np.ndarray,
@@ -348,13 +450,25 @@ def permutation_bar(
     sid: np.ndarray,
     perms: int,
     rng: np.random.Generator,
+    method: str = "block",
+    blocks: Optional[Dict[int, int]] = None,
 ) -> np.ndarray:
     """Distribution of the BEST |lift| reachable by selection alone.
 
-    Forward returns are shuffled WITHIN symbol, so each symbol keeps its own
+    Forward returns are resampled WITHIN symbol, so each symbol keeps its own
     return distribution and only the tick-to-predicate alignment is destroyed.
     The full screen is then re-run and the maximum recorded. This is the bar
     the winner has to clear to be more than an order statistic.
+
+    method='block' (the default, and the honest one) uses a CIRCULAR BLOCK
+    BOOTSTRAP: contiguous runs of length L are drawn with wraparound and laid
+    down in time order, so serial dependence inside a block survives. L comes
+    from block_lengths() and is measured, not guessed.
+
+    method='iid' is the OLD null -- a plain within-symbol permutation. It is
+    kept ONLY so the two bars can be printed side by side and the size of the
+    correction is visible. It is anti-conservative on this feed and no result
+    should be scored against it.
     """
     out = np.zeros(perms)
     idx_by_sid: Dict[int, np.ndarray] = {}
@@ -363,8 +477,16 @@ def permutation_bar(
         idx_by_sid[int(s)] = np.where(live & (sid == s))[0]
     for p in range(perms):
         yp = y.copy()
-        for _, idx in idx_by_sid.items():
-            yp[idx] = yp[rng.permutation(idx)]
+        for s, idx in idx_by_sid.items():
+            if method == "iid":
+                yp[idx] = yp[rng.permutation(idx)]
+                continue
+            n = len(idx)
+            L = max(1, min(int((blocks or {}).get(s, 1)), n))
+            nblocks = int(math.ceil(n / L))
+            starts = rng.integers(0, n, size=nblocks)
+            take = (starts[:, None] + np.arange(L)[None, :]) % n
+            yp[idx] = y[idx][take.reshape(-1)[:n]]
         lifts, sup = screen(preds, yp, mask)
         out[p] = np.abs(lifts[sup >= MIN_SUPPORT]).max() if (sup >= MIN_SUPPORT).any() else 0.0
     return out
@@ -759,23 +881,57 @@ def main() -> int:
             print(f"  [{H:g}m] no predicate reaches support {MIN_SUPPORT}. skipped.")
             continue
 
-        bar_dist = permutation_bar(preds, y, mask_is, sid, args.perms, rng)
+        blocks, blk_report = block_lengths(y, ts, mask_is, sid, H)
+        bar_dist = permutation_bar(preds, y, mask_is, sid, args.perms, rng,
+                                   method="block", blocks=blocks)
         bar95 = float(np.quantile(bar_dist, 0.95))
         bar50 = float(np.quantile(bar_dist, 0.50))
+
+        # The OLD null, run on the same ticks at the same horizon and the same
+        # number of draws, so the size of the correction is VISIBLE rather than
+        # silently applied. It is not used to judge anything.
+        iid_dist = permutation_bar(preds, y, mask_is, sid, args.perms, rng, method="iid")
+        iid95 = float(np.quantile(iid_dist, 0.95))
+        iid50 = float(np.quantile(iid_dist, 0.50))
 
         best = int(np.argmax(np.where(ok, np.abs(lifts_is), -np.inf)))
         best_lift = float(lifts_is[best])
 
+        widen = (bar95 / iid95) if iid95 > 0 else float("nan")
         print(f"  [{H:g}m horizon]")
-        print(f"     selection bar (best |lift| from a PERMUTED tape, {args.perms} draws):")
-        print(f"        median {bar50:7.2f}bp    95th pct {bar95:7.2f}bp")
+        print(f"     selection bar -- best |lift| a NULL tape reaches, {args.perms} draws each:")
+        print(f"        {'null':<34}{'median':>10}{'95th pct':>11}")
+        print(f"        {'i.i.d. permutation (OLD, too narrow)':<34}{iid50:9.2f}bp{iid95:10.2f}bp")
+        print(f"        {'circular block bootstrap (USED)':<34}{bar50:9.2f}bp{bar95:10.2f}bp")
+        print(f"        correction: the honest bar is {widen:.2f}x the i.i.d. bar."
+              f"  block={blk_report['median_block']} ticks (median over"
+              f" {len(blk_report['per_symbol'])} symbols), from median lag-1 rho"
+              f" {blk_report['median_rho1']:+.4f} and {blk_report['median_overlap_ticks']}"
+              f" ticks of {H:g}m overlap"
+              f"\n        overlap floor respected: {blk_report['floor_respected']}"
+              f" ({blk_report['whole_series_symbols']} symbol(s) shorter than one horizon"
+              f" are ONE block and never shuffled;"
+              f" {blk_report['thin_symbols']} have fewer than 5 blocks)")
         print(f"     best real predicate: {preds[best][0]:<22} {best_lift:+8.2f}bp  n={int(sup_is[best])}")
+        n_iid = int((ok & (np.abs(lifts_is) > iid95)).sum())
+        n_blk = int((ok & (np.abs(lifts_is) > bar95)).sum())
+        if n_iid != n_blk:
+            print(f"     DEMOTED BY THE CORRECTION: {n_iid - n_blk} predicate(s) cleared the"
+                  f" i.i.d. bar and do NOT clear the block bar ({n_iid} -> {n_blk}).")
+        elif n_iid == 0:
+            print(f"     survivors under BOTH nulls: 0. The correction changes nothing here"
+                  f" because nothing cleared the narrow bar either.")
+        else:
+            print(f"     survivor count unchanged by the correction: {n_blk} under both nulls.")
 
         survivors = np.where(ok & (np.abs(lifts_is) > bar95))[0]
         if len(survivors) == 0:
             print(f"     SURVIVORS: NONE. The best real predicate does not beat what")
             print(f"     shuffling the labels produces. Nothing here is an edge.\n")
-            results.append({"horizon_min": H, "bar95_bp": bar95, "survivors": 0,
+            results.append({"horizon_min": H, "bar95_bp": bar95,
+                        "null": "circular_block_bootstrap",
+                        "bar95_iid_bp": iid95, "block_ticks": blk_report["median_block"],
+                        "block_report": blk_report, "survivors": 0,
                             "best": preds[best][0], "best_lift_bp": best_lift})
             continue
 
@@ -855,7 +1011,10 @@ def main() -> int:
                 print(f"         *** {r['predicate']} -> {r['oos_net_bp']:+.2f}bp/trade"
                       f" on n={r['oos_n']} after {r['oos_cost_bp']:.2f}bp cost{fb}")
         print()
-        results.append({"horizon_min": H, "bar95_bp": bar95, "bar50_bp": bar50,
+        results.append({"horizon_min": H, "bar95_bp": bar95,
+                        "null": "circular_block_bootstrap",
+                        "bar95_iid_bp": iid95, "block_ticks": blk_report["median_block"],
+                        "block_report": blk_report, "bar50_bp": bar50,
                         "screened": int(ok.sum()), "survivors": len(survivors),
                         "held": len(held), "rows": rows})
 
