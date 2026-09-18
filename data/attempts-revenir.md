@@ -11791,3 +11791,44 @@ lead and the `author != verifier` rule silently stops biting. Forge authored and
 and never ran `scrum.py done`, so the item sat `in_progress` with the work already in git and
 `verify` refused with "there is no claim to verify yet". Worked around once by hand
 (`CR_CREW_NAME=Forge scrum.py done`); filed `[d16e45c8]`.
+
+### Pass 462 addendum: it is FOUR cost reads, not two, and two of them cannot see a symbol
+
+I ran the end-to-end trace I had just written into `[fa681912]` as work for somebody else, because
+the item was unresolvable without it. **One AERO round trip, four live call sites, 13.1x apart:**
+
+| call site | cost | source | symbol-aware? |
+|---|---|---|---|
+| `services/atf_static_strategy.py:880` | 33.27bp | census | yes — migrated |
+| `services/symbol_edge_gate.py:476`, `strategy_edge_gate.py:288` | 46.13bp | DB-measured | **no — signature is `(*, db_path)`, it cannot take one** |
+| `trading/bot.py:2235` | 52.10bp | census | **no — passes no symbol, gets the unpriced default** |
+| `trading/scheduler.py:1800` | 435.00bp | token table | yes |
+
+**The symbol-aware cost project is 2 of 4 done and the denominator was never known to be 4.**
+`[84e62c6d]` is correct and verified, but it migrated one module. It could not have fixed
+`symbol_edge_gate` (needs a signature change) or `bot.py:2235` (needs a caller change, tracked as
+`[5454d2dd]`). `bot.py:2235` is the dangerous one: it imports the *new* module, so it reads as
+migrated to anyone grepping imports, and silently takes the unpriced default.
+
+**THE SPREAD INVERTS BETWEEN TOKENS, so do not average the four.** On AERO the census is cheaper
+than the token table (33.27 vs 435.00); on WETH the token table is cheaper (11.00 vs 22.24). Any
+reconciliation that splits the difference helps one token and hurts the other. Price WETH through
+all four before touching a line.
+
+**Already diagnosed once, in our own source.** `trading/bot.py:2231`: *"when each carried its own
+copy of the formula they disagreed silently — the scout charged no fee at all."* That is this
+defect at function scale, fixed once by consolidation. It returned at module scale, and the
+per-symbol fix is what let it return — it removed the shape difference that used to make the two
+modules obviously different things. **Consolidation is not durable unless the names say what each
+thing measures.**
+
+**Closed / not closed:** the *measurement* is closed — four numbers, named lines, reproducible. The
+*diagnosis* is open and deliberately so: the four may count different things (pool vs pool+gas, one
+leg vs two), which would make this a naming defect fixed by renaming rather than re-pricing. That
+complement is criterion 1 on `[fa681912]` and must be settled before any number moves. `02f322f`,
+this same loop, is why: Echo quoted a pool-only census figure as end-to-end and was wrong by 4.4x.
+
+**Process note worth keeping.** I filed the `CR_CREW_NAME` attribution defect as `[d16e45c8]`
+without grepping the backlog; Tally had already filed it as `[b308473d]` the pass before. Rejected
+mine, folded the evidence into theirs. The rule is one line: `scrum.py list | grep <keyword>` before
+`scrum.py add`.
