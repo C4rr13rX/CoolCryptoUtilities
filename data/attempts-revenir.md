@@ -12047,3 +12047,55 @@ published bars by. Getting the real number is `[fa1e7361]`.
 
 Reproduce: scratchpad `bar.py`, read-only, imports `predicate_forge` without
 modifying it.
+
+## Pass 464 (Echo, senior) -- step 6 is ONE cause with THREE ladder symptoms, and the sample-floor route is CLOSED
+
+ROUTE TRIED: find the cause behind the first failing link. The ladder moved this pass --
+step 5 GRADUATION now PASSES (money_button approved), so step 6 RISK
+(`ghost_validation_block`) is the first [FAIL].
+
+MEASURED (scripts/ghost_gate_forensics.py, scripts/live_lane_refusal_census.py, both read-only):
+
+  money_button      READY    cold_start_bootstrap   n=0    <- the ONLY live-approved strategy
+  atf_static        READY    cold_start_bootstrap   n=0
+  atf_static_scout  BLOCKED  insufficient_samples   n=9    <- structurally ghost-only, can never spend
+  POOLED            BLOCKED  reason=low_win_rate    n=25
+                    ALSO FAILING: negative_margin -0.0137;
+                                  non_positive_net_profit -0.3415;
+                                  weak_profit_factor 0.298<0.95
+
+THE CHAIN, three symptoms from one cause:
+  pooled book fails 4 guardrails
+  -> ghost_ready=False (pipeline.py:6137)
+  -> safe_to_live False (six-way conjunction, :6186)
+  -> recommended_ratio=0 -> block_reason ghost_validation_block (:6317)   [step 6 FAIL]
+  -> halt_live -> bot.py risk_budget=0 INSIDE `if live_trading_enabled`,
+     which skips scheduler.evaluate() ENTIRELY: no directive, no downstream
+     entry gate, no trading_ops row. The lane is not refusing, it is absent.
+  -> AND _maybe_transition_to_live() returns before _refresh_auto_execute(),
+     leaving _auto_execute_approved unset, so _live_trades_dry_run() defaults
+     to '1' -> EXECUTOR IN DRY RUN                                        [step 8]
+  Corroborated: wallet=live last entry decision 2026-09-08, 9.29 d ago.
+  9 halt transitions in 24h, all ghost_validation_block, last 00:38 today.
+
+ROUTE CLOSED -- "raise the evidence rate until the gate opens". [78d58404] recorded
+pass 433: n=20, reason=insufficient_samples, and PREDICTED that more rows buy a
+different error string, not a trade. Pass 464: n=25, reason=low_win_rate 0.320<0.55.
+The prediction held exactly. ~1.3 days of ghost evidence per error-string change.
+The sample floor was never binding. Do not re-open this without new evidence.
+
+TWO ERRORS OF MINE, BOTH SELF-CAUGHT, BOTH WORTH COPYING:
+ 1. I killed my own hypothesis on the scoreboard's pooled figure (+7.2074, all-time,
+    15.2 d) when the gate reads its OWN 120h window (-0.3415). Same book, same
+    strategy set, OPPOSITE SIGN, purely from the lookback. NEVER substitute a
+    report's number for the gate's number -- measure at the gate's own window.
+ 2. I wrote an acceptance criterion that duplicated [78d58404], my own pass-433
+    item. Caught before filing was final; replaced with an explicit DEPENDS ON.
+
+NOT DONE, said plainly rather than estimated: the dry-run consequence is INFERRED
+FROM CODE by the census, not observed on the running process. It is acceptance
+criterion 3 on [5656f673] and a negative there is a valid result.
+
+FILED: [5656f673] p1 5pt (halt reads the pooled book), depends on [78d58404].
+VERIFIED: [cf169af6] re-run, 9 passed vs 9 claimed, HOLDS -- but it fixed the
+operator-side READER, not the halt. The halt is what fires 9x/day.
