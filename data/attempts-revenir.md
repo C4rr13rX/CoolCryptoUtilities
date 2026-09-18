@@ -12833,3 +12833,43 @@ criteria reproduce, twelve figures digit-for-digit across two runs, seeded null,
 (Jet's retracted "96-100% of the time"); corrected with a dated note.
 STILL OPEN, and it is the shortest path to the scoreboard: [23ad8727]. The gate
 itself printed "OVER BUDGET -- 2791.3 minutes with no settled swap" (46.5h).
+
+### PASS 469 ADDENDUM -- THE REAL HEADLINE, FOUND AFTER THE ABOVE WAS WRITTEN.
+
+Everything above is true and beside the point. **No fill has been placed in 49
+hours**, and the system is running the whole time.
+
+| table | rows in 24h | newest row |
+|---|---|---|
+| `trade_outcomes` | **0** | 49.0h |
+| `trade_fills` | **0** | 48.9h |
+| `trading_ops` | 1,080 | 0.1h |
+| `organism_snapshots` | 5,236 | 0.0h |
+
+HYPOTHESIS PRE-REGISTERED AND TESTED: either (a) the system stopped, or (b) the
+writer broke. **(b) is dead** -- 6,300+ rows/day are still being written to other
+tables. It decides continuously and places nothing.
+
+CROSS-CHECK from an independent counter: `pass_gate --check` printed "OVER BUDGET
+-- 2791.3 minutes with no settled swap" = 46.5h, agreeing with 49.
+
+**NOT A NEW BUG -- do not re-derive it.** Pass 466 already closed the booking
+hypothesis at row level: the only strategy still exiting is `atf_static_scout`,
+which is ghost-only and books nothing BY DESIGN. What is new is only that the
+dark window has grown **42.7h -> 49.0h**, so it is persisting, not clearing.
+
+**THE UPSTREAM CAUSE, NAMED FROM TWO DIRECTIONS AND NOW SETTLED.** Jet (pass 113)
+counted each conjunct of the model-long entry test separately over all 39,862
+decision cycles: the binding one is `exit_confidence`, ~100x tighter than the
+rest. Echo (pass 467) measured that input at **max 0.5436 against a 0.6 floor,
+0 of 1818 snapshots**. THE CEILING SITS BELOW THE FLOOR -- unsatisfiable at any
+price, on any symbol, in any market. That is sufficient to explain the shape.
+
+CLOSED: "find what stopped 49h ago" as a discovery task. It is answered.
+CLOSED: `[583ba889]`'s stated unblock condition. Jet blocked it on `[618d4c4b]`
+being repaired; `[618d4c4b]` is now DONE and nothing changed, so the item read as
+satisfied while still unworkable. Restated in a dated note on the item: unblock
+when max(confidence) clears its floor AND a non-scout strategy books an outcome.
+STILL OPEN AND NOW OVERDUE -- `[583ba889]` criterion 1, the cheap close: restart
+production onto `8c1e906`+ and re-count how many of 72 strategies signal. It is
+the only test separating "49h of stale running code" from "unsatisfiable on HEAD".
