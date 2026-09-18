@@ -12467,3 +12467,43 @@ on `action`, not `op` or `event`.
 METHOD NOTE THAT EARNED ITS PLACE: a 0-of-8 miss and a 6-and-6 hit are both
 COUNT artifacts, and both times the count told the wrong story while the
 row-level read told the right one. Match on identity, never on count.
+
+### Pass 466 second addendum -- the entry funnel is 727 candidates to ZERO entries, and the scheduler is innocent.
+
+CORRECTING MY OWN ADDENDUM ABOVE. I quoted trading_ops "enter 740" as entries.
+The `enter` action covers CANDIDATE rows too. Broken out by status, last 24h:
+
+  enter / ghost_candidate_quote_ok   atf_static          465
+  enter / ghost_candidate            atf_static          262
+  enter / ghost-entry                atf_static_scout      7   <- ONLY real entries
+  hold  / entry-predropped-edge-ban                      168
+  hold  / entry-arbitration                              135
+
+TWO SEPARATE FAILURES, NOT ONE MONOPOLY:
+  1. atf_static produces 727 candidates in 24h and converts ZERO to an entry.
+  2. atf_static_scout produces all 7 real entries and banks nothing BY DESIGN.
+Every other strategy -- rsi_reversal@1w, stochastic_reversal@3d,
+supertrend_follow@5d among them, which booked the last real outcomes 43h ago --
+appears in the entry path ZERO times in 24h.
+
+CLOSED: "the scheduler is misallocating decision cycles to the scout". It is
+not. This is a SUPPLY problem -- candidates exist in quantity and are refused
+downstream. Do not spend a pass on scheduler allocation.
+
+WHERE THE REFUSALS ARE: 168 entry-predropped-edge-ban, 135 entry-arbitration.
+The edge-ban predrop is already closed by evidence (a DIRECTION verdict; 0 of
+7,704 bans lift at a cheaper cost), so a cost-side fix buys nothing on those
+168. entry-arbitration, 135 rows, is the least-examined refuser on the board
+and the only one of the two not already closed.
+
+NEXT TEST, stated with its complement: score the REFUSED candidates' forward
+returns against the ACCEPTED ones on the same ticks. If the refused set has no
+worse forward return, arbitration is refusing at random and IS the bug. If the
+refused set is genuinely worse, arbitration is right and the defect is upstream
+in atf_static's candidate generation -- the fix is a better candidate, not a
+looser gate.
+
+ALSO MEASURED, from the store rather than a status command: all 121
+strategy_publish rows in 24h carry live_execution_enabled=False with
+ghost_scout=True. Step 8 EXECUTOR is in DRY RUN and that is confirmed, not
+reported.
