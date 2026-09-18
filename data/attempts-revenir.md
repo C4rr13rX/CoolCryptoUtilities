@@ -13734,3 +13734,39 @@ STATUS: [eb269198] left IN PROGRESS with rewritten acceptance criteria and an
 unshipped, fully specified fix. No production code written (senior). No restart
 -- a restart re-draws the hash and would have destroyed the observation, and a
 6h post-restart window does not fit a 30-minute pass.
+
+### Pass 476 addendum -- the endpoint census, and a correction to my own speculation
+
+market_stream.raw carries the DELIVERING SOURCE per row in its 'rest' field, so
+this needed no log parsing and no restart. 6310 rows over 12h:
+
+  dexscreener   4146  65.7%      kucoin    803  12.7%
+  geckoterminal 1302  20.6%      bitstamp   59   0.9%
+
+_WS_POOL = (okx, bybit, mexc, kraken, kucoin, coinbase). ONLY KUCOIN EVER
+DELIVERS A ROW. okx, bybit, mexc, kraken and coinbase wrote ZERO rows in twelve
+hours. The whole pool is 12.73% of the tape and all of it is one endpoint.
+
+Per symbol, delivering source over 12h:
+  FED      CBBTC 317 dexscreener, CBETH 344, MAMO 496, AERO 459
+  STARVED  WETH  93 kucoin, ETH 96 kucoin, LDO 95 kucoin, UNI 88 geckoterminal
+
+dexscreener gives a symbol 3.4-5x the tape kucoin gives it. That IS the two-
+shift structure -- a slow endpoint ranked ahead of a fast one, not an exotic
+failure. _ranked_endpoints gives every pool member rank 0-5 and everything else
+base+pref with base=len(pool)=6, so five endpoints that deliver nothing plus one
+that delivers slowly all outrank the source producing 65.7% of our tape.
+
+CORRECTION TO MY OWN PASS-476 CLAIM, and I had flagged it as unproven when I
+made it: I speculated WETH drew coinbase, which :2496 says cannot serve -USDC
+pairs. In THIS process WETH drew KUCOIN -- 93 of its 94 rows are kucoin. Kucoin
+works; it is simply ~5x slower than the on-chain source ranked behind it. The
+coinbase story is dead. This confirms the standing note weth-tape-is-95-percent-
+kucoin, which I had doubted earlier in the pass.
+
+THE FIX, now one ranking change and NOT a hash rewrite: drop okx, bybit, mexc,
+kraken, coinbase from _WS_POOL. It does not depend on the per-boot hash, so the
+restart-reshuffle trap does not apply and it is testable in ONE restart, unlike
+a hash change. Expected: WETH and ETH move from ~95 rows/12h to the 300-500 band
+the dexscreener-served symbols already occupy. Prove it by grouping on
+json_extract(raw,'$.rest'), not on the row count alone.
