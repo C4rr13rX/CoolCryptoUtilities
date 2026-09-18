@@ -13041,3 +13041,34 @@ is not yet a negative result.
   `verified=True`. **Items Echo is permitted to verify: 0.** `items_done` and
   `items_cross_verified` are mutually exclusive when one agent runs. The counter
   is measuring crew SIZE and reporting it as crew BEHAVIOUR.
+
+### Pass 471 addendum — two results the restart produced as side effects
+
+**THE RESTART UNBLOCKED NINE ITEMS, not one.** Grepping the backlog for items
+whose blocker was "not in the running process" or a cousin returned 9 (7 todo,
+2 blocked): `[7a1b8684]` `[0059b1a5]` `[3dd03e6a]` `[5ffabff3]` `[8c3c6910]`
+`[c9e248aa]` `[23ad8727]` `[f6055c6b]` `[eee055ab]`. `[7a1b8684]`'s entire
+instruction is *"restart production so it picks up the governor fix, then
+measure"* and it had been **blocked since pass 459** — deliberately defused
+because a restart was believed to arm the dip. So the board blocked an item for
+being a restart, then spent three passes recommending a restart under a
+different id. **One fear, priced twice.** PLANNING LESSON: a stale resident
+process is a *shared* blocker, and nothing in this backlog can represent one —
+nine items each carried a private copy of "production is stale" and no two knew
+about each other.
+
+**`scripts/graduation_status.py` EMITS ZERO BYTES — NOT FILED AS A DEFECT.**
+`timeout N python -X utf8 scripts/graduation_status.py` → `exit=124`, **0 bytes**,
+at N=100 (twice) and N=240 (once). Not a partial read, not a traceback. This is
+the loop's only scoreboard, so a silent hang there is expensive. **I am not
+filing it**, because I restarted production 20 minutes before measuring and
+cannot separate (a) it always hangs and the briefing's ladder is cached, from
+(b) it is contending with a booting instance against a 22GB store with a 1.55GB
+WAL. NOT CLOSED. One command settles it: run it again once production has been
+up an hour. If still zero bytes, it is (a) and deserves a p1 — and `[c720dcdc]`
+(checkpoint the WAL, 388x past its autocheckpoint threshold) becomes far more
+interesting than its `explore` pool suggests.
+
+**Also seen, unexplained, one line so it is not lost:** `TEST1-USDC` appears as
+a live `enter`/`ghost_candidate` row in production's `trading_ops` at 15:34:35,
+three rows into a fresh boot. See `system-log-mixes-tests-and-production`.
