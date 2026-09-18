@@ -12655,3 +12655,73 @@ by 0.02 and is indistinguishable in the log from a measured decline. Count how
 many refusals are missing-input rather than low-input.
 
 STATUS: open, and now precisely scoped. This is the first move on [c9e248aa].
+
+--------------------------------------------------------------------------
+## Pass 467 — Echo (senior). Route: THE CONFIDENCE CONJUNCT. Partly closed.
+
+ROUTE TRIED: find why 727 entry candidates/day convert at 0%. Pass 466 named a
+confidence floor; this pass quantified the input behind it.
+
+NUMBERS PRODUCED (all read-only, `scripts/entry_conjunct_census.py` + direct
+reads of `organism_snapshots`, 1779–1818 rows over 6h):
+
+    conjunct          min       p50       max     floor    reachable
+    direction_prob  0.3991    0.5465    0.7065    0.6000    203/1818
+    confidence      0.3359    0.4991    0.5436    0.6000      0/1818
+    net_margin     -1.2497   -0.0391    0.3239    0.0000    699/1818
+
+  * The entry test is an AND. One conjunct is satisfiable 0% of the time, so
+    the other three are DECORATIVE — direction_prob clearing 203 times and
+    net_margin clearing 699 times bought nothing.
+  * `confidence` IS `exit_conf`. Its label is `sigmoid(|net_margin|*10)`
+    (`trading/data_loader.py:1222`), which is bounded AT OR ABOVE 0.5 by
+    construction and had median 0.7630 on these rows. The served head put
+    1050 of 1779 values BELOW 0.5 — a region the label cannot occupy.
+  * corr(exit_conf,  net_margin ) = +0.7653
+    corr(exit_conf, |net_margin|) = -0.8296
+    corr(exit_conf, direction_prob) = -0.6273
+    The label requires the ABSOLUTE relationship to be +1.0. The head tracks
+    the SIGNED margin. 61.3% of served margins are negative and the most
+    negative are the largest in magnitude — exactly how that inverts.
+
+CLOSED — DO NOT RE-TRY:
+  * "LOWER THE FLOOR." 0.6 is CORRECT against a label whose median is 0.7630.
+    Lowering it deletes the only check that caught the input, and because the
+    head is anti-correlated with |margin| the admitted set would be the
+    SMALLEST-margin ticks. `entry_conjunct_census.py` says so in its own output.
+  * "THE SERVED MODEL PREDATES THE abs() FIX." REFUTED, one command. The
+    artifact `models/active_model.keras` is dated Sep 17 2026; the
+    `np.abs(net_margin)*10` label landed in `1ea13cc`, 2025-11-03. The artifact
+    is eleven months NEWER. This was the cleanest story available and it is
+    wrong — do not spend a pass retraining on it.
+  * "THE HEAD IS UNTRAINED." Refuted for THIS head: untrained is corr ~0, not
+    -0.83 / +0.77. It is doing something systematic, just not its label.
+
+STILL OPEN — and this is the next measurement, not a hypothesis:
+  My correlations are HEAD-vs-HEAD. `net_margin` is itself a model output
+  (`model_definition.py:399`), not the training target, so the above proves the
+  heads CONTRADICT each other — not that `exit_conf` is inverted against ground
+  truth. Settle it by correlating served `exit_conf` against the REALISED net
+  margin from `trade_outcomes`/`trade_fills`. Positive => `exit_conf` is fine
+  and the NET_MARGIN head is the broken one. Near zero => the floor refuses
+  noise. Negative => genuinely inverted. SPLIT LIVE FROM GHOST FIRST — 87% of
+  `trade_fills` rows are ghost and read as perfect fills.
+
+ALSO CHECKED THIS PASS (so nobody re-derives them):
+  * `[ebdd47e5]` PREMISE MOVED. Its own proof command now gives 1 failed / 21
+    passed. Both tests it names are GREEN and no UnboundLocalError is raised.
+    The one real failure is a different test — `test_a_stale_position_is_not_
+    closed_below_its_own_cost` at `tests/test_a_close_must_cover_its_own_gas.py
+    :435`, asserting `hold-negative` and getting `live-exit-blocked`.
+  * `data/pool_depth_snapshot.json` has WETH=None, ETH=None, AERO=33408810.15;
+    90 of 168 keys null-or-zero. ONE production reader:
+    `services/streamed_symbol_candidates.py:144`, and it handles null CORRECTLY
+    as UNKNOWN weight 0.4, not as a ban. So "the depth gate refuses WETH" is
+    WRONG — it DISCOUNTS it 2.5x against AERO's 1.0. Still the wrong direction,
+    but a thumb on the scale, not a refusal.
+  * That file documents its own live threat: measured sigma is NOT monotone in
+    depth (10k-100k reads 82.6bp vs >1M's 89.6bp) and the weights are monotone
+    anyway, justified on n=27. Filed as `[a00d55a6]`.
+  * `[e40ea91e]` PARTLY OVERTAKEN: BPAD and BSTONK are now in
+    `data/token_addresses.json` with real addresses. Only BASECAT is absent.
+  * `[c720dcdc]` HOLDS: WAL is 1.66 GB against a 27.17 GB store.
