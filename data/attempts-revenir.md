@@ -11935,3 +11935,33 @@ license a number at $20.
 fills, and a named wrong constant. The *fix* is open and is a worker's item (`[fa681912]`) — it is
 not "correct the table", it is "make four call sites read one source", and which source is chosen
 changes admission in opposite directions for AERO and WETH.
+
+### Pass 462, CORRECTION: my own AERO slippage number was ghost-diluted by 7.6x — 22.04bp, not 2.89bp
+
+I wrote the caveat ("the table mixes live and ghost rows; ghost fills cannot carry slippage; a
+ghost-heavy average is biased down") about *other* symbols and then quoted 2.89bp for AERO anyway.
+Applying my own caveat to my own number:
+
+```
+AERO-USDC   n=122   exact-zero rows=106   nonzero rows=16   mean over NONZERO only = 22.04bp
+```
+
+**106 of 122 AERO rows are `executed_price == expected_price` — ghost.** They dragged the mean from
+22.04 to 2.89. **The caveat I wrote was the defect in the number I wrote it under.**
+
+**Corrected:** AERO full round trip = 33.27bp census floor + round-trip slippage on 22.04bp/leg ≈
+**55–77bp**, depending on whether 22.04 is a leg or a trip — *not established, not guessed*. Against
+the 435bp `scheduler.py:1800` charges that is **~6–8x too strict, not the ~11x I claimed.** The
+conclusion survives; the margin does not. `TOKEN_ROUND_TRIP` is still convicted on AERO.
+
+**And the CBETH 198bp outlier I flagged is dead — killed, not left hanging.** Distribution:
+`0.0bp ×46`, then **one row at exactly 10000.0bp**, then 60.1, 31.4, 16.2, 13.5. A single row at
+exactly 100% deviation sets that mean — a unit/denomination bug, not a fill. **One row sets the
+sign**, the pattern this repo has shipped repeatedly. Do not open an item on CBETH. AERO's 16
+non-zero rows top out at 63.7bp with no such artifact, which is why AERO's corrected number stands
+and CBETH's does not.
+
+**The transferable rule, and it is the most useful thing in this pass:** *split live from ghost
+before computing any cost statistic on `trade_fills`.* 87% of AERO's rows are ghost and **every one
+of them reads as a perfect fill**, so any naive average over that table is biased toward zero cost —
+the direction that makes trading look cheaper than it is.
