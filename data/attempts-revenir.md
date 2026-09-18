@@ -13306,3 +13306,26 @@ count — a sweep alarm fires correctly but names the scheduler when the bug is
 upstream in feed/discovery. Do NOT touch the edge ban: it refused AERO 460 times
 and is probably right (0 of 7,704 bans lift at a cheaper cost); the defect is
 that AERO was the only symbol left to ban. **Still half broken: 9 of 18.**
+
+**REFINED AGAIN (third correction, same pass): the FEED never narrowed — the
+OVERLAP did.** `market_stream` distinct symbols per 6h bucket held **22–40**
+straight across the outage. What rotates is *which* symbols are live:
+
+    AERO-USDC  last tick 0.02h ago  8902 ticks     WETH-USDC 3.09h ago  2006
+    ZORA-USDC  last tick 0.01h ago  5408 ticks     LINK-USDC 7.32h ago  1995
+                                                   SOL-USDC 49.96h ago   276
+                                                   TAO-USDC 59.74h ago   229
+
+The classical lane can only work on what is streaming *at that moment*. During
+the outage the rotating feed set and the tradeable set overlapped on exactly one
+symbol — AERO — which the edge ban correctly refuses. 51.82h of zero entries
+follows with nothing broken anywhere.
+
+**THE PROFIT CONSEQUENCE, and it is the reason this matters beyond the outage:**
+the loop's route (b) is *trade the deep cheap tokens* — WETH round trips 0.04–
+0.11% vs AERO 0.64–4.35%. The tape serves **4.4x more AERO than WETH** (8902 vs
+2006 ticks) and WETH is dark right now. Route (b) is not blocked by a gate or a
+cost model — **we do not stream WETH reliably enough to trade it.** Every
+downstream cost-floor fix has been aimed at a symbol the feed will not keep
+alive. Closest existing item: `eb269198` (restrict the stream to fillable
+symbols), currently BLOCKED — read it before filing anything new.
