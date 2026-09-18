@@ -13292,3 +13292,17 @@ to depend on the mechanism, not the number.
 **ROUTE: brain corpus loader (`b7676675`) — BLOCKED, not rejected.** Real bug,
 714,673 bars, but serves only brain experiments and the brain is closed negative
 (`OMEN_STRATEGY_ENABLED=0`, L2 heldout t=−5.97). Reopen when that flag goes to 1.
+
+**ROUTE: "a scheduler task died" — CLOSED, wrong. The SYMBOL UNIVERSE collapsed.**
+Corrected within pass 474. Five classical statuses going to exactly zero looked
+like a dead task; asking which *symbols* the machinery touches gives the real
+answer. Distinct symbols: **18 healthy → 2 during the outage → 9 since restart →
+9 live now**. The lane ran 816 times during the outage — 806 AERO-USDC, 10
+ETH-USDC. The two statuses that did NOT zero (`entry-predropped-edge-ban` 460 +
+`entry-arbitration` 356) sum to exactly 816; the five that zeroed sit
+**downstream of the edge-ban predrop**, so a universe of one pre-dropped symbol
+zeroes them with nothing dying. Detector is **universe width**, not a sweep
+count — a sweep alarm fires correctly but names the scheduler when the bug is
+upstream in feed/discovery. Do NOT touch the edge ban: it refused AERO 460 times
+and is probably right (0 of 7,704 bans lift at a cheaper cost); the defect is
+that AERO was the only symbol left to ban. **Still half broken: 9 of 18.**
