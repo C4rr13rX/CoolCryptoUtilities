@@ -13260,3 +13260,35 @@ restarted onto it at 16:47:59. Next pass reads:
 **Trap recorded:** `log_message` from a standalone process takes the fallback
 path (`services/logging_utils.py:28-35`) because the bus is absent, so a
 synthetic test proves nothing. Verify in-process.
+
+## Pass 474 (Echo, senior) — 2026-09-18
+
+**ROUTE: "the books stopped writing" — CLOSED, premise was false.**
+Seven passes chased a swallowed exception in `record_fill`. There isn't one. The
+17 ghost entries in the 51.82h window are ALL `VIRTUAL-USDC` /
+`source=c0d3rv2_atf_static` / `strategy_id=atf_static_scout` — the ATF path,
+which writes a `trading_ops` row and never calls `record_fill`. The baselines
+that made 0 fills look impossible (day11 24→31, day9 15→27) were measured on
+CLASSICAL entries. Two populations, one denominator. Control: the 2 classical
+entries since the 16:47:59 boot (AERO `donchian_breakout@1w`, ZORA
+`donchian_breakout@5d`) each wrote `trade_fills` in the SAME SECOND plus
+`trade_outcomes` at exit. Both armed probes read 0.
+`grep -c 'FILL WRITE FAILED' logs/services/ghost.log` → 0. CLOSED.
+
+**ROUTE: reprice the fee per token — OPEN, but its evidence base is thinner
+than it looked.**
+The fee is one pooled p75 charged per-token. Measured bp of notional over 221
+ghost rows: AERO 54.6 (n=46), BASECAT 67.5, COMP 86.5, CBETH 76.3. AERO and
+ZORA were charged an IDENTICAL 0.025334 at 17:17 despite different costs.
+Repricing AERO to the census 13bp moves it 47.8% → **54.3%** win on n=46 —
+still UNDER the 55% bar, one trade short. Whole book 34.8% → 40.7%.
+**Pre-registered kill test was run and is NOT ANSWERABLE from this store**:
+ghost legs carry no slippage (`bot.py:9576`) so a ghost round trip measures the
+market; live `fee_cost` is gas only on 91¢ clips (AERO 39.2bp, CBETH 100.5bp,
+BSTONK 183.2bp — clip odometer). Neither book can price AERO. The 13bp is NOT
+defensible locally; only an on-chain read settles it. Item `27ec44d3` rewritten
+to depend on the mechanism, not the number.
+
+**ROUTE: brain corpus loader (`b7676675`) — BLOCKED, not rejected.** Real bug,
+714,673 bars, but serves only brain experiments and the brain is closed negative
+(`OMEN_STRATEGY_ENABLED=0`, L2 heldout t=−5.97). Reopen when that flag goes to 1.
