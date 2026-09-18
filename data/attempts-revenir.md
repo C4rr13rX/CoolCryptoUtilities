@@ -14106,3 +14106,20 @@ OPEN QUESTION FOR THE NEXT PASS: whether to CLEAR the persisted flag in kv_store
 Leaving it true means every future boot is one env edit away from live execution.
 Clearing it means the next legitimate graduation must re-earn it. I did not
 decide this -- it is an operator call and I was out of clock.
+
+### PASS 477 FIFTH ADDENDUM -- EXACT PATH, VERIFIED AGAINST THE READER
+
+My first statement of the kv_store finding put the flag at the TOP LEVEL of
+kv_store[state]. It is not. Top level holds only ghost_trading, last_epoch,
+training_pipeline. The flag is NESTED, and the nesting is exactly what the code
+reads:
+
+    kv_store["state"]["ghost_trading"]["auto_execute_approved"] == True
+
+    bot.py:12847  self._auto_execute_approved = bool(ghost.get("auto_execute_approved", False))
+    bot.py:1377   documents kv_store['state']['ghost_trading'] as the ghost path
+
+Value, path and reader all line up. This version is hardened. The two that
+preceded it in this same pass were not -- the first checked the wrong store
+(data/*.json) and concluded the gate holds, the second had the right store and
+the wrong depth.
