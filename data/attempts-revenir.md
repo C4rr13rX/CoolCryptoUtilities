@@ -12423,3 +12423,47 @@ ZERO evidence -- those are different failures and the briefing's "tradeable
 evidence rate: 4.1/day, nearest graduation ~60.8 days" is computed over a book
 that has not moved in nearly two days. The rate is zero and the ETA is
 undefined, not 60.8 days.
+
+### Pass 466 addendum -- the 43h-dark evidence book is an ENTRY monopoly, not a booking bug. CLOSED.
+
+PRE-REGISTERED, posted to the board before running: take the 8 `exit` ops in
+trading_ops from the last 24h and look for each in trade_outcomes. If all 8 are
+present it is a READ bug (window/filter). If 0 are present it is a WRITE bug on
+the exit path.
+
+RAN IT: 0 of 8 by trade_id, 0 of 8 by symbol within +-10 min. Complement
+refuted. Then read the ROWS instead of the count and the write-bug reading died
+too:
+
+  ALL 8 are strategy_id=atf_static_scout, VIRTUAL-USDC, exit_reason=max_hold,
+  source=c0d3rv2_atf_static. Over the full 42.7h dark window: 11 of 11, same
+  strategy.
+
+atf_static_scout is the ghost-only executor with NO LIVE BRANCH -- it books
+nothing BY DESIGN, so an unbooked scout exit is correct. record_trade_outcome is
+not silently no-opping.
+
+THE MECHANISM. The last six outcomes ever booked (43h ago) were rsi_reversal@1w,
+stochastic_reversal@3d, supertrend_follow@5d, rsi_reversal@1d -- strategies that
+CAN bank and did. They have not exited since. The book is silent because the
+only strategy still exiting is the one whose evidence can never be spent, while
+~740 entries/day are consumed. That is the ENTRY MONOPOLY ([583ba889],
+[c9e248aa]), not a booking seam.
+
+CLOSED: "the evidence book is dark because of a booking failure between
+ghost-exit and trade_outcomes". Do not spend another pass on it. The standing
+memory that said so is overturned in place.
+
+COST TELL, worth carrying: those 8 scout exits total +0.1275 GROSS, per-trade
+returns 0.004-0.015% against a stamped roundtrip_cost_usd of 0.0232 on EVERY
+row. Sub-2bp moves counted as wins -- the same gross-vs-net trap as the
+graduation counter, and the reason the scoreboard shows this strategy at 71%
+win / +0.1278.
+
+SCHEMA, not guessable, cost me a wrong query this pass: trade_outcomes HAS NO
+STRATEGY COLUMN (strategy is JSON inside `details` only), and trading_ops keys
+on `action`, not `op` or `event`.
+
+METHOD NOTE THAT EARNED ITS PLACE: a 0-of-8 miss and a 6-and-6 hit are both
+COUNT artifacts, and both times the count told the wrong story while the
+row-level read told the right one. Match on identity, never on count.
