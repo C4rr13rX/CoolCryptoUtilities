@@ -13329,3 +13329,21 @@ cost model — **we do not stream WETH reliably enough to trade it.** Every
 downstream cost-floor fix has been aimed at a symbol the feed will not keep
 alive. Closest existing item: `eb269198` (restrict the stream to fillable
 symbols), currently BLOCKED — read it before filing anything new.
+
+**THE BASELINE, and it blocks TWO routes.** Max tick gap over 6h in
+`market_stream` (open gap counted): CBETH 13.8 min, CBBTC 22.1, VVV 52.4,
+**AERO 65.8**, ZORA 89.7, **WETH 187.6** (19 ticks), ETH-USDC 193.2 (24).
+Bar is 15 min — **one symbol of seven clears it.**
+
+Read the median beside the maximum: AERO's median gap is **11.5 seconds** and its
+max is **65.8 minutes**. Not a slow feed — a feed that *stops*. Any metric on
+tick counts or median cadence reports this tape healthy.
+
+- **Route (b) blocked**: tape carries 4.4x more AERO than WETH; the cheap token is
+  dark. Downstream cost fixes were aimed at a symbol the feed won't keep alive.
+- **Route (c) blocked**: cannot exit inside 15 min through a 65-min hole — the
+  exit check runs *on a tick*. Stale-exit/timed-exit fixes aimed at a clock while
+  the thing that fires the exit was gone for an hour at a time.
+
+`eb269198` carries the baseline. Done when max_gap < 15.0 min for WETH, AERO,
+CBBTC, ZORA. **AERO alone** from 65.8 → under 15 is real partial credit.
