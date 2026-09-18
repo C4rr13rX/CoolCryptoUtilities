@@ -13412,3 +13412,19 @@ serving a brain that is `OMEN_STRATEGY_ENABLED=0`, closed negative.
 measured blackout. Confirm the correlation before changing anything; if
 dataset_warmup is *not* holding during the blackouts, the socket read (2 of 6) is
 the better suspect. On `a2bfd079`.
+
+**TWELVE SAMPLES: the GIL holder is not one thread — distrust the ranking above.**
+dl-dynamic 4, seq-dataset_warmup 3, asyncio_9 1, resource-governor 1 (+2
+ssl_wrap_socket, 1 fetch_trades, not GIL-marked). `dl-dynamic` appears *more*
+than dataset_warmup and was absent from the first six samples entirely.
+
+**What survives all twelve: the GIL is almost never held by the trading loop.**
+The asyncio supervisor thread was active ONCE in twelve dumps. Everything else
+was a model task, a download thread, the resource governor, or a TLS handshake.
+This process is not blocked by a single culprit — it is **GIL-contended by a
+crowd**, and the money path is one voice in it.
+
+That may change the fix shape entirely: *"find the blocking call"* and *"the
+trading loop shares an interpreter with a dozen model/IO threads and loses"* have
+very different answers — a bugfix versus a process split. **Take substantially
+more than twelve samples, inside measured blackouts, before choosing.**
