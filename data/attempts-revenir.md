@@ -13661,3 +13661,76 @@ cause covers both.
 Also: the top droppers overall are GROVE 250, FLOW 164, CLAWDCHAT 157, LAPCAT
 154, CUMMIES 142, AICAT 140. The poll budget is being spent timing out on tokens
 we will never trade.
+
+## Pass 476 (Echo, senior) -- the feed runs TWO DISJOINT SHIFTS; the endpoint hash decides who starves
+
+ROUTE TRIED: assigned [eb269198], "restrict the stream to fillable symbols",
+carrying a pass-475 diagnosis that WETH's ticks are dropped by the synthetic-
+source gate at data_stream.py:1444 at an 85% rate.
+
+RESULT: the pass-475 drop census is CENSORED and the diagnosis is wrong at the
+mechanism level, though right that WETH is starved.
+
+1. HYPOTHESIS OF MY OWN, PRE-REGISTERED AND REFUTED. I proposed WETH's 19 rows
+   were a lead-edge artifact (WETH joined the universe recently). Decomposed
+   INNER/LEAD/TRAIL over 6h: WETH LEAD 0.9m, span 357.7m, INNER max 247.0m,
+   3.2 ticks/h. Present the whole window. Genuinely starved. Complement held.
+
+2. THE PASS-475 DROP CENSUS IS CENSORED. The warning at data_stream.py:1448 is
+   throttled to one line per 60s per symbol, so no symbol can log more than 360
+   lines in 6h however much it drops. Counting log lines censors the worst
+   offenders hardest. Uncensored count is the cumulative dropped_total in the
+   line's details payload. CLOSED: do not re-derive drop rates from line counts.
+
+3. THE DROP GATE IS NOT A CONSENSUS GATE. :1444 drops on a SOURCE LABEL,
+   _SYNTHETIC_SOURCES = {fallback, offline, bootstrap, reference, snapshot}.
+   Observed labels over 6h of drops: fallback 1515, offline 364. The gate is
+   correct and its comment at :1427 documents the last attempt to relax it
+   (173 of 211 ticks fabricated; BASEJUICE 0.00111 <-> 1.00004, a 900x swing).
+   CLOSED NEGATIVE: "admit a single-source price when consensus fails" is
+   struck from the item. The starvation is upstream of the gate.
+
+4. THE FEED RUNS TWO DISJOINT SHIFTS. 10-min bins over 12h, 72 bins:
+   CBBTC-only 13, WETH-only 33, BOTH 0, neither 26. Expected BOTH under
+   independence 5.8, observed 0. Fisher one-sided p=1.15e-04.
+   Correlation vs WETH across 37 symbols (>=15 rows/12h):
+     STARVED (with WETH): UNI +0.810/97 rows, LDO +0.806/93, ALIGN +0.747/111,
+       VIRTUAL +0.725/119, CAKE +0.719/109, ETH-USDC +0.714/96
+     FED (against WETH): MAMO -0.279/505, BLUECHIP -0.274/420, CBETH -0.268/365,
+       CBBTC -0.239/327, COMP -0.228/269, VVV -0.197/243
+   243-505 rows vs 93-119. WETH and ETH -- the deepest, cheapest names we have
+   -- are both in the starved shift.
+
+5. THE SHIFTS ARE TWO SOURCE STACKS, MEASURED WITHOUT A RESTART. The log
+   carries endpoint and symbol together. REST-timeout census, 25MB:
+     STARVED 18102 timeouts: mexc 5102, geckoterminal 5047, dexscreener 3666,
+                             kucoin 2458, coingecko 1829
+     FED      4544 timeouts: dexscreener 2236, geckoterminal 2226, coingecko 82
+   mexc+kucoin = 7560 in STARVED, ZERO in FED. The fed symbols never touch an
+   exchange endpoint; the starved ones burn their poll budget on exchange REST.
+   Per symbol: WETH 2179 timeouts/19 rows vs CBBTC 129 timeouts/327 rows -- 17x
+   the timeouts, 1/17th the tape.
+
+6. THE ASSIGNMENT MECHANISM, data_stream.py:2510:
+     rot = abs(hash(self.symbol)) % len(pool)
+     _WS_POOL = (okx, bybit, mexc, kraken, kucoin, coinbase)
+   PYTHONHASHSEED is UNSET, so this is randomised PER PROCESS and re-drawn on
+   every restart, fixed for the process lifetime. Three runs: WETH -> coinbase,
+   kucoin, coinbase; CBBTC -> kraken, mexc, okx. The code's own comment at
+   :2496 states coinbase cannot stream -USDC/-USDT pairs at all.
+   THIS EXPLAINS WHY SIX SELECTION-SIDE HYPOTHESES DIED IN PASS 475: which
+   symbols look broken changes across every restart, so anything measured
+   before a boot and tested after it tested a different draw.
+
+7. THE ROOT IS THE BLOCKED LOOP, NOT THE HASH. Event-loop lag recorded on those
+   timeouts, n=60722: median 22.4s, p90 93.4s, max 3570.8s, against a 10s
+   budget. The median block is 2.2x the budget, so the exchange REST path can
+   essentially never complete and any symbol routed to it starves by
+   construction. The 3570.8s max is the 16-59 min global blackout already on
+   record. [a2bfd079] is the root; [eb269198] is its downstream face. Fixing the
+   hash alone only reshuffles which symbols starve.
+
+STATUS: [eb269198] left IN PROGRESS with rewritten acceptance criteria and an
+unshipped, fully specified fix. No production code written (senior). No restart
+-- a restart re-draws the hash and would have destroyed the observation, and a
+6h post-restart window does not fit a 30-minute pass.
