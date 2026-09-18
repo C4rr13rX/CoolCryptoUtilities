@@ -13483,3 +13483,34 @@ remedy identified, NOT applied (needs a restart + 6h window to judge).
 
 NOT CLOSED: the item stays open. The diagnosis is done; the change is not made
 and is therefore not proven.
+
+### Pass 475 addendum -- I refuted my own link 2, and a sampling artifact nearly hid it
+
+CLAIM TESTED: the 36 bot slots are ranked by a key monotone in VARIANCE, so meme
+tokens win them and deep calm names like WETH rank out. Cited from the memory
+`symbol-selection-sort-key-is-monotone-in-variance`, not measured.
+
+COMPLEMENT: selection is not volatility-driven; WETH left for another reason.
+
+FIRST RESULT, mean |r| per tick over 6h: ALIVE (trail<15m) median 1.4 bp,
+DEPARTED (trail>200m) median 14.1 bp. NOT REPORTED AS A RESULT -- it is an
+artifact. Alive symbols tick every 6-22 s, departed every 87-198 s, and per-tick
+return grows with tick spacing, so a sparsely sampled symbol looks volatile for
+free. Same family of error as the window padding above.
+
+NORMALISED to bp per sqrt(minute): ALIVE median 3.5, DEPARTED median 10.6. The
+margin falls from 10x to 3x and the SIGN SURVIVES -- departed symbols are ~3x
+MORE volatile per unit time. HYPOTHESIS REFUTED, in the opposite direction: the
+selector kept the CALM names and dropped the VOLATILE ones.
+
+CONSEQUENCE. `GHOST_STREAM_TOTAL=0` survives untouched -- it is arithmetic off
+`selector.py:1351` and `:1511` and does not depend on why symbols churn. What is
+DEAD is the account of why the 36 bot slots churn: unknown again. The next pass
+must read the `select_pairs` sort key directly rather than trust pass 475 on it.
+`symbol-selection-sort-key-is-monotone-in-variance` does not explain THIS churn.
+
+UNEXPECTED, and the strongest argument for the item: WOLF, CYBER and CUTECAT
+show EXACTLY 0.0 bp of movement across 112, 25 and 142 ticks. Their prices never
+change. THREE OF THE NINE SYMBOLS HOLDING LIVE TAPE ARE FROZEN, while WETH at
+9.5 bp/sqrt(min) is off the tape entirely. A third of live coverage is spent on
+symbols that cannot produce a signal.
