@@ -14036,3 +14036,34 @@ geckoterminal 9187 (26.28%), kucoin 9147 (26.16%), bitstamp 477 (1.36%), and
 okx/bybit/mexc/kraken/coinbase ZERO. Exactly four delivering sources. The claim
 held on 473 rows that did not exist when it was made. [eb269198] is safe to hand
 over; scope-cut to that one change and dropped to priority 3.
+
+### PASS 477 THIRD ADDENDUM -- WHAT THE LEDGER'S 18 COUNTS. ANSWERED, AND IT CLOSES OPTION A.
+
+    atf_static in the STORE   15 rows, 12 distinct trade_ids, net -0.1882
+    atf_static in the LEDGER  18 trades, wins 5, losses 13, net -0.18637
+
+18 matches neither 15 rows nor 12 round trips. But 5 + 13 = 18 -- the ledger is
+INTERNALLY CONSISTENT WITH ITSELF. It is a STAMPED ACCUMULATOR, incremented per
+booking event, not a view over trade_outcomes. It cannot be reconstructed by any
+query and it can drift. For atf_static it HAS drifted: by 3 counts and 0.0018 of
+P/L, on top of the 7 orphan rows it never saw at all.
+
+NOT A NEW BUG -- THE SAME BUG, RELOCATED. See the memories
+graduation-tradeable-count-is-a-stamped-accumulator (ledger.py:736) and
+ledger-wins-plus-losses-is-not-trades (199+13=212 against 253 trades). This repo
+has documented this exact defect on two other counters. What is new is that it
+sits under THE GOAL NUMBER, which is the one place nobody checked, because it is
+the thing everything else is measured against.
+
+CONSEQUENCE -- CLOSES A FIX OPTION I MYSELF PROPOSED EARLIER IN THIS ENTRY.
+Option A (back-attribute the 7 orphans, let the ledger absorb them) is
+ARITHMETICALLY DEAD ON ITS OWN. Back-attribution cannot reconcile the books when
+even the 15 rows the ledger DOES attribute fail to reproduce its own 18. The
+scoreboard must read the STORE. Back-attribution remains worth doing for the two
+rows recoverable from their reason string, but as attribution, not reconciliation.
+
+STATED PLAINLY FOR THE RECORD: every pass for weeks has reported progress
+against -0.1864 over 18. That figure is an accumulator no query reproduces,
+sitting over a store that says -0.3320 over 17 round trips. Nobody faked
+anything. The loop has been steering by an uncalibrated instrument, and
+calibrating it ([503d996e]) is worth more than another pass of tape work.
