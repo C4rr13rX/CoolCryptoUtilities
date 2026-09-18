@@ -14067,3 +14067,42 @@ against -0.1864 over 18. That figure is an accumulator no query reproduces,
 sitting over a store that says -0.3320 over 17 round trips. Nobody faked
 anything. The loop has been steering by an uncalibrated instrument, and
 calibrating it ([503d996e]) is worth more than another pass of tape work.
+
+### PASS 477 FOURTH ADDENDUM -- URGENT, AND IT OVERTURNS MY OWN SAFETY CLAIM FROM THIS SAME PASS
+
+Earlier in this entry I wrote: "no file under data/ contains auto_execute_approved,
+so it boots False and the dry-run default holds. THE GATE HOLDS."
+
+THAT WAS WRONG. I grepped data/ and orchestration/ for JSON. bot.py:12847
+rehydrates from persisted ghost state, and that state is NOT in a JSON file. It
+is in the DATABASE:
+
+    storage/trading_cache.db   table kv_store   key = "state"
+    value contains:  "auto_execute_approved": true, "swarm": {"cells":
+
+    SELECT substr(value, instr(value,'auto_execute_approved'), 40)
+      FROM kv_store WHERE key='state';
+
+IT IS PERSISTED TRUE. So the chain resolves the OTHER way:
+
+    bot.py:12847   _auto_execute_approved <- true   (from kv_store)
+    bot.py:1557    LIVE_TRADES_DRY_RUN is None AND _auto_execute_approved
+                   -> return False   = NOT DRY RUN, REAL EXECUTION
+
+And production was restarted TODAY: PID 9792, main.py --action start, booted
+2026-09-18 16:47:59. That boot read this state.
+
+NO MONEY HAS MOVED. Zero live fills since 09-05, measured twice this pass, and
+step 6 still refuses entries upstream of execution. The lane is blocked. What is
+RETRACTED is the REASON it is safe: it is NOT safe because of the env vars, it
+is safe ONLY because step 6 refuses -- and step 6 is exactly what the next pass
+was queued to fix.
+
+REQUIRED BEFORE ANY STEP-6 WORK OR ANY RESTART: set LIVE_TRADES_DRY_RUN=1
+EXPLICITLY in .env. bot.py:1557 tests "is None", so an unset var does NOT survive
+a persisted auto_execute_approved=true. [f6b04c09] updated to lead with this.
+
+OPEN QUESTION FOR THE NEXT PASS: whether to CLEAR the persisted flag in kv_store.
+Leaving it true means every future boot is one env edit away from live execution.
+Clearing it means the next legitimate graduation must re-earn it. I did not
+decide this -- it is an operator call and I was out of clock.
