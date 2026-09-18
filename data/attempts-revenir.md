@@ -13107,3 +13107,19 @@ SURVIVING RESULT (positive, and new):
 OPEN: is it boot STATE (rebuilt by the 09-18 15:25 restart) or committed CODE
 (still present)? The restart separates them. Entries arrive at 0.34/h, so
 95% confidence of observing one needs 8.8h of uptime, not 35 minutes.
+
+4. "The fill write SUCCEEDS but lands in a different database — the 09-16 14:48
+   boot resolved TRADING_DB_PATH differently." CLOSED NEGATIVE, and this one
+   mattered most: if true, no exception would ever be raised and the armed
+   probe would stay mute forever. Walked every sqlite file in the tree:
+     storage/trading_cache.db        1436 rows, newest 09-16 13:13:11
+     web/storage/trading_cache.db       0 rows, untouched since 09-02
+     data/trading.db, trading_bot.db, data/trading_bot.db, data/market_data.db
+                                     0 bytes, all stale
+   There is no second book. The probe is the right instrument.
+
+NOT A FINDING, recorded only because the coincidence is close: trading_cache.db-shm
+has mtime 09-16 17:02:15 and has not moved, four minutes before the first unbooked
+entry. Probably an artifact — shm is memory-mapped and Windows does not reliably
+update its mtime, and the main db and -wal are both being written now. Do not
+build on it without a second source.
