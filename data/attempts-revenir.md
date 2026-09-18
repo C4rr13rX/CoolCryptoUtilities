@@ -12302,3 +12302,41 @@ quantity, and **neither known writer explains it** — `bot.py:10834` passes
 `economic_profit` and the scout never reaches it; `backfill_ghost_ledger.py:157`
 passes the raw ops profit, which would give −0.0203. **There is a third writer or
 a third quantity.** `[d5fbddfc]` criterion 2.
+
+### Pass 465 RETRACTION -- "the same fourteen" was a coincidence
+
+I argued the ledger's win counter tracks **gross** profit because the ledger holds
+14 wins of 20 and my ops-row count gave 14 of 21. **Retracted.** I never checked
+that the row sets were the same rows. One query:
+
+    scout ghost-exit ops rows, all time        126
+    ledger ghost book, same strategy           253 trades
+
+**The ledger holds twice as many trades as there are ops rows to build it from**,
+so it cannot be derived from them and no count match across the two is a join.
+Over all 126 ops rows the gross is **+2.0502 with 112 wins (88.9%)** — matching
+neither the ledger's 199/253 (78.7%) nor its +6.6802.
+
+Worse, the cost field is **not missing at random**. Of 126 rows only 21 carry
+`roundtrip_cost_usd`, and those 21 are **81% VIRTUAL-USDC (17 of 21)** while the
+105 without it are AERO 26, BSTONK 20, CBBTC 13, BASECAT 12, CBXRP 11, CBETH 9.
+So the net-of-cost census I ran is 83% incomplete **and** symbol-skewed — which
+matters a great deal here, because AERO and WETH sit at opposite ends of this
+chain's cost wall.
+
+**WHAT SURVIVES:**
+
+- The scoreboard reads the ledger's tradeable subset — an exact digit-for-digit
+  match on `0.12070961597995647` and 14/20, not a count coincidence.
+- `199 + 13 = 212` against `trades = 253`. Internal to one file, needs no join.
+  `[99728b37]` stands.
+- The gross/net mechanism at `ledger.py:804` and the two writers are real.
+
+**WHAT DOES NOT:** that this strategy's book was written gross. Unproven.
+`[4c267abe]` criterion 3 is **fully open**, and neither known writer produces
++0.1207 — so a third writer or a third quantity exists.
+
+The lesson is one my own memory index already carries and I walked into anyway:
+**a matching count across two books is not a join.** The n=21 kill test that
+closed the scout-promotion route is unaffected — it compared `profit` against
+`roundtrip_cost_usd` **within each row**, never across books.
