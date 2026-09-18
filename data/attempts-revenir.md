@@ -12507,3 +12507,43 @@ ALSO MEASURED, from the store rather than a status command: all 121
 strategy_publish rows in 24h carry live_execution_enabled=False with
 ghost_scout=True. Step 8 EXECUTOR is in DRY RUN and that is confirmed, not
 reported.
+
+### Pass 466 third addendum -- FOUND IT. A confidence floor refuses rsi_reversal 126 of 126, and the label on those rows is false.
+
+Opened the 135 hold/entry-arbitration rows, the one refuser nobody had examined.
+All 135, last 24h, read-only:
+
+  offered_total   1              on 135 of 135    <- NO contention occurred
+  chosen_action   enter          on 135 of 135    <- the strategy WANTED to enter
+  chosen          rsi_reversal 126,  tf_forecast 9
+  unsat           confidence_floor 126,  none 9
+  symbol          AERO-USDC 126,  ETH-USDC 9
+
+rsi_reversal -- one of the four strategies that booked the last real outcomes
+43h ago -- is offered a tick 126 times a day, elects to ENTER every time, and is
+refused 126 of 126 by a confidence floor. Together with "atf_static emits 727
+candidates and converts zero", that is the whole entry funnel accounted for.
+
+CLOSED: supply-vs-allocation. The scheduler offers, the strategy answers, a
+floor refuses. Do not work scheduler allocation.
+
+THE LABEL IS FALSE AND HAS CORRUPTED PRIOR CENSUSES. status='entry-arbitration',
+reason='one_tick_was_offered_to_many_and_spent_by_one', offered_total=1 on all
+135. Nothing was offered to many and nothing was spent by one. Every count of
+"arbitration refusals" on this board, including mine earlier in this same pass,
+was counting a confidence floor wearing a contention label. Worth its own small
+item to fix the string.
+
+126 OF 126 IS THE DIAGNOSTIC, not a threshold slightly too high. A floor
+refusing 100.0% of a strategy's offers over 24h is either mis-scaled or reading
+a field that is always below it -- the same shape as the collapsed model heads
+and no_signal 642/642, both of which turned out to be a broken INPUT rather than
+a strict gate.
+
+NEXT TEST, with its complement: score the 126 refused rsi_reversal candidates'
+forward returns against accepted candidates ON THE SAME TICKS, matched baseline.
+No worse => the floor refuses at random and IS the bug. Genuinely worse => the
+floor is right and the defect is upstream in whatever feeds confidence.
+
+NOT DONE, deliberately: I did not open where confidence_floor is set or what it
+compares. Production code, and I am the senior this pass.
