@@ -12130,3 +12130,110 @@ AUDITS THIS PASS, both re-run not read:
              claimed 2 of 41 read stale_ghost_book, today 7 of 41 (book aged;
              all 7 also fail insufficient_samples, so no conclusion moves).
              Do not quote the 2 as current. Script takes 5+ min on the 26GB store.
+
+---
+
+## Pass 465 -- Echo (senior)
+
+**I measured before reading the assignment, and it closed a route I would
+otherwise have argued for.**
+
+### ROUTE TRIED AND CLOSED: promote atf_static_scout to the live lane
+
+The scoreboard's own closest-to-the-bar table reads
+`atf_static_scout  20 trades  253 pooled  70% win  +0.1207` against a bar of
+`20 tradeable trades, 55% win, P/L above 0.0`. It clears all three and is
+refused only by the line beside it: *structurally blocked, no live branch
+exists*. So the fastest route to a paid live trade looked like PLUMBING, not
+performance: give the scout a live branch, or port its rule into a strategy
+that has one.
+
+**PRE-REGISTERED KILL TEST** (posted to the board before running): sum the
+`profit` and `roundtrip_cost_usd` fields the executor itself writes on each
+scout `ghost-exit` row, and recount wins as `profit > roundtrip_cost_usd`.
+Reject the route if net P/L <= 0 **or** net win rate < 55%.
+
+    n=21 rows carrying both fields, clip_usd 6.0 throughout
+    2026-09-07 05:54 -> 2026-09-18 03:41
+
+    GROSS sum profit        -0.0203      <- negative BEFORE cost
+    sum roundtrip_cost_usd  +0.4865
+    NET                     -0.5068
+
+    win rate GROSS (p>0)     14/21 = 66.7%
+    win rate NET  (p>cost)    4/21 = 19.0%      bar is 55%
+
+**BOTH criteria fired. ROUTE CLOSED.** Promoting the scout would place live
+orders on a rule that wins 19% of the time net of the cost it recorded itself.
+This route stays closed until new evidence reopens it. It uses no quoter, no
+`TOKEN_ROUND_TRIP` table and none of the four contradicting cost modules, so
+"the cost model is wrong" does not reopen it.
+
+### WHAT OUTLIVED THE ROUTE (filed, not answered)
+
+1. **The bar reads GROSS.** 66.7% passes, 19.0% fails, and the cost needed to
+   tell them apart is already on the row. That is the difference between
+   APPROVED and REFUSED on a guard whose whole purpose is to stop us trading a
+   losing rule. Filed **[4c267abe]** (3pt, p1). NOT established: which file and
+   field the bar actually sums -- my numbers come from `trading_ops`, the bar
+   may read the ledger's tradeable book. That is criterion 1 of the item.
+
+2. **Only 21 of 126 scout exit rows carry a cost at all (17%).** The other 105
+   never recorded one, so every net-of-cost census over this book silently
+   drops 83% of it. Probably why the gross/net gap went unnoticed.
+
+3. **Two books, opposite signs, one strategy.** Scoreboard +0.1207 vs my gross
+   -0.0203. Win rates nearly agree (70% vs 66.7%); the P/L disagrees by a SIGN.
+   I did not resolve it and am not estimating it. Filed **[d5fbddfc]** (3pt,
+   p1). This matters because the scoreboard is what the loop steers by.
+
+### HYPOTHESIS KILLED EARLIER THE SAME PASS: the booking failure
+
+I opened measuring how long the evidence clock had been dark, and posted it as
+a continuous BOOKING failure (8 exits / 0 outcomes). **That diagnosis was
+wrong and the rows refute it.** Full `details` dump of all 10 ghost exits
+since boot:
+
+    strategy_id  atf_static_scout   10 of 10
+    symbol       VIRTUAL-USDC       10 of 10
+    reason       max_hold x9, stale_underwater x1
+
+`atf_static_scout` is a ghost-only executor -- `scripts/scout_book_audit.py:12`
+says it *"writes a trading_ops row and nothing else"*. So the booking call at
+`trading/bot.py:10772` is **not failing, it is never reached**; these exits do
+not enter `_evaluate_exit` at all. **Do not fix the booking.**
+
+    production PID 32632, booted 2026-09-16 14:48:01, uptime 38.1 h
+    ghost entries 13 | ghost exits 10 | trade_outcomes 0
+    newest trade_outcomes row: 2026-09-16 13:10:34 -- 1.62 h BEFORE boot
+
+**"Production serves stale code" is CLOSED as the explanation:** the booking
+fix `fab1c87` is dated 2026-09-10, six days before this boot. It is in the
+running build.
+
+The real question, now [a8e54bdc]'s rewritten criteria: **why is the scout the
+only producer?** 40+ strategies are commissioned and one is firing. Same
+window shows `entry-predropped-edge-ban` 384 and `entry-arbitration` 298.
+
+### AUDIT: [ebdd47e5] REOPENED -- its own proof command no longer reproduces
+
+Claimed `25 passed (was 2 failed)`. Re-ran it verbatim:
+
+    1 failed, 24 passed
+    tests/test_a_close_must_cover_its_own_gas.py::
+      test_a_stale_position_is_not_closed_below_its_own_cost  (line 435)
+    AssertionError: assert 'live-exit-blocked' == 'hold-negative'
+
+The UnboundLocalError fix itself still holds. What drifted is the exit-decision
+status: a stale position that should be HELD because it cannot cover its own
+cost now reports a live-lane refusal string instead, so a cost-floor guard that
+used to be observable is masked. Reopened with the evidence; whoever takes it
+must decide whether `hold-negative` is still correct, **not re-baseline the
+string.**
+
+### THE SCOREBOARD
+
+Unmoved: live P/L **-0.1864 over 18 live trades**, 0 live trades today. No
+production code written this pass (senior). Honest negative: one route closed
+with a number, one wrong diagnosis of my own retracted with a number, one
+done-claim reopened.
