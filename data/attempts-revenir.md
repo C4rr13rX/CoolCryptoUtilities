@@ -13173,3 +13173,36 @@ of the decision, decision not taken.
 
    CORRECTED TRIGGER for the next pass — use the DB, not the log:
      select count(*) from trading_ops where ts>1789759522 and status='ghost-entry'
+
+6. CORRECTION TO 5, AND THE PASS'S REAL RESULT. The log line and the ops row are
+   NOT on different code paths — they are in the SAME function, in this order:
+
+     bot.py:9794   writes the trading_ops 'ghost-entry' row
+     bot.py:9812   self._tune_allocation(...)               UNPROTECTED
+     bot.py:9821   self.metrics.record(GHOST_TRADING, ...)  UNPROTECTED
+     bot.py:9832   self.metrics.feedback('ghost_trading')   UNPROTECTED
+     bot.py:9844   print('[ghost] enter ...')
+     bot.py:9848   self.scheduler.record_trade(...)
+     bot.py:9869   self.record_fill(...)   <- the silent write
+     bot.py:9901   the probe armed at cb52c9e
+
+   Every try/except in 9700-9910 sits at 9714, 9771, 9850, 9868. NOTHING
+   protects 9808-9849.
+
+   This accounts for all four observations at once:
+     17 ghost-entry ops rows exist        -> 9794 ran
+     0 '[ghost] enter' lines for them     -> 9844 never ran
+     0 trade_fills rows                   -> 9869 never ran
+     0 probe lines in the entire log      -> 9901 never ran
+
+   Something in 9812/9821/9832 raises AFTER the ops row is written and BELOW
+   nothing — the exception propagates past every instrument, because all three
+   probes sit under it. The pass-470 bare-except diagnosis was aimed one screen
+   too low.
+
+   NOT CONFIRMED: I have not caught the raise. This is a named suspect with
+   file and line, not a proven cause.
+
+   CONSEQUENCE FOR THE PLAN: the probe at 9901 WILL NEVER FIRE. Do not spend
+   hours waiting on it. Wrap 9808-9848 in a handler that logs type, message and
+   symbol, restart, and the next VIRTUAL entry names the raiser.
