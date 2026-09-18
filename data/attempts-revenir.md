@@ -13960,3 +13960,34 @@ Also 81.4% of total |net| is in 5 of 22 rows; BPAD-USDC atf_static stop_loss is
 
 SHIPPED: no production code (senior). Backlog [eb269198] scope-cut from an
 uncompletable 7-day-census DONE WHEN to a one-pass one; priority dropped to 3.
+
+### PASS 477 ADDENDUM -- THE UNRESOLVED ITEM ABOVE IS NOW RESOLVED, AND IT IS WORSE
+
+The "two counts of the live book disagree" note above is CLOSED. The scoreboard
+number is one JSON field:
+
+    data/strategy_ledger.json -> atf_static -> live
+      {"trades": 18, "wins": 5, "losses": 13, "total_profit": -0.18637...}
+
+graduation_status.py:258 reads `live.get("trades")` off the LEDGER, which
+attributes by strategy_id. Only atf_static has a non-zero live book; the other
+42 of 43 entries read trades 0.
+
+The STORE, trade_outcomes on details.mode=='live':
+
+    ALL live rows           22   net -0.3320
+    attributed atf_static   15   net -0.1882
+    strategy_id = None       7   net -0.1437    <-- in NO ledger
+
+atf_static's P/L agrees across the two to 0.0018; its COUNT does not (18 vs 15).
+The 7 orphan rows are real settled live round trips that nothing reads, because
+the ledger is keyed by strategy_id and they have none.
+
+CONCLUSION: the live book is ~1.8x worse than the number this loop has steered
+by for weeks. -0.3320 over 22, not -0.1864 over 18. Filed [503d996e]. NOT fixed
+this pass -- the fix is a real decision, not plumbing: attributing the orphans
+and making the scoreboard read the store give DIFFERENT demotion outcomes,
+because STRATEGY_DEMOTE_MAX_LIVE_LOSSES=2 is evaluated per strategy.
+
+Fourth instance of disagreeing books here (three-books-priced-different-games,
+corrections-reach-only-one-book). First one that is in the GOAL number.
