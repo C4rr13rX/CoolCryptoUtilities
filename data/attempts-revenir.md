@@ -13369,3 +13369,26 @@ names sqlite and its own finding says it is *not* sqlite). Judge that loop by th
       → route (b) dead: WETH gets 19 ticks/6h, so only AERO is left
       → classical universe collapses to AERO, correctly edge-banned
       → funnel reads 51.82h of zero entries with nothing actually broken
+
+**THE STACK, and it is THREE blockers not one.** Installed py-spy in `.venv`
+(`.venv/Scripts/py-spy.exe dump --pid 22264`; PID 9792 refuses). Six dumps of
+live production:
+
+- **3x `seq-dataset_warmup`, `active+gil`**, in `json raw_decode` (decoder.py:361)
+- **2x `ssl_wrap_socket`** (urllib3/util/ssl_.py:461) in ThreadPoolExecutor-721
+- **1x `fetch_trades` (db.py:1880) ON THE EVENT LOOP** via `_handle_sample`
+  (bot.py:6457) → `_maybe_transition_to_live` (bot.py:4797) →
+  `live_readiness_report` (pipeline.py:5704) → `_ghost_validation`
+  (pipeline.py:4780) → `ghost_trade_snapshot` (metrics.py:387)
+
+The **GIL** one best explains a *global* blackout — it stalls every thread
+regardless of symbol or socket. The recorded socket-read finding is **vindicated
+(2 of 6), not overturned**: a single dump showing `fetch_trades` briefly looked
+like a contradiction and five more samples killed that reading. One sample is not
+a profile.
+
+Note anyway: `_handle_sample` is the **per-tick** handler and synchronously
+builds the whole ghost→live readiness report against a 22GB sqlite — and
+`_ghost_validation` is also the ladder's first failing link
+(`[FAIL] 6 RISK ghost_validation_block`). Step 6 and the feed starvation are the
+same function. **Rank the three by sampling DURING a measured blackout.**
