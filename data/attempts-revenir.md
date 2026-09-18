@@ -13848,3 +13848,49 @@ SOURCE, baseline WETH 1305 rows/7d (kucoin 1280), ETH 1293 (kucoin 1242).
 ALSO RETRACTED: the prediction that WETH reaches the 300-500 rows/12h band. That
 band belongs to dexscreener-served symbols and WETH has no dexscreener route.
 The honest prediction is "better than now by an unknown amount". Measure it.
+
+### Pass 476 addendum 5 -- I DOWNGRADE MY OWN RECOMMENDATION. The starvation framing is wrong on a 7-day window.
+
+Rows per 7 days grouped by each symbol's MAJORITY serving source:
+
+  kucoin         11 symbols   min 114   MEDIAN 1114   max 1610
+  dexscreener    28 symbols   min  63   MEDIAN  280   max 3915
+  geckoterminal  34 symbols   min  54   MEDIAN  207   max 1282
+
+  top kucoin: ETH-USDT 1610, WETH-USDT 1555, LINK 1398, WETH-USDC 1305,
+              ETH-USDC 1293, LDO 1114
+
+WETH-USDC at 1305 rows/7d is ABOVE the kucoin median and 4th of 11. kucoin
+delivers ~4x the median dexscreener symbol and ~5x the median geckoterminal one.
+The earlier "dexscreener gives 3.4-5x the tape" was an artifact of comparing two
+high-volume dexscreener names (ZORA 3915, AERO 3086) against WETH's last 12h.
+Across all symbols the ordering is the OPPOSITE.
+
+WHAT SURVIVES AND WHAT DOES NOT.
+  SURVIVES: okx, bybit, mexc, kraken and coinbase delivered ZERO rows in 7 days
+    (34491 rows). That held on every window tried.
+  SURVIVES: the drop gate at :1444 is a source-label gate, is correct, and must
+    not be relaxed.
+  SURVIVES: the pass-475 drop census is censored by the 60s log throttle at
+    :1448.
+  SURVIVES: event-loop lag median 22.4s, p90 93.4s, max 3570.8s vs a 10s budget,
+    n=60722.
+  SURVIVES AS A WINDOWED FACT: the two-shift structure, 0 of 72 bins shared,
+    p=1.15e-04. Real for that 12h window.
+  DOES NOT SURVIVE: the INTERPRETATION of those shifts as a structural endpoint
+    defect. Over 7d WETH wrote 1305 and CBBTC 527, so the fed/starved labels
+    INVERT on the longer window. The shifts are a transient state of the current
+    process. WETH's 94 rows/12h is a SLUMP against its own ~186/day, not its
+    normal condition.
+  DOES NOT SURVIVE: that removing the five endpoints will meaningfully raise
+    WETH's tape. WETH is already near the top of what its source delivers.
+    Expect a poll-budget saving, not a step change.
+
+LESSON, and it is the standing "distrust a good number" rule biting me three
+times in one pass: every strong claim I made came from a 6-12h window, and the
+7-day window inverted two of them. Match the window to the claim's scope BEFORE
+posting, not after.
+
+CLOSED: "restrict/repair the stream universe" as a route to more WETH tape. The
+tape is not the binding constraint on WETH. [a2bfd079], the blocked event loop,
+is the item that matters.
