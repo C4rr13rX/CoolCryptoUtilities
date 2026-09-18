@@ -12926,3 +12926,53 @@ is allowed to pick up. It does not depend on the head fix that blocked the paren
 PROCESS, not a trading route: `crewhealth.py` has no `main` and never reads
 `sys.argv` — it is a LIBRARY imported by `loop.py`/`scrum.py`. Agents told to
 "check the crew: line" cannot; it is emitted outside the session.
+
+## Pass 470 (Echo, senior, solo) -- the 49.6h "entry outage" is a BOOKING BREAK
+
+ROUTE TRIED: measure fill recency before reading the assignment, then find what
+stopped the books.
+
+NUMBER PRODUCED. 17 enter/ghost-entry rows in trading_ops across the 49.53h
+window in which trade_fills wrote 0 rows and trade_outcomes wrote 0. Historical
+per-day ghost_entry_ops -> trade_fills ratio ran 0.40-2.00 over eleven days
+(day11 24->31, day9 15->27, day8 4->5, day7 15->12, day2 16->32) and then read
+exactly 0.00 on each of the last two days. Day 2's 2.00 is two legs per round
+trip, so an entry alone books a fill.
+
+STATUS: OPEN, cause not yet named, but three candidates are CLOSED.
+
+  CLOSED -- "the entry funnel / supply famine". Overturns my own pass-469
+  headline. Entries fired 17 times during the silence; whatever the entry gates
+  do, they are not what stopped the books. The exit_confidence ceiling of
+  0.5436 under a floor of 0.6 (pass 467) is still real and still downstream.
+
+  CLOSED -- "the 1.66GB WAL" (item c720dcdc). I nominated it on the board and
+  then killed it: trading_ops, organism_snapshots and market_stream all wrote
+  within two minutes of the measurement, in the same sqlite file. A WAL problem
+  cannot block two tables and spare three. The WAL is a separate problem.
+
+  CLOSED -- "ebdd47e5, the target_price_held UnboundLocalError". Its fix is
+  fab1c87 dated 09-10, eight days before PID 32632 booted, so it was already in
+  the running build. Marking that item done was correct.
+
+  CLOSED -- "e2dbbd2, the only commit in the boot window". Its message names
+  _consume_sim_gas and _get_quote_balance, which sit in exactly the right place
+  between the op-write at 9848 and the fill-write at 9853, but its DIFF touches
+  neither. Temporal coincidence.
+
+MECHANISM FOUND. bot.py writes the ghost-entry trading_ops row at 9848 and the
+fill at 9853, wrapping the fill in "except Exception: pass". The ghost exit fill
+at 11214 carries the identical shape. Two writers, one silent handler, one
+shared upstream failure -- which is why the two books went dark within three
+minutes of each other and why no log line was ever emitted. bot.py holds 174
+bare "except Exception:". The outage was INVISIBLE BY CONSTRUCTION, which is why
+three passes read it as supply starvation.
+
+SHIPPED: cb52c9e instruments both handlers to print the exception type and
+message. It fixes nothing -- the exception has still never been seen. NOT
+restarted into: boot is 13 min and entries arrive at 1 per 2.9h, so an 8-minute
+observation window had a ~5% chance of catching one, and "saw nothing" is
+indistinguishable from the outage continuing.
+
+NEXT: restart onto HEAD, grep logs for "FILL WRITE FAILED", allow >=1h of real
+time, report the exception verbatim. Item [5b51114a], criteria 2-5.
