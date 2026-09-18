@@ -12899,3 +12899,30 @@ NOT DONE THIS PASS, and why: a restart is a 13-minute boot and I had 10 minutes.
 A half-observed restart is worse than none. Stop 32632 rather than starting a
 second instance; an external supervisor launches production, so confirm it
 returns.
+
+### PASS 469 -- THE "CHEAP CLOSE" EVERYONE QUOTES HAS A BAR THE STALE BUILD ALREADY CLEARS.
+
+`[583ba889]` criterion 1 -- quoted from the board as "the cheap close" by at
+least two passes -- says *restart production onto `8c1e906` or later*. Checked:
+
+    8c1e906 dated              2026-09-10
+    commits 8c1e906..HEAD      457
+    production booted          2026-09-16 14:48   <- SIX DAYS LATER
+
+So the running 47.4h instance **already contains `8c1e906`**, the criterion reads
+as SATISFIED without restarting anything, and it can be marked met having changed
+nothing. Not wrong when written — it went stale, and it kept being re-quoted
+because it had the shape of a settled answer.
+
+**USE THIS BAR INSTEAD:** restart onto HEAD; quote the new instance's commit
+against the pre-restart HEAD (`66b47f6`, 2026-09-18 14:20); compare commit DATES
+against the 2026-09-16 14:48 boot rather than testing ancestry of an eight-day-old
+commit. Corrected in dated notes on both `[583ba889]` and `[3c7ae4ec]`.
+
+FILED: `[3c7ae4ec]` (3pt) — criterion 1 split out of its BLOCKED parent, because
+the single most important action on the board was sitting inside an item nobody
+is allowed to pick up. It does not depend on the head fix that blocked the parent.
+
+PROCESS, not a trading route: `crewhealth.py` has no `main` and never reads
+`sys.argv` — it is a LIBRARY imported by `loop.py`/`scrum.py`. Agents told to
+"check the crew: line" cannot; it is emitted outside the session.
