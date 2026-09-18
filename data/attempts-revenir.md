@@ -13770,3 +13770,24 @@ restart-reshuffle trap does not apply and it is testable in ONE restart, unlike
 a hash change. Expected: WETH and ETH move from ~95 rows/12h to the 300-500 band
 the dexscreener-served symbols already occupy. Prove it by grouping on
 json_extract(raw,'$.rest'), not on the row count alone.
+
+### Pass 476 addendum 2 -- the zero holds over a full week, not one process
+
+Before handing over a change that deletes five endpoints, I widened the window.
+Delivering source for every row written in SEVEN DAYS, 34491 rows:
+
+  dexscreener  15959  46.27%     kucoin     9017  26.14%
+  geckoterminal 9041  26.21%     bitstamp    474   1.37%
+
+  _WS_POOL: okx 0, bybit 0, mexc 0, kraken 0, kucoin 9017, coinbase 0
+
+Zero for a WEEK, across every restart in that week, over 34 thousand rows -- not
+zero for one process lifetime. Four sources have ever written a row here and
+only one is in the websocket pool. Removing okx, bybit, mexc, kraken and
+coinbase from _WS_POOL therefore cannot lose tape we are currently getting; what
+it recovers is the ranking, since those five occupy ranks 0-5 ahead of
+dexscreener, which writes 46% of everything.
+
+NOT CLAIMED: that this fixes the feed. The measurable prediction is WETH and ETH
+moving from ~95 rows/12h toward the 300-500 band. The 22.4s median event-loop
+block sits underneath it and remains [a2bfd079].
