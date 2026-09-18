@@ -13814,3 +13814,37 @@ CONSEQUENCE FOR HOW TO JUDGE THE NEXT PASS: if the change lands and WETH reaches
 300+ rows but still books nothing, that is a SUCCESS for [eb269198] and the
 blocker is one layer up. Do not read it as the fix failing and do not revert it.
 The DONE WHEN is a row count and a source census, not a trade, deliberately.
+
+### Pass 476 addendum 4 -- CORRECTION to addendum 2's mechanism, found by testing my own fix once more
+
+I checked whether WETH can even BE served by dexscreener. Delivering source,
+SEVEN DAYS:
+
+  WETH-USDC  1305 rows  kucoin 1280, geckoterminal 25,  DEXSCREENER ZERO
+  ETH-USDC   1293 rows  kucoin 1242, geckoterminal 51,  DEXSCREENER ZERO
+  LDO-USDC   1113 rows  kucoin 1113 and nothing else
+  CBBTC-USDC  527 rows  dexscreener 511, geckoterminal 16
+  UNI-USDC    657 rows  geckoterminal 612, dexscreener 45
+
+WETH AND ETH ARE NEVER SERVED BY DEXSCREENER -- not once in a week. So the
+"dead endpoints displace dexscreener" story is WRONG for the two symbols the fix
+is aimed at. Dexscreener is not behind them in the queue; it is not in their
+queue at all.
+
+THE CORRECTED MECHANISM, and the fix survives it: WETH is ALREADY served by
+kucoin, the one pool member that works. The five dead endpoints do not change
+WHO serves WETH -- they change HOW OFTEN the serving endpoint is REACHED. They
+rank ahead of kucoin in the rotation, each poll cycle spends its budget timing
+out on them, and kucoin is only asked on some cycles. The REST-timeout census
+fits exactly: mexc 5102 and kucoin 2458 timeouts in the starved shift, mexc
+being tried and dying before kucoin is reached.
+
+MY OWN DONE WHEN WAS WRONG AND IS REPLACED. I had written "prove the source
+shifted, baseline kucoin 93". If this fix works the source STAYS KUCOIN and only
+the COUNT rises -- a worker following that criterion would see kucoin still on
+top and conclude nothing changed. Corrected criterion: ROW COUNT AT AN UNCHANGED
+SOURCE, baseline WETH 1305 rows/7d (kucoin 1280), ETH 1293 (kucoin 1242).
+
+ALSO RETRACTED: the prediction that WETH reaches the 300-500 rows/12h band. That
+band belongs to dexscreener-served symbols and WETH has no dexscreener route.
+The honest prediction is "better than now by an unknown amount". Measure it.
