@@ -13392,3 +13392,23 @@ builds the whole ghost→live readiness report against a 22GB sqlite — and
 `_ghost_validation` is also the ladder's first failing link
 (`[FAIL] 6 RISK ghost_validation_block`). Step 6 and the feed starvation are the
 same function. **Rank the three by sampling DURING a measured blackout.**
+
+**CHEAPEST CANDIDATE, found last: `detach=True` cannot fix a GIL.** The
+GIL-holding thread (3 of 6 dumps) is `production.py:609` —
+`Task('dataset_warmup', category='model', timeout_sec=120.0, interval_sec=600.0,
+detach=True)`. Its own comment records someone already catching it starving the
+feed: *"dataset_warmup timed out 28 times and held 93.4s per 10 minutes — 15.6%
+of the whole queue"* (6h, 2026-09-11). The fix applied was `detach=True`.
+
+**Detaching removes it from the scheduler QUEUE, not from the GIL.** A detached
+thread running `json.loads` holds the interpreter lock exactly as hard as an
+attached one, and the asyncio loop cannot run a callback while it does. The queue
+symptom was fixed and the stall was not — which is why that comment reads as
+solved while the feed still goes dark. Up to 2 min of GIL pressure per 10 min,
+from a **model** task, under a header saying model work must never cost trading —
+serving a brain that is `OMEN_STRATEGY_ENABLED=0`, closed negative.
+
+**NOT CONFIRMED:** the GIL holds were sampled at arbitrary moments, not inside a
+measured blackout. Confirm the correlation before changing anything; if
+dataset_warmup is *not* holding during the blackouts, the socket read (2 of 6) is
+the better suspect. On `a2bfd079`.
