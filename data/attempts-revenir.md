@@ -13628,3 +13628,36 @@ NEXT MEASUREMENT: count `_synthetic_drops` per symbol against rows written. If
 WETH drops ~300 and writes 19, the fix is in the consensus/timeout path -- raise
 the REST budget above the measured block time, or admit a single-source price
 when consensus cannot be reached -- and measure the tape after a restart.
+
+### Pass 475 -- the per-symbol drop count, run before handover (it needs no instrumentation)
+
+Dropped ticks per symbol from `market-stream.log` 02:35 -> 18:36 (16h) against
+`market_stream` rows over 6h:
+
+    symbol        DROPPED   ROWS_6h   drop rate
+    WETH-USDC        100        18      85%
+    ETH-USDC          99        23      81%
+    ZORA-USDC        160       429      27%
+    AERO-USDC        149       406      27%
+    CBETH-USDC        26       365       6.6%
+    CBBTC-USDC        22       327       6.3%
+
+**WETH drops 85% of its ticks; CBBTC drops 6%.** A 13x differential that ranks
+exactly with who holds the tape. The mechanism is confirmed and it is SELECTIVE.
+
+WHAT IT DOES NOT EXPLAIN -- stated so nobody overstates it later. The windows are
+not matched (drops 16h, rows 6h), and 100 drops + 18 rows is ~7 events/hour for
+WETH while a healthy symbol writes 400+ rows in six. **WETH is also receiving far
+fewer samples in the first place.** Two things are true at once:
+
+    (a) WETH's consensus fails 85% of the time when a sample DOES arrive
+    (b) samples arrive for WETH far less often than for AERO or CBBTC
+
+Both fit the timeout chain -- if both endpoints time out on a blocked loop you
+get fewer poll completions AND a higher failure rate on those you get -- but (b)
+is measured, not explained. Re-run with matched windows before assuming one
+cause covers both.
+
+Also: the top droppers overall are GROVE 250, FLOW 164, CLAWDCHAT 157, LAPCAT
+154, CUMMIES 142, AICAT 140. The poll budget is being spent timing out on tokens
+we will never trade.
