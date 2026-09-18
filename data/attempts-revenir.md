@@ -13428,3 +13428,58 @@ That may change the fix shape entirely: *"find the blocking call"* and *"the
 trading loop shares an interpreter with a dozen model/IO threads and loses"* have
 very different answers — a bugfix versus a process split. **Take substantially
 more than twelve samples, inside measured blackouts, before choosing.**
+
+## Pass 475 (Echo, senior) -- the feed "blackout" is a config zero, and my own pass-474 baseline was padded
+
+ROUTE TRIED: [eb269198] "restrict the STREAM to fillable symbols". Outcome: the
+item's premise is backwards and its file list was fiction. Diagnosis complete,
+remedy identified, NOT applied (needs a restart + 6h window to judge).
+
+1. THE ITEM NAMED TWO FILES THAT DO NOT EXIST. `services/market_stream.py` and
+   `trading/pair_select.py` are not in this tree. The real path is
+   `trading/selector.py` (constructs `MarketDataStream(symbol=...)` at :1355,
+   :1375, :1686, :1723) and `trading/data_stream.py:1496` (writes the tick via
+   `db.insert_market_sample`). Item file list corrected.
+
+2. I WITHDREW MY OWN PASS-474 BASELINE. It padded each symbol's tick list with
+   the window start, charging a symbol that ENTERED the tape mid-window with a
+   gap back to the window edge. That is how nine symbols came to share a max gap
+   of exactly 207.2 min -- they all STARTED at 15:40. Report INNER (consecutive
+   ticks) and TRAIL (now - last tick) separately. LEAD is never a gap.
+
+   CORRECTED, 6h to 18:16 09-18, INNER max: MAMO 13.8 (442 ticks), CBETH 13.8
+   (365), BLUECHIP 14.2 (387) -- all three PASS the 15-min bar. CBBTC 22.1,
+   COMP 31.3, AERO 65.8, ZORA 89.7, WETH 36.7 on 19 ticks. The feed is NOT
+   uniformly broken; three of the shortlist already clear the bar.
+
+3. DEDUPE RULED OUT -- CLOSED, do not re-run. Hypothesis: gaps are suppressed
+   flat-price ticks, so every gap metric measures price stickiness not feed
+   health. Complement: gaps are genuine absence of writes. Kill test read
+   `data_stream.py:1584`: the drop requires `(ts - last_ts) <= 1.0`. A
+   one-second ceiling cannot make a 65-minute hole. HYPOTHESIS REFUTED.
+
+4. THE CAUSE, and it is a config zero, not a bug. `.env:78 GHOST_STREAM_TOTAL=0`
+   with `.env:69 GHOST_PAIR_LIMIT=36`. `selector.py:1106` reads it; at 0 both
+   coverage paths are dead: `:1351` `all_ordered[pair_limit:stream_total]` is
+   empty because `0 > 36` is false, and `:1511` `data_slots = max(0, 0 - bots -
+   streams)` is always 0. The comment at `:1099` states the feature's purpose --
+   data-only streams so the box "can watch 100+ pairs without choking the event
+   loop". It is the feature this item asks for and it is switched off.
+
+   CHAIN: stream_total=0 -> all coverage is the 36 re-ranked BOT slots -> the
+   sort key rises with VARIANCE (see symbol-selection-sort-key-is-monotone-in-
+   variance) -> meme tokens win slots (UP WOLF CUTECAT WTCOIN MANYU CYBER all
+   entered at 17:19, after the 16:48 restart) -> deep calm names rank out (WETH
+   ETH UNI OP LDO CAKE VIRTUAL left at 14:30, TRAIL 209-249 min) -> no
+   MarketDataStream instance -> no market_stream rows. Streams are removed only
+   at :1680 (promotion) and :1787 (shutdown): WETH is never EVICTED, it is never
+   ADMITTED.
+
+5. THE REMEDY, for the next pass, one value: raise GHOST_STREAM_TOTAL above 36.
+   That buys data-only coverage for ranks 36..N without adding bot CPU. It does
+   NOT by itself guarantee WETH specifically -- it extends coverage down the
+   same ranking -- so a named pin for the deep shortlist is the follow-on code
+   change in selector.py. Do the config value FIRST and measure it alone.
+
+NOT CLOSED: the item stays open. The diagnosis is done; the change is not made
+and is therefore not proven.
