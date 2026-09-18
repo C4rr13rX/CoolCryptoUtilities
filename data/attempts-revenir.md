@@ -13553,3 +13553,40 @@ before theorising -- I guessed four times this pass and was wrong four times.
 STILL STANDING: `GHOST_STREAM_TOTAL=0` (arithmetic off `:1351` and `:1511`). It
 widens coverage but does not fix a symbol that is selected and not streamed, so
 it is no longer upstream of anything.
+
+### Pass 475 third addendum -- fifth kill: the USD denomination gate refuses nothing
+
+I named `_can_denominate_pnl_in_usd()` (`selector.py:1666`) as the top candidate
+for why WETH is selected and never streamed, then tested it:
+
+    _REQUIRE_USD_ACCOUNTING = True   (SELECTOR_REQUIRE_USD_ACCOUNTING defaults
+                                      to "1" at :68, NOT set in .env -- the gate
+                                      is ACTIVE, not a no-op)
+
+    WETH-USDC True   ETH-USDC True   AERO-USDC True   CBETH-USDC True
+    WOLF-USDC True   CUTECAT   True   CYBER-USDC True  UP-USDC    True
+
+IT REFUSES NOTHING -- it passes every symbol on both sides of the cut, so it
+cannot be what separates WETH from the tape. CANDIDATE SEAM 1 IS DEAD.
+
+And it was killable by reading, not running: `select_pairs` already applies that
+same gate internally at `:885` and `:962`, and WETH came OUT of `select_pairs`,
+so the gate had passed it by construction. Ten seconds on the call sites would
+have saved the run.
+
+THE NARROWING, which is the pass's real output. WETH-USDC is **SIXTH of 36** in
+the returned ranking and `GHOST_PAIR_LIMIT` is 36 -- it is not marginal, it is
+comfortably inside the cut, it passes the only symbol gate in the path, and it
+still has 19 ticks in six hours. Two shapes remain, separated by ONE
+observation -- does a `MarketDataStream(symbol="WETH-USDC")` instance exist?
+
+    A. no instance          -> selection-to-construction seam
+    B. instance, but silent -> a SOURCE problem, and the suspect is already
+                               named: weth-tape-is-95-percent-kucoin measured
+                               1,630 kucoin ticks against 92 geckoterminal. A
+                               dropped kucoin channel starves a live stream and
+                               makes every gate above it look innocent -- which
+                               is exactly what five dead hypotheses look like.
+
+FIVE HYPOTHESES DIED THIS PASS, ALL MINE, AND ALL FIVE WERE AIMED AT SELECTION.
+That pattern is itself the finding: stop testing selection.
