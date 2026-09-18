@@ -13514,3 +13514,42 @@ show EXACTLY 0.0 bp of movement across 112, 25 and 142 ticks. Their prices never
 change. THREE OF THE NINE SYMBOLS HOLDING LIVE TAPE ARE FROZEN, while WETH at
 9.5 bp/sqrt(min) is off the tape entirely. A third of live coverage is spent on
 symbols that cannot produce a signal.
+
+### Pass 475 second addendum -- I RETRACT the select_pairs finding. The function returns 36, not 0.
+
+A direct call I had queued in the background finished after I had already posted
+the claim and filed an item on it:
+
+    select_pairs(limit=36) -> 36 candidates
+    ['MAMO-USDC','ZORA-USDC','VIRTUAL-USDC','UNI-USDC','CBETH-USDC',
+     'WETH-USDC','WETH-USDT','AERO-USDC','AVNT-USDC','WBTC-USDC']
+
+RIGHT: the glob IS dead -- `data/historical_ohlcv/*.json` is 0 files against 652
+recursive, and that is a real latent defect.
+WRONG: my inference that it is the function's ONLY source. It is one helper
+path. The same run logs `pair-select: deferred OHLCV backfill for DEBIT-USDC
+(selection budget spent) budget_sec 25.0` and `suppressed ETH-DAI:
+no_live_market_data` -- selection runs off LIVE MARKET DATA, in code I never
+read. I read one loop, found it dead, and generalised from it to the function.
+`[a4efd5f1]` REJECTED, not reopened: the diagnosis is wrong, not incomplete.
+
+FOUR THEORIES DIED THIS PASS, ALL MINE, ALL UPSTREAM OF THE ACTUAL SEAM:
+  1. a feed/scheduler stall  -- three shortlist symbols already clear 15 min
+  2. dedupe suppressing flat prices -- one-second ceiling, cannot make a hole
+  3. a variance-hungry sort key -- refuted, departed symbols are 3x MORE volatile
+  4. an empty selector -- refuted above, it returns 36
+
+WHAT REPLACES THEM, and it is narrower and better than any of them:
+
+    select_pairs PICKS WETH-USDC. WETH HAS 19 TICKS IN 6 HOURS AND HAS BEEN
+    SILENT FOR 3.5 OF THEM.
+
+The break is BETWEEN SELECTION AND STREAMING: a symbol is chosen and its
+MarketDataStream is never constructed, or does not survive. Untested candidate
+seams: `selector.py:1666` refuses a symbol when `_can_denominate_pnl_in_usd()`
+is false; `:1673` tears down a data-only stream on promotion to a bot. Read both
+before theorising -- I guessed four times this pass and was wrong four times.
+
+STILL STANDING: `GHOST_STREAM_TOTAL=0` (arithmetic off `:1351` and `:1511`). It
+widens coverage but does not fix a symbol that is selected and not streamed, so
+it is no longer upstream of anything.
