@@ -12099,3 +12099,34 @@ criterion 3 on [5656f673] and a negative there is a valid result.
 FILED: [5656f673] p1 5pt (halt reads the pooled book), depends on [78d58404].
 VERIFIED: [cf169af6] re-run, 9 passed vs 9 claimed, HOLDS -- but it fixed the
 operator-side READER, not the halt. The halt is what fires 9x/day.
+
+### Pass 464 addendum -- corrections to the entry above
+
+1. The item is **[73e1c19b]**, not [5656f673]. I filed [5656f673] for this defect
+   and then REJECTED it myself as a duplicate: [73e1c19b] is the same defect in
+   different words, better developed, and already asks for the trace I did. Its
+   files are extended to trading/pipeline.py + trading/bot.py. All evidence folded
+   into it as a note. Checking two related ids is NOT checking the backlog --
+   grep the SYMPTOM, not the file.
+
+2. [73e1c19b] criterion 4 ("trace one money_button cycle, name the line that
+   refuses") is ANSWERED: THERE IS NO CYCLE TO TRACE. halt_live -> risk_budget=0
+   -> scheduler.evaluate() skipped entirely -> no directive, no gate asked, no
+   trading_ops row. Every previous trace came back empty for this reason.
+
+3. Dry-run consequence CONFIRMED, by a tighter mechanism than the census claimed.
+   Not the call-ordering argument: _refresh_auto_execute refuses ITSELF at
+   bot.py:1883 (`if ... or not self.live_trading_enabled: return`), and
+   bot.py:4825 states halt_live makes live_trading_enabled read False. Escape
+   hatch (bot.py:12786 restores the flag from persisted state) checked and closed
+   -- no data/*.json holds the key, storage/trading_cache.db has NO state tables.
+   Caveat: absence of a store I could find is not proof none exists.
+
+AUDITS THIS PASS, both re-run not read:
+  [cf169af6] HOLDS -- 9 passed vs 9 claimed. Scope: it fixed the operator-side
+             READER (live_gate_map.py), NOT the halt. The halt fires 9x/day.
+  [dbbfea96] core conclusion HOLDS -- "refused ONLY by staleness: 0, so widening
+             the stale guard opens NOTHING" reproduces exactly. One count DRIFTED:
+             claimed 2 of 41 read stale_ghost_book, today 7 of 41 (book aged;
+             all 7 also fail insufficient_samples, so no conclusion moves).
+             Do not quote the 2 as current. Script takes 5+ min on the 26GB store.
