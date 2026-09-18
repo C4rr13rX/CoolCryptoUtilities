@@ -12268,3 +12268,37 @@ scout never reaches `bot.py:10834` at all. Naming the writer, and counting how
 much of the whole ledger was written gross vs net, is criterion 3 of
 `[4c267abe]`. If most of it was backfilled gross then the 55% bar has never once
 been evaluated on net profit, and that explains 66.7 → 19.0 with no new bug.
+
+### Pass 465 second addendum -- one read of the ledger, three results
+
+`data/strategy_ledger.json`, `atf_static_scout`:
+
+    ghost      trades 253   wins 199   losses 13   total_profit +6.6802
+    tradeable  trades  20   wins  14   losses  6   total_profit +0.1207
+
+**1. SETTLED -- the scoreboard is the ledger's tradeable subset.** 14/20 = 70.0%
+and `total_profit` is `0.12070961597995647`; the scoreboard prints
+`20 trades, 70% win, +0.1207`. Digit for digit. Half of `[d5fbddfc]` is closed.
+
+**2. STRONG EVIDENCE, not proof — the wins are the GROSS wins.** My gross count
+off the ops rows was **14** of 21 (66.7%). The ledger holds **14** of 20. Same
+fourteen. The net count is 4 (19.0%) and four appears nowhere in the file. So the
+win counter tracks `profit > 0`, not `profit > roundtrip_cost_usd`.
+
+**3. NOT SOUGHT, and worse than what I was looking for: 199 + 13 = 212, but
+trades = 253.** Forty-one ghost trades (16%) are neither a win nor a loss. The
+cause is documented in the buggy code itself — `ledger.py:776-787`: *"losses was
+never incremented here, and was not even a field in `_blank_mode()`, so it read 0
+forever."* So the 13 losses are post-fix and the 41 gap is pre-fix rows whose
+losses were dropped **while their wins were still counted**. That comment claims
+*"graduation survived that (it scores wins/trades)"* — **too optimistic**: if
+wins and trades accumulated under different accounting rules, a rate across that
+boundary is not a win rate. Filed `[99728b37]` (3pt).
+
+**STILL OPEN and not estimated:** `total_profit` is +0.1207 where the ops
+`profit` field sums to −0.0203 over near-identical rows with the same 14 wins.
+Counts agree, money disagrees by a sign. So the ledger was fed a different
+quantity, and **neither known writer explains it** — `bot.py:10834` passes
+`economic_profit` and the scout never reaches it; `backfill_ghost_ledger.py:157`
+passes the raw ops profit, which would give −0.0203. **There is a third writer or
+a third quantity.** `[d5fbddfc]` criterion 2.
