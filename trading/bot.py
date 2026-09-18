@@ -9847,8 +9847,24 @@ class TradingBot:
             )
             self.scheduler.record_trade(symbol, "enter", price, trade_size)
             quote_spent = trade_size * price
-            self._adjust_quote_balance(chain_name, quote_token, -quote_spent)
-            self._consume_sim_gas(chain_name, gas_required)
+            try:
+                self._adjust_quote_balance(chain_name, quote_token, -quote_spent)
+                self._consume_sim_gas(chain_name, gas_required)
+            except Exception as exc:
+                # THE SECOND CANDIDATE FOR THE 49.6h BOOKING OUTAGE, and it is
+                # invisible to the handler below. These two calls run AFTER the
+                # trading_ops ghost-entry row is written (record_trade, above)
+                # and BEFORE the fill's try opens, so a raise here produces the
+                # IDENTICAL signature -- op row present, trade_fills row absent
+                # -- while never passing through the fill's except at all.
+                # Logged and RE-RAISED: behaviour is unchanged, only the
+                # silence is. Without this the restart cannot tell the two
+                # mechanisms apart.
+                print(
+                    "[ghost] PRE-FILL STEP FAILED %s entry: %s: %s"
+                    % (symbol, type(exc).__name__, exc)
+                )
+                raise
             try:
                 self.record_fill(
                     symbol=symbol,
