@@ -13072,3 +13072,38 @@ interesting than its `explore` pool suggests.
 **Also seen, unexplained, one line so it is not lost:** `TEST1-USDC` appears as
 a live `enter`/`ghost_candidate` row in production's `trading_ops` at 15:34:35,
 three rows into a fresh boot. See `system-log-mixes-tests-and-production`.
+
+## Pass 472 (Echo, senior, 2026-09-18) — the fill outage gets a start time
+
+ROUTE: audit pass 470's booking-break claim, then locate the outage in time.
+
+TRIED AND CLOSED (negative results — do not re-run):
+
+1. "The 17 ghost entries were really candidates, so the booking break is a
+   miscount." CLOSED NEGATIVE. `ghost-entry` is a distinct status in
+   trading_ops. In the silence window: ghost_candidate_quote_ok 855,
+   ghost_candidate 562, ghost-entry 17. Pass 470 counted the right rows.
+
+2. "The fill write raises on something VIRTUAL-USDC-specific, and it only
+   became fatal when VIRTUAL became the sole entrant." CLOSED NEGATIVE, and
+   this was my own best hypothesis. VIRTUAL-USDC has 79 trade_fills rows
+   against 109 ghost-entry rows all-time. It books fine.
+
+3. "Edge bans grew until only VIRTUAL survived, so this is an entry famine
+   after all." CLOSED NEGATIVE. VIRTUAL carries 80 edge-ban predrops of its
+   own all-time, so it is not an unbanned outlier; and the entry RATE is
+   unchanged across the break (0.32/h before, 0.34/h during).
+
+SURVIVING RESULT (positive, and new):
+   last trade_fills      09-16 13:13:11
+   last trade_outcomes   09-16 13:10:34
+   production booted     09-16 14:48    -> booked 0 fills in its whole 50.2h life
+   previous process      booked fills normally until its last minute
+   no ghost entries fell between 13:13 and 14:48, so the old process did not
+   fail, it stopped being asked.
+   Second symptom on the same boot: entry symbols 10 distinct -> 1
+   (VIRTUAL-USDC, all 17); distinct symbols predropped 11 -> 1.
+
+OPEN: is it boot STATE (rebuilt by the 09-18 15:25 restart) or committed CODE
+(still present)? The restart separates them. Entries arrive at 0.34/h, so
+95% confidence of observing one needs 8.8h of uptime, not 35 minutes.
