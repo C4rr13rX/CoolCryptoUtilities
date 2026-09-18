@@ -12873,3 +12873,29 @@ when max(confidence) clears its floor AND a non-scout strategy books an outcome.
 STILL OPEN AND NOW OVERDUE -- `[583ba889]` criterion 1, the cheap close: restart
 production onto `8c1e906`+ and re-count how many of 72 strategies signal. It is
 the only test separating "49h of stale running code" from "unsatisfiable on HEAD".
+
+### PASS 469 FINAL -- THE RUNNING INSTANCE HAS NEVER FILLED. RESTART IS THE TEST.
+
+    PID 32632   running 47.4h   (booted 2026-09-16 14:48)
+    last `trade_fills` row      48.9h ago
+    last `trade_outcomes` row   49.0h ago
+
+**The last fill predates this process by ~1.5h.** Every fill in the book was
+placed by a previous instance. This one has decided for 47.4h (1,080
+`trading_ops`/day, 5,236 `organism_snapshots`/day) and entered nothing, ever.
+
+IDENTIFICATION (load-bearing, so stated): the pass-457 record names production as
+PID 32632, boot `ts` 1789584481. Against the pipeline's `now` (1789753775) that is
+47.0h, matching the process table's 47.4h. Same PID, same boot, two sources.
+
+**CONSEQUENCE: the central question has never actually been tested.** Production
+serves stale code until restarted, and this build is 47.4h old -- older than
+`[618d4c4b]` and most of what shipped in the last two days. So "is the
+`exit_confidence` floor unsatisfiable on HEAD, or is the running build simply 47
+hours behind?" is OPEN, and every conclusion drawn from this database is
+contaminated by not knowing which.
+
+NOT DONE THIS PASS, and why: a restart is a 13-minute boot and I had 10 minutes.
+A half-observed restart is worse than none. Stop 32632 rather than starting a
+second instance; an external supervisor launches production, so confirm it
+returns.
