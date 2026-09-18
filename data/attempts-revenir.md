@@ -13991,3 +13991,48 @@ because STRATEGY_DEMOTE_MAX_LIVE_LOSSES=2 is evaluated per strategy.
 
 Fourth instance of disagreeing books here (three-books-priced-different-games,
 corrections-reach-only-one-book). First one that is in the GOAL number.
+
+### PASS 477 SECOND ADDENDUM -- CORRECTING MY OWN COUNT, AND DIAGNOSING THE ORPHANS
+
+CORRECTION TO THE ADDENDUM ABOVE. I wrote "22 live round trips". 22 is the
+OUTCOME ROW count. The ROUND TRIP count is 17 distinct trade_ids. Four trade_ids
+carry multiple rows and they are legitimate PARTIAL EXITS, not double-booking --
+remaining_size walks to zero on every one:
+
+    CBETH 34c513c4  3 rows  net -0.0085  0.000153 -> 0.000152 -> 0.0
+    AERO  85a11f8d  2 rows  net +0.0002  1.3250 -> 0.0
+    AERO  c45e3945  2 rows  net +0.0097  1.2149 -> 0.0
+    AERO  c083a4c7  2 rows  net -0.0514  2.5593 -> 4.4e-16
+
+Net sums correctly across them, so -0.3320 is UNAFFECTED.
+
+    CORRECTED   -0.3320 over 17 live round trips (22 partial-exit rows)
+    SCOREBOARD  -0.1864 over 18
+    GAP          0.1456 = the 7 orphan rows at -0.1437
+
+The ledger's 18 is now MORE anomalous, not less: it matches neither 22 rows nor
+17 round trips. No query written this pass reproduces 18. UNRESOLVED and named
+as such in [503d996e].
+
+THE 7 ORPHANS, DIAGNOSED (so nobody re-derives it):
+
+  * ALL SEVEN ARE FROM 09-03, 08:36 to 16:38 -- one contiguous day. This is a
+    TIME-BOUNDED WRITER DEFECT, not random attribution loss.
+  * strategy_id is ABSENT FROM THE details KEY SET entirely. Keys present:
+    accounting_version, mode, reason, remaining_size, repriced, retained_profit.
+    It was NEVER WRITTEN, not written-and-lost.
+  * TWO OF THE SEVEN carry the strategy in their reason string:
+    "[1d] rsi_reversal: RSI 88" and "[1d] rsi_reversal: RSI 93".
+
+That last point CHANGES THE FIX OPTIONS. Attribution is partially recoverable
+from data already in the row, so this is not an all-or-nothing choice between
+back-attributing and rewriting the scoreboard. The other five carry no strategy
+hint (confidence_drop x2, negative_margin x2, stop_loss x1).
+
+AUDIT OF PASS 476, AND IT CONFIRMS -- reporting a clean positive because this
+log is otherwise all kills. Re-ran the five-zero-endpoint claim on a window that
+has since moved forward: 34964 rows / 7d, dexscreener 16153 (46.20%),
+geckoterminal 9187 (26.28%), kucoin 9147 (26.16%), bitstamp 477 (1.36%), and
+okx/bybit/mexc/kraken/coinbase ZERO. Exactly four delivering sources. The claim
+held on 473 rows that did not exist when it was made. [eb269198] is safe to hand
+over; scope-cut to that one change and dropped to priority 3.
