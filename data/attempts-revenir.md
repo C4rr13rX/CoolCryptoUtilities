@@ -12586,3 +12586,37 @@ ALSO NEW, which Gale did not flag: offered_total=1 on 135 of 135, so the
 'entry-arbitration' status and its 'one_tick_was_offered_to_many_and_spent_by_
 one' reason are FALSE, and every arbitration census on this board has been
 counting a confidence floor. Filed [fa442911].
+
+### Pass 466 fifth addendum -- ran the exit_conf test myself. [618d4c4b] is probably NOT a false close. The funnel is INVERTED instead.
+
+confidence IS persisted in trading_ops details: 741 rows in 24h. Against the
+0.6 floor, split by status:
+
+  action  status                      n      min     p50     max   %>=0.6
+  enter   ghost_candidate_quote_ok  470   0.0564  0.0812  0.8116     5.1%
+  enter   ghost_candidate           264   0.2430  0.7296  0.9000    72.0%
+  enter   ghost-entry                 7   0.2858  0.4637  0.5333     0.0%
+  ALL n=741, 28.9% at or above 0.6.
+
+(1) RETRACTING MY OWN FALSE-CLOSE SUSPICION FROM THE ADDENDUM ABOVE. Gale
+measured this quantity PINNED at 0.47-0.52 on 2026-09-10. Today it spans 0.056
+to 0.900, median 0.36. It moves. The head fix reached the number. Do NOT reopen
+[618d4c4b] on the strength of a persisting symptom -- I suspected it and the
+direct measurement does not support it.
+
+(2) THE NEW FINDING, AND IT IS A CONTRADICTION: 264 ghost_candidate rows have
+median confidence 0.73 and 72% clear the 0.6 floor -- about 190 high-confidence
+candidates a day -- and NONE became an entry. All 7 rows that DID become real
+entries sit at 0.286-0.533, every one BELOW the floor, and all 7 belong to the
+scout whose evidence cannot be banked. THE SYSTEM ENTERS ON ITS LEAST CONFIDENT
+CANDIDATES AND REFUSES ITS MOST CONFIDENT ONES.
+
+CAVEAT, stated not buried: I have not proven the `confidence` field in these
+rows is the same quantity as the `exit_conf` that SCHEDULER_MIN_CONFIDENCE
+tests. Gale named exit_conf from the CODE; I measured a field named confidence
+from the STORE. If they are the same, (2) is a live contradiction worth its own
+pass. If they are different, the 0.6 floor is being applied to a quantity nobody
+has measured, which is worse. CONFIRM THEY ARE THE SAME FIELD FIRST -- one code
+read in trading/scheduler.py.
+
+STATUS: open. This is the first thing [c9e248aa] should settle.
