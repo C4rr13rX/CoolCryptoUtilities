@@ -13150,3 +13150,26 @@ a $10 clip risks pennies. See [23ad8727] and [74a12c84].
 NOT ACTIONED BY THIS PASS: approving live capital is the operator's call, on a
 strategy demoted 7x with live P/L -0.1585 over 17 trades. Number placed in front
 of the decision, decision not taken.
+
+5. "grep prod_direct.log for '[ghost] enter' as a cheap entry signal." PARTLY
+   WRONG, and I tested my own handover rather than leaving it untested.
+   The line exists (106 in the last 80MB) but fires on a DIFFERENT LANE:
+   CLANKER-USDC (obv_accumulation), BSTONK-USDC (atf_static), AAVE-USDC
+   (supertrend_follow) — not one VIRTUAL-USDC, and VIRTUAL is the only symbol
+   with a ghost-entry ops row in the whole 50h silence.
+   The last 3MB of the log spans 09-18 12:26:08 to 16:19:15 and contains ZERO
+   '[ghost] enter' lines and zero probe lines — yet trading_ops has a
+   ghost-entry row at 09-18 12:43:42 inside that range.
+
+   CONCLUSION: bot.py:9845 '[ghost] enter' and the trading_ops ghost-entry row
+   are NOT the same event. Different code paths. Two independent entry lanes,
+   now with both sides named.
+
+   OPEN AND NOT GUESSED AT: which lane the fill writer sits on, and therefore
+   whether the probe at bot.py:9901 is even on the failing lane. If the 17
+   VIRTUAL entries never execute 9845 they may never reach 9901 either, and the
+   probe could stay mute forever while the real write lives elsewhere. READ THIS
+   BEFORE CONCLUDING ANYTHING FROM PROBE SILENCE.
+
+   CORRECTED TRIGGER for the next pass — use the DB, not the log:
+     select count(*) from trading_ops where ts>1789759522 and status='ghost-entry'
