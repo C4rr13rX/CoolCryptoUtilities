@@ -11862,3 +11862,38 @@ looks more carefully derived. All four look carefully derived; that is how we en
 **Still open, and stated as open rather than guessed:** the complement — whether the four count
 different things (pool vs pool+gas, one leg vs two), which would make this a naming defect fixed by
 renaming. I did not settle it. It is criterion 1 and the first job next pass.
+
+### Pass 462, third addendum: the complement LOSES — and one number is provably impossible
+
+I filed "the four may count different things, making this a naming defect" as criterion 1 and then
+settled it. **Both modules document the same quantity in their own source:**
+
+- `round_trip_cost.py:73` — *"PER-TOKEN full round trips (both legs, gas + slippage), measured on chain"*
+- `roundtrip_cost.py:74` — `cost_rate(n, symbol) = FIXED_USD/n + pool_cost_pct(symbol, n)`, where
+  `:70` says the fixed leg **is** the gas (0.004047, the census's measured median) and `:81`/`:83`
+  say slippage and MEV are excluded, making it *"a FLOOR on the cost — the best case"*.
+
+Same two-leg round trip, both including gas. The census is a **floor of the very quantity the token
+table estimates** — not a different unit, leg count, or fee concept. **The naming-defect escape is
+closed; this is a genuine contradiction.**
+
+**And that makes one number impossible, with no judgement call required:** WETH census floor
+(gas + pool, **no** slippage) is 22.24bp; WETH token table (gas + slippage, on chain) is **11.00bp**.
+A full estimate cannot sit *below* the documented best case of the same quantity. One of those two is
+wrong, and it is falsifiable without first deciding which source is authoritative — rare in this
+cluster, where every other number needs a judgement call. My guess is the token table (oldest, six
+hand-written literals), **labelled as a guess**.
+
+AERO points the same way but is **not** proof: floor 33.27 + the census's own pooled 27.8bp slippage
+lands near 61bp against the table's 435bp — still 7x, unexplained by anything either file documents.
+That 27.8bp is **pooled**, and this repo already records that pooled slippage fits no individual
+symbol, so closing AERO needs per-token slippage measured.
+
+**Not done, stated rather than implied:** per-token slippage was not measured, and the DB-measured
+46.13bp path at `symbol_edge_gate.py:476` was not reconciled against either module.
+
+**Process note:** this addendum was first appended to the WRONG repo — a `cd` in an earlier compound
+command persisted, so it landed in `ContinuousRefinement/data/attempts-revenir.md` (gitignored there,
+so `git status` showed nothing and the commit failed with "pathspec did not match"). Removed from
+that file and re-appended here. **The failed commit is what surfaced it; a silent append would not
+have.** Use absolute paths in compound commands that `cd`.
