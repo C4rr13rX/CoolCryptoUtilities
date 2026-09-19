@@ -17866,3 +17866,17 @@ carry entry+exit hashes" -- those hashes are in NEITHER table. For a loop whose
 one non-negotiable is that a profit not tied to a settled tx hash did not happen,
 locating where the hashes actually live is worth one query. NOT FOUND in the two
 obvious places. That is the cheapest open question in this file.
+
+### ANSWERED: the hashes are in a CHAIN-LEVEL table, not the trading books
+Swept every table in storage/trading_cache.db for a hash column:
+
+    transfers                ['hash']                        <- the on-chain table
+    discovery_swapprobe      ['buy_tx_hash','sell_tx_hash']
+    payouts_payout           ['tx_hash']
+    branddozer_gaterun       ['input_hash']                  (unrelated)
+
+NEITHER trade_outcomes NOR trade_fills has a hash column -- which is why neither
+lookup found one. To tie a live row to a settled transaction you must join the
+BOOKS to `transfers` by symbol and timestamp; there is no hash on the trading
+side to join on directly. That join is the loop's one non-negotiable rule and
+the two obvious tables do not support it.
