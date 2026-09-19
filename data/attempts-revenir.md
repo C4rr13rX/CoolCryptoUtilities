@@ -14303,3 +14303,29 @@ license live money against an unauditable book.
 SEPARATE DEFECT FROM THE SAME QUERY: 96 of 246 receipt rows (39%) carry NO
 strategy id. Every per-strategy conclusion drawn from that table uses 61% of
 it. Filed on [82662e5d] as a reporting criterion.
+
+### PASS 478 FOURTH ADDENDUM -- I WALK BACK HALF MY OWN ALARM
+
+The previous addendum left an "unresolved sign flip" on the record: the
+scout's tradeable subset was 4 trips / 25% / -0.1097 at pass 103 and reads
+22 / 68% / +0.1030 today, and I implied one of them must be wrong. I checked
+the writer before leaving that standing.
+
+ledger.py:733-740, inside record_outcome: the ledger accumulates its OWN
+counters as outcomes are recorded, via services.strategy_registry.record_outcome,
+on a path entirely separate from the trade_outcomes table. The ledger numbers
+are a RUNNING ACCUMULATOR, not a query over receipts.
+
+So 4 -> 22 is EIGHTEEN MORE ACCUMULATED TRADES, not a restatement. Same
+counter, two different times; mostly-winning additions moving 25% to 68% over
+eighteen trades is ordinary. WITHDRAWN: the implication that the two figures
+contradict. I should have reached for accumulation first, and I am recording
+the withdrawal rather than leaving an alarming framing up because it supported
+my own item.
+
+WHAT SURVIVES UNCHANGED, and it never needed the sign flip: the scout has 0 of
+246 trade_outcomes rows. The ledger accumulator and the receipt table are
+DISJOINT for this strategy and only the accumulator holds anything. The
++0.1030 is self-reported by the writer and no de-contamination instrument in
+this repo can reach it. [82662e5d] corrected accordingly -- the job is making
+an unaudited counter auditable, NOT hunting a restatement.
