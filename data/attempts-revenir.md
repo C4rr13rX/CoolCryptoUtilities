@@ -16218,3 +16218,43 @@ detect a floor-sized effect centred there. It found +12.01 bp, not significant,
 with 52.5% of 343 windows positive. **But 27.77 sits INSIDE the upper bound
 (+37.47), so a floor-paying edge cannot be excluded.** The answer is likely "no"
 and is not proven. More lookback or a better aggregator closes it.
+
+## Pass 485 (Echo) -- CLOSING RESULT: atf_static's own score ranks symbols at CHANCE. Sign test, 652 windows.
+
+ROUTE: close the one remaining axis -- does the strategy's own signal have
+direction skill? -- with a statistic immune to the price outliers that wrecked
+the mean-based version.
+
+TWO DEAD ENDS FIRST, both recorded so nobody repeats them:
+
+1. **The lookback lever is EXHAUSTED.** `market_stream` spans only **23.8
+   days**, so a 30-day and a 60-day query return byte-identical results
+   (66182 vs 66183 scored rows). There is no more price history on disk.
+   Going from 343 to 611 windows moved the 45m MDE the WRONG way, 25.47 ->
+   26.51 bp. More windows does not fix this.
+2. **There are corrupt prices in `market_stream`.** The 15m mean-of-diffs came
+   back **+7642.95 bp** with an MDE of 14695 bp -- a single window's return
+   dominating 696 of them. Consistent with the known blocked item
+   [57d69341] (COMP-USDC carrying two price regimes under one ticker). Any
+   mean taken over this table is contaminated.
+
+THE TEST THAT WORKS -- a sign test, which needs no variance estimate and cannot
+be moved by an outlier. Within each 10-min window, rank candidates by the
+strategy's own `score`, median of the top half against median of the bottom
+half, and count only WHICH SIDE WON:
+
+| horizon | windows won | n | rate | 95% CI | z | verdict |
+|---|---|---|---|---|---|---|
+| 15m | 336 | 652 | **51.5%** | [47.7%, 55.4%] | +0.78 | indistinguishable from chance |
+| 45m | 288 | 564 | **51.1%** | [46.9%, 55.2%] | +0.51 | indistinguishable from chance |
+
+**The score does not rank symbols better than a coin.** 652 windows over the
+full 23.8 days of available price history, and the ranking ability is bounded
+above at 55.4%.
+
+SCOPE, AND IT IS THE LIMIT OF THIS RESULT: all 66182 scored rows carry
+`strategy_id=atf_static`. This closes the axis **for atf_static**, which is the
+only strategy that publishes a score to `trading_ops`. donchian_breakout,
+rsi_reversal and supertrend_follow remain UNTESTED because their signals are not
+in this table -- that is now the whole of the remaining question, and finding
+their signal source is the larger half of [310c3dad].
