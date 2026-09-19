@@ -14652,3 +14652,31 @@ CLOSED: "delete the five endpoints and save 7560 REST timeouts" as written.
 OPEN: the one-line demotion, which is still correct and still priority 3.
 I rewrote the item's acceptance criteria with all three corrections rather than
 filing a new id.
+
+### Pass 479 addendum -- the route fix exposed a bigger fact than the item asked about
+
+Verifying my own change could not drop a chain to zero routes, I checked what
+production actually swaps on. FOCUS_CHAINS defaults to
+base,arbitrum,optimism,polygon (trading/bot.py:792), not base alone:
+
+    base      ['uniswap']
+    arbitrum  ['uniswap', 'camelot', 'sushi']
+    optimism  ['camelot']
+    polygon   ['camelot']
+
+None is empty, so the new `no_route_for_chain` early return cannot fire on any
+configured chain -- the change is safe on all four.
+
+THREE OF FOUR HAVE EXACTLY ONE DEX ROUTE AND NO FALLBACK. And on optimism and
+polygon the surviving route is registered as "camelot" but is not Camelot:
+CAMELOT_V2_ROUTER maps polygon -> QuickSwap V2 and optimism -> Sushi V2
+(camelot_v2.py:9-17). UniswapV3 has never worked on either -- UNI_V3
+(uniswap_v3.py:13) carries only ethereum, base, arbitrum -- so every
+optimism/polygon swap raised ValueError on the uniswap attempt and had it
+swallowed by the except.
+
+Behaviour there is UNCHANGED by this pass; the same venue always answered. What
+changed is that it is visible. base-has-one-quoting-venue has been in memory for
+passes while two more focus chains had the same disease unnoticed. Filed as
+[00f5a607], priority 3 -- it is a decision and a labelling job, not a live bug,
+and it moves no P/L.
