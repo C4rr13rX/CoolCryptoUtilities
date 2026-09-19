@@ -18384,3 +18384,85 @@ blocked on a cost measurement that our own book cannot supply. Next step is a
 quote sweep on those four pairs at a fundable clip ([1504e406]), carrying pass
 492's caveat that the quoter understates and cannot distinguish a 429 from an
 empty pool.
+
+## Pass 494 (Echo, senior, solo) -- the per-token cost table is uncalibrated in BOTH directions, and 4 of its 6 rows have no live evidence at all
+
+ROUTE TRIED: satisfy [23bb42fd] by pricing VIRTUAL/VVV/DRB/ZORA from
+trade_outcomes.fee_cost and adding them to services.round_trip_cost.TOKEN_ROUND_TRIP.
+
+RESULT: CLOSED NEGATIVE. The instrument the item names is a CONSTANT.
+
+Pre-registered kill test before touching the table: run the fee_cost method on
+the two tokens that already have an independent number and see if it
+reproduces them.
+
+  token   fee_cost method   TOKEN_ROUND_TRIP   miss
+  WETH        0.4613%            0.11%         4.2x too high
+  AERO        0.4692%            4.35%         9.3x too low
+
+It reproduces neither, and misses in opposite directions. The census explains
+why -- across the 144 real fees in trade_outcomes:
+
+  0.4613%  n=41  across 22 DISTINCT tokens
+  1.2259%  n=18  across  9 DISTINCT tokens
+
+41% of the book is two constants shared over 31 token names. VVV, DRB and
+ZORA all sit ON 0.4613%; VIRTUAL on 0.4636%. Writing them in would have put
+one number into the production table four times under four token names, each
+with an n beside it to look like four independent measurements. round_trip_cost.py's
+_is_echo filter catches only the 0.0065 echo and is blind to both of these.
+
+COVERAGE, from non-ghost trade_fills (the only instrument that can see
+slippage). ALL NINE tokens the item named have ZERO non-ghost rows:
+LINK 0/3, OP 0/8, LDO 0/4, CAKE 0/4, UNI 0/3, VIRTUAL 0/81, VVV 0/12,
+DRB 0/10, ZORA 0/4.
+
+AUDIT OF THE WHOLE PRODUCTION TABLE (read at trading/scheduler.py:1800, and
+any symbol above 35bp is refused at :1803):
+
+  token   table bp   measured bp   n live   n ghost   verdict
+  WETH       11.00         n/a          0        11   UNVERIFIABLE
+  ETH        11.00         n/a          0         8   UNVERIFIABLE
+  USDC       11.00         n/a          0         0   UNVERIFIABLE
+  KTA      7498.00         n/a          0         0   UNVERIFIABLE
+  AERO      435.00       37.45         16       108   table 11.6x TOO HIGH
+  CBETH      30.00       62.90          5        46   table  2.1x TOO LOW
+
+Four of six cannot be checked at all. Both that can are wrong, in OPPOSITE
+directions -- so the table is not conservative, it is uncalibrated.
+
+THE ROW THAT LOSES MONEY IS CBETH, NOT AERO. The module's own docstring says
+understating cost is the direction that loses money. CBETH is understated:
+30bp sits UNDER the 35bp gate, 62.90bp sits OVER it, so the gate ADMITS CBETH
+on a cost too low to admit it. Baseline from
+`python -X utf8 scripts/money_button_dip_expectancy.py --hours 168`:
+
+  ALL             106 trades  46% win  mean net -0.663%
+  ADMITTED<=0.35%  11 trades  64% win  mean net -0.049%
+  CBETH-USDC        1 trade  100% win  mean net +0.347%
+
+Charging CBETH its measured 62.90bp moves that row by 32.9bp: +0.347% becomes
++0.018%. The entire reported gain on the only admitted token with live
+evidence IS the understatement. n=5, so 62.90bp is not settled -- but 30bp is
+UNEVIDENCED, which is the safer and sufficient claim.
+
+CORRECTING AERO DOES NOT ADMIT AERO. 37.45bp is still above the 35bp gate. It
+moves AERO from refused-by-400bp to refused-by-2.45bp. No new symbol trades.
+Recorded here because the 11.6x headline invites exactly that misreading.
+
+SELF-AUDIT, PASS 493. scripts/strategy_replay_table.py (mine, last pass)
+charges cost from this table. Its docstring line 37 and printed caveat line
+457 both say the constant is a LOWER bound on real cost, citing AERO at
+37.45bp against the quoter's 13.58bp. It never compares against the 435bp the
+table actually charges. For AERO the constant is an UPPER bound and the
+caveat is backwards for the very token it names. AERO is in the THIN cohort,
+so the 65.9%-vs-16.1% deep-vs-thin contrast was inflated by ~400bp per AERO
+round trip. The DIRECTION result still stands (same rule, tape, horizon); the
+NET spread and the 16.1% figure are CONTAMINATED until re-run.
+
+STATUS: [23bb42fd] re-specified in place, not re-filed. Nothing written to
+TOKEN_ROUND_TRIP -- criterion refused on evidence. Operator escalation posted:
+one \$2-3 live WETH-USDC round trip, worst case under \$0.40 (gas measured at
+\$0.0041 median / \$0.0137 max per leg over 21 live rows), which would give
+WETH its first real cost number and make the pass-493 kill test runnable for
+the first time.
