@@ -145,7 +145,17 @@ def test_swap_tries_uniswap_first_and_never_calls_0x(monkeypatch):
 
 
 def test_swap_falls_through_on_chain_routes_without_0x(monkeypatch):
-    """Every on-chain route is still tried in order when the earlier ones fail."""
+    """Every REACHABLE on-chain route is tried in order when earlier ones fail.
+
+    This asserted ``chain="base"`` until pass 479 and passed only because the
+    fall-through was unconditional. It was never true on base: camelot and sushi
+    there return an error dict without opening a socket, so the three names in
+    this list were one real attempt and two stubs answering a question the chain
+    was never asked. The property under test -- fall through the on-chain routes
+    in order, never consult 0x -- is real, so it is asserted on arbitrum, the
+    chain where all three routers genuinely resolve. Base gets its own pin
+    below, and they disagree on purpose.
+    """
     svc = _service_with_stubs()
     attempted: list[str] = []
 
@@ -167,10 +177,51 @@ def test_swap_falls_through_on_chain_routes_without_0x(monkeypatch):
         lambda **kw: SwapOutcome(ok=False, broadcast=False, route=kw["name"], reason="no_pool"),
     )
 
-    svc.swap(chain="base", sell=_USDC, buy=_WETH, amount_human="1")
+    svc.swap(chain="arbitrum", sell=_USDC, buy=_WETH, amount_human="1")
 
     assert svc.zx.calls == 0
     assert attempted == ["uniswap", "camelot", "sushi"]
+
+
+def test_on_base_the_fall_through_is_one_route_and_it_says_why(monkeypatch):
+    """Base has ONE working DEX route, and a failure there is terminal.
+
+    The companion to the test above, and the more important of the two: base is
+    the chain this system actually trades. If UniswapV3 stops answering here the
+    swap is over -- there is no second venue to fall to, and pretending there was
+    is what this pass removed. The outcome must say so in a machine-readable
+    reason rather than a bare "all routes failed".
+    """
+    monkeypatch.setenv("CAMELOT_V2_ROUTER_BASE", "")
+    svc = _service_with_stubs()
+    attempted: list[str] = []
+
+    class _Provider:
+        def __init__(self, name):
+            self.name = name
+
+        def quote_and_build(self, *a, **kw):
+            attempted.append(self.name)
+            return {"tx": {"to": _WETH, "data": "0x", "value": 0}}
+
+    svc.uni = _Provider("uniswap")
+    svc.camelot = _Provider("camelot")
+    svc.sushi = _Provider("sushi")
+
+    monkeypatch.setattr(
+        svc, "_try_local_provider",
+        lambda **kw: SwapOutcome(ok=False, broadcast=False, route=kw["name"], reason="no_pool"),
+    )
+
+    outcome = svc.swap(chain="base", sell=_USDC, buy=_WETH, amount_human="1")
+
+    assert svc.zx.calls == 0
+    assert attempted == ["uniswap"], (
+        f"base must try uniswap and stop, got {attempted}; camelot and sushi "
+        "cannot answer there and attempting them is theatre"
+    )
+    assert outcome is not None and not outcome.ok
+    assert "all_routes_failed[base:uniswap]" in outcome.reason, outcome.reason
 
 
 def test_route_only_0x_refuses_up_front_instead_of_calling_a_dead_provider(monkeypatch, capsys):

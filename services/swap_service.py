@@ -43,13 +43,103 @@ def zerox_available() -> bool:
     return bool((os.getenv("ZEROX_API_KEY") or "").strip().strip("'\""))
 
 
-def default_route_order() -> list[str]:
+#: The on-chain routes, in the order swap() tries them. Chain-agnostic.
+_ONCHAIN_ROUTES = ("uniswap", "camelot", "sushi")
+
+
+def route_availability(chain: str) -> dict[str, str]:
+    """Why each on-chain route can or cannot answer on ``chain``.
+
+    Returns route -> reason. An empty reason means the route can answer there.
+    A non-empty one is ``"<code>:<detail>"``, and the code is one of:
+
+      ``unconfigured``          the venue has an environment knob for this chain
+                                and the knob is empty. An operator can fix this
+                                from .env without touching code.
+      ``unsupported_on_chain``  the venue carries no router for this chain at
+                                all, and no environment variable adds one.
+                                Fixing it means editing the provider.
+
+    Keeping those two apart is the point. Measured 2026-09-18 on base: sushi
+    returns ``"SushiV2 unsupported on base"`` and camelot returns ``"no router
+    configured for base"``, and both surfaced to the caller as the same thing --
+    a failed quote, indistinguishable from a pool that had no liquidity. One of
+    those is an unfinished .env line and the other is a code fact, and the swap
+    log said neither.
+
+    Read live from each provider's own table rather than copied into a map here,
+    so there is one source of truth: setting CAMELOT_V2_ROUTER_BASE must put the
+    route back with no change to this file.
+    """
+    ch = (chain or "").lower().strip()
+    why: dict[str, str] = {}
+
+    # Uniswap V3: a static per-chain table of router/quoter addresses. No env
+    # override exists, so an absent chain is a code fact.
+    from services.providers.uniswap_v3 import UNI_V3
+
+    why["uniswap"] = (
+        ""
+        if ch in UNI_V3
+        else f"unsupported_on_chain:UniswapV3 has no router for {ch or '(none)'} "
+        f"(services/providers/uniswap_v3.py UNI_V3 knows {sorted(UNI_V3)})"
+    )
+
+    # Camelot V2: CAMELOT_V2_ROUTER_<CHAIN> overrides the table for ANY chain,
+    # so an empty answer is always 'unconfigured' and never 'unsupported'.
+    from services.providers.camelot_v2 import CAMELOT_V2_ROUTER
+
+    camelot_router = os.getenv(
+        f"CAMELOT_V2_ROUTER_{ch.upper()}", CAMELOT_V2_ROUTER.get(ch, "")
+    ).strip()
+    why["camelot"] = (
+        ""
+        if camelot_router
+        else f"unconfigured:CamelotV2 has no router for {ch or '(none)'}; "
+        f"set CAMELOT_V2_ROUTER_{ch.upper() or '<CHAIN>'} in .env"
+    )
+
+    # Sushi V2: a static table with no env override anywhere in the provider.
+    from services.providers.sushi_v2 import SUSHI_V2_ROUTER
+
+    why["sushi"] = (
+        ""
+        if ch in SUSHI_V2_ROUTER
+        else f"unsupported_on_chain:SushiV2 has no router for {ch or '(none)'} "
+        f"(services/providers/sushi_v2.py SUSHI_V2_ROUTER knows "
+        f"{sorted(SUSHI_V2_ROUTER)}; there is no env override)"
+    )
+
+    return why
+
+
+def default_route_order(chain: str | None = None) -> list[str]:
     """Routes the default (no ROUTE_ONLY) swap path tries, in order.
 
     Never contains "0x" unless zerox_available(); the on-chain routes alone
     are always sufficient to attempt a swap.
+
+    With ``chain`` given, routes that cannot answer on that chain are dropped,
+    because a route in this list is a promise that it will be tried. On base
+    that takes the order from uniswap->camelot->sushi down to uniswap alone:
+    camelot and sushi are arbitrum-only here and have always returned an error
+    dict without so much as opening a socket.
+
+    BASE NOW HAS EXACTLY ONE WORKING DEX ROUTE, and shortening this list did not
+    cause that -- it revealed it. If UniswapV3 stops answering on base (a dead
+    RPC, a quoter revert, a pool with no liquidity at the requested size) the
+    swap fails outright with ``all_routes_failed``; there is nothing behind it,
+    and there never was. The honest list is what makes that visible.
+
+    Without ``chain`` the old chain-agnostic answer is returned unchanged, so
+    the 0x-is-opt-in property that test_swap_never_requires_0x.py guards keeps
+    asserting on exactly the list it was written against.
     """
-    order = ["uniswap", "camelot", "sushi"]
+    if chain is None:
+        order = list(_ONCHAIN_ROUTES)
+    else:
+        why = route_availability(chain)
+        order = [r for r in _ONCHAIN_ROUTES if not why.get(r)]
     if zerox_available():
         order.insert(0, "0x")
     return order
@@ -645,11 +735,22 @@ class SwapService:
         return raw
 
     def _ensure_allowance(self, chain: str, token: str, spender: str, need_raw: int) -> bool:
+        # "I could not READ the allowance" and "the approval was REJECTED" are
+        # different failures with the same old answer, `approval_failed`, and
+        # the difference is the whole diagnosis. The AERO-USDC exit on
+        # 2026-09-05 reported approval_failed while the allowance on chain was
+        # 2^256-1: the router was already approved and the only thing that
+        # failed was one eth_call to a rate-limited endpoint. The reason is
+        # recorded here so `_try_local_provider` can name it in the outcome
+        # rather than flattening every case into one word.
+        self._last_allowance_reason = ""
         if is_native(token): return True
         try:
             have = int(self.bridge.erc20_allowance(chain, token, self.bridge.acct.address, spender))
         except Exception as e:
-            print(f"[approve] allowance read failed: {e!r}")
+            print(f"[approve] allowance UNREADABLE (not rejected) for {token} "
+                  f"spender={spender}: {e!r}")
+            self._last_allowance_reason = f"allowance_unreadable:{type(e).__name__}"
             return False
         if have >= need_raw: return True
         mode = (os.getenv("APPROVE_MODE","e").lower())
@@ -661,6 +762,7 @@ class SwapService:
             print(f"[approve] tx: {txh}")
         except Exception as e:
             print(f"[approve] broadcast failed: {e!r}")
+            self._last_allowance_reason = f"approve_broadcast_failed:{type(e).__name__}"
             return False
 
         # Same trap as _send had: a 403 from a rate-limited RPC while reading
@@ -676,14 +778,18 @@ class SwapService:
             return True
         if confirmed is False:
             print("[approve] receipt status=failed (reverted)")
+            self._last_allowance_reason = "approve_reverted"
             return False
 
         try:
             now = int(self.bridge.erc20_allowance(chain, token, self.bridge.acct.address, spender))
         except Exception as e:
             print(f"[approve] receipt unknown and allowance unreadable: {e!r}")
+            self._last_allowance_reason = f"allowance_unreadable:{type(e).__name__}"
             return False
         ok = now >= need_raw
+        if not ok:
+            self._last_allowance_reason = "allowance_still_insufficient"
         print(f"[approve] receipt unknown; allowance now {now} ({'sufficient' if ok else 'insufficient'})")
         return ok
 
@@ -798,8 +904,9 @@ class SwapService:
             return SwapOutcome(ok=False, broadcast=False, route=name, reason=shortfall)
         spender = q.get("allowanceTarget")
         if spender and not self._ensure_allowance(chain, sell_token, spender, sell_raw):
-            print("[ERR] approval failed")
-            return SwapOutcome(ok=False, broadcast=False, route=name, reason="approval_failed")
+            detail = getattr(self, "_last_allowance_reason", "") or "approval_failed"
+            print(f"[ERR] approval step failed: {detail}")
+            return SwapOutcome(ok=False, broadcast=False, route=name, reason=detail)
         tx = q.get("tx") or {}
         print(f"[{name}] to={tx.get('to')} value={tx.get('value',0)} gas~{tx.get('gas',0)}")
         outcome = self._send(
@@ -1060,8 +1167,9 @@ class SwapService:
                 tx = q0.get("tx") or {}
                 spender = q0.get("allowanceTarget")
                 if spender and not self._ensure_allowance(ch, sell, spender, sell_raw):
-                    print("[ERR] approval failed")
-                    return SwapOutcome(ok=False, route="0x", reason="approval_failed")
+                    detail = getattr(self, "_last_allowance_reason", "") or "approval_failed"
+                    print(f"[ERR] approval step failed: {detail}")
+                    return SwapOutcome(ok=False, route="0x", reason=detail)
 
                 # Preflight (estimate_gas)
                 val_raw = tx.get("value") or 0
@@ -1223,8 +1331,21 @@ class SwapService:
         # =========================
         # Normal order: on-chain routes first; 0x only if explicitly enabled
         # =========================
-        _routes = default_route_order()
-        print(f"[info] chainId={cid} taker={taker} routes={'->'.join(_routes)}")
+        _routes = default_route_order(chain=ch)
+        _why = route_availability(ch)
+        print(f"[info] chainId={cid} taker={taker} routes={'->'.join(_routes) or '(none)'}")
+        # Name every route we are NOT going to try. Silence here is what let
+        # base look like it had two fallbacks behind uniswap for months.
+        for _r in _ONCHAIN_ROUTES:
+            if _why.get(_r):
+                print(f"[info] route {_r} skipped on {ch}: {_why[_r]}")
+        if not _routes:
+            print(f"[ERR] no route can answer on {ch}.")
+            return SwapOutcome(
+                ok=False,
+                reason="no_route_for_chain:"
+                + "; ".join(f"{r}={_why[r]}" for r in _ONCHAIN_ROUTES),
+            )
 
         # 1) 0x v2 (no auto-wrap pre-0x) -- skipped unless opted in with a key
         if "0x" in _routes:
@@ -1313,43 +1434,61 @@ class SwapService:
             attempts.append(outcome)
             if outcome.ok or outcome.broadcast:
                 return outcome
-            print("[UniswapV3] failed, trying Camelot...")
+            _next = [r for r in _routes if r != "uniswap"]
+            # Do not print "trying Camelot" on a chain where camelot cannot
+            # answer. That line is the whole false-redundancy problem in one
+            # string: it told the operator a fallback was about to run.
+            print(
+                f"[UniswapV3] failed, trying {_next[0]}..."
+                if _next
+                else f"[UniswapV3] failed, and it is the ONLY route on {ch}."
+            )
         except Exception as e:
             print(f"[UniswapV3] fallback: {e}")
             attempts.append(SwapOutcome(ok=False, route="uniswap", reason=f"error:{e!r}"))
 
         # 3) Camelot V2 (multi-chain via configured router)
-        try:
-            q2 = self.camelot.quote_and_build(
-                ch, sell, buy, int(sell_raw),
-                slippage_bps=slippage_bps,
-            )
-            outcome = self._try_local_provider(name="CamelotV2", q=q2, chain=ch, sell_token=sell, sell_raw=sell_raw, min_buy_raw=min_buy_raw)
-            attempts.append(outcome)
-            if outcome.ok or outcome.broadcast:
-                return outcome
-            print("[CamelotV2] failed, trying SushiV2...")
-        except Exception as e:
-            print(f"[CamelotV2] fallback: {e}")
-            attempts.append(SwapOutcome(ok=False, route="camelot", reason=f"error:{e!r}"))
+        if "camelot" in _routes:
+            try:
+                q2 = self.camelot.quote_and_build(
+                    ch, sell, buy, int(sell_raw),
+                    slippage_bps=slippage_bps,
+                )
+                outcome = self._try_local_provider(name="CamelotV2", q=q2, chain=ch, sell_token=sell, sell_raw=sell_raw, min_buy_raw=min_buy_raw)
+                attempts.append(outcome)
+                if outcome.ok or outcome.broadcast:
+                    return outcome
+                if "sushi" in _routes:
+                    print("[CamelotV2] failed, trying SushiV2...")
+                else:
+                    print("[CamelotV2] failed, and no route remains.")
+            except Exception as e:
+                print(f"[CamelotV2] fallback: {e}")
+                attempts.append(SwapOutcome(ok=False, route="camelot", reason=f"error:{e!r}"))
 
         # 4) Sushi V2
-        try:
-            q3 = self.sushi.quote_and_build(
-                ch, sell, buy, int(sell_raw),
-                slippage_bps=slippage_bps,
-            )
-            outcome = self._try_local_provider(name="SushiV2", q=q3, chain=ch, sell_token=sell, sell_raw=sell_raw, min_buy_raw=min_buy_raw)
-            attempts.append(outcome)
-            if outcome.ok or outcome.broadcast:
-                return outcome
-        except Exception as e:
-            print(f"[SushiV2] failed: {e!r}")
-            attempts.append(SwapOutcome(ok=False, route="sushi", reason=f"error:{e!r}"))
+        if "sushi" in _routes:
+            try:
+                q3 = self.sushi.quote_and_build(
+                    ch, sell, buy, int(sell_raw),
+                    slippage_bps=slippage_bps,
+                )
+                outcome = self._try_local_provider(name="SushiV2", q=q3, chain=ch, sell_token=sell, sell_raw=sell_raw, min_buy_raw=min_buy_raw)
+                attempts.append(outcome)
+                if outcome.ok or outcome.broadcast:
+                    return outcome
+            except Exception as e:
+                print(f"[SushiV2] failed: {e!r}")
+                attempts.append(SwapOutcome(ok=False, route="sushi", reason=f"error:{e!r}"))
 
-        print("[ERR] All routes failed.")
+        # Name the width of the failure, not just its cause. On base `_routes`
+        # is ["uniswap"], so "all routes failed" means ONE route failed and
+        # there was never a second one -- an operator reading the old message
+        # would have assumed three had been tried.
+        print(f"[ERR] All routes failed ({len(_routes)} tried on {ch}: {'->'.join(_routes)}).")
         return SwapOutcome(
             ok=False,
             broadcast=False,
-            reason="all_routes_failed:" + "; ".join(f"{a.route or '?'}={a.reason}" for a in attempts),
+            reason=f"all_routes_failed[{ch}:{'->'.join(_routes) or 'none'}]:"
+            + "; ".join(f"{a.route or '?'}={a.reason}" for a in attempts),
         )
