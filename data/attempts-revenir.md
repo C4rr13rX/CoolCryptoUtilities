@@ -16598,3 +16598,36 @@ the ghost bound is optimistic by construction, so the true gap is WIDER than
 STANDING RULE THAT COMES OUT OF THIS: never quote a gross without its
 population. The only two available are a ghost upper bound (+15.03bp) and a live
 dollar sum (-0.0849). They answer different questions.
+
+### Pass 487 CORRECTION to its own headline: the 983-day figure is WRONG by 7x.
+
+The "1.1 live round trips/day" rate used all pass came from 18 trades / 16.3
+days. That denominator is a blended artifact. The actual span:
+
+  18 live closed rows span  2.35 days   (2026-09-03 -> 2026-09-05)
+  rate over that span       7.66/day
+  days since the LAST live trade        13.4
+
+The 18 trades were a 2.35-day BURST followed by a 13.4-day silence. Dividing by
+16.3 averages the burst with the silence and calls it a rate.
+
+  at 1.1/day  (wrong)   1081 round trips = 983 days
+  at 7.66/day (actual)  1081 round trips = 141 days
+
+THE CONCLUSION REVERSES IN CHARACTER. The binding constraint is NOT that we
+generate evidence too slowly -- when the lane runs it produces 7.66 round trips
+a day and reaches a usable sample in under five months. The binding constraint
+is THAT THE LANE HAS BEEN OFF FOR 13.4 DAYS. That the lane is dead is not new
+(see the live-lane-blocked entries and ladder step 6). What is new is its PRICE:
+it is 7.66 round trips/day of the only evidence that can settle any cost
+question here.
+
+ROUTE (a) IS THEREFORE NOT CLOSED ON POWER. It was closed this pass on a
+983-day figure that does not survive. At 141 days it is expensive, not
+impossible. The route's status reverts to OPEN-BUT-UNPRICED and the p487
+closure of it is WITHDRAWN.
+
+NOT WITHDRAWN: the CI on round-trip cost is still [-7.10, +91.59], the buy-leg
+asymmetry is still a null, the live gross is still negative, and gas is still
+~69% of the toll at the $0.75 clip. Only the DAYS figure and the route-(a)
+closure that rested on it are withdrawn.
