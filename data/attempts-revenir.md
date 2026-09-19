@@ -15890,3 +15890,21 @@ asked "does a direct or 2-hop pool exist" as a CHEAP question, separate from
 "quote me a route"? If yes, a 45s call becomes a fast one and it is the best
 throughput fix on the board. If no, the deadline is doing the only job
 available to it and this thread closes.
+
+### Pass 484 addendum 7 -- FINAL. Two facts for whoever takes [b6be1b81].
+
+**The winning intermediate is NOT recoverable from the store.** Across 378
+successful quotes: zero via-intermediate mentions. The hop detail is written
+through `self._dbg` (`services/providers/uniswap_v3.py:337,:342`) and `_dbg` is
+OFF in production. Step 1 of [b6be1b81] needs the debug flag and a restart, or
+a hand-run of the provider. It is NOT a read of the store.
+
+**378 of 378 SUCCESSFUL quotes also carry `0x failed: 0x v2 403`.** Every
+single one. The 403 sits on the critical path of 100% of quotes in both
+populations. A success finishes at 15.49s only because UniswapV3 then finds its
+route quickly. The tax is universal, paid before the only venue that works, and
+buys nothing on any call.
+
+Caveat kept attached: the 0x 403 costs AT MOST 15.49s, so short-circuiting it
+does NOT rescue the 45s failures. It is a latency fix for the quotes that
+already work — and CBADA-USDC (OK 1 / timeout 3) is why that still matters.
