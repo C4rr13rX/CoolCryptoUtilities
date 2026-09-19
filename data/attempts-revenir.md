@@ -14528,3 +14528,24 @@ cannot execute; it should survive until the live branch exists.
 
 ALSO CONFIRMED: demotions 0. The scout is NOT held down by the re-arm rule,
 unlike atf_static at 7. Nothing to unwind there.
+
+### PASS 478 TENTH ADDENDUM -- THE CENTRAL CLAIM VERIFIED BY AN INDEPENDENT PATH
+
+The pass's load-bearing claim is that reason=="fast_track" IMPLIES term 3
+(total_net_profit > 0.0), so atf_static_scout satisfies all three terms of
+_ghost_validation_for_live without a separate check. That rests on the value
+tested inside the fast_track conjunction being the SAME value the earned-filter
+later reads out of the returned dict. Asserted earlier; verified now.
+
+    pipeline.py:5194   and total_net_profit > 0.0        (clause of
+                       fast_track_ready, pipeline.py:5190)
+    pipeline.py:5375   "total_net_profit": total_net_profit,   <- the SAME
+                       local goes into the returned verdict dict
+    pipeline.py:4732   and float(v.get("total_net_profit", 0.0) or 0.0) > 0.0
+
+Same function, same local, same number. The earned-filter at 4732 reads exactly
+the value fast_track already required to be positive at 5194. The implication
+holds and term 3 needs no independent measurement.
+
+This is the one claim in the pass that everything else hangs on, so it is the
+one worth checking twice.
