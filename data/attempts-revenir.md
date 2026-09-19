@@ -15070,3 +15070,63 @@ weaker. Nobody should assume this disagreement resolves against the cheap
 reading just because caution feels safer -- caution is not a measurement.
 
 STILL TRUE REGARDLESS: COMP and DRB fail at any tier or clip ([449305ff]).
+
+### Pass 480, SEVENTH and the headline -- [5efa6ba2] RESOLVED. The standing instruction quotes a RETRACTED cost figure. AERO is ~10.8bp on live fills, not 0.64-4.35%.
+
+The answer was already in this repo, committed ONE DAY before I filed the
+item. `git show 1a33c9a` (2026-09-17). Its own subject line:
+
+    "the legacy literal it replaces was 5x wrong on WETH and AERO"
+
+At the $2 clip:
+    AERO   legacy 0.6395%  census 0.1303%   legacy OVERCHARGED  4.91x
+    WETH   legacy 0.1074%  census 0.0201%   legacy OVERCHARGED  5.34x
+    CBBTC  legacy 0.0728%  census 0.1479%   legacy UNDERCHARGED 2.03x
+
+Those are the exact three ratios I derived independently before finding the
+commit (4.9x, 5.3x, 0.49x = 1/2.03). Same phenomenon, stated as settled.
+
+MECHANISM, and it explains the CBBTC inversion I could not account for: the
+legacy numbers came from the ROUTER PROVIDER, which picks the best tier PER
+LEG INDEPENDENTLY and therefore CROSSES TWO POOLS. Same-tier quoting is what
+makes a number a genuine round trip. A per-leg optimiser can land cheaper OR
+dearer than a same-tier round trip depending on the token's tier structure,
+which is why the error is not a uniform scale factor.
+
+CORROBORATED BY LIVE FILLS, which outrank every quote in this repo: AERO
+census 0.101% against 10.8bp MEASURED FROM ACTUAL FILLS; CBETH 0.603-0.617%
+against 62.4bp measured. CBBTC does NOT corroborate (14.8bp quoted vs 2.2bp
+filled) and by the artifact's own rule the QUOTE is the suspect there.
+
+**THE CONSEQUENCE, AND IT IS THE MOST IMPORTANT THING IN THIS PASS.** The
+standing instruction reproduced in EVERY briefing --
+
+    "the cost wall here is a TOKEN choice: WETH 0.04-0.11%, AERO 0.64-4.35%"
+    "AERO is the most-traded ghost symbol and costs more per round trip than
+     any edge ever measured here"
+
+-- IS THE RETRACTED LEGACY NUMBER. AERO is ~10.8bp on live fills, not 64-435bp.
+That text is the stated basis for restricting the universe to deep pools and
+for treating AERO as poison, and it has been wrong since 2026-09-17. It needs
+replacing in the briefing or the loop keeps deciding the universe on a figure
+the repo itself withdrew. RAISED TO THE OPERATOR on the board.
+
+Note the code already moved: deep_pool_reprice.py and
+tradeable_book_repricing.py stopped falling back to the legacy literal and
+QUOTE_PROVENANCE now reports source=artifact. It is the BRIEFING that is
+stale, not the code.
+
+I WITHDRAW PART OF MY OWN EARLIER ENTRY. I called probe_cost_pct disagreeing
+with its curve's $2 point a DEFECT. For AERO the SCALAR (0.101%) is the value
+that matches live fills (10.8bp), so the scalar is not simply wrong and may be
+the better-anchored figure. The scalar-vs-curve gap is real and worth
+documenting; the "defect" framing was too strong and I retract it rather than
+leave it to be quoted by someone else.
+
+CORRECTED h* ON THE LIVE-FILL ANCHOR: AERO 0.552, WETH 0.529.
+
+COVERAGE LIMIT, so nobody over-reads the census: only 9 of 18 qualifying
+symbols are priced at all, covering 98 of 177 ghost rows. Eight symbols have
+no_address_in_book (BASECAT CBXRP CBADA OMARCHY CBZEC PUMP CBMEGA MOG) and
+NONE of them gets a default cost. A universe rule built on this census must
+say what it does with an unpriced symbol.
