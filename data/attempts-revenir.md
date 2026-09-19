@@ -17070,3 +17070,55 @@ NOT PROVEN, stated so nobody inherits it as fact: the replay is a reconstruction
 of the production call, not the production call; production was NOT restarted;
 and whether the executor would ACCEPT a money_button candidate once one exists
 is untested -- step 6 has never had one to refuse.
+
+### Pass 489 addendum -- THE HORIZON AXIS IS CLOSED IN BOTH DIRECTIONS
+
+Follow-up to the above: is the 54.4bp edge ceiling a property of the TAPE or of
+money_button's discounting? Measured the realised forward move on the same 7d
+`market_stream` window, 40+ tick symbols. MEDIAN ONLY -- the mean is unusable
+here (mean abs move computes to 188,582bp because XRP-USDC reads 3,126,200bp and
+PEPE 24,224bp from the known second-price-regime contamination).
+
+  horiz  windows syms  MEDIAN|mv|     p75   P(>32.3bp)  up-rate
+     5m    26959   76       3.23bp   14.94      12.83%    38.1%
+    10m    29474   73       6.39     23.17      18.33%    39.8%
+    12m    29558   73       7.01     24.72      20.06%    39.7%   <- money_button's hold
+    15m    29714   73       8.08     27.71      22.25%    39.8%
+    20m    30054   73       9.56     34.08      26.00%    40.1%
+    30m    29863   73      13.60     43.52      31.61%    40.9%
+    45m    29964   72      19.70     59.20      39.09%    44.0%   <- .env:169 CAP
+    60m    29122   69      24.77     73.46      43.86%    46.1%
+    90m    28046   67      36.65     99.68      52.82%    48.7%   <- first crossing
+   180m    25759   56      59.89    151.56      65.08%    53.0%
+   360m    23191   48     101.32    239.50      75.83%    61.1%
+
+Cost bars: 32.3bp at a $10 clip, 78.9bp at the traded $0.89 clip
+(toll = 27.77bp + 45.70/clip_usd).
+
+TWO FINDINGS, and the second is the one nobody has stated.
+
+(1) NO HORIZON INSIDE THE REACHABLE HOLD PAYS. `MAX_HOLD_FORCE_SECONDS=2700`
+(.env:169) caps the hold at 45 minutes, where the median move is 19.70bp against
+a 32.3bp round trip. The median first crosses 32.3bp between 60 and 90 minutes --
+OUTSIDE the cap. Inside the reachable range the tape does not move far enough to
+pay for the trade, with direction called PERFECTLY.
+
+(2) THE UP-RATE IS BELOW A COIN FLIP ACROSS THE ENTIRE REACHABLE RANGE:
+38.1% at 5m rising only to 44.0% at 45m. money_button is LONG-ONLY -- it
+requires r5>0 AND r10>0 AND r30>0 AND slope>0. It is a long-only lane on a tape
+that rises less than half the time at every horizon it is allowed to hold. The
+up-rate does not reach 50% until ~90-180 minutes, which is past the cap, and the
+61.1% at 360m is one week of market drift on 48 symbols, not an edge -- the
+standing result that the 90-360min band is DRIFT already covers it.
+
+STATUS: CLOSED NEGATIVE for the momentum family on this feed, and it SUPERSEDES
+the cost-constant finding above as the explanation for 0.00 fires/day. Both are
+true; only this one is causal. The standing note that the horizon axis is closed
+because SHORTER IS WORSE is now closed at BOTH ends: shorter is worse, longer is
+past the cap and is drift where it is positive.
+
+CONSEQUENCE FOR [e796c7d5], and it is counterintuitive enough to state plainly:
+the 286bp double-count is ACCIDENTALLY PROTECTING THE ACCOUNT. Removing it makes
+money_button fire on windows whose median move is 7bp against 32bp of cost. Do
+not fix it as a route to profit. Re-prioritised p1 -> p3 by the agent who filed
+it, 20 minutes after filing it.
