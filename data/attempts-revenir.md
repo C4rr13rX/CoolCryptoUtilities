@@ -16025,3 +16025,56 @@ INDEPENDENT FINDING, and it is the valuable one: `trade_fills` holds ZERO
 different table, a different writer and a different code path from the
 `trading_ops` rows the live-lane census reads, and it agrees -- so the 13.3-day
 live silence is not an instrumentation artifact in the ops table.
+
+## Pass 485 (Echo) -- the entry gate is a coin flip on direction, and BOTH arms are negative
+
+ROUTE: [c9e248aa]'s pre-registered decisive criterion -- score REFUSED
+candidates' forward returns against ACCEPTED ones ON THE SAME TICKS.
+
+COMMAND: `python -X utf8 scripts/matched_baseline_test.py`
+
+DESIGN. Pairing is the whole point. This tape drifts and entries arrive in
+bursts, so an unpaired forward-return study measures WHEN each pool was sampled,
+not what the gate knew. Every comparison is made inside a 10-minute window
+holding at least one accept AND one refuse; only the within-window difference is
+aggregated, so drift is common to both arms and cancels. 7 days, 59 accepts
+(`action='enter' status='ghost-entry'`), 12420 refusals (`action='hold'`), 149
+priced symbols from `market_stream`.
+
+RESULT:
+
+| horizon | windows | accepted | refused | paired diff | 95% CI | accepted won |
+|---|---|---|---|---|---|---|
+| 15 min | 27 | -2.08 bp | -4.66 bp | +2.58 bp | [-8.79, +13.94] | 14/27 = 51.9% |
+| 45 min | 22 | -6.88 bp | -5.11 bp | -1.77 bp | [-33.91, +30.36] | 11/22 = 50.0% |
+
+All eight refusal reasons contain zero in their own CI at both horizons,
+including the three that do the real refusing: `entry-predropped-edge-ban`
+(4459), `entry-arbitration` (3588), `entry-refused-lattice` (2327).
+
+TWO KILL TESTS RUN AGAINST THIS SCRIPT'S OWN HEADLINE, both of which it survived:
+
+1. SENSITIVITY over the arbitrary design constants -- pairing window
+   {300,600,900,1800} s x staleness cap {300,600,1200} s. All 12 combinations
+   return zero-in-CI. The point estimate wanders between -5.08 and +4.94 bp;
+   even its SIGN is not stable across the constants, which is what no signal
+   looks like.
+2. POWER, because a null is worth nothing if the test is blind. Injecting a
+   known lift into the accepted arm: +10 bp DETECTED, +20 DETECTED, +27.77
+   DETECTED, +50 DETECTED. Minimum detectable effect at 95% is **11.37 bp**
+   against a live-receipt round-trip cost floor of 27.77 bp (p482). The test
+   can resolve an effect the size of the cost floor and did not find one, so
+   the null IS informative.
+
+CONCLUSION, AND IT INVERTS THE ITEM'S EXPECTED ACTION. The item says: if refused
+is no worse than accepted, the gate is refusing at random and IS the bug.
+Refused is no worse -- but read the LEVELS, not the difference. The ACCEPTED arm
+is NEGATIVE at both horizons (-2.08 bp, -6.88 bp). The gate is not picking
+losers out of a winning pool; there is no winning pool. Both arms go down.
+
+So the gate refuses at random, and loosening it admits MORE COIN FLIPS AT A
+27.77 bp TOLL. **DO NOT LOOSEN THE ENTRY GATE** -- and note the upper end of the
+15-min CI, +13.94 bp, pays under half the cost floor, so no point inside the
+interval is profitable. CLOSED: the defect is upstream of every gate. Candidate
+generation has no direction edge, which is what `h*` infimum 0.5 has been saying
+all along and what pass 484 found from the single-strategy side.
