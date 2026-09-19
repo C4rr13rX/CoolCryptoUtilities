@@ -14489,3 +14489,42 @@ that instruction has not gone stale.
 CONSEQUENCE: there IS a running instance -- do not start a second one. And a
 restart of this process ARMS REAL MONEY unless LIVE_TRADES_DRY_RUN=1 is set
 explicitly first (see the first PASS 478 entry).
+
+### PASS 478 NINTH ADDENDUM -- MY OWN HANDOVER CRITERION WAS INCOMPLETE: TWO BARS, NOT ONE
+
+I wrote into [9ef737d3] that removing the id from ledger.py:76
+_GHOST_ONLY_DEFAULT / GHOST_ONLY_STRATEGY_IDS would let the scout's
+already-passing record "take effect unaided". Tested against the ledger file
+rather than asserted.
+
+data/strategy_ledger.json, atf_static_scout:
+
+    live_approved        False
+    graduation_blocked   TRUE      <-- PERSISTED, IN THE FILE
+    demotions            0
+
+TWO INDEPENDENT BARS. ledger.py:836 and :1376 both read:
+
+    if ent.get("graduation_blocked") or sid in _ghost_only_ids():
+
+Left operand: a flag persisted in data/strategy_ledger.json. Right operand: the
+runtime constant at ledger.py:76. OR-ed, so clearing either ALONE does nothing.
+My criterion named only the runtime constant.
+
+CORRECTED IN THE ITEM -- step 2 is TWO edits:
+    2a. remove atf_static_scout from _GHOST_ONLY_DEFAULT / the env var
+    2b. clear graduation_blocked in data/strategy_ledger.json
+and _revoke_ghost_only_approval() (ledger.py:536) runs ON LOAD and re-strips
+approval if 2a is skipped, so the ledger edit alone is also insufficient.
+
+WHY IT MATTERED TO CATCH IT: the plan is unchanged ([82662e5d] still first,
+the scout's edge still unaudited), but the failure mode is the worst kind --
+the edit applies cleanly, nothing errors, and the ladder does not move.
+
+IT STRENGTHENS THE TRAP WARNING AGAIN: two independent guards were placed on
+this strategy by two different mechanisms. Whoever added the second did not
+trust the first. Deliberate belt-and-braces against licensing an executor that
+cannot execute; it should survive until the live branch exists.
+
+ALSO CONFIRMED: demotions 0. The scout is NOT held down by the re-arm rule,
+unlike atf_static at 7. Nothing to unwind there.
