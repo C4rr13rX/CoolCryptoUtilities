@@ -16414,3 +16414,29 @@ STATUS: **CLOSED, scoreboard vindicated**. The 4 have no settling ERC-20
         scripts/tx_hash_provenance_audit.py: scoreboard rows 18, both legs
         hashed 18, net -0.186371. Accounting and chain criteria drop the SAME 4.
         TRAP: querying mode='live' without status='closed' inflates loss 78%.
+
+### Pass 487 CORRECTION, same pass: the buy-leg asymmetry is a NULL.
+
+ROUTE: is the buy leg's slippage really 3.6x the sell leg's?
+NUMBER: live_entry n=20 median +15.06bp, live_exit n=18 median +6.04bp,
+        difference +9.02bp, bootstrap 95% CI [-21.98, +35.35], 20000 resamples.
+STATUS: **CLOSED AS A NULL** by the item's own pre-registered criterion 1.
+        The CI contains zero. [96c5f532] filed and closed in the same pass.
+        NULL = UNDERPOWERED, NOT REFUTED. Point estimate positive in both
+        extractions; CI is 57bp wide because n is 20 and 18.
+        Sell leg reproduces the census EXACTLY (+6.04, n=18) by an independent
+        route -- pipeline sound. Buy leg does NOT reconcile: +15.06 over 20 raw
+        legs vs the census's +21.73 over 12 paired-and-quarantined legs. Both
+        cannot be right and the gap is unfavourable.
+        RULED OUT, do not re-check: symmetric 75bp configured tolerance
+        (fill_cost.py:8); fee inseparable and CANCELS in the difference
+        (fill_cost.py:29-36); identical stamp sites (bot.py:9672/9693 vs
+        11219/11242) and identical executed-price derivation (9438 vs 10630);
+        sell-only modelled path bot.py:10140 touches 1 of 18 exits.
+
+THE BINDING CONSTRAINT THIS PASS ACTUALLY FOUND, and it outranks every cost
+question on the list: WE CANNOT MEASURE OUR OWN COST STRUCTURE AT n=18 LIVE
+ROUND TRIPS ACCUMULATED OVER 16 DAYS. Every cost route is being argued from a
+sample too small to resolve a 15bp effect against a 27.77bp toll. The only
+thing that fixes it is more live legs at a minimum clip -- route (a), not to
+make money, but to make cost MEASURABLE.
