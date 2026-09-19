@@ -169,12 +169,20 @@ def test_reverted_swap_is_not_retried_on_another_route():
 
 
 def test_failure_before_broadcast_still_falls_through_to_other_routes():
-    """The fall-through is only wrong *after* money moves; keep it otherwise."""
+    """The fall-through is only wrong *after* money moves; keep it otherwise.
+
+    Asserted on arbitrum since pass 479. It read ``chain="base"`` and passed
+    only because the fall-through was unconditional: on base, camelot has no
+    configured router and sushi is arbitrum-only, so two of those three names
+    were stub providers answering a question the chain never got asked. The
+    no-double-spend property this file exists to guard is unchanged -- it is
+    simply asserted on the chain where three routes really do resolve.
+    """
     quoted: list[str] = []
     bridge = _FakeBridge(raise_on_send=True)
     svc = _service(bridge, quoted)
 
-    outcome = svc.swap(chain="base", sell=_USDC, buy=_WETH, amount_human="0.05")
+    outcome = svc.swap(chain="arbitrum", sell=_USDC, buy=_WETH, amount_human="0.05")
 
     assert quoted == ["uniswap", "camelot", "sushi"], (
         f"nothing was broadcast, so every route should be tried: {quoted}"
@@ -183,3 +191,21 @@ def test_failure_before_broadcast_still_falls_through_to_other_routes():
     assert outcome.broadcast is False
     assert outcome.tx_hash == ""
     assert "all_routes_failed" in outcome.reason
+
+
+def test_on_base_a_pre_broadcast_failure_has_nowhere_to_fall():
+    """Base's fall-through is one route deep, and the reason must say so.
+
+    Same scenario as above on the chain we actually trade. This is the
+    single-point-of-failure, pinned: UniswapV3 failing on base ends the swap.
+    """
+    quoted: list[str] = []
+    bridge = _FakeBridge(raise_on_send=True)
+    svc = _service(bridge, quoted)
+
+    outcome = svc.swap(chain="base", sell=_USDC, buy=_WETH, amount_human="0.05")
+
+    assert quoted == ["uniswap"], f"base has one DEX route, got {quoted}"
+    assert outcome.ok is False
+    assert outcome.broadcast is False
+    assert "all_routes_failed[base:uniswap]" in outcome.reason, outcome.reason
