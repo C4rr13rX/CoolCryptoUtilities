@@ -18941,3 +18941,74 @@ both in the probe/quoter and NOT in the pool:
 STATUS: tool committed and reproducible; the measurement is NOT delivered.
 Do not quote 59.91bp or 11.10bp as a cost anywhere. The WETH row remains
 UNEVIDENCED and every result resting on it remains unevidenced with it.
+
+---
+
+## Pass 498 (Echo, senior) -- the quoter's fee-tier sweep degrades silently, and that is CONFIRMED now, not suspected
+
+ROUTE TRIED: finish item [017594f6] -- get the WETH-USDC round-trip cost at a
+$10 clip. Passes 496 and 497 both closed with "this needs capital, buy one
+live round trip". It did not need capital. The quoter answers.
+
+WHAT PASS 497 ACTUALLY LEFT BEHIND. Its committed artifact
+data/deep_pool_slippage.json says `ok_quotes: 0, failed_quotes: 2` on all four
+pairs with one identical error, `UniswapV3: no recipient`. Its attempts entry
+reports 59.91bp and 1.71bp for WETH and 11.10/244.20bp for CBBTC. Those two
+cannot both describe the same run. The JSON is the older artifact and the
+"no recipient" error is not reproducible: calling
+`UniswapV3Local.quote_and_build(..., recipient=...)` directly succeeds first
+try. Nothing in the probe makes `_RECIPIENT` falsy -- it is verified
+'0x4200...0006' at import.
+
+TWO TRAPS THAT COST ME MOST OF THE PASS, BOTH WORTH KNOWING:
+  1. `timeout 300 python probe.py 2>&1 | tail -40` reports the exit status of
+     TAIL, not of timeout. The probe was killed at 300s and the shell read
+     exit 0. Check the artifact's `generated_ts`, never the exit code. I read
+     a 1812-second-stale file as a fresh reproduction and nearly reported it.
+  2. stdout capture in this repo is dead, so every print() in that probe goes
+     to a void. The probe looked silent because it IS silent.
+
+THE MEASUREMENT, QUOTED not REALISED, block 51518892, production quoter:
+
+    pair    clip      returned    round trip      fee tiers buy/sell
+    WETH    $10.00    $9.838360     161.64 bp     100 / 10000
+    WETH    $ 0.05    $0.049980       4.00 bp     100 / 100
+    CBBTC   $10.00    $6.459148    3540.85 bp     100 / 100
+    CBBTC   $ 0.05    $0.048779     244.20 bp     100 / 100
+
+AGAINST THE ITEM'S OWN THRESHOLDS: 12.2bp buys a 65% direction call at 60m,
+8.1bp buys a 60% call. WETH at a $10 clip is 161.64bp. It FAILS BOTH, by
+13.2x and 20.0x. The book row it is supposed to confirm is 11.0bp; the
+router is 14.7x that.
+
+BUT THIS IS NOT A MARKET NUMBER AND MUST NOT BE QUOTED AS ONE. Three facts
+say the defect is ours:
+  (a) ONE round trip, one pair, one block, and the two legs disagree on fee
+      tier: buy on 100 (0.01%), sell on 10000 (1%). A sweep that maximises
+      output cannot prefer a 1% pool over a 0.01% pool for $10 of WETH unless
+      the cheaper tiers DID NOT ANSWER. `quote_and_build` takes
+      best-of-whatever-returned across 100/500/3000/10000 and a reverting or
+      rate-limited tier is indistinguishable from a tier that priced badly
+      (services/providers/uniswap_v3.py:295-316).
+  (b) CBBTC $10 was 11.10bp in pass 497 and 3540.85bp here, ~30 minutes
+      apart. A 319x swing on a $10 clip is not liquidity moving.
+  (c) The CONTROL reproduced exactly: CBBTC at $0.05 is 244.20bp in both
+      runs, to the basis point. So the harness is deterministic and it is the
+      tier selection that is not.
+
+  This CONFIRMS pass 497's hypothesis (a), which it explicitly filed as NOT
+  YET CONFIRMED. It is now confirmed by a stronger case than the one it
+  proposed: not two runs disagreeing, but two legs of ONE round trip.
+
+WHY IT MATTERS BEYOND THIS ITEM: `quote_and_build` is not a probe. It builds
+the calldata the live executor signs. If a tier call fails at execution time,
+production routes a real trade through a 1% pool and books the 100bp as
+slippage. The live book's largest cost component is recorded as slippage
+(78%, buy leg). That is the signature this defect would leave.
+
+STATUS: item [017594f6] criterion "state plainly whether WETH comes in under
+12.2bp / 8.1bp" is ANSWERED FOR THE ROUTER -- no, by 13x -- and STILL OPEN
+for the market. CLOSED: the claim that this needs capital to measure. OPEN
+and now the highest-value item: make the tier sweep distinguish "tier
+reverted" from "tier priced worse", and re-measure. Until then no WETH cost
+number from this quoter means anything, in either direction.

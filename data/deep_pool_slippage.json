@@ -1,136 +1,46 @@
 {
   "measurement": "QUOTED",
-  "not": "REALISED -- nothing was signed or sent; no tx hash exists for these numbers",
+  "not": "REALISED -- nothing signed, no tx hash",
   "chain": "base",
-  "clip_usd": 10.0,
-  "tiny_clip_usd": 0.05,
-  "repeats": 1,
-  "generated_ts": 1789825295.9451745,
+  "block": 51518892,
+  "generated_ts": 1789827131.3521388,
+  "pairs": {
+    "WETH": {
+      "10.00": {
+        "back_usd": 9.83836,
+        "round_trip_bp": 161.6400000000002,
+        "fee_buy": 100,
+        "fee_sell": 10000
+      },
+      "0.05": {
+        "back_usd": 0.04998,
+        "round_trip_bp": 4.000000000001225,
+        "fee_buy": 100,
+        "fee_sell": 100
+      }
+    },
+    "CBBTC": {
+      "10.00": {
+        "back_usd": 6.459148,
+        "round_trip_bp": 3540.852,
+        "fee_buy": 100,
+        "fee_sell": 100
+      },
+      "0.05": {
+        "back_usd": 0.048779,
+        "round_trip_bp": 244.19999999999996,
+        "fee_buy": 100,
+        "fee_sell": 100
+      }
+    }
+  },
+  "caveat_1": "QUOTED through the PRODUCTION quoter (services.providers.uniswap_v3.UniswapV3Local) -- the same object that builds live calldata. Not a fill: no MEV, no block delay, no gas.",
+  "caveat_2": "This measures OUR ROUTER, not the market. A 10 dollar CBBTC trade cannot really cost 35 percent; the tier sweep is selecting thin pools. Treat as an upper bound on what production would pay, and as evidence of a router defect.",
   "thresholds_bp": {
     "pays_at_65pct_direction_60m": 12.2,
     "pays_at_60pct_direction_60m": 8.1
   },
-  "env": {
-    "TOKEN_ROUND_TRIP_DEFAULT": 0.007,
-    "MIN_DRAWDOWN": null,
-    "MAX_HOLD_FORCE_SECONDS": "2700"
-  },
-  "pairs": {
-    "WETH-USDC": {
-      "status": "all_quotes_failed",
-      "quoted_round_trip_at_clip": {
-        "n": 0
-      },
-      "quoted_round_trip_at_tiny_clip": {
-        "n": 0
-      },
-      "clip_dependent_impact_bp": null,
-      "fee_tiers_seen": [],
-      "book_rate_bp": 11.0,
-      "book_row_is_measured": true,
-      "ok_quotes": 0,
-      "failed_quotes": 2,
-      "failures": [
-        {
-          "clip": "full",
-          "status": "quote_failed",
-          "leg": "buy",
-          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
-        },
-        {
-          "clip": "tiny",
-          "status": "quote_failed",
-          "leg": "buy",
-          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
-        }
-      ]
-    },
-    "CBBTC-USDC": {
-      "status": "all_quotes_failed",
-      "quoted_round_trip_at_clip": {
-        "n": 0
-      },
-      "quoted_round_trip_at_tiny_clip": {
-        "n": 0
-      },
-      "clip_dependent_impact_bp": null,
-      "fee_tiers_seen": [],
-      "book_rate_bp": 28.0,
-      "book_row_is_measured": true,
-      "ok_quotes": 0,
-      "failed_quotes": 2,
-      "failures": [
-        {
-          "clip": "full",
-          "status": "quote_failed",
-          "leg": "buy",
-          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
-        },
-        {
-          "clip": "tiny",
-          "status": "quote_failed",
-          "leg": "buy",
-          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
-        }
-      ]
-    },
-    "CBETH-USDC": {
-      "status": "all_quotes_failed",
-      "quoted_round_trip_at_clip": {
-        "n": 0
-      },
-      "quoted_round_trip_at_tiny_clip": {
-        "n": 0
-      },
-      "clip_dependent_impact_bp": null,
-      "fee_tiers_seen": [],
-      "book_rate_bp": 70.0,
-      "book_row_is_measured": false,
-      "ok_quotes": 0,
-      "failed_quotes": 2,
-      "failures": [
-        {
-          "clip": "full",
-          "status": "quote_failed",
-          "leg": "buy",
-          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
-        },
-        {
-          "clip": "tiny",
-          "status": "quote_failed",
-          "leg": "buy",
-          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
-        }
-      ]
-    },
-    "AERO-USDC": {
-      "status": "all_quotes_failed",
-      "quoted_round_trip_at_clip": {
-        "n": 0
-      },
-      "quoted_round_trip_at_tiny_clip": {
-        "n": 0
-      },
-      "clip_dependent_impact_bp": null,
-      "fee_tiers_seen": [],
-      "book_rate_bp": 68.0,
-      "book_row_is_measured": true,
-      "ok_quotes": 0,
-      "failed_quotes": 2,
-      "failures": [
-        {
-          "clip": "full",
-          "status": "quote_failed",
-          "leg": "buy",
-          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
-        },
-        {
-          "clip": "tiny",
-          "status": "quote_failed",
-          "leg": "buy",
-          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
-        }
-      ]
-    }
-  }
+  "verdict_weth": "FAILS BOTH. 161.64bp quoted at a 10 dollar clip is 13.2x the 12.2bp threshold and 20.0x the 8.1bp threshold.",
+  "gas_measured_bp_at_10usd": 4.047007887550228,
+  "gas_source": "median fee_cost over all 18 closed live rows in trade_outcomes; gas only on the live path"
 }
