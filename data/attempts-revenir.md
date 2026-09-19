@@ -17787,3 +17787,29 @@ to p4 and I am saying so rather than leaving my own priority to stand.
 Noted and NOT read as signal: 6 of 7 are negative and the single positive (XRP
 +0.0607) exceeds the other six combined. A 7-row sample where one row carries
 the sign is the shape this repo has been fooled by before.
+
+### OPEN, and the best question this pass leaves: the scoreboard decomposed
+The 18 live closed rows behind -0.1864, by symbol:
+
+    AERO-USDC       9 rows   net -0.0709   <- HALF THE BOOK
+    CBBTC-USDC      3 rows   net -0.0552
+    CBETH-USDC      2 rows   net +0.0050
+    BSTONK-USDC     1 row    net +0.2420   <- biggest positive
+    BASECAT-USDC    1 row    net -0.0332
+    CBXRP-USDC      1 row    net -0.0191
+    BPAD-USDC       1 row    net -0.2549   <- biggest negative
+                                    sums to -0.1863, ties to -0.1864
+
+1. AERO is 9 of 18. The live book is HALF ONE SYMBOL, and AERO clears the
+   motion gate's measured-and-pays branch -- admitted, and losing -0.0709 over
+   9 trades.
+2. BPAD and BSTONK are ONE row each and together exceed everything else in
+   magnitude. They nearly cancel; strip both and it is -0.1735 over 16 rows.
+3. WARNING, NOT A RESULT: memory records "2 LIVE entries closed by SIMULATED
+   exits -- CBBTC + BSTONK". BSTONK is the +0.2420. If that exit was simulated
+   the largest positive row is not a settled on-chain profit and the true
+   figure is WORSE than -0.1864 by up to a quarter. NOT VERIFIED -- out of
+   time. One lookup: does the BSTONK row carry an exit tx hash.
+
+That lookup is the highest-value next action in this file. Nothing else filed
+this pass can move the scoreboard number; this can.
