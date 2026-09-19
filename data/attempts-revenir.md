@@ -18466,3 +18466,66 @@ one \$2-3 live WETH-USDC round trip, worst case under \$0.40 (gas measured at
 \$0.0041 median / \$0.0137 max per leg over 21 live rows), which would give
 WETH its first real cost number and make the pass-493 kill test runnable for
 the first time.
+
+### Pass 494 addendum -- the cost gate is INVERTED on both evidenced tokens, and the one token that clears it is banned by a receipt we already have
+
+THE COMPLETE PRICEABLE UNIVERSE. Non-ghost `trade_fills` rows carrying BOTH
+expected_price and executed_price: 38 of 1478 (2.6%), across SEVEN tokens.
+That is the entire cost evidence base in this repo.
+
+  token      n   1-leg med   ROUND TRIP   vs the 35bp gate
+  AERO      16      18.72bp     37.45bp   REFUSE
+  CBBTC      9      10.98bp     21.96bp   ADMIT   <-- the ONLY one that clears
+  CBETH      5      31.45bp     62.90bp   REFUSE
+  BSTONK     2     622.31bp   1244.62bp   REFUSE
+  BASECAT    2      88.09bp    176.18bp   REFUSE
+  CBXRP      2      85.72bp    171.44bp   REFUSE
+  BPAD       2     227.01bp    454.03bp   REFUSE
+
+Verified by calling the production function:
+  token_round_trip_cost(CBBTC-USDC) = 70.00bp -> REFUSED  (measured 21.96bp)
+  token_round_trip_cost(CBETH-USDC) = 30.00bp -> ADMITTED (measured 62.90bp)
+
+CBBTC is not in TOKEN_ROUND_TRIP at all and falls to the 70bp unlisted
+default. So on the two tokens where evidence exists the gate is INVERTED on
+BOTH: it admits CBETH at 1.8x over the bar and refuses CBBTC at 1.6x under
+it. CBBTC has n=9 live fills -- more than WETH, ETH, USDC and KTA combined
+(n=0 each, all four admitted). This is not a conservative table; a
+conservative table errs one way.
+
+CBBTC IS DOUBLE-BLOCKED -- the cost fix alone will NOT make it trade.
+`grep -c "refusing new entries on this symbol" logs/system.log` returns 7499
+and ALL 7,499 are CBBTC-USDC. Most recent fire 2026-09-19 07:17:19, live and
+continuous. Mechanism `trading/bot.py:2620-2634`: a settled live BUY whose
+receipt cannot be read bans new entries on that symbol.
+
+THE BANNED TRANSACTION'S FILL IS ALREADY IN THE STORE, RECONCILED TO THE CENT.
+Traced `0x53f7303248255d6923b42c5920a58413c8b4c85b57cb54df01be0e14899b07ad`:
+
+  trading_ops 64908  live-swap-settled  confirmed=true ok=true reason=''
+  trading_ops 64910  live-entry
+  feedback_events 278097  orphaned_live_holding_adopted:
+     held 3.709e-05   onchain_raw 3709 @ 8 dec -> 3.709e-05  EXACT MATCH
+     basis $80,884.33540037746   quote_spent $3.00
+     unaccounted_base 0.0        basis_estimated FALSE
+
+  held x basis = $3.000000  against  quote_spent $3.000000
+  discrepancy  = $0.00000000 -- 0.000bp
+
+The position was reconciled against chain state and ADOPTED. The system is
+banning its cheapest measured symbol over a number it already knows.
+
+ROOT-CAUSE HYPOTHESIS, TEST NOT RUN (needs RPC). `source_tx_hashes` lists
+FOUR hashes and the offender is the LAST. HYPOTHESIS: the entry was SPLIT
+across four transactions and `_read_receipt_fill` reads ONE hash requiring
+bought>0 AND sold>0 from it alone, so a partial leg reads as no_fill.
+COMPLEMENT: the split is irrelevant and that hash is genuinely unreadable.
+DISTINGUISHING TEST: read all four individually -- partial amounts summing to
+3709 raw confirms the split; three-good-one-bad means a per-tx read failure.
+If the split holds the fix needs NO chain call, which matters because pass 492
+measured 8,676 base-RPC rate-limit events.
+
+STATUS: [8b978275] raised p2 -> p1 with the trace attached. [23bb42fd]
+re-specified in place with the dependency stated both ways. [78338262]
+REJECTED -- its premise (no gate can refuse AERO on cost) was overtaken by
+the code; trading/scheduler.py:1803 does exactly that.
