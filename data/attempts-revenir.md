@@ -18529,3 +18529,63 @@ STATUS: [8b978275] raised p2 -> p1 with the trace attached. [23bb42fd]
 re-specified in place with the dependency stated both ways. [78338262]
 REJECTED -- its premise (no gate can refuse AERO on cost) was overtaken by
 the code; trading/scheduler.py:1803 does exactly that.
+
+### Pass 494 closing -- I tried to kill my own CBBTC finding twice and it survived both; my CBETH figure did not
+
+KILL TEST 1, the module's own conservative rule. `round_trip_cost.py` says
+"p75, not the median ... understating cost is the dangerous direction", and I
+had quoted a median to support an ADMIT. Re-run on p75:
+
+  token     n   RT median    RT p75    vs the 35bp gate
+  CBBTC     9     21.96bp    27.86bp   ADMIT  <- only one, on BOTH statistics
+  AERO     16     37.45bp    68.45bp   refuse
+  CBETH     4     47.63bp   120.27bp   refuse
+  BASECAT   2    176.18bp   227.37bp   refuse
+  CBXRP     2    171.44bp   187.36bp   refuse
+  BPAD      2    454.03bp   632.52bp   refuse
+  BSTONK    2   1244.62bp  1750.20bp   refuse
+
+CBBTC survives. Its nine one-leg values are 1.5/2.89/7.59/8.31/10.98/13.75/
+13.93/23.51/62.32bp -- tight, not lucky. AERO on p75 misses by 33bp, NOT the
+2.45bp I posted earlier; that was the generous statistic and nobody should
+read AERO as nearly-admissible.
+
+MY CBETH NUMBER WAS WRONG AND I CORRECTED IT. Swept all seven tokens for
+malformed rows. Exactly ONE exists in the whole priceable universe: CBETH
+`executed_price` 2.739721278e-09 against `expected_price` 2731.12, alongside a
+real `executed_amount`. It passed a `>0` filter because it is a tiny positive
+number. CBETH clean is n=4, median 47.63bp -- NOT the 62.90bp I posted. The
+conclusion is unchanged (table charges 30bp, gate refuses above 35bp, so
+CBETH is admitted on a cost too low to admit it) but the magnitude is 1.6x,
+not 2.1x. LESSON: any cost statistic over `trade_fills` needs a sanity filter
+on `executed_price` beyond `>0`; one bad row was 20% of CBETH's evidence.
+
+KILL TEST 2, against my own recommendation. I spent the pass arguing CBBTC is
+the token to unblock, so I measured whether it can signal at all:
+
+  symbol        n/168h  ticks/h   median gap    MAX gap   per 2h window
+  CBBTC-USDC       527     3.14      0.21 min    60.43 h        ~6.3
+  AERO-USDC       3118    18.56      0.58 min    60.59 h       ~37.1
+  WETH-USDC       1305     7.77      1.73 min    74.55 h       ~15.5
+
+CBBTC is the THINNEST tape measured, ~1/6 of AERO. money_button needs a 2h
+drawdown and CBBTC offers ~6 ticks per 2h window, which is a plausible reason
+it produced ZERO rows in the 168h dip expectancy run despite streaming. Its
+median gap of 13 seconds says it arrives in dense BURSTS -- roughly two hours
+of streaming across seven days. The 60h max gap is NOT a CBBTC defect (AERO
+60.59h, WETH 74.55h -- the known global blackout).
+
+SO: the cost finding stands for ANY strategy, but CBBTC-plus-money_button
+specifically may never fire. Take [8b978275] and [23bb42fd] because the ban
+and the table are independently WRONG, not because a CBBTC trade will fall
+out. "CBBTC actually trades" is a separate question with a real chance of a
+negative.
+
+ALSO CORRECTED MY OWN ACCEPTANCE CRITERION before handover: I had written
+"show whether CBBTC rows appear under ADMITTED in the expectancy run", and
+CBBTC appears ZERO times in that run. A worker doing the fix correctly would
+have seen nothing and been forced to fail a satisfied criterion or redefine
+it. Replaced with a direct assertion on `token_round_trip_cost('CBBTC-USDC')`.
+
+STATUS: [23bb42fd] diagnosis COMPLETE, edit UNTOUCHED, not marked done.
+services/round_trip_cost.py is byte-identical to how this pass found it.
