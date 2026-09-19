@@ -18676,3 +18676,59 @@ ban claim was the one I raised to p1 and recommended. The asymmetry was not
 that the log is untrustworthy in general -- it is that I never asked where the
 line came from. `scripts/tx_forensics.py --symbol` answers that in seconds and
 already existed.
+
+## Pass 495 (Echo, senior, solo) -- the cost table was corrected, and the fix reached only half the repo
+
+ROUTE: land the pass-494 diagnosis into `services/round_trip_cost.TOKEN_ROUND_TRIP`.
+RESULT: shipped, and it produced a WORSE book, which is the correct direction.
+STATUS: the table fix is CLOSED. A defect it exposed is OPEN.
+
+Rule applied, and it is the module's own, not one I invented:
+  * `n >= MIN_SAMPLES` (8) or it is not a measurement -> the row is REMOVED,
+    not written thin. The default is pessimistic; that is the safe direction.
+  * p75 of per-leg slippage, doubled -- not the median. Same reason the
+    book-wide cost uses p75.
+
+  AERO   0.0435 -> 0.0068  n=16, p75 68.45bp / median 37.45bp. 6.4x too HIGH.
+         Does NOT admit AERO: 68bp > the 35bp gate. Refused-by-400bp becomes
+         refused-by-33bp. NOTHING NEW TRADES.
+  CBBTC  added 0.0028      n=9, p75 27.86bp. The only token in the measured
+         universe that clears 35bp.
+  CBETH  REMOVED           5 non-ghost fills, one a 1e-12 units defect
+         (exp 2731.12, exe 2.74e-09) -> real n=4, below MIN_SAMPLES. The four
+         measure 47.63bp median / 120.27bp p75, BOTH over the 35bp gate, while
+         the row sat UNDER it at 30bp. The table was admitting CBETH at a cost
+         too low to admit it. Now falls to the 0.70% default and is refused.
+  WETH, ETH, USDC, KTA     UNCHANGED, annotated n=0 non-ghost each.
+
+PROOF: `python -X utf8 scripts/money_button_dip_expectancy.py --hours 168`
+  ADMITTED 11 trades / 64% win / -0.54% -> 10 / 60% / -0.88%.
+  The CBETH-USDC row (1 trade, 100% win, +0.347%) is GONE. That phantom gain
+  WAS the understatement. The book reads worse because it is now honest.
+
+### CLOSED NEGATIVE: "fixing the cost table fixes the censuses". It did not.
+`scripts/money_button_dip_census.py:79` held a SECOND VERBATIM COPY of the
+same six rows, and `scripts/strategy_replay_table.py` imports `round_trip_for`
+FROM THAT COPY. After committing the canonical fix the replay still printed
+AERO 4.35% and CBBTC 0.70%. Meanwhile `services/round_trip_cost.py` states in
+its own docstring: "This is the ONLY per-token cost table in the repo, and it
+lives here so a census and the production gate cannot disagree." FALSE as
+written. Fixed: the census now imports instead of declaring. Swept the tree
+for a third copy (`grep 0.7498|0.0435`) -- there is none outside `.venv`.
+
+DO NOT REPEAT: do not trust a constant fix to propagate. This repo already
+carries TWO cost modules one underscore apart; this was a third copy, inside
+a script, imported by the tool that measures strategy edge.
+
+### OPEN, and it is sharper than the item I was dealt
+After the correction the money_button gate admits FOUR symbols: WETH-USDT,
+ETH-USDT, WETH-USDC, ETH-USDC. Every one is priced on a row with ZERO
+non-ghost fills. CBBTC -- the only token carrying n>=8 live evidence that
+clears the gate -- generates no dip candidates in 168h. So the gate admits
+EXCLUSIVELY on assumptions, and the one thing it admits on evidence never
+fires. Filed as [73fcdab3].
+
+### Unrelated red found, NOT caused here
+`tests/test_money_button_dip_live_gate.py` is 6 failed / 7 passed. Identical
+6 fail at HEAD~1 in a detached worktree, so they predate this pass. Filed as
+[c0bf9be6]. Do not make them green by editing the cost module.

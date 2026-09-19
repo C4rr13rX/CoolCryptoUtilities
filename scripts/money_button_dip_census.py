@@ -73,18 +73,23 @@ except Exception as exc:  # pragma: no cover - diagnostic path
 
 DB_PATH = "file:%s?mode=ro" % (ROOT / "storage" / "trading_cache.db")
 
-# Per-token round-trip cost, measured on chain and recorded in the project
-# memory as "the cost wall is a TOKEN choice, not a venue fee". These are
-# full round trips (both legs, gas + slippage), not one-way fees.
-TOKEN_ROUND_TRIP = {
-    "WETH": 0.0011,
-    "ETH": 0.0011,
-    "CBETH": 0.0030,
-    "USDC": 0.0011,
-    "AERO": 0.0435,
-    "KTA": 0.7498,
-}
-DEFAULT_ROUND_TRIP = 0.0070
+# Per-token round-trip cost. THIS FILE USED TO HOLD ITS OWN COPY of the
+# six-row table, which is the defect this repo keeps re-shipping under new
+# names: services/round_trip_cost.py says in its own docstring that it is
+# "the ONLY per-token cost table in the repo, and it lives here so a census
+# and the production gate cannot disagree", and that was FALSE while this
+# duplicate existed. On 2026-09-19 the canonical table was corrected (AERO
+# 0.0435 -> 0.0068 on n=16 live fills, CBBTC added at 0.0028 on n=9, CBETH
+# removed as n=4 < MIN_SAMPLES) and this copy did not move -- so the census
+# and strategy_replay_table.py, which imports round_trip_for FROM HERE, went
+# on charging AERO 435bp for a round trip measured at 68bp.
+#
+# There is now one table. Do not re-declare it here; import it.
+from services.round_trip_cost import (  # noqa: E402
+    DEFAULT_TOKEN_ROUND_TRIP as DEFAULT_ROUND_TRIP,
+    TOKEN_ROUND_TRIP,
+    token_round_trip_cost,
+)
 
 
 def base_of(symbol: str) -> str:
@@ -92,7 +97,8 @@ def base_of(symbol: str) -> str:
 
 
 def round_trip_for(symbol: str) -> float:
-    return TOKEN_ROUND_TRIP.get(base_of(symbol), DEFAULT_ROUND_TRIP)
+    """Full round trip for a pair, from the single canonical table."""
+    return token_round_trip_cost(symbol)
 
 
 def load_ticks(hours: float) -> Dict[str, List[Tuple[float, float]]]:
