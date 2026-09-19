@@ -17300,3 +17300,88 @@ still junk in the fill records and will bite whoever reads that field next --
 noted on [7a439149] -- but it is not on the cost path.
 
 Went looking for a reason the conclusion might be too harsh; did not find one.
+
+## Pass 490 -- Echo (senior, solo)
+
+### Route CLOSED: trade the KUCOIN-vs-BASE-POOL BASIS instead of direction [f08cb59c]
+
+The idea was sound and it is the only route here that needs no direction call:
+WETH-USDC carries two price sources, so trade their convergence. It fails on
+TWO independent grounds, and either one alone closes it.
+
+METHOD. 30 days of `market_stream` WHERE symbol='WETH-USDC'. Source is the
+`rest` key inside the `raw` JSON (NOT a column -- there is no source column on
+market_stream, unlike `prices`). Each geckoterminal Base-pool tick paired to
+the nearest kucoin CEX tick within 60s; basis = (gecko-kucoin)/kucoin in bp.
+
+KILL 1 -- MAGNITUDE. An upper bound, so it needs no autocorrelation at all:
+
+    max |basis| excursion, 30 days        26.3 bp
+    round-trip toll                       27.77 bp  (35.75 in the item)
+
+    median basis  -0.2bp   mean -0.2   sd 7.5   range -26.3 .. +15.5
+
+The single widest basis print in a month does not clear the toll ONCE, and a
+basis trade must cross it TWICE. There is no excursion to capture. Same shape
+as the pass-489 oracle bound: a perfect call on the best observation loses.
+
+KILL 2 -- OBSERVABILITY. The item guessed 8 obs/day would be too few. Worse:
+
+    geckoterminal ticks        103 in 30d  =  3.4/day   (26 in 7d = 3.7/day)
+    CLEAN PAIRED observations   37 in 30d  =  1.23/day
+    paired gap  median 100min   p90 852min (14h)   max 5636min (3.9 DAYS)
+
+AUTOCORRELATION, because criterion 1 asked for it. Every CI contains zero:
+
+    lag  1   acf -0.040   CI [-0.111,+0.210]
+    lag  2   acf +0.277   CI [-0.057,+0.319]
+    lag  5   acf -0.202   CI [-0.351,+0.148]
+    lag 10   acf -0.286   CI [-0.318,+0.018]
+
+No mean reversion at any lag -- but this is the WEAKEST of the three results on
+n=37 and must NOT be quoted as the reason. The magnitude bound is the reason and
+it holds whatever the autocorrelation does.
+
+CLOSED. Do not reopen without a Base-pool feed at materially higher frequency,
+and note that even a fast feed does not fix KILL 1.
+
+MEMORY CORRECTION: the standing note says 1630 kucoin vs 92 gecko ticks. Over
+7d it is 1275 vs 26. The 95%-kucoin headline is right; the counts are wider-window.
+
+### The GA in [c2691536] is reachable ONLY from a Django HTTP view
+
+Not a route attempt -- an audit finding that re-prices a priority-1 item.
+
+The fitness function the item targets is `trading/genome/ga.py:285`, entered via
+`evolve()`. Full caller chain, by grep over every .py outside build/dist:
+
+    trading/genome/ga.py::evolve
+      <- services/ga_service.py:29 (the ONLY importer)
+         <- web/modelcontrol/ga_views.py:92        start_run
+         <- web/modelcontrol/strategy_views.py:162 start_run
+
+Both callers are Django request handlers. Nothing in trading/, main.py, bot.py
+or any scheduler reaches it. The GA runs only when a human POSTs an endpoint,
+and its output lands in data/ga_runs.json, which no trading code reads.
+
+AND THE TWO CHAMPIONS ARE DISJOINT STORES -- this is the part that was not
+stated, and it was my own kill test against calling the item harmless:
+
+  * ga_service.register_champion writes a MODEL-LIST entry, kind="genome",
+    carrying the shape genes (window/horizon/shape_points).
+  * trading/genome/champion.py::load_champion reads a FILE,
+    _CHAMPION_PATH = <genome repo>/runtime/market-evolution/champion.json
+
+The champion live RIGHT NOW is learner_kind='extra_trees', generation 2511,
+40 features (news sentiment, futures basis), trained on ARB/COMP/CRV/DOGE/...
+It is structurally NOT a shape-GA genome and cannot have come from ga_runs.json.
+champion_meets_objective(champion) is True and selector.py:1007 consumes it --
+but only in `_genome_universe_symbols`, which picks WHICH SYMBOLS to watch. It
+generates no entry signal.
+
+So the shape-GA cannot move -0.1864 by any amount, and the artifact that IS
+live comes from a different module the item does not name.
+
+CONFIRMED REAL, though, and cheap: the saturation bug is exactly as filed.
+`confidence = math.sqrt(min(1.0, total / 200.0))` gives 200 and 1423 trades an
+IDENTICAL 1.0. The diagnosis is right; the priority was not.
