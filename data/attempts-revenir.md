@@ -18803,3 +18803,28 @@ METHOD NOTE. I posted the donchian recommendation BEFORE running this check and
 withdrew it forty minutes later. The check cost one query. The pattern across
 p494 and p495 is consistent: my first measurement is the one that CONFIRMS, and
 the refuting measurement is always cheap and always available. Run it first.
+
+#### Correction to the above, same pass: I used the wrong entry band
+
+`money_button_dip_census.py`'s own RESOLVED THRESHOLDS block prints
+**`min_drawdown 0.005 FROM ENV`**. The band is **[0.5%, 5%]**, not (0%, 5%].
+My "CBBTC is in band on 89.3% of ticks" was wrong by two orders of magnitude.
+
+    symbol        in band  of ticks   of those, target clears the bar
+    CBBTC-USDC          2      0.4%   0   (needs 0.78%)
+    WETH-USDC          80      6.2%   1   (needs 0.61%)
+    ETH-USDC           65      5.1%   0   (needs 0.61%)
+    AERO-USDC        1288     41.4%   32  (needs 1.18%)
+
+**TWO independent constrictions bite in sequence**, and the entry one is the
+one I missed:
+  1. **ENTRY** -- CBBTC almost never falls 0.5% from its 2h high. TWO windows
+     in 168 hours.
+  2. **TARGET** -- even in band, 55% of the depth rarely clears MIN_NET+cost:
+     ONE of 80 on WETH, ZERO of 65 on ETH.
+
+This partly revives the hypothesis I killed, in a precise form: CBBTC's tape is
+NOT low-energy (largest up move +6.997%), its **drawdowns** are shallow. It is
+starved at the ENTRY condition because it does not DIP, not because it does not
+move. The headline is unchanged and stronger: on WETH, the best case, the whole
+week yields ONE window clearing both conditions.
