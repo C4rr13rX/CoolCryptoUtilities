@@ -18732,3 +18732,42 @@ fires. Filed as [73fcdab3].
 `tests/test_money_button_dip_live_gate.py` is 6 failed / 7 passed. Identical
 6 fail at HEAD~1 in a detached worktree, so they predate this pass. Filed as
 [c0bf9be6]. Do not make them green by editing the cost module.
+
+### Pass 495, second finding: the dip rule's bar is 5-6x its own entry condition
+
+CLOSED NEGATIVE, and it closes the "why does money_button fire 0/day" question.
+
+Replicated the rule's own parameters over 168h of `market_stream`
+(`MONEY_BUTTON_LOOKBACK_SEC=7200`, `MAX_DRAWDOWN=0.05`, `REVERSION_FRACTION=0.55`,
+`MIN_NET_RETURN=0.005`). The rule enters on a drawdown inside [-5%, -0%] of the
+2h high, targets **55% of the drawdown DEPTH**, and needs that target to clear
+`MIN_NET_RETURN` 0.50% **plus** the token round trip:
+
+    symbol      in band  med depth  med target   needs   windows clearing
+    CBBTC-USDC      465     0.187%      0.103%   0.78%   0 of 465   (0.0%)
+    WETH-USDC      1187     0.206%      0.113%   0.61%   1 of 1187  (0.1%)
+    ETH-USDC       1174     0.202%      0.111%   0.61%   0 of 1174  (0.0%)
+    AERO-USDC      2647     0.475%      0.261%   1.18%   32 of 2647 (1.2%)
+
+The typical dip on this venue is **0.19-0.48% deep**. The rule claims 55% of
+that and then demands it clear 0.61-1.18%. It asks for **5-6x what its own
+entry condition can produce**, on every token including the cheapest.
+
+TWO CAUSES RULED OUT FIRST, both dead, both mine:
+  * "CBBTC's tape is too quiet" -- DEAD. It clears its required move in 4.06%
+    of 30-min windows vs WETH 5.45%. Its max up-move is +6.997%. I had written
+    this into an acceptance criterion; it was wrong and is now corrected.
+  * "the drawdown band is too tight" -- DEAD. CBBTC is in band on 89.3% of
+    evaluable ticks vs WETH 91.4%.
+
+DO NOT RESPOND BY LOWERING `MIN_NET_RETURN`. At a 0.103% median target against
+a 28bp round trip on the cheapest MEASURED token, a loosened rule trades a
+target under 4x its own cost. The honest reading is that **the dip premise is
+wrong for this tape** -- 55% of a 0.2% dip is not a trade at any threshold --
+not that the constant is miscalibrated. Same shape as the recorded
+"required_edge 286bp against a 54.4bp tape ceiling".
+
+CONSEQUENCE FOR APPROVAL ORDER, and it is an inversion: money_button is the
+ONLY approved strategy and its target is 0.10% against a 61bp bar, while
+donchian_breakout on the deep names has gross **+0.246%**. If one strategy is
+to receive live evidence first it should be donchian. Filed as [0a35acb2].
