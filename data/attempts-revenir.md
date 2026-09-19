@@ -16818,3 +16818,45 @@ CBBTC prices under 35bp it enters the universe ON EVIDENCE, which is what the
 guard is for. This is the argument for [ec37fd2e] (measured WETH round trip) and
 [017594f6] (real slippage on deep-pool pairs) -- both feed the table that is
 currently refusing 154 symbols on an assumption.
+
+## Pass 488 (Echo) -- SIZING THE LEVER: 66.3% of the ghost book is priced at an ASSUMPTION
+
+scripts/roundtrip_cost_coverage.py, run this pass:
+
+    ghost book: 258 rows across 56 distinct symbols, net +2.3977
+      MEASURED cost symbols :   87 rows ( 33.7%)   net +1.2356
+      ASSUMED default cost  :  171 rows ( 66.3%)   net +1.1622
+      distinct symbols measured: 8 of 56
+      share of book NET sitting on an assumed cost: 48.5%
+
+    top unpriced by rows: BASECAT 37 (-1.9138), COMP 16 (-1.2368),
+    BSTONK 16 (+1.7783), VIRTUAL 7, CBXRP 7, VVV 6, DRB 5, CBADA 5
+
+So a "re-priced book" today restates a constant over two thirds of its rows.
+
+FILED [1504e406] p1 3pt -- a READ-ONLY quote sweep. It spends NOTHING and needs NO
+operator sign-off, unlike [ec37fd2e] and [017594f6]. Precedent: the 2026-09-11
+figures (879ea6e) came from read-only round-trip QUOTES on base, USDC in and back.
+
+TWO TARGET LISTS, deliberately kept separate in the item because they answer
+different questions: BY DEPTH (CBBTC 7.6M liq, CBXRP 117M liq) widens
+money_button's universe; BY ROWS (BASECAT/COMP/BSTONK) makes the ghost book
+honestly re-priceable.
+
+VERIFIED BEFORE HANDING OVER, so the item is not a guess:
+  * `from services.quote_providers import UniswapV3Local` is an ALIAS resolving to
+    services/providers/uniswap_v3.py -- grep the latter.
+  * It is NOT zero-arg constructible: __init__ requires `w3_provider_callable`.
+    Reuse the production path's callable; do not hand-roll an RPC client.
+
+CAVEAT NOT CLEARED: the standing finding that the quote step loses 146 symbols to
+19 says 100% of those losses are a 45-SECOND WALL. At 45s/token a 15-symbol sweep
+at 3 clips is ~34 min and will not fit a pass. Quote CBBTC and CBXRP FIRST -- those
+two decide whether the universe can widen at all. Do NOT raise the quote deadline.
+
+NOT A LOOSENING, and the item says so twice: round_trip_cost.py:83-88 states the
+70bp default is deliberately pessimistic because understating cost loses money.
+That stays. Measuring a token FEEDS the guard -- a token pricing under the 35bp
+first gate enters the universe ON EVIDENCE, which is what the guard is for.
+A token that prices ABOVE 35bp is a RESULT, not a failure: it would mean
+money_button's starvation is structural and would close the route.
