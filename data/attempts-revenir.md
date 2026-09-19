@@ -14710,3 +14710,21 @@ now a measurement: count ghost trades on optimism and polygon, and REJECT the
 item if it is zero. Seeding a balance is not using it.
 
 CLOSED: "production swaps on four chains". It swaps live on one.
+
+### Pass 479 close -- [00f5a607] REJECTED by its own first criterion, same pass
+
+The item's first acceptance criterion was the measurement that would kill it:
+count ghost trades on optimism and polygon; if zero, reject.
+
+    select chain, count(*) from trade_outcomes group by chain  ->  base 248
+    select chain, count(*) from trade_fills    group by chain  ->  base 1458
+
+ALL TIME, nothing else. ZERO trades on optimism or polygon, ghost or live. The
+venue-mislabelling concern applies to a universe that has never produced a row.
+REJECTED -- not blocked; it is not impossible, it is not worth doing. The
+backlog ends this pass one item shorter than it started, with the facts kept
+here rather than in an item nobody will reach.
+
+LESSON WORTH REUSING: putting the number that would kill an item INTO its
+acceptance criteria let it be closed in ten minutes instead of worked for an
+hour. CLOSED: optimism/polygon venue labelling, on an empty universe.
