@@ -16474,3 +16474,35 @@ this system's economics are UNDETERMINED at the sample we can afford, not that
 they are known to be bad. Both halves of the fork are shut: we cannot buy the
 measurement (983 days) and we cannot argue from the sample (49.34bp half-width
 on a 12.74bp gap).
+
+### Pass 487 ROUTES AUDIT: all four stay closed; the HEADLINE is what fails.
+
+Logical audit over results already recorded with their commands, NOT a new
+measurement. The test: which p486 closures depend on 27.77bp being a CONSTANT,
+given its CI is [-7.10, +91.59]?
+
+(a) HAND-APPROVE AT A TINY CLIP -- SURVIVES, closed TWICE. Closed on the toll,
+    and now independently on POWER: 1081 round trips / 983 days. A power
+    calculation does not depend on the toll's value, only its dispersion.
+(b) DEEP-POOL RESTRICTION -- SURVIVES. Closed on the UNIVERSE: one live symbol,
+    one quoting venue on base. A cheaper toll does not create a second pool.
+(c) SHORTEN THE HOLD -- SURVIVES, cleanest of the four. Closed on a MONOTONE
+    up-rate, 21.0% at 90min falling to 3.0% at 2min. A direction result with no
+    cost term in it at all; toll uncertainty cannot touch it.
+(d) RAISE THE EVIDENCE RATE -- SURVIVES on its own terms but is MOOT. Never
+    closed on cost. Today makes it worse: the target sample is 1081, roughly
+    60x further away than it was ever costed at.
+
+(e) WHAT DOES **NOT** SURVIVE -- the p486 HEADLINE, not the routes.
+    'THE EDGE IS REAL AND 10.4x TOO SMALL' is +2.69bp [+0.16,+5.21] against a
+    27.77bp toll. That ratio is ENTIRELY a statement about the toll. With the
+    toll's CI at [-7.10, +91.59] the ratio spans 'the toll is 34x the edge' to
+    'the toll is indistinguishable from zero'. It is a tight numerator over a
+    denominator whose error bar was never computed.
+
+NOT A CLAIM THAT THE EDGE CLEARS THE TOLL. Median toll +20.66bp adverse vs
++15.03bp gross -- the point estimates still lose. The claim is narrower: the
+'10.4x' asserts a precision that does not exist.
+
+CONSEQUENCE: do NOT reopen routes (a)-(d); three of them are closed for reasons
+having nothing to do with cost. Re-state the headline instead.
