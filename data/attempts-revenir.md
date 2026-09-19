@@ -14609,3 +14609,46 @@ NOT MEASURED, and I am not estimating it: whether production is currently
 running this code. It serves stale code until restarted and I did not restart
 it. The change is inert until then, and it is hygiene either way -- it moves no
 P/L. Scoreboard unmoved at -0.1864 over 18.
+
+## Pass 479 (Echo) -- [eb269198] AUDITED, NOT SHIPPED. THE ITEM NAMES THE WRONG MECHANISM.
+
+I re-ran the previous passes' zero-delivery claim instead of inheriting it, and
+it REPRODUCES on a fresh 7-day window -- but I found two things the item has
+wrong, and I did not ship the change because neither the restart nor the 6-hour
+census fits in a 30-minute pass.
+
+FIRST, THE WRONG TABLE WILL FOOL YOU. `prices` holds 44 rows ALL TIME and
+carries none of these sources (consensus/coinpaprika/coinlore only). The tape is
+`market_stream` (116,805 rows), and the source lives inside its `raw` JSON under
+the key **`rest`**, not `source`. A pass that queries `prices` concludes every
+endpoint is dead, including the ones that work.
+
+    market_stream by `rest`, last 7d:
+      dexscreener   16149
+      geckoterminal  9189
+      kucoin         9099
+      bitstamp        475
+      okx/bybit/mexc/kraken/coinbase   0
+      TOTAL         34912
+
+Third window, third pass, never inverted. CONFIRMED.
+
+SECOND, `_WS_POOL` IS NOT A WEBSOCKET POOL. It is a ranking table, read only by
+`_ranked_endpoints()` (trading/data_stream.py:2511-2526). Every endpoint --
+pool member or not -- is polled over REST by the same loop, which stamps
+`"rest": endpoint.name` at :1311. All 34,912 rows carry that key and none carry
+a websocket marker. Membership only ranks an endpoint FIRST. So the real defect
+is sharper than the title: the five dead endpoints are polled BEFORE the four
+that answer.
+
+THIRD, AND IT CHANGES WHAT THE FIX BUYS: removing a name does NOT stop polling
+it. `rank()` falls through to `base + _FALLBACK_PREFERENCE.get(name, 10)`. With
+pool=("kucoin",), base=1, so okx/bybit/mexc/kraken/coinbase rank 11 while
+dexscreener ranks 5. They are demoted below the sources that deliver, not
+deleted. Expect LATENCY TO FIRST GOOD TICK to improve; do NOT expect the ~7560
+polls to disappear. Any pass claiming a poll-count saving must measure it.
+
+CLOSED: "delete the five endpoints and save 7560 REST timeouts" as written.
+OPEN: the one-line demotion, which is still correct and still priority 3.
+I rewrote the item's acceptance criteria with all three corrections rather than
+filing a new id.
