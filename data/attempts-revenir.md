@@ -17880,3 +17880,76 @@ lookup found one. To tie a live row to a settled transaction you must join the
 BOOKS to `transfers` by symbol and timestamp; there is no hash on the trading
 side to join on directly. That join is the loop's one non-negotiable rule and
 the two obvious tables do not support it.
+
+---
+
+## Pass 492 (Echo, senior, solo) -- CLOSED: "11 of 14 symbols cannot be priced"
+## was an RPC RATE LIMIT, not a routing defect
+
+Route tried: item [bc5b0e57], filed pass 440 on a measurement that
+scripts/money_button_universe.py quotes each round trip 3x and sees the cost
+move between repeats -- ZORA 98.872% of notional, UNI 31.398%, LINK 11.409%,
+against WETH-USDC 0.478% / AERO-USDC 0.503% / VIRTUAL-USDC 0.870% stable. The
+item blamed venue coverage: sushi and camelot return None on every base pair,
+so base has one quoting venue.
+
+HYPOTHESIS, stated with its complement before measuring: the instability is
+route selection -- a thin DIRECT pool is chosen over a deep two-hop route
+because services/providers/uniswap_v3.py:326 gates the hop loop on
+`if best_out <= 0 and multihop`, so the WETH hop is only ever tried when every
+direct tier returns zero. It is a no-pool-exists fallback, never a
+best-execution comparison. COMPLEMENT: if the forced WETH route is not tighter
+than the direct pool across 3 repeats, the gate is harmless and the instability
+is block/RPC noise.
+
+MEASURED, base mainnet block 51511463, production quoter helpers, read-only:
+
+    sym   clip   route     rt_usdc   cost_bps  spread%
+    AERO  2.00   direct   1.997283     13.58    0.071
+    AERO  2.00   viaWETH  0.000000      DEAD      n/a
+    ZORA  5.50   direct   5.466815     60.34      n/a
+    ZORA  5.50   viaWETH  0.000000      DEAD      n/a
+
+HYPOTHESIS REFUTED -- viaWETH DEAD on both. But DEAD is not a result, so the
+same paths were swept by hand instead of being reported:
+
+    USDC->WETH->AERO   f1=100  f2=3000  -> 2924832444038041099   ALIVE
+                       f1=500  f2=3000  -> 2924150197518660036   ALIVE
+                       f1=500  f2=10000 -> 2924944339612881775   ALIVE
+                       f1=500  f2=500   -> execution reverted: SPL
+                       f1=3000 f2=any   -> 429 Client Error: Too Many Requests
+
+The WETH route is ALIVE. "DEAD" was the free endpoint throttling the sweep.
+
+THE ACTUAL CAUSE, and it is the raw repeats:
+
+    AERO direct raw = [1997988, 1996579, 0]
+    ZORA direct raw = [0, 5466815, 0]
+
+Those zeros are HTTP 429s against LIVE pools. The provider cannot tell: every
+quoter .call() in quote_and_build sits inside a bare `except Exception as e:
+self._dbg(...)`, debug-only and swallowed, so a contract revert (no pool at
+that tier) and a rate-limited transport are the SAME observation. best_out is a
+max over whichever tiers happened to answer, so the same question asked twice
+lands on a different tier at a different price. ZORA's 98.872% spread is one
+repeat answered and two throttled -- not a thin pool repricing.
+
+NUMBER PRODUCED, filed as a CENSUS number only: AERO-USDC round trips at
+13.58bp on a $2.00 clip, spread 0.071% across the repeats that were answered --
+under the 1% bar the item set. AERO is not unpriceable and never was. This does
+NOT open a route: q was measured at 46.4% (pass 489), so (2q-1) = -0.072 and the
+net is negative even at toll = 0. A cost correction cannot pay. Filing this as
+an opened route would be the error.
+
+LIMIT OF THE MEASUREMENT, stated so nobody over-reads it: the calls went to the
+public https://mainnet.base.org endpoint DIRECTLY, not through production's
+bridge._w3 factory. The defect is proven in CODE and is unconditional. The RATE
+at which production hits it is UNMEASURED.
+
+CLOSED: [bc5b0e57] rejected by its own filer -- premise is an artifact, and its
+criterion 3 ("route AERO and ZORA through WETH on UniswapV3Local") is impossible
+by configuration because of the line above. Replacement [557240ef] filed at 3
+points with a unit test that needs no RPC.
+
+STILL OPEN from this pass: does production's RPC actually throttle? That is
+criterion 4 of [557240ef] and it decides whether the defect is live or latent.
