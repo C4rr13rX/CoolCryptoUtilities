@@ -15441,3 +15441,29 @@ STILL OPEN (filed): [f7a6ee71] instrument the silent live path; [bd5619eb] a liv
 fill carries executed_price=0.0 (CBETH-USDC, yields +1.03e14 percent); [e80b4777]
 gas is recorded nowhere -- fee_cost is None on all 38 live fills and
 live-swap-settled has no gas field, so no net-of-gas claim here is verifiable.
+
+### Pass 483 addendum -- ROOT CAUSE FOUND
+
+CENSUS: trading_ops action=strategy_publish, parsing bus_actions[].strategy_id.
+  14 days:    1099 plans, 6412 bus_actions -> 6412 atf_static, 0 money_button
+  since boot:   32 plans,  172 bus_actions ->  172 atf_static, 0 money_button
+All carry reason=c0d3rv2_atf_candidate, action=evaluate_atf_static_entry.
+
+CHAIN: planner emits only atf_static -> money_button accrues no ghost trades
+(stuck at 2, last 14.6d ago) -> bar is min_trades=max(5, MIN_GHOST_TRADES_FOR_
+PROMOTION default 25) at pipeline.py:928/:4869, neither env var set -> shortfall
+23 at rate zero -> ghost_ready false forever -> halt_live reason
+ghost_validation_block -> 821daa1 demotes bot to ghost (31/31 plans since boot
+read live_execution_enabled=False) -> 0 live entries AND 0 live refusals, 13.3d.
+
+CLOSED: "a gate is blocking the live lane and we must find and loosen it." The
+gates are CORRECT -- they refuse a 2-trade strategy, which is their job. The
+defect is upstream and it is STARVATION, NOT REFUSAL. Do NOT lower the 25.
+CLOSED: "shorten the hold" re-run on the current book -- 900s -0.2320, 1800s
+-0.7608, 3600s -0.7928, monotone, shorter is WORSE.
+QUALIFIED: "gross is NEGATIVE" is not supported. ghost_gate_forensics n=45 gives
+gross +12.19bp CI [-1.07,+25.44] -- spans zero, so gross is UNMEASURED.
+
+OPEN, and it is the whole ballgame: WHAT BUILDS bus_actions AND WHY DOES THE
+CANDIDATE SET HAVE EXACTLY ONE MEMBER? Thread to pull: c0d3rv2_atf_candidate.
+Filed [01444d9a].
