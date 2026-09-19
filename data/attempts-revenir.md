@@ -14417,3 +14417,43 @@ ROUTE STATUS, FINAL FOR THIS PASS:
     route (a) admit atf_static_scout           OPEN but its edge is UNAUDITED
                                                (0 of 246 receipts) -- [82662e5d]
                                                is the prerequisite
+
+### PASS 478 SEVENTH ADDENDUM -- ROUTE (b) DOES NOT UNLOCK STEP 6 AT ALL
+
+Re-read of output I had already summarised. I had missed the line that closes
+route (b) on MECHANICS rather than economics:
+
+    money_button       READY   reason=cold_start_bootstrap   n=0
+    atf_static         READY   reason=cold_start_bootstrap   n=0
+    atf_static_scout   READY   reason=fast_track             n=12
+
+atf_static carries the SAME unearned reason as money_button on the SAME empty
+book. Run the three terms on it: ready TRUE; reason cold_start_bootstrap NOT in
+GHOST_EARNED_READY_REASONS; net not above zero at n=0. Two of three fail,
+identically to money_button.
+
+THEREFORE restoring atf_static to approved_ids leaves candidates =
+[money_button, atf_static], earned = EMPTY, and pipeline.py:4748 forces
+ready=False regardless. STEP 6 STILL BLOCKS. Route (b) is not a bad way
+through the gate; it is NOT A WAY THROUGH.
+
+THE SHARPENED CONCLUSION, and it is the pass's real result:
+
+    atf_static_scout is the ONLY strategy in this system holding an EARNED
+    ghost verdict, and therefore the ONLY one that can open step 6 at all.
+
+Every other candidate carries cold_start_bootstrap on an empty book, which the
+gate is deliberately built to refuse.
+
+AND THAT BOOK HAS ZERO RECEIPTS (0 of 246). The one key that fits the lock has
+never been audited and no instrument here can audit it. This stops being a
+strategy-selection problem and becomes a MEASUREMENT problem; [82662e5d] is the
+only item on the board that addresses it.
+
+CONSEQUENCE WORTH PRE-REGISTERING: if the scout's edge is KILLED once its book
+becomes auditable, this system has NO strategy able to open step 6, which is a
+larger finding than anything filed today -- and it is knowable in one pass.
+
+PROVENANCE, honestly: this was in output read forty minutes earlier and
+summarised without noticing atf_static's reason string matched money_button's.
+Three posts were spent costing a route the same screen had already closed.
