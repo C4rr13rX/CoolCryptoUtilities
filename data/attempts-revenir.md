@@ -17476,3 +17476,37 @@ here suggests a forecast would help.
 Also note mean > median on all five (+4.20 to +9.26 vs +1.08 to +4.79). The
 right skew is exactly the trap the standing note warns about -- a mean-based
 read of this table would have shown a "positive drift" on every symbol.
+
+### Pass 490 addendum 3 -- and production ALREADY refuses the loud symbols, correctly
+
+`services/round_trip_cost.py:89` TOKEN_ROUND_TRIP is a SIX-token table:
+
+    WETH 0.0011   ETH 0.0011   CBETH 0.0030
+    USDC 0.0011   AERO 0.0435  KTA 0.7498
+
+ZORA, CAKE and ALIGN -- the three loud symbols from addendum 1 -- are NOT in
+it. They fall through to DEFAULT_TOKEN_ROUND_TRIP = 0.0070, i.e. **70bp**
+(`:100`, env TOKEN_ROUND_TRIP_DEFAULT).
+
+So the per-symbol toll [f9f24f42] criterion 4 asks for is, in production TODAY,
+70bp for every symbol I measured. Against that:
+
+    ZORA  median signed return  +4.79bp  CI [-1.15,+11.68]   toll 70bp
+    CAKE  median signed return  +4.70bp  CI [-3.08,+22.84]   toll 70bp
+    ALIGN median signed return  -0.33bp  CI [-3.25, +0.39]   toll 70bp
+
+The gate refuses them, and IT IS RIGHT TO. The best upper CI bound across all
+five symbols is CAKE +22.84bp, which clears neither the 70bp default nor the
+27.77bp WETH toll. The universe-selection route is not merely closed by
+measurement -- production already declines it for the correct reason.
+
+CONSEQUENCE FOR CRITERION 4: measuring the REAL toll on ZORA/CAKE is only worth
+doing if a real toll under ~23bp would change a decision. It would not, because
+the SIGNED return CIs all contain zero. Criterion 4 is therefore DEMOTED, not
+answered -- and the honest ranking is that criterion 3, per-symbol FORECAST q,
+is the only thing on this route that can still change the answer.
+
+The comment at :83-88 is worth reading before anyone "fixes" the default: an
+unlisted token is UNPRICED and deliberately gets the pessimistic value, because
+understating cost is the direction that loses money. That is sound, and it is
+the opposite of the inverted-admission defect filed on the same table.
