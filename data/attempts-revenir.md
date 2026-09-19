@@ -15625,3 +15625,61 @@ PUBLISHED interval, so it does not depend on my reconstruction.
 
 **STATUS: [0fcc938d] CLOSED NEGATIVE. The trap worked. Route (b) -- restrict
 the universe to deep pools -- has no surviving positive number on this tape.**
+
+### Pass 484 addendum -- [c9e248aa]: the item's premise is STALE, and the real
+### shape is 71 of 72 strategies refusing with a content-free label
+
+Command: `python -X utf8 scripts/entry_conversion_census.py` (24h window).
+
+THREE OF THE ITEM'S PREMISES ARE NO LONGER TRUE. Measured, not argued:
+
+1. "atf_static converts ZERO candidates into an entry" -- FALSE NOW. 29
+   ghost-entries in 24h across NINE strategies:
+     atf_static_scout 10   donchian_breakout@5d 5   donchian_breakout@1w 4
+     atf_static 4          donchian_breakout@12h 2  donchian_breakout@3d 1
+     donchian_breakout 1   supertrend_follow@1w 1   bollinger_squeeze 1
+   atf_static enters 4 times. The scout is 10 of 29 (34%), not 96%.
+
+2. "a ghost-only scout takes 96% of decision cycles" -- FALSE. The tick
+   winners are donchian_breakout@5d 293 (33.1%), @1w 167 (18.9%),
+   rsi_reversal 166 (18.8%), rsi_reversal@5h 107 (12.1%). atf_static wins 11
+   (1.2%) and atf_static_scout does not appear in the top ten at all.
+
+3. "report what fraction of the 727 candidates each refuser accounts for" --
+   NOT ANSWERABLE AS ASKED, and I am refusing the question rather than
+   producing a number with the wrong denominator. 24h has 2770 holds against
+   620 candidates, 4.5x. Refusals are emitted per tick per strategy, so they
+   do not partition the candidate set. Composition of holds IS well defined:
+     entry-arbitration 884 (31.9%)   stale-clock-sweep-declined 549 (19.8%)
+     entry-predropped-edge-ban 531 (19.2%)  entry-refused-duplicate 424 (15.3%)
+     entry-refused-lattice 220 (7.9%)  entry-refused-no-candidates 149 (5.4%)
+
+THE FINDING OF THE PASS, and it reframes pass 483's money_button result:
+
+    strategies appearing in skipped{}: 72
+    of those, >=95% 'no_signal':       71
+    giving a SUBSTANTIVE reason:        1   <- money_button, alone
+
+Every one of the 72 is offered the same 745 ticks and they tie EXACTLY at 745.
+So "money_button is in skipped{} on all 745 rows" (pass 483, mine) is TRUE but
+was never distinctive -- that is the universal shape. What IS distinctive is
+that money_button is the ONLY strategy of 72 that reports a real reason.
+The other 71 return `no_signal`.
+
+I AM NOT CLAIMING I KNOW WHAT no_signal MEANS. It may be "I evaluated and found
+nothing" or "I was never really run". Those are different bugs with different
+fixes and this census cannot separate them. That is the next measurement and it
+is worth more than anything else on this board.
+
+AND THE FUNNEL IS NOT WHERE THE ITEM SAYS IT IS. In distinct symbols, which is
+the honest unit since each tick re-emits the same symbol:
+
+    146 proposed  ->  19 quotable (87% LOST)  ->  12 entered
+
+The QUOTE step discards 87% of symbols. The entry gate then passes 12 of 19.
+The item is written as though the entry gate were the cut. It is not.
+
+STATUS: [c9e248aa] criteria 1 and 2 are answered (criterion 2 partly by
+refusing its premise). Criterion 3 -- the matched-baseline forward-return test
+on refused vs accepted candidates on the SAME ticks -- is UNTOUCHED, and it is
+the decisive one. Item stays OPEN.
