@@ -15832,3 +15832,31 @@ recovering the seconds wasted on the 0x 403 -- which fires on every call
 before the only live venue is consulted -- pulls CBADA's kind back across the
 line without giving all 241 doomed quotes a longer rope. Widening to 120s
 would make every doomed quote take 120s and CUT throughput. [3bad78ef] step 1.
+
+### Pass 484 addendum 5 -- a LATENCY BOUND from data already on disk, and it
+### qualifies my own step 1
+
+output_tail carries no timestamps, so per-provider latency is not directly
+readable. The two populations bracket it:
+
+  0x 403 + UniV3 route FOUND      = 15.49s median  (n=379)
+  0x 403 + UniV3 route NOT found  = 45.06s median  (n=241)
+
+**THE 0x 403 COSTS AT MOST 15.49s**, and certainly less, since that figure also
+contains a successful UniswapV3 route search. The ~30s difference is
+**UniswapV3 searching direct-and-2-hop and failing** -- not 0x.
+
+CORRECTION TO MY OWN RECOMMENDATION: I implied 0x dominates the 45s. It cannot.
+Short-circuiting 0x will NOT rescue the failing quotes. Step 1 stands only for
+the narrower reason: it pays back on the 379 quotes that SUCCEED at median
+15.49s. If 0x is 5-10s of that, it is a 30-60% cut in successful-quote latency,
+and CBADA (1-in-4, sitting at the wall) is exactly what crosses back over on a
+cut that size. This is an INFERENCE, not an instrument reading -- it assumes the
+403 costs the same in both populations. Instrumenting it stays criterion 2.
+
+THE BIGGER LEVER, NAMED NOT FILED because I have not verified it: the expensive
+thing is UniswapV3's exhaustive 2-hop search on tokens with no pool, ~241/day at
+~45s. If the pool set is knowable up front -- `data/pool_depth_snapshot.json`
+suggests something like it exists -- the right fix is to NOT ASK for a token
+with no direct or 2-hop pool, which costs 0s instead of 45s. Better than
+anything filed today. Verify the snapshot can answer it before building on it.
