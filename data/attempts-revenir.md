@@ -17122,3 +17122,45 @@ the 286bp double-count is ACCIDENTALLY PROTECTING THE ACCOUNT. Removing it makes
 money_button fire on windows whose median move is 7bp against 32bp of cost. Do
 not fix it as a route to profit. Re-prioritised p1 -> p3 by the agent who filed
 it, 20 minutes after filing it.
+
+### Pass 489 addendum 2 -- THE ORACLE BOUND: 14.87bp of drift against a 32.3bp toll
+
+Tried to KILL the horizon result above with a regime check, expecting to retract.
+It survived and got stronger.
+
+REGIME CHECK. If the sub-50% up-rate were a down-market artifact the horizon
+result would be regime-bound. 7d change over the sample window:
+  ETH-USDT +4.19%  ETH-USDC +3.97%  WETH-USDC +3.96%  CBBTC +6.96%  AERO +16.19%
+It was a strongly UP week, and the 12m up-rate was still 39.7% and the 45m still
+44.0%. The below-coin-flip up-rate is NOT a down market.
+
+WHAT IS ACTUALLY HAPPENING -- positive skew over a frequently dead feed:
+  12m  median move +0.00bp  up-rate 39.7%  median UP +12.50bp  median DOWN -11.37bp
+  45m  median move +0.00bp  up-rate 44.0%  median UP +34.92bp  median DOWN -23.02bp
+The median window moves EXACTLY ZERO at both horizons -- the frozen feed again
+(19.1% of money_button's declines this pass were `feed_frozen`). Up moves exceed
+down moves, so drift is genuinely positive; the tape is not adversarial, it is
+too small and too often dead.
+
+THE ORACLE BOUND. Winsorised at 1/99 to remove the XRP/PEPE regime rows:
+  mean forward move, 12 min   +0.62 bp
+  mean forward move, 45 min  +14.87 bp     vs a 32.3 bp round trip
+An oracle entering EVERY window and holding the maximum 45 minutes the config
+permits -- no signal, no selection, no skill, capturing the ENTIRE drift of an up
+week -- earns 14.87bp per round trip and pays 32.3bp. It loses 17.4bp each time.
+
+STATUS: this is the binding constraint and it subsumes every route tried this
+pass. Only two things can move it:
+  (a) a toll below 14.87bp -- IMPOSSIBLE at any clip: toll = 27.77bp +
+      45.70/clip_usd, so the FIXED term alone is 27.77bp;
+  (b) a hold longer than 45 min -- capped by .env:169 MAX_HOLD_FORCE_SECONDS=2700,
+      and at 90 min the up-rate is still 48.7% in a band already ruled DRIFT.
+Not changing (b) and not recommending it on one week of data.
+
+ROUTES CLOSED BY THIS PASS, all four of them mine, all four proposed and then
+killed by measurement within the same pass:
+  1. cost is what refuses money_button          -- NO, momentum is (57.2% of declines)
+  2. a cheaper token (VIRTUAL @21.1bp) is the lever -- NO, 598 momentum declines vs 121 cost
+  3. the 286bp double-count is the cause        -- NO, real bug but not causal;
+                                                   it is PROTECTING the account
+  4. a longer horizon inside the cap pays       -- NO, 45m median 19.70bp vs 32.3bp
