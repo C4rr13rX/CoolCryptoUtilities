@@ -15951,3 +15951,30 @@ lead, the deep-tier +40.1bp, the raise-the-deadline fix, the snapshot
 pre-filter, and the trim-the-mid-tokens ask that was my own report's headline.
 The counts never moved; the story moved five times. Check the SIZE of a finding
 before acting on its mechanism.
+
+### Pass 484 addendum 9 -- A VOID MEASUREMENT, RECORDED SO NOBODY REPEATS IT
+
+I found the public base endpoints (`services/token_contract_guard.py:88-91`)
+and ran the settling measurement, 40 sequential `eth_blockNumber` each:
+
+  base-rpc.publicnode.com   n=40  TOTAL 2.82s  median 0.066s  ERRORS 40
+  base.llamarpc.com         n=40  TOTAL 3.48s  median 0.081s  ERRORS 40
+  mainnet.base.org          n=40  TOTAL 2.90s  median 0.070s  ERRORS 40
+
+**40 of 40 FAILED on all three.** No outbound network to these hosts from this
+sandbox. The 0.066s is THE TIME TO FAIL A CONNECTION, not to answer a call.
+**The totals are meaningless.**
+
+Read what that nearly became: "TOTAL 2.82s against a 45s budget" says the RPC
+is 16x faster than it needs to be, so the provider must be serialising or
+retrying -- a clean, publishable, completely FALSE conclusion reached by
+reading the latency column and not the one beside it.
+
+**STILL OPEN.** All that is known: ~40 eth_calls hit a 45s wall (~1.1s/call);
+`.env:15` is `PREFER_FREE_RPC=1`; and this environment cannot reach base.
+
+WHOEVER RUNS IT: run from an environment with outbound network, and **ASSERT ON
+THE ERROR COUNT BEFORE READING THE LATENCY**. A timing loop that cannot connect
+returns fast, small, confident numbers. [[short-window-on-a-slow-process-reads-
+as-death]] is the same failure wearing the opposite mask: a broken probe reading
+as health.
