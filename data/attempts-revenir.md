@@ -14123,3 +14123,59 @@ Value, path and reader all line up. This version is hardened. The two that
 preceded it in this same pass were not -- the first checked the wrong store
 (data/*.json) and concluded the gate holds, the second had the right store and
 the wrong depth.
+
+### PASS 478 -- STEP 6 IS A CLOSED LOOP, AND STEP 5 PASSING IS WHAT CLOSED IT
+
+ROUTE TRIED: find the cause of the first failing link, step 6
+ghost_validation_block, by reading the code rather than any report.
+
+RESULT: CLOSED -- cause found, and it is a deadlock, not a fault.
+
+THE EXIT CONDITION, as a three-term boolean. pipeline.py:4714
+_ghost_validation_for_live passes iff some strategy in approved_ids()
+satisfies ALL of (pipeline.py:4727-4735):
+
+    1. ready == True
+    2. reason in GHOST_EARNED_READY_REASONS
+       = {"", "fast_track", "positive_expectancy"}      pipeline.py:676
+    3. total_net_profit > 0.0
+
+MEASURED: approved_ids() is exactly ["money_button"]. Its verdict is
+ready=True, reason=cold_start_bootstrap, n=0. Its whole all-time book in
+trade_outcomes is n=1, 0 wins, net -0.0214. Terms 2 and 3 fail. With nobody
+qualifying, pipeline.py:4748 FORCES the verdict false and renames it
+no_qualified_strategy:cold_start_bootstrap -> ghost_validation_block.
+
+WHY IT CANNOT RESOLVE ITSELF: money_button appears in 0 of 3450
+entry-arbitration rows over 7 days (no_signal 641 of 730). The book stays at
+n=1, so the bar of 20 is not far away, it is unreachable. The 13.1-day live
+silence is this loop, not a break.
+
+THE ROUTE THAT IS CLOSED: loosening the gate. Do not add cold_start_bootstrap
+to GHOST_EARNED_READY_REASONS and do not weaken the forced-false at 4748. The
+docstring at pipeline.py:4710 states a test already caught that exact
+regression, and the bypass exists for an EMPTY POOLED book, where it is
+harmless, not for per-strategy licensing, where it hands live money to every
+untried strategy.
+
+THE ROUTE THAT IS OPEN: atf_static_scout is READY with reason=fast_track at
+n=12. fast_track IS an earned reason, so term 2 already passes for it. It is
+not in approved_ids and has no live branch. The system holds its only earned
+verdict in the one strategy that cannot spend. Filed [9ef737d3].
+
+A SCRIPT THAT APPEARED TO REFUTE THIS, AND DID NOT: ghost_gate_forensics.py
+prints "money_button READY reason=cold_start_bootstrap n=0". That is the RAW
+per-strategy _ghost_validation verdict, an intermediate eleven lines upstream
+of the forced-false. READY there and FAIL on the ladder are the same run of
+the same code.
+
+SAFETY, SEPARATE AND UNCHANGED: scripts/live_lane_refusal_census.py section 5
+concludes "the executor is in DRY RUN". That is WRONG and wrong in the
+dangerous direction. It reasons only about _refresh_auto_execute (bot.py:1878)
+and reads its early return at 1883 as a closed door -- but that early return
+fires BECAUSE the flag is already True. The first writer is bot.py:779 ->
+_load_state -> bot.py:12847, an unguarded boot restore of the persisted
+kv_store value, where all six neighbouring lines carry an accounting_version
+guard and this one does not. Filed [23136f6b]. Pin LIVE_TRADES_DRY_RUN=1
+explicitly before any restart; bot.py:1557 tests "is None", so unset does not
+protect you.
