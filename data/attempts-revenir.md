@@ -18100,3 +18100,36 @@ Two criteria worth carrying into [97fb9113]: do NOT widen the window to a
 larger hardcoded number (that MOVES the artifact); and do NOT accept one green
 run as proof -- a 42% coin comes up heads often, so require three runs 40+
 minutes apart that agree.
+
+### THE PER-SYMBOL COST WALL, FROM LIVE FILLS (not a quoter, not a census)
+All 38 non-ghost `trade_fills` rows carrying BOTH expected_price and
+executed_price. Round trip = 2x median per-leg slippage:
+
+    symbol             n  med_leg_bp  roundtrip_bp
+    CBBTC-USDC         9       10.98         21.96   <- cheapest
+    AERO-USDC         16       18.72         37.45
+    CBETH-USDC         5       31.45         62.90
+    CBXRP-USDC         2       85.72        171.44
+    BASECAT-USDC       2       88.09        176.18
+    BPAD-USDC          2      227.01        454.03
+    BSTONK-USDC        2      622.31       1244.62   <- 12.4% round trip
+    ALL POOLED        38       24.24         48.49
+
+Applying the board's own arithmetic, net = (2q-1)*move - toll, with q = 46.4%
+so (2q-1) = -0.072, and the 45-min tape ceiling move = 54.09bp:
+
+    pooled toll 48.49  ->  net = -3.89 - 48.49 = -52.4bp
+    CBBTC  toll 21.96  ->  net = -3.89 - 21.96 = -25.9bp
+
+NEGATIVE EVEN AT THE CHEAPEST SYMBOL THE BOOK ACTUALLY TRADES. The direction
+term is negative before any cost is subtracted, so no venue, clip or token
+choice can pay. The cost axis is now closed from a THIRD independent direction:
+quotes, censuses, and live fills all agree.
+
+ACTIONABLE ORDERING nobody has acted on: AERO is 9 of the 18 live closed rows
+and costs 1.7x what CBBTC costs on the same book. BSTONK at 1244bp should never
+have been entered; one of its two rows is the +0.2420 that flatters -0.1864.
+
+CAVEATS: CBBTC n=9, AERO n=16, everything else n=2-5 -- the tail medians are not
+stable. Doubled per-leg median, not a matched round-trip pairing. Only the
+pooled 48.49 and the AERO/CBBTC pair are worth spending.
