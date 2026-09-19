@@ -15276,3 +15276,36 @@ swap. `auto_vacuum=0`, so freed pages never return on their own.
 
 **Open, on `[1706fe9e]`:** stop the snapshot writer (the actual fix), then
 reclaim at a planned restart. Operator's call -- not taken.
+
+### Pass 481 correction, same pass: "stop the snapshot writer" was WRONG
+
+Before filing the remedy I grepped for the writer, and the grep refuted the
+remedy rather than locating it:
+
+    db.py:2084   INSERT INTO organism_snapshots(ts, payload)   <- single writer
+    db.py:2093 / 2105 / 2132                                   <- three readers
+
+plus, across `data/attempts-revenir.md` and `data/brain_experiments/`:
+`direction_prob`, `expected_delta`, `payload['scheduler'][*]['last_filter_reason']`,
+"636 decisions from organism_snapshots", "238 decision cycles", "newest 5,000
+cycles, 20.2h, 28 symbols".
+
+**That table is the per-decision-cycle telemetry, not paused-brain state.** It is
+the substrate a large share of this loop's censuses are built on. I had verified
+that the *trading evidence* (`trade_fills`, `market_stream`) would survive a
+purge and concluded the table was disposable -- I checked the right thing and
+drew the wrong conclusion from it.
+
+**Corrected remedy:** retention, not a stop and not a purge.
+
+* Do **not** stop the writer; it produces the decision record we investigate with.
+* Add a **retention window** -- every use found is recent (2h / 6h / 20.2h /
+  newest 5,000). 7-14 days cuts 22.38 GiB to roughly 2.
+* **The real defect is the payload: 337,469 bytes per decision cycle.** A third
+  of a megabyte of JSON per cycle *is* the 1.2 GB/day. Halving it is worth as
+  much as halving the window -- inspect one payload first.
+
+**Unchanged, because it was measured rather than inferred:** the 25.93 GiB
+attribution (86% this table, 98% of the file accounted), 0.02 GiB of trading
+evidence, 1.2 GB/day corroborated two independent ways, 1-2 weeks of headroom.
+The diagnosis held; the remedy was wrong by one grep.
