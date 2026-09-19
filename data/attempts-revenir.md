@@ -18266,3 +18266,46 @@ other eight zeroes stand at both window sizes.
 STILL OPEN, and stated rather than papered over: those eight zeroes remain
 "refusing or window-blind, indistinguishable". The ramp/crash/flat detector had
 no power to separate them and was deleted rather than shipped.
+
+### PASS 493 FINAL TABLE -- CORRECTED WINDOWS. NOT ONE ROW IN THE REGISTRY HAS abs(t) > 2 ON GROSS. ZERO.
+
+Re-run after window_for() replaced the flat WINDOW=40. This SUPERSEDES the
+first table above: two of its numbers were window artifacts.
+
+  python scripts/strategy_replay_table.py --hours 168
+
+  strategy              win   evals  fires  resolved  mean gross   t       mean net    t
+  mean_reversion         72   29612     40        39     +1.136%  1.625    -0.115%  -0.153
+  supertrend_follow     108   27131     83        83     -0.005% -0.018    -0.700%  -2.376
+  ema_cross             120   26346    210       210     +0.061%  0.758    -0.834%  -7.457
+  rsi_reversal           96   27947    982       979     +0.178%  1.530    -0.895%  -7.248
+  donchian_breakout     120   26346    344       342     +0.137%  1.408    -0.957%  -7.894
+  stochastic_reversal    90   28358    140       138     -0.020% -0.218    -1.004%  -7.581
+  bollinger_squeeze     120   26346     16        16     -0.405% -1.171    -1.105%  -3.195
+  macd_momentum         120   26346     21        21     -0.447% -1.497    -1.383%  -3.573
+  money_button           40   32000     29        29     -0.765% -3.734    -1.465%  -7.149  CONCENTRATED
+  8 more: ZERO fires
+
+TWO CORRECTIONS TO MY OWN EARLIER NUMBERS IN THIS FILE, both caused by the
+flat window and both in the same direction:
+
+  rsi_reversal      +0.487% t=+2.557   ->  +0.178% t=+1.530
+  supertrend_follow +175.301% t=0.999  ->  -0.005% t=-0.018
+
+The 175% was a window artifact, not only a contamination artifact. And the one
+t>2 gross in the registry did not need the outlier argument to die -- it dies
+on window sizing alone. The outlier analysis and the window fix are two
+INDEPENDENT reasons the same row is not an edge.
+
+THE RESULT, stated once and cleanly: seventeen gates, one 168h tape, one cost
+model, each strategy handed 3x its own declared min_samples. NOT ONE ROW HAS
+abs(t) > 2 ON GROSS. Nine strategies produced resolved round trips and all nine
+have a NEGATIVE mean net, seven of them at t below -3. Eight fired zero times.
+
+CLOSED, with numbers: "a better registered strategy is the way out". There is
+no rule in this registry with a demonstrated gross edge, positive or negative.
+The constraint is not signal selection.
+
+WHAT THIS DOES NOT SAY: that these rules are bad. abs(t)<2 on gross means
+UNMEASURED at 168h of this tape. It says the graduation funnel cannot
+distinguish them either, on far less evidence than this table used.
