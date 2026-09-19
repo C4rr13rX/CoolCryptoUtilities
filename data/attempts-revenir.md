@@ -16918,3 +16918,20 @@ CBBTC does NOT clear -- it clears at a size we cannot fund. That is the honest
 statement and it is a different sentence from the headline.
 
 CBXRP could not be quoted: no address in data/token_addresses.json.
+
+## Pass 488 (Echo) -- UNFINISHED: the ten-token sweep did not return
+
+Extended the quote sweep to the ten unpriced symbols carrying the most book
+(AERO, CBADA, VIRTUAL, OP, MOG, BSTONK, BASECAT, COMP, VVV, DRB) at the fundable
+$10 clip. IT DID NOT RETURN within the pass. NO NUMBERS. Nobody should cite it.
+
+THE NON-RESULT IS ITSELF USEFUL, and it corrects my own earlier "a full sweep
+fits comfortably": CBBTC and WETH each round-tripped in 15-22s, so ten tokens
+should be ~3-4 min, and it did not finish in that. SUSPICION, not measured: the
+thin names likely have no Uniswap V3 pool, and an ABSENT pool costs far more wall
+time than a present one (RPC retries across fee tiers). If so, quoting cost is set
+by whether a pool EXISTS, and the tokens we most want priced are the slow ones.
+
+CORRECTED INSTRUCTION FOR [1504e406] (third version): quote the DEEP names first,
+they are fast. Budget generously for thin ones, quote them ONE AT A TIME with a
+per-token timeout so one dead token cannot eat a pass. Do NOT assume 20s/token.
