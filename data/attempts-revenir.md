@@ -14823,3 +14823,42 @@ closed 12-90 min out-of-sample, this closes 2-12 min. Route (c) of the
 standing instructions is refuted and should stop being offered as a live
 option. The cost floor (70bp round trip against a median gross move of ZERO)
 is the binding constraint, and it is a TOKEN/DEPTH problem, not a timing one.
+
+### Pass 480 addendum -- NECESSARY IS NOT SUFFICIENT. The best gross on this tape is 9.53bp against an 11bp floor at the CHEAPEST depth we have.
+
+I told the operator a cost cut is NECESSARY. That is right and it must not be
+read as SUFFICIENT. The same run answers the sufficiency question and the
+answer is no.
+
+Best sequential gross mean over any population with real n, same 168h run:
+
+    momentum_not_aligned   n=3315   gross mean +0.0953%   up 51.9%
+    slope_not_positive     n=99     gross mean +0.0880%   up 34.3%
+    edge_below_cost        n=271    gross mean -0.0039%   up 54.2%
+    move_exhausted         n=107    gross mean -0.2433%   up 58.9%
+
+Best available gross = +0.0953% = 9.53bp.
+The script's own floor line: "cost floors to beat: 70.00 bp at this census
+fee, 11.00 bp at WETH-class depth."
+
+9.53bp < 11.00bp. So even if the universe were cut to WETH-class depth --
+the cheapest token measured anywhere in this repo, 0.04-0.11% per round trip
+-- the best gross visible on this tape still does not clear the floor.
+
+TWO HONEST QUALIFIERS, because this number is doing a lot of work:
+ 1. momentum_not_aligned is the REFUSED population. It is not a strategy, it
+    is everything the momentum gate declined. Its +0.0953% is the best gross
+    ON THE TAPE, not an edge anybody can trade. Quoting it as a strategy
+    result would be exactly the kind of artifact this repo keeps producing.
+ 2. Its up-rate is 51.9%, a coin flip. A +9.53bp gross mean at 51.9% up is
+    DRIFT, not skill, and drift does not survive a direction requirement.
+
+CONSEQUENCE, stated plainly: on this tape there is no positive-expectancy
+configuration visible at any horizon (2-90 min) or at any depth we can reach.
+Cost reduction is necessary and insufficient. The missing term is GROSS, and
+gross is a SIGNAL/UNIVERSE problem -- which tokens actually move more than
+their own toll -- not a timing or clip problem.
+
+This is consistent with, and independent of, pass 478's book-wide finding
+(de-contaminated gross -0.0744% of notional vs a +0.3187% variable floor).
+Different instrument, different window, same sign.
