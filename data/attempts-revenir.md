@@ -16883,3 +16883,38 @@ STANDING WARNING FOR ANY OTHER MEASUREMENT: 89 of 236 rows (37.7%) are
 unattributed on a 30-day window. Any per-strategy rate quoted over 30 days or
 longer on this store is understated by up to that much. Use 14 days, or state the
 NULL count beside the number.
+
+## Pass 488 (Echo) -- THE QUOTES, TAKEN. CBBTC CLEARS THE GATE AT $50 AND NOT AT $10
+
+READ-ONLY, USDC -> token -> USDC on base via UniswapV3Local. NO CAPITAL MOVED.
+
+    CBBTC   $2    back  1987254 of  2000000 raw    63.7 bp   fee tiers 3000/3000
+    CBBTC  $10    back  9957006 of 10000000 raw    43.0 bp   fee tiers 3000/500
+    CBBTC  $50    back 49949607 of 50000000 raw    10.1 bp   fee tiers  500/500
+    WETH   $10    back  9997147 of 10000000 raw     2.9 bp   fee tiers  100/100
+
+CBBTC prices at 10.1bp at $50 against the 35bp first gate and the 70bp DEFAULT it
+is currently assumed at -- the assumption is ~7x wrong in the direction that
+refuses it. Cost FALLS with clip here because the router picks a cheaper fee tier
+as size grows (3000 -> 500 -> 100).
+
+TWO OF MY OWN CLAIMS FROM EARLIER THIS PASS, REFUTED:
+
+  * I budgeted [1504e406] against a 45-SECOND-PER-QUOTE wall and told the next
+    agent to scope down to two tokens. A FULL ROUND TRIP (two quotes) takes
+    15-22s. The 45s wall is NOT in the local quoter. A full sweep fits a pass.
+  * WETH measures 2.9bp at $10; TOKEN_ROUND_TRIP carries it at 11bp. The table
+    OVERCHARGES the one token we can fill by ~4x -- same direction as the standing
+    finding that the legacy literal overcharged WETH 5.34x, by an independent route.
+
+WHAT THIS IS NOT: these are QUOTES, not fills. They carry pool fee and price
+impact and NOTHING else -- no gas, no execution slippage, no failed-tx risk. Every
+number is a LOWER BOUND on true round-trip cost. Do not write them into
+TOKEN_ROUND_TRIP as if they were fills without saying so beside each one.
+
+AND THE CLEARING CLIP IS NOT FUNDABLE: 10.1bp needs $50; deployable stable is
+$23.18. At $10 CBBTC is 43.0bp, still ABOVE the 35bp gate. So on today's wallet
+CBBTC does NOT clear -- it clears at a size we cannot fund. That is the honest
+statement and it is a different sentence from the headline.
+
+CBXRP could not be quoted: no address in data/token_addresses.json.
