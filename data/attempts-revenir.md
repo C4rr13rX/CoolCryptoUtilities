@@ -15748,3 +15748,42 @@ TWO HONEST DEFLATIONS:
 
 STATUS: [3bad78ef] OPEN, p1. This is upstream of every gate -- 140 symbols
 never reach one -- so no gate, cost or signal work can recover them.
+
+### Pass 484 addendum 3 -- I SIZED MY OWN FINDING AND IT SHRANK 94%
+
+Before letting "140 symbols never reach a gate" stand as a 140-symbol
+opportunity, I asked what those 140 are. Reported `liquidity_usd` on the
+candidate rows, 24h, by quote outcome:
+
+    quote OK  n=379  median $      0   p10 $    0   p90 $254,571
+    FAILED    n=242  median $ 18,040   p10 $7,564  p90 $ 84,473
+
+THE SYMBOLS THAT QUOTE SUCCESSFULLY HAVE A MEDIAN REPORTED LIQUIDITY OF ZERO.
+Over half the successful rows report none at all, while the failures report a
+median of $18k. By this field the failures are the MORE liquid set -- backwards
+from any story worth telling. So `liquidity_usd` is unpopulated or unreliable
+and NO inference may be built on it. Recorded rather than quietly dropped.
+
+Taking the tail as a floor rather than a measurement: of the 140 failed-only
+distinct symbols, NINE report >=$100k --
+
+    VCAT-USDC        $8,236,370     CBHYPE-USDC  $662,096
+    (CJK-named)-USDC $5,810,688     USXT-USDC    $174,119
+    ARGUS-USDC       $1,229,396     CBLTC-USDC   $118,938
+    BASEFOREVER-USDC $  240,708     CBMEGA-USDC  $116,917
+
+131 of 140 are under $100k. ~94% of the symbols lost at the quote step are
+thin, and UniswapV3's "no viable pool direct or 2-hop" is very probably
+truthful about them. THE RECOVERABLE UNIVERSE IS SINGLE DIGITS, NOT 140. My
+"upstream of every gate" framing was right about the mechanism and badly wrong
+about the size.
+
+THE PART THAT SURVIVES: three of the nine are CB-wrapped -- CBHYPE $662k,
+CBLTC $119k, CBMEGA $117k -- the SAME FAMILY as CBBTC and CBXRP, which quote
+and trade today (CBBTC has 7 ghost round trips). A CB-wrapped token at $662k
+failing to quote while its siblings succeed is a specific checkable anomaly,
+and it is three symbols, not a programme.
+
+UNCHANGED: step 1 of [3bad78ef], short-circuit the 0x 403, is still worth doing
+on its own merits -- it pays latency back on the 379 quotes that SUCCEED at
+median 15.49s, not only on the failures. That argument never depended on the 140.
