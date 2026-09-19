@@ -16440,3 +16440,37 @@ ROUND TRIPS ACCUMULATED OVER 16 DAYS. Every cost route is being argued from a
 sample too small to resolve a 15bp effect against a 27.77bp toll. The only
 thing that fixes it is more live legs at a minimum clip -- route (a), not to
 make money, but to make cost MEASURABLE.
+
+### Pass 487 FINAL: route (a) closed on arithmetic. The economics are UNDETERMINED.
+
+ROUTE: (a) hand-approve one strategy at a minimum clip to BUY the measurement.
+NUMBER: 1081 live round trips required to resolve the 12.74bp gap; 983 days at
+        the current 1.1/day. Criterion 1 of [7b79c272] set 300 as the cutoff.
+STATUS: **CLOSED**. Not available on any practical horizon.
+
+  per-round-trip total slippage, n=18
+    mean -480.12 bp   SD 2387.69     <- GARBAGE, outlier-driven, DO NOT USE
+    median +20.66 bp  MAD 52.93
+    bootstrap 95% CI on the median  [-7.10, +91.59]  half-width 49.34 bp
+
+  An SD-based sample size off that mean gives 539,748 round trips -- the same
+  mean-of-means artifact that produced +167,333bp in p486. Always use the median.
+
+  resolve a gap of   required n   days at 1.1/day
+    12.74 bp            1081           983
+    10.00 bp            1753          1594
+     5.00 bp            7012          6375
+
+THE CONCLUSION THIS PASS REACHED, and it is a statement about EPISTEMICS, not
+about profitability: the 95% CI on our own round-trip cost is [-7.10, +91.59].
+It contains the 27.77bp toll, it contains ZERO, and it contains 90. We do not
+know our round-trip cost to within an order of magnitude. Every route closed in
+p486 was closed on 27.77 treated as a constant; it is a point estimate inside a
+99bp band.
+
+NOT A CLAIM OF HIDDEN PROFIT. Median round-trip slippage is +20.66bp adverse
+against a +15.03bp gross -- the point estimates still lose. The finding is that
+this system's economics are UNDETERMINED at the sample we can afford, not that
+they are known to be bad. Both halves of the fork are shut: we cannot buy the
+measurement (983 days) and we cannot argue from the sample (49.34bp half-width
+on a 12.74bp gap).
