@@ -16078,3 +16078,54 @@ So the gate refuses at random, and loosening it admits MORE COIN FLIPS AT A
 interval is profitable. CLOSED: the defect is upstream of every gate. Candidate
 generation has no direction edge, which is what `h*` infimum 0.5 has been saying
 all along and what pass 484 found from the single-strategy side.
+
+## Pass 485 (Echo) -- CLOSED NEGATIVE: the 90-360 min "edge" is tape drift. Do not lengthen the hold.
+
+ROUTE: forget the gate -- does anything the system ENTERS go up enough to pay,
+at ANY horizon? Eight horizons against zero and against the 27.77 bp floor.
+
+COMMAND: `PYTHONPATH=scripts python -X utf8 scripts/horizon_skill_sweep.py`
+
+THE UNPAIRED TABLE, which looked like the first real edge in a long time:
+
+| horizon | n | accepted mean | 95% CI | up-rate |
+|---|---|---|---|---|
+| 15m | 50 | +1.54 bp | [-6.27, +9.34] | 50.0% |
+| 45m | 44 | +5.25 bp | [-12.97, +23.47] | 54.5% |
+| 90m | 40 | +37.21 bp | [+3.12, +71.31] | 57.5% |
+| 180m | 29 | +70.82 bp | [+21.44, +120.19] | 72.4% |
+| 360m | 24 | +134.02 bp | [+23.29, +244.76] | 79.2% |
+
+with the refused pool running the OTHER way over the same horizons (90m
+-17.76 bp, 180m -14.00 bp). An 85 bp separation at 180 min, 3x the cost floor,
+up-rate rising monotonically 50% -> 79%.
+
+IT IS NOT REAL. The paired, drift-controlled version, swept over the pairing
+window:
+
+| horizon | window | windows | paired diff | 95% CI | acc won |
+|---|---|---|---|---|---|
+| 90m | 600 | 24 | +6.11 | [-46.02, +58.24] | 41.7% |
+| 90m | 1800 | 25 | -9.29 | [-56.80, +38.23] | 44.0% |
+| 180m | 600 | 17 | -31.34 | [-114.40, +51.71] | 41.2% |
+| 180m | 1800 | 17 | -23.02 | [-97.92, +51.88] | 52.9% |
+| 360m | 600 | 13 | +77.98 | [-42.26, +198.22] | 69.2% |
+| 360m | 1800 | 17 | -50.70 | [-172.86, +71.47] | 52.9% |
+
+Every one contains zero, and **the sign flips on an arbitrary bucket width I
+chose myself**: 90m goes +6.11 -> -9.29, 360m goes +77.98 -> -50.70. At 180 min
+the paired diff is negative in both. The unpaired lift is the tape rising in
+the windows where entries happened to cluster -- accepted and refused sit in
+different symbols at different times, which is precisely the artifact the
+pairing was built to remove.
+
+CLOSED: **do not lengthen the hold.** It is the obvious action from the
+unpaired table and it is unsupported. `MAX_HOLD_FORCE_SECONDS=2700` (.env:169)
+is not what is costing us. The coin-flip verdict now stands over 15m to 360m
+rather than 15m to 45m.
+
+METHOD NOTE worth more than the result: the unpaired table would have passed
+review -- it has n, CIs excluding zero, a monotone up-rate, and a control arm
+running the other way. It is still wrong. The only reason it was not published
+as a finding is that the kill test was pre-registered, so running it was not a
+choice made while excited about the number.
