@@ -17164,3 +17164,39 @@ killed by measurement within the same pass:
   3. the 286bp double-count is the cause        -- NO, real bug but not causal;
                                                    it is PROTECTING the account
   4. a longer horizon inside the cap pays       -- NO, 45m median 19.70bp vs 32.3bp
+
+### Pass 489 addendum 3 -- CORRECTION TO ADDENDUM 2. 45 min is NOT closed. The bar is 80% directional accuracy.
+
+Addendum 2 quoted 14.87bp at 45 min as an "oracle bound" and concluded every
+drift-capture route inside the cap is arithmetically closed. THAT WAS AN
+OVERSTATEMENT and this corrects it. 14.87bp is the NO-SKILL bound (enter every
+window, always long). The actual upper bound is what PERFECT direction earns,
+which is mean |move|, and it was not computed.
+
+Winsorised 1/99, same 7d window:
+  horizon   no-skill (all, long)   PERFECT direction   toll     perfect net
+   12 min        +0.62 bp              21.24 bp        32.3bp    -11.06 bp
+   45 min       +14.85 bp              54.09 bp        32.3bp    +21.79 bp
+
+12 min is closed even with a perfect call -- independently reproduces [15cc71d4].
+45 MIN IS NOT CLOSED: a perfect call at the maximum hold the config ALREADY
+permits clears the toll by 21.79bp.
+
+THE BAR. With directional accuracy q, expected net = (2q-1) * 54.09 - 32.3.
+Break-even at 2q-1 = 32.3/54.09 = 0.597, i.e. q = 79.9%.
+
+  ** 80% DIRECTIONAL ACCURACY AT A 45-MINUTE HORIZON. **
+
+Measured accuracy today is a coin flip: the entry gate is +2.58bp CI
+[-8.79,+13.94] with BOTH arms negative. At q=0.50 the expression returns exactly
+-32.3bp, the whole toll. That is the -0.1864 scoreboard.
+
+WHY THE BAR IS SO HIGH -- the FIXED toll. toll = 27.77bp + 45.70/clip_usd; the
+27.77bp is fixed, so no clip size reduces it, and it eats more than half of the
+54.09bp available before any skill is applied. Decomposing the 27.77bp is the
+ONLY lever that lowers the 80% bar. NOT INVESTIGATED -- next item.
+
+STATUS: this supersedes addenda 1 and 2 as the standing summary. The horizon
+axis is closed BELOW 45 min and the cost/gate/token routes are closed. What
+remains is a single testable quantity -- directional accuracy at 45 min -- and a
+single unexamined constant, the 27.77bp fixed toll.
