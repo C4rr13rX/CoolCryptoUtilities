@@ -16178,3 +16178,43 @@ drift-controlled paired difference with a stated minimum detectable effect
 evidence, run ITS OWN signal through this harness, and find out whether it beats
 11.37 bp. If nothing clears the bar, that is the honest answer to the whole
 project and it should be said to the operator plainly.
+
+## Pass 485 (Echo) -- the last axis is NEARLY closed, and the lever was the AGGREGATOR, not the sample
+
+ROUTE: de-risk [310c3dad] before handing it over -- is the strategy's own signal
+extractable, and can a test of it resolve the 27.77 bp cost floor?
+
+FOUND: the signal needs no extraction. `trading_ops` ghost_candidate rows carry
+`strategy_id, confidence, score, expected_return, price_usd, liquidity_usd,
+rationale, target_price` per symbol per tick -- 6456 scored rows over 14 days.
+BUT all 6456 carry `strategy_id=atf_static`: no other strategy publishes a
+scored candidate, so donchian/rsi/supertrend cannot be tested from this table.
+
+TEST: within each 10-min window rank candidates by the strategy's own score, top
+half against bottom half. Drift-free by construction.
+
+| horizon | agg | windows | top-minus-bottom | 95% CI | MDE | won |
+|---|---|---|---|---|---|---|
+| 15m | mean | 388 | -8.03 bp | [-453.26, +437.19] | 445.23 | 49.0% |
+| 15m | **median** | 388 | +32.42 bp | [-8.97, +73.82] | **41.39** | 49.2% |
+| 45m | mean | 343 | -32.31 bp | [-532.19, +467.56] | 499.88 | 50.4% |
+| 45m | **median** | 343 | **+12.01 bp** | **[-13.46, +37.47]** | **25.47** | 52.5% |
+
+TWO METHOD FACTS WORTH MORE THAN THE RESULT:
+
+1. **The aggregator is a 17x power lever.** Mean-of-window gives an MDE of
+   445 bp; median-of-window gives 25 bp on the SAME rows. Individual symbol
+   moves here are large enough that a within-window mean is dominated by
+   outliers. **Use a median.** A 7-day mean-aggregated MDE of 39.50 bp was luck,
+   not power -- it went to 445 bp on 14 days.
+2. **Pooling per-row makes it WORSE, not better** (MDE 589 bp). Demeaning
+   returns within a window and keeping every row sounds like more n; the
+   residual variance swamps it. This was Echo's own suggested lever and it is
+   wrong -- recorded so nobody spends a pass on it.
+
+STATUS: NOT CLOSED, and deliberately not reported as a null. At 45m/median the
+half-width is 25.47 bp, just under the 27.77 bp floor -- so the test would
+detect a floor-sized effect centred there. It found +12.01 bp, not significant,
+with 52.5% of 343 windows positive. **But 27.77 sits INSIDE the upper bound
+(+37.47), so a floor-paying edge cannot be excluded.** The answer is likely "no"
+and is not proven. More lookback or a better aggregator closes it.
