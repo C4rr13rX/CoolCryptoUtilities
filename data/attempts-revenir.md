@@ -17846,3 +17846,23 @@ EXACT NEXT STEP: scan ALL trade_fills for BSTONK-USDC (no LIMIT), find the row
 whose mode is live rather than ghost_entry/ghost_exit, read its hash. If no
 live fill exists for BSTONK then the +0.2420 row has no settled exit behind it
 and -0.1864 is optimistic by up to a quarter.
+
+### CLOSED, and it KILLS my own suspicion: BSTONK has a real live exit
+Scanned ALL BSTONK-USDC fills, no LIMIT:
+
+    BSTONK-USDC fills total : 62
+       ghost_entry   45     ghost_exit    15
+       live_entry     1     live_exit      1
+    with any hash key       : 0
+
+A live_exit row EXISTS. "The +0.2420 was closed by a simulated exit and the book
+is overstated by a quarter" is NOT SUPPORTED -- one live_entry and one live_exit
+is exactly the shape a real round trip leaves. RETRACTED: the one-sided downward
+error bar I attached to -0.1864 earlier this pass. -0.1864 stands uncaveated.
+
+RESIDUAL, smaller but real: none of the 62 fills carries a hash key of any kind,
+and trade_outcomes.details carries none either (checked). Memory records "18 rows
+carry entry+exit hashes" -- those hashes are in NEITHER table. For a loop whose
+one non-negotiable is that a profit not tied to a settled tx hash did not happen,
+locating where the hashes actually live is worth one query. NOT FOUND in the two
+obvious places. That is the cheapest open question in this file.
