@@ -14920,3 +14920,56 @@ board (0.549) on the largest n (3067) and is the most-traded ghost symbol;
 at 64bp its h* is 0.811 and the standing advice to avoid it is correct.
 I am NOT resolving this by picking the number that suits my conclusion.
 It needs a third, independent read before either is trusted. FILED.
+
+### Pass 480, fourth measurement -- I EXTENDED PAST 90 MIN AND THE RESULT IS A TRAP. h* FALLING WITH HORIZON IS ARITHMETIC, NOT EDGE -- AND PRODUCTION CANNOT HOLD PAST 45 MIN ANYWAY.
+
+I said above that nobody had measured past 90 min and mean|move| was still
+rising. I measured it. Same method, HZ extended to 120/180/240/360/480:
+
+    sym     n      cost_bp  best_hz  mean|mv|bp   h*
+    CBBTC   200    14.5     360      689.2        0.511
+    WETH    1265   4.1      480      122.2        0.517
+    AERO    2646   10.1     480      215.6        0.523
+    CBETH   200    67.1     180      449.3        0.575
+    VIRTUAL 905    67.6     480      246.7        0.637
+    VVV     599    212.5    480      556.1        0.691
+    DRB     503    1507.6   480      551.3        PERFECT ORACLE LOSES
+    COMP    140    3301.5   180      542.2        PERFECT ORACLE LOSES
+
+WETH h* 0.559 at 90 min becomes 0.517 at 480 min. That looks like the answer.
+IT IS NOT, AND I AM RECORDING IT AS A TRAP RATHER THAN A RESULT.
+
+WHY IT IS ARITHMETIC. Cost is FIXED per round trip; |move| grows roughly as
+sqrt(t). So h* = 0.5 + cost/(2*mean|move|) falls monotonically toward 0.5 as
+the horizon grows, FOR ANY COST WHATSOEVER, including an absurd one. DRB and
+COMP only fail because their cost is so large the tape ran out before the
+sqrt caught up. This metric therefore CANNOT be used to choose a horizon --
+it always prefers the longest one measured, by construction. Anyone quoting
+"you only need 51.7% accuracy at 8 hours" has quoted a tautology.
+
+WHAT IT LEAVES INTACT: nothing here says a predictor exists. h* is the bar,
+not a score. The measured up-rate on the populations our gates actually
+select is 51.9% -- a coin flip -- and an 8-hour forecast is not obviously
+EASIER than a 90-minute one. h* falling says the bar drops with horizon; it
+says nothing about whether anything clears it.
+
+AND THE CONSTRAINT THAT ENDS THE DISCUSSION FOR NOW -- production cannot
+reach these horizons at all:
+
+    .env:169  MAX_HOLD_FORCE_SECONDS=2700        (45 min)
+    .env:138  ATF_STATIC_GHOST_MAX_HOLD_SEC=2700 (45 min)
+
+The reachable ceiling is 45 MINUTES. Every horizon in the table above from
+90 min upward is unreachable without an operator knob change. At the best
+REACHABLE horizon the pass-480 sweep measured up-rate 14.2% and net -0.5850%.
+
+BOTTOM LINE FOR THE HORIZON AXIS, final: 2-90 min is closed on measurement
+(monotone, all negative). 90-480 min is open only in the sense that the BAR
+falls there, which is arithmetic, and it is unreachable in production today.
+Extending MAX_HOLD_FORCE_SECONDS is an OPERATOR decision with a real cost --
+[the-cost-gate-is-disabled-for-long-holds] records that the cost gate is
+already switched off past 45 min -- and it should not be changed on the
+strength of a tautology.
+
+n SHRINKS AS THE HORIZON GROWS (CBBTC 286->200, COMP 233->140) because long
+windows run off the end of a 168h tape. The longest cells are the thinnest.
