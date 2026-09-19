@@ -18878,3 +18878,27 @@ not read the window handed to them — `trading.strategies.horizons` resamples
 its own stored history — so their rate is real but NOT comparable to a base
 strategy's. Every base strategy except `ema_cross` scored 0.000 cheap, and
 `ema_cross`'s single fire did not reproduce on a shifted window.
+
+**ADDENDUM — THE COLLAPSE IS TAPE-DEPENDENT, AND THE COUNT OF SEVEN IS TOO
+GENEROUS.** It is not an `obv` bug. `donchian_breakout@3d` and `@5d` also agree
+exactly on the cheap cohort (both 7.078/1k, ETH-USDT x5 + ETH-USDC x2) while
+staying genuinely DISTINCT on dearer (13.000 vs 14.164). On a thin tape a 3d
+and a 5d window hold the same high and the same low, so a breakout rule and a
+window-ratio rule both return the same verdict — and the cheap cohort IS the
+thin tape (WETH is this repo's quietest symbol on record). So horizon variants
+stop being independent exactly where this decision needs them to be.
+**Honest count of DISTINCT cheap suppliers is four or fewer, not seven.**
+Re-derive it; do not inherit the seven. Filed into `[b6a70ddf]`.
+
+Root cause, measured read-only: NOT a cache collision (`horizons.py:93` keys on
+`(symbol, int(bar_sec))`, 900≠1800) and NOT a resample collapse (WETH-USDC:
+5h=72 bars/6.9h, 12h=64/20.2h, 1d=64/33.5h, verified non-identical). The
+PREDICATE is horizon-insensitive: `last_price` is the same latest tick at every
+horizon by construction, and `recent_high` is identical whenever the window high
+sits inside the shortest window. WETH-USDC 5h/12h/1d all give
+`recent_high 2647.3084, last 2640.1926, edge 0.002695`.
+
+**And my 0.000 does NOT overturn pass 443's 2-in-32,916.** At that rate 6,144
+evaluations expect 0.373 candidates and P(0) = 0.688 — zero is the modal
+outcome. What this pass adds is the COMPARISON across 72 strategies on one tick
+series, not a sharper absolute. Never quote the 0.000 as the stronger result.
