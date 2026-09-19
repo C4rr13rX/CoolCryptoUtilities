@@ -18828,3 +18828,53 @@ NOT low-energy (largest up move +6.997%), its **drawdowns** are shallow. It is
 starved at the ENTRY condition because it does not DIP, not because it does not
 move. The headline is unchanged and stronger: on WETH, the best case, the whole
 week yields ONE window clearing both conditions.
+
+---
+
+## Pass 496 (Echo) — RANK THE WHOLE POPULATION BY CANDIDATE SUPPLY ON CHEAP TOKENS
+
+**Route:** the live arm points at `money_button`, which produces ~0 candidates.
+Rank all 72 registry strategies by candidates per 1,000 evaluations, split by
+what the token's round trip costs, and see whether the arm can be re-pointed.
+
+**Tool:** `scripts/population_candidate_supply.py` — `money_button_gate_census`
+with the strategy taken as an argument. Same `_State`, same `load_ticks`, same
+walk-forward window, same fire accounting. Run:
+
+    python -X utf8 scripts/population_candidate_supply.py --hours 168 --stride 6
+
+**PRE-REGISTERED HYPOTHESIS (MINE) AND IT IS DEAD.** I predicted no strategy
+would have cheap-token supply, making the honest negative the result. Seven do.
+
+    strategy                 cheap/1k   cheap fires
+    obv_accumulation@12h      446.9     WETH-USDT x239, WETH-USDC x203
+    obv_accumulation@1d       446.9     WETH-USDT x239, WETH-USDC x203   <- IDENTICAL
+    obv_accumulation@5h       429.7     WETH-USDT x234, WETH-USDC x191
+    donchian_breakout@1w       48.5     ETH-USDT x34, ETH-USDC x14
+    supertrend_follow@5d       12.1     WETH-USDC x6, WETH-USDT x6
+    donchian_breakout@3d        7.1     ETH-USDT x5, ETH-USDC x2
+    donchian_breakout@5d        7.1     ETH-USDT x5, ETH-USDC x2
+    money_button                0.0     none — and 0.0 on DEARER too, over 6,144 evals
+
+**CLOSED: "money_button is the best available live arm."** It is the WORST
+supplier in the population — 0.000/1k on both cohorts, binding guard
+`momentum_not_aligned` 53%. Seven strategies beat it on cheap supply.
+
+**NOT CLOSED, AND DO NOT ACT ON THE TOP THREE ROWS.** `obv_accumulation@12h`
+and `@1d` are BYTE-IDENTICAL — 446.916/1k, same symbol counts — across two
+runs with different windows. `HORIZON_SPECS` gives them 900s and 1800s bars;
+they cannot agree to the fire. Filed `[b6a70ddf]` p1. `obv` prices edge as a
+window ratio and has form: `base.py:make_candidate` records
+`expected_return = 12551318.65` from `obv_accumulation@3d`.
+
+**THE CHEAP COHORT IS TWO ASSUMED BASES.** `<=0.20%` resolves to WETH and ETH
+only, both marked `n=0 non-ghost — ASSUMED` in `services/round_trip_cost.py`.
+Every base with live fills is DEARER (CBBTC 28bp, AERO 68bp, default 70bp).
+This is the SAME 11bp row the donchian deep-cohort result rests on — one
+assumption load-bearing in two places. One live WETH round trip settles both.
+
+**Standing caveat on all seven:** every one is a horizon variant (`H`). They do
+not read the window handed to them — `trading.strategies.horizons` resamples
+its own stored history — so their rate is real but NOT comparable to a base
+strategy's. Every base strategy except `ema_cross` scored 0.000 cheap, and
+`ema_cross`'s single fire did not reproduce on a shifted window.
