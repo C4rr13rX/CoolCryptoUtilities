@@ -17985,3 +17985,40 @@ quote, it returns a WRONG price built from the surviving fee tiers. Every census
 run through UniswapV3Local -- including this pass's own AERO 13.58bp -- has an
 unknown number of throttled tiers missing from its max. Treat quoter-derived
 costs as a LOWER BOUND on the best tier until [557240ef] lands.
+
+### WITHDRAWN SAME PASS: the 8,676 throttle events are NOT the quoter's
+Attribution of all 8,656 base-RPC 429 lines by shape:
+
+     545  "[WARN] fetch error for CBBTC-WETH[block->block] (attempt 1/4)"
+          -- block-range fetcher, and it RETRIES 4x. Not the quoter.
+    rest  "[rpc] balanceOf(0x...) failed on https://mainnet.base.org"
+          "[onchain-feed] unable to initialise metadata for EURC-WETH"
+          -- balance reads and feed metadata. Not the quoter.
+
+ZERO sampled lines come from quote_and_build. The implied claim that production's
+QUOTER is throttled 8,676 times is NOT supported and is withdrawn.
+
+Why it cannot be found, and this is the stronger finding --
+services/providers/uniswap_v3.py:171:
+
+    def _dbg(self, *a):
+        if os.getenv("DEBUG_SWAP","0").lower() in ("1","true","yes"):
+            print(*a)
+
+Every swallowed quoter exception routes to _dbg. It is OFF by default, and when
+on it is a print() -- and stdout capture in this repo is dead, so every print
+probe is void (see [[stdout-capture-died-every-print-probe-is-void]]). The
+quoter CANNOT log a failed quote. A 429, a revert, and a healthy tier all
+produce the same silence.
+
+CORRECT STATEMENT, replacing the withdrawn one:
+  (1) base endpoints DO throttle under production's own load -- 8,656 events,
+      3,275 of them on the PAID alchemy endpoint, so rotating RPC is not a fix;
+  (2) the quoter calls those same endpoints;
+  (3) whether the quoter is throttled is UNKNOWABLE from the logs, because its
+      only error handler is a disabled print.
+
+[557240ef] stays priority 1 on (1)+(3), not on a rate nobody has measured. Its
+criterion 4 is hereby amended: a log grep CANNOT answer it. The observability
+must be built -- route the swallowed exception to log_message, not _dbg -- before
+the rate can be measured at all. Do not close criterion 4 with a grep.
