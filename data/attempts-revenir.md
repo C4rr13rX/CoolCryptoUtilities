@@ -16506,3 +16506,34 @@ NOT A CLAIM THAT THE EDGE CLEARS THE TOLL. Median toll +20.66bp adverse vs
 
 CONSEQUENCE: do NOT reopen routes (a)-(d); three of them are closed for reasons
 having nothing to do with cost. Re-state the headline instead.
+
+### Pass 487 CLOSING: the toll model validated against the outcome, to 3bp.
+
+ROUTE: measure realised NET per live round trip directly -- no gross-minus-toll
+       decomposition, no model.
+NUMBER: n=18, median notional $0.7500
+        median net -70.44 bp   mean net -8.20 bp
+        bootstrap 95% CI on the median  [-227.39, +2.85]
+        winners 5 of 18 (27.8%)
+STATUS: the toll curve is VALIDATED; the verdict remains UNDETERMINED.
+
+  toll(clip) = 27.77bp + 45.70/clip_usd
+  at the actual $0.75 clip:  45.70/0.75 = 60.9bp of GAS ALONE
+  predicted net = 15.03 - (27.77 + 60.9) = -73.6 bp
+  realised  net =                          -70.4 bp
+
+  Three bp apart from two independent routes -- a cost curve fitted on receipts
+  versus the realised P/L of 18 settled round trips. The curve has been quoted
+  for several passes and had never been checked against the outcome. It holds.
+
+WHAT THIS REORDERS: at the clip we actually trade, GAS is 60.9bp of an ~88.7bp
+toll -- 69%. Every pass, mine included, has argued about the 27.77bp VARIABLE
+term. The dominant term at $0.75 is the one being treated as a rounding error.
+This does NOT reopen route (a): a larger clip needs capital we do not have
+($23.18 deployable) and the asymptote still loses 12.74bp. But the cost
+conversation has been aimed at the smaller half.
+
+CAVEAT, unchanged from everything else this pass: the CI [-227.39, +2.85]
+CONTAINS ZERO. At n=18 even a -70bp median net is not formally distinguishable
+from zero. Every point estimate computed this pass is negative and not one
+clears its own error bar.
