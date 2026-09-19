@@ -34,10 +34,16 @@ UPPER BOUNDS, printed in the output rather than buried here:
   * Forward outcome is held to target or to the horizon on the same tick
     series; there is no book, no partial fill and no slippage beyond the
     per-token round trip. Gross here is a GHOST gross.
-  * Cost is ``TOKEN_ROUND_TRIP`` -- the same table the dip census used. Pass
-    492 measured live AERO fills at 37.45bp against the quoter's 13.58bp, so
-    a round-trip constant is a LOWER BOUND on real cost and every ``mean net``
-    below is therefore an OPTIMISTIC number.
+  * Cost is ``TOKEN_ROUND_TRIP`` -- the same table the dip census used. This
+    line used to say the constant was a LOWER BOUND on real cost, and that
+    was BACKWARDS for the very token it named. The table charged AERO 435bp
+    while 16 non-ghost live fills measure 37.45bp median / 68.45bp p75 -- it
+    was 6.4x too HIGH, not too low. Corrected 2026-09-19.
+    The bound now runs in BOTH directions and which one depends on the row:
+    AERO (n=16) and CBBTC (n=9) are calibrated to live fills; WETH, ETH,
+    USDC and KTA have ZERO non-ghost fills behind them and are ASSUMPTIONS
+    of unknown sign. Treat a ``mean net`` on an unevidenced token as UNPRICED
+    rather than optimistic or pessimistic.
 
 Nothing here writes: no ledger, no registry, no threshold, no approval.
 """
@@ -454,9 +460,10 @@ def main() -> int:
     print("    here. Fire counts are UPPER BOUNDS on the production fire count.")
     print("  * no downstream arbitration, position cap, risk gate or live gate is")
     print("    replayed. This is the GATE's verdict, NOT the lane's.")
-    print("  * cost is the TOKEN_ROUND_TRIP constant. Live AERO fills measured")
-    print("    37.45bp against the quoter's 13.58bp (pass 492), so that constant")
-    print("    is a LOWER bound and every 'mean net' below is OPTIMISTIC.")
+    print("  * cost is the TOKEN_ROUND_TRIP constant, and it errs in BOTH")
+    print("    directions. AERO (n=16) and CBBTC (n=9) are calibrated to live")
+    print("    fills; WETH, ETH, USDC and KTA have ZERO non-ghost fills behind")
+    print("    them. A 'mean net' on those four is UNPRICED, not optimistic.")
     print()
 
     started = time.time()

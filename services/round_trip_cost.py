@@ -79,20 +79,56 @@ def fallback_cost() -> float:
 #: different module) takes only a notional. Neither can tell WETH from KTA,
 #: and on this venue that is the whole spread: 0.11% against 74.98%.
 #:
-#: READ THE COVERAGE BEFORE QUOTING A ROW. Six tokens here are MEASURED.
-#: Everything else falls through to ``DEFAULT_TOKEN_ROUND_TRIP``, which is an
-#: ASSUMPTION, not a measurement -- so an unlisted token is UNPRICED, and
+#: READ THE COVERAGE BEFORE QUOTING A ROW. Everything not listed falls
+#: through to ``DEFAULT_TOKEN_ROUND_TRIP``, which is an ASSUMPTION, not a
+#: measurement -- so an unlisted token is UNPRICED, and
 #: ``token_round_trip_cost`` deliberately returns the pessimistic default for
 #: it rather than a cheap guess. A caller that refuses above a threshold
 #: therefore refuses the unmeasured by default, which is the intended
 #: direction: understating cost is the direction that loses money.
+#:
+#: CORRECTED 2026-09-19. This comment used to say "six tokens here are
+#: MEASURED" and the store did not support that for four of them. Every row
+#: now carries the count of NON-GHOST ``trade_fills`` rows behind it, because
+#: an assumption that reads as a measurement is how the two rows below came
+#: to be wrong in OPPOSITE directions at once.
+#:
+#: The evidence base is the whole of it: 38 of 1478 ``trade_fills`` rows are
+#: non-ghost AND carry both ``expected_price`` and ``executed_price``, across
+#: seven tokens. Nothing else in the store is priceable. Do NOT price a token
+#: from ``trade_outcomes.fee_cost`` -- 41% of that column is two constants
+#: (41 rows at exactly 0.4613% over 22 distinct tokens, 18 more at exactly
+#: 1.2259% over 9), so it would write ONE number in wearing many names.
+#:
+#: TWO RULES DECIDE A ROW, and they are this module's own, applied to itself:
+#:
+#:   * ``n >= MIN_SAMPLES`` (8) or it is not a measurement. Four real fills
+#:     are a guess, and this module already refuses to charge a book-wide cost
+#:     off fewer than eight. A token below the bar is REMOVED, not written
+#:     thin -- the default is pessimistic, which is the safe direction.
+#:   * **p75 of the per-leg slippage, doubled**, not the median. Same reason
+#:     the book-wide number uses p75: the next trade's cost is not the typical
+#:     one. Both figures are recorded below so the choice stays auditable.
 TOKEN_ROUND_TRIP = {
-    "WETH": 0.0011,
-    "ETH": 0.0011,
-    "CBETH": 0.0030,
-    "USDC": 0.0011,
-    "AERO": 0.0435,
-    "KTA": 0.7498,
+    # MEASURED -- n is non-ghost trade_fills rows, value is 2 x p75 per-leg.
+    "CBBTC": 0.0028,  # n=9   p75 27.86bp (median 21.96bp)  <- clears a 35bp gate
+    "AERO": 0.0068,   # n=16  p75 68.45bp (median 37.45bp)  <- was 0.0435, 6.4x high
+    # UNVERIFIABLE -- n=0 non-ghost fills each. Values UNCHANGED because there
+    # is no evidence to change them to; they are assumptions and must read as
+    # assumptions. WETH 0 of 11 fills non-ghost, ETH 0 of 8, USDC 0 of 0,
+    # KTA 0 of 0. The only positive result in this repo (donchian_breakout on
+    # the deep names) rests on the WETH row, and the WETH row is UNEVIDENCED.
+    "WETH": 0.0011,   # n=0 non-ghost -- ASSUMED
+    "ETH": 0.0011,    # n=0 non-ghost -- ASSUMED
+    "USDC": 0.0011,   # n=0 non-ghost -- ASSUMED
+    "KTA": 0.7498,    # n=0 non-ghost -- ASSUMED
+    # REMOVED 2026-09-19: CBETH was 0.0030. Five non-ghost fills exist; one is
+    # a units defect (expected 2731.12, executed 2.74e-09, i.e. x1e-12), so
+    # the real evidence is n=4 -- BELOW MIN_SAMPLES. The four measure 2xmedian
+    # 47.63bp / 2xp75 120.27bp, both ABOVE the 35bp production gate, while the
+    # 0.0030 row sat BELOW it. So the table was admitting CBETH at a cost too
+    # low to admit it: the losing direction. Falling through to the 0.70%
+    # default refuses it on an honest assumption instead of a thin number.
 }
 
 #: What an UNLISTED (unmeasured) token costs. Read at call time, like
