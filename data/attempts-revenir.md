@@ -14179,3 +14179,42 @@ kv_store value, where all six neighbouring lines carry an accounting_version
 guard and this one does not. Filed [23136f6b]. Pin LIVE_TRADES_DRY_RUN=1
 explicitly before any restart; bot.py:1557 tests "is None", so unset does not
 protect you.
+
+### PASS 478 ADDENDUM -- I KILL-TESTED MY OWN ROUTE AND IT PASSES ALL THREE TERMS
+
+I recommended route (a) (admit atf_static_scout) having verified only two of
+the three terms. Term 3, total_net_profit > 0.0, was UNVERIFIED, and if it
+failed both routes were shut and the recommendation was worthless.
+
+RESULT: term 3 does not need separate verification. pipeline.py:5190
+fast_track_ready is a conjunction of eleven guardrails and line 5194 is
+
+    and total_net_profit > 0.0
+
+so reason == "fast_track" IMPLIES it. The same conjunction also requires a
+WILSON LOWER BOUND on win rate rather than the point estimate, avg_profit >=
+min_margin, profit_factor >= min_profit_factor, tail risk measured and under
+guard, drawdown, loss rate, loss streak, and not tradeable_edge_block.
+
+So for atf_static_scout, today:
+
+    term 1  ready == True                       PASS
+    term 2  reason in EARNED set                PASS   pipeline.py:676
+    term 3  total_net_profit > 0.0              PASS   implied, pipeline.py:5194
+
+The live risk gate has no remaining objection to it. Step 6 reports
+ghost_validation_block solely because atf_static_scout is not in
+approved_ids(), so pipeline.py:4673 never puts its verdict before the gate.
+
+THE LIMIT OF THE CLAIM, STATED BECAUSE IT IS EASY TO OVERREAD. Clearing step 6
+is not a trade. The scout has no live execution branch ([b3cef28b]), so it
+would clear step 6 and fail at step 8. Route (a) is TWO pieces of work and only
+the second can produce a settled hash. Its ledger edge is +0.1030 over 22
+tradeable trades -- real, small, not proof of profitability. n=12 is BELOW the
+25-sample bar; fast_track is precisely the path that substitutes a Wilson lower
+bound for sample count.
+
+WHAT THIS RECLASSIFIES: the system is not short of a qualifying verdict. It
+holds one, fully earned, in a strategy it never shows the gate, while
+licensing one with n=0. That is an ADMISSION defect, not an evidence famine,
+and it is far smaller than finding 0.45pp of gross in atf_static ([fdeb0316]).
