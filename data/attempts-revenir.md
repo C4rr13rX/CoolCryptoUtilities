@@ -15683,3 +15683,68 @@ STATUS: [c9e248aa] criteria 1 and 2 are answered (criterion 2 partly by
 refusing its premise). Criterion 3 -- the matched-baseline forward-return test
 on refused vs accepted candidates on the SAME ticks -- is UNTOUCHED, and it is
 the decisive one. Item stays OPEN.
+
+### Pass 484 addendum 2 -- THE CONSTRICTION IS THE QUOTER, AND IT IS THREE
+### DEAD PROVIDERS, NOT A DEADLINE. Filed [3bad78ef].
+
+The 24h funnel in DISTINCT SYMBOLS (the honest unit -- each tick re-emits the
+same symbol): 146 proposed -> 19 quotable (87% LOST) -> 12 entered.
+
+Opening quote_probe on every candidate row, 24h:
+
+  distinct symbols:  quote OK 19   quote FAILED 146   FAILED-ONLY 140
+
+  FAILURE CATEGORIES                 n=241
+    quote_timeout                      202   83.8%   returncode None
+    rc=0 but ok:false                   39   16.2%   'No quote providers available'
+
+  DURATION
+    ok      n=379  median 15.49s  p90 32.50s  max 48.39s   >=40s:   4 (1%)
+    failed  n=241  median 45.06s  p90 45.56s  max 49.09s   >=40s: 241 (100%)
+
+100% of failures took >=40s -- including every one of the 39 that returned
+rc=0. There is no fast failure anywhere. The clock is
+`services/atf_static_strategy.py:722`, `timeout_sec: int = 45`, HARDCODED, not
+an env var; raised at :749, labelled at :765. `.env` has no QUOTE setting but
+ATF_STATIC_REQUIRE_QUOTE_OK=1 at :238, which is what makes it binding.
+
+I FILED "RAISE THE DEADLINE TO 120" AND THEN KILLED MY OWN FIX. The 39 rc=0
+rows carry an output_tail. All 39 are IDENTICAL:
+
+  0x failed: 0x v2 403: You cannot consume this service
+  UniswapV3 unavailable: no viable pool (direct or 2-hop)
+  CamelotV2 unavailable: no router configured for base (CAMELOT_V2_ROUTER_BASE)
+  SushiV2 unavailable: SushiV2 unsupported on base
+  No quote providers available for this chain/token pair.
+
+THREE OF FOUR PROVIDERS ARE OUT ON CONFIGURATION AND CREDENTIALS, NOT ON THE
+TOKEN. `.env` has no CAMELOT and no ZEROX entry of any kind; the router default
+is empty string. This CONFIRMS two standing memory entries rather than
+overturning them: base has ONE quoting venue (UniswapV3Local), and the 0x key
+is hydrated but 403s on /swap/*.
+
+So the 0x 403 sits on the CRITICAL PATH of every quote and burns wall-clock
+before the only working provider is consulted. That is reading (c) -- a dead
+provider stalling a queue -- and my own acceptance criterion said that if (c)
+holds, raising the deadline makes the stall LONGER. Raising timeout_sec to 120
+would have given every doomed quote 120s to fail in and CUT symbols probed per
+hour. I would have shipped a regression and called it an experiment.
+
+CORRECTED ORDER OF WORK (now the item's criteria):
+  1. short-circuit 0x -- pure latency recovered on every quote, including the
+     379 that succeed at median 15.49s
+  2. instrument per-provider latency -- NOBODY has the number for how much of
+     the 45s is 0x; I did not measure it and did not guess it
+  3. only then consider the deadline
+
+TWO HONEST DEFLATIONS:
+  * Camelot is primarily an Arbitrum DEX. I did NOT check whether it carries
+    meaningful base liquidity. "One missing .env line" is the SHAPE of a fix,
+    not evidence it pays.
+  * For these 39 tokens UniswapV3 reports no viable pool direct OR 2-hop --
+    a REAL no-route verdict. Some share of the 140 failed-only symbols are
+    genuinely untradeable on base and no provider work recovers them. I do not
+    know the share. Naming it is what ends this thread.
+
+STATUS: [3bad78ef] OPEN, p1. This is upstream of every gate -- 140 symbols
+never reach one -- so no gate, cost or signal work can recover them.
