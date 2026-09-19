@@ -15489,3 +15489,28 @@ against a 25-trade bar.
 OPEN QUESTION FOR THE OPERATOR: is money_button the momentum rule simply the
 WRONG HORSE? atf_static has 57 ghost and 18 live trades and is what produces.
 Measure momentum_not_aligned fires vs ticks offered, and put the ratio up.
+
+### Pass 483 addendum 3 -- FINAL mechanism: contention, not momentum
+
+Census of the 765 money_button rows since boot, BY STATUS:
+  745  entry-arbitration   reason=one_tick_was_offered_to_many_and_spent_by_one
+   19  ghost-entry
+    1  ghost-exit
+
+money_button is OFFERED the tick ~110 times an hour and LOSES THE ARBITRATION
+essentially every time. momentum_not_aligned is only 361 of 765 (47%), and all
+361 rows date from this boot alone.
+
+THREE MECHANISMS PROPOSED FOR ONE FACT IN ONE PASS, all mine, first two wrong:
+  1. the planner starves it            -- WRONG, two separate rails
+  2. it declines its own ticks on momentum -- WRONG, only 47%
+  3. it loses every arbitration        -- 745/765 with a named reason
+The COUNTS never moved. The STORY moved three times. Trust the counts.
+
+CAVEAT: matched with details LIKE '%money_button%', which catches MENTIONS as
+well as OWNERSHIP -- the 19 ghost-entry rows prove it, since the ledger says 2
+ghost trades LIFETIME not 19 since boot. Confirm ownership before acting.
+
+CHECK FIRST, NOT LAST: memory confidence-floor-refuses-rsi-reversal-126-of-126
+records this SAME contention label being FALSE once before, masking a
+confidence_floor refusal. Verify the label is the real refusal, not a cover.
