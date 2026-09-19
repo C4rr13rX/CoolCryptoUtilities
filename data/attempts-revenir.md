@@ -16370,3 +16370,16 @@ RECORD CORRECTION: the standing note that no refusal names its strategy holds
   for the 682 refusal-STATUS rows but NOT for action='hold' rows, 22.6% of
   which are attributed across 36 strategies. Evaluation counts per strategy
   ARE available.
+
+ROUTE (pass 486, last measurement): "the 14 SELECTIVE strategies refuse 99% of
+  ticks, so when they DO act they should be better than a near-unconditional
+  buyer." NOT CLOSED -- NULL AND THIN, and reported as such. Pooled all non-atf
+  entry proposals against the same tape comparator: 31 proposals across 14
+  strategies, 27 priced, 16 paired windows, POOLED vs TAPE -5.10bp 95% CI
+  [-14.10,+3.91], 5 of 16 windows beat the tape (31.2%), MDE 9.00bp.
+  The CI contains zero, so this is NOT evidence they are worse. What is solid:
+  MDE 9.00bp is under the 27.77bp toll, so no pooled toll-clearing edge exists
+  here at the available resolution. What it cannot do: separate 14 strategies
+  on 31 proposals. A single strategy's edge could be buried in the pool. The
+  30+-entries bar in [583ba889] remains the right next step -- more TAPE (same
+  rule, more symbols or a longer window), not more cycles.
