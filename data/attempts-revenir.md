@@ -18076,3 +18076,27 @@ DO NOT WORK STEP 3. Nothing there to fix: it measures a 1h count against a
 0.875/h process. The first REAL failing link is step 6 RISK
 (ghost_validation_block), already measured on this board as a closed loop firing
 0 of 3450 rows over 7d -- earned, not broken, and not to be loosened.
+
+### CORRECTION, same pass: the step 3 finding was ALREADY FILED as [97fb9113]
+I filed [204e3759] for the step 3 window artifact, then read what else names
+scripts/graduation_status.py -- TEN open items, one of which is
+
+    [97fb9113] p1 3pt "Ladder step 3 GHOST is a threshold artifact: it FAILs
+                       on 66%..."
+
+Same defect, already open. [204e3759] REJECTED four minutes after filing. This
+is the pathology this file keeps recording -- one defect filed four or five
+times -- and the senior committed it while rejecting somebody else's item for
+being overtaken. Check `scrum.py files` BEFORE adding, not after.
+
+The measurement UPDATES the existing item rather than duplicating it:
+  - [97fb9113] says step 3 FAILs on 66% of observations.
+  - Pass 492 measures 42%: rate 21/24h = 0.875/h, P(zero in 1h) = e^-0.875.
+  - NEW, and not in [97fb9113]: the process is ACCELERATING, not dying --
+    21 of 38 rows in 7d landed in the last 24h. The FAIL reads as death and
+    the data says growth.
+
+Two criteria worth carrying into [97fb9113]: do NOT widen the window to a
+larger hardcoded number (that MOVES the artifact); and do NOT accept one green
+run as proof -- a 42% coin comes up heads often, so require three runs 40+
+minutes apart that agree.
