@@ -19012,3 +19012,54 @@ for the market. CLOSED: the claim that this needs capital to measure. OPEN
 and now the highest-value item: make the tier sweep distinguish "tier
 reverted" from "tier priced worse", and re-measure. Until then no WETH cost
 number from this quoter means anything, in either direction.
+
+### Pass 498 addendum -- the kill test ran twice, and the second run named the cause
+
+My first per-tier probe called `quoteExactInputSingle` and got "execution
+reverted, no data" on all eight calls. That LOOKS like proof the tiers do not
+answer. It is not: the buy leg at tier 100 is the exact call that had already
+succeeded through `quote_and_build`. `quoteExactInputSingle` simply reverts on
+this QuoterV2 deployment, which is why the provider carries a
+`quoteExactInput(path)` fallback. The first kill test measured my harness.
+
+RE-RUN THROUGH THE PATH INTERFACE, block 51519082, 2s spacing, sell leg
+3786949113347916 wei WETH -> USDC:
+
+    tier   100   HTTP 429 Too Many Requests (mainnet.base.org)
+    tier   500   HTTP 429 Too Many Requests (mainnet.base.org)
+    tier  3000   $9.954684
+    tier 10000   $9.871078
+
+CONFIRMED. Two of four tiers lost to rate limiting at two-second spacing.
+Best of the tiers that ANSWERED is 3000; `quote_and_build` chose 10000
+earlier, so 3000 had failed in that run too. The gap between the only two
+tiers that priced is 83.99bp ON ONE LEG.
+
+THE FULL CHAIN, all five links measured, not inferred:
+  1. base rpcs[0] is an Alchemy endpoint and it returns HTTP 429 itself --
+     the key is rate-limited or out of quota.
+  2. main.py:137-148 keeps the first URL that CONNECTS, so selection falls
+     through to rpcs[1] = https://mainnet.base.org. Verified:
+     `_readonly_w3('base').provider.endpoint_uri` is mainnet.base.org.
+  3. That public endpoint 429s under a four-tier sweep at 2s spacing.
+  4. uniswap_v3.py:295-316 catches it in a bare `except` and a rate-limited
+     tier is indistinguishable from a tier that priced worse.
+  5. best-of becomes best-of-whatever-answered, and a $10 WETH sell leg
+     routes through the 1% pool. The 83.99bp is booked as slippage.
+  A 429 arriving AFTER selection is not a connection failure, so nothing
+  ever rotates away from the endpoint refusing us. The session stays pinned.
+
+NUMBERS WITHDRAWN: 161.64bp is a ROUTER ARTIFACT, not a WETH cost. Do not
+quote it. Do not quote 11bp either -- that row is still ASSUMED, n=0.
+
+WHAT IS ACTUALLY KNOWN ABOUT WETH NOW: at the best ANSWERING tier the $10
+round trip is 45.32bp. That is an UPPER BOUND, because tiers 100 and 500
+never priced and the buy leg went through tier 100. It is still above both
+decision thresholds (12.2bp, 8.1bp), so WETH clears NEITHER on anything
+measured today -- but the bound is loose and the true number is unmeasured.
+
+CLOSED THIS PASS: "the WETH cost needs a live fill / needs capital". It does
+not. The quoter answers and passes 496 and 497 were both wrong to end there.
+OPEN: [f433250c] the quoter swallow, [ff97b5d6] the RPC rotation gap. They
+are in different files and can be worked in parallel.
+BLOCKED ON THE OPERATOR: a base RPC endpoint with real quota.
