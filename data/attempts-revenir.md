@@ -16935,3 +16935,41 @@ by whether a pool EXISTS, and the tokens we most want priced are the slow ones.
 CORRECTED INSTRUCTION FOR [1504e406] (third version): quote the DEEP names first,
 they are fast. Budget generously for thin ones, quote them ONE AT A TIME with a
 per-token timeout so one dead token cannot eat a pass. Do NOT assume 20s/token.
+
+## Pass 488 (Echo) -- CORRECTION: the sweep LANDED. VIRTUAL clears the gate at a FUNDABLE clip
+
+I declared this unfinished one commit ago. It completed in ~5 minutes and worked.
+Read-only, USDC -> token -> USDC on base, $10 clip. QUOTES not fills (lower bound).
+
+    AERO        45.3 bp   refused        fees 3000/500
+    VIRTUAL     21.1 bp   CLEARS 35bp    fees  500/500
+    BSTONK     216.2 bp   refused        fees  100/10000
+    VVV         82.3 bp   refused        fees 3000/3000
+    DRB       4622.2 bp   refused        fees 3000/3000
+    COMP      7886.1 bp   refused        fees 10000/10000
+    CBADA, OP, MOG, BASECAT   NO ADDRESS in token_addresses.json
+
+THE RESULT THAT MATTERS: VIRTUAL prices at 21.1bp at a TEN DOLLAR clip. It clears
+the 35bp first gate AND, unlike CBBTC (43.0bp at $10, 10.1bp only at $50), it
+clears at a size the $23.18 wallet can fund. It is currently refused at an assumed
+70bp and carries 7 rows of ghost book. A real universe expansion found ON EVIDENCE.
+
+THE TABLE IS WRONG IN BOTH DIRECTIONS, which matters more than any single row:
+
+    TOKEN_ROUND_TRIP says   AERO 435bp    measured  45.3bp   overcharged ~9.6x
+    TOKEN_ROUND_TRIP says   WETH  11bp    measured   2.9bp   overcharged ~3.8x
+    DEFAULT assumption       70bp         VIRTUAL   21.1bp   refused on an assumption
+
+So the table overcharges BOTH tokens we trade most while the default refuses a
+token that is genuinely cheap. It is not conservative -- it is inaccurate, in
+whichever direction each row happens to land. (Consistent with the standing
+finding that the legacy literal overcharged AERO 4.91x / WETH 5.34x, reached here
+by a fully independent route.)
+
+BEARS ON [57d69341]: COMP round-trips at 7886bp -- 225x the gate. The contaminated
+ticker is also economically untradeable at any clip. The item stays blocked on
+attribution, but nobody should spend effort making COMP tradeable.
+
+I was wrong about this sweep TWICE in ten minutes: that it would fit easily, then
+that it had failed. Quote one at a time with a per-token timeout, and do not
+predict the wall clock.
