@@ -1,0 +1,136 @@
+{
+  "measurement": "QUOTED",
+  "not": "REALISED -- nothing was signed or sent; no tx hash exists for these numbers",
+  "chain": "base",
+  "clip_usd": 10.0,
+  "tiny_clip_usd": 0.05,
+  "repeats": 1,
+  "generated_ts": 1789825295.9451745,
+  "thresholds_bp": {
+    "pays_at_65pct_direction_60m": 12.2,
+    "pays_at_60pct_direction_60m": 8.1
+  },
+  "env": {
+    "TOKEN_ROUND_TRIP_DEFAULT": 0.007,
+    "MIN_DRAWDOWN": null,
+    "MAX_HOLD_FORCE_SECONDS": "2700"
+  },
+  "pairs": {
+    "WETH-USDC": {
+      "status": "all_quotes_failed",
+      "quoted_round_trip_at_clip": {
+        "n": 0
+      },
+      "quoted_round_trip_at_tiny_clip": {
+        "n": 0
+      },
+      "clip_dependent_impact_bp": null,
+      "fee_tiers_seen": [],
+      "book_rate_bp": 11.0,
+      "book_row_is_measured": true,
+      "ok_quotes": 0,
+      "failed_quotes": 2,
+      "failures": [
+        {
+          "clip": "full",
+          "status": "quote_failed",
+          "leg": "buy",
+          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
+        },
+        {
+          "clip": "tiny",
+          "status": "quote_failed",
+          "leg": "buy",
+          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
+        }
+      ]
+    },
+    "CBBTC-USDC": {
+      "status": "all_quotes_failed",
+      "quoted_round_trip_at_clip": {
+        "n": 0
+      },
+      "quoted_round_trip_at_tiny_clip": {
+        "n": 0
+      },
+      "clip_dependent_impact_bp": null,
+      "fee_tiers_seen": [],
+      "book_rate_bp": 28.0,
+      "book_row_is_measured": true,
+      "ok_quotes": 0,
+      "failed_quotes": 2,
+      "failures": [
+        {
+          "clip": "full",
+          "status": "quote_failed",
+          "leg": "buy",
+          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
+        },
+        {
+          "clip": "tiny",
+          "status": "quote_failed",
+          "leg": "buy",
+          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
+        }
+      ]
+    },
+    "CBETH-USDC": {
+      "status": "all_quotes_failed",
+      "quoted_round_trip_at_clip": {
+        "n": 0
+      },
+      "quoted_round_trip_at_tiny_clip": {
+        "n": 0
+      },
+      "clip_dependent_impact_bp": null,
+      "fee_tiers_seen": [],
+      "book_rate_bp": 70.0,
+      "book_row_is_measured": false,
+      "ok_quotes": 0,
+      "failed_quotes": 2,
+      "failures": [
+        {
+          "clip": "full",
+          "status": "quote_failed",
+          "leg": "buy",
+          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
+        },
+        {
+          "clip": "tiny",
+          "status": "quote_failed",
+          "leg": "buy",
+          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
+        }
+      ]
+    },
+    "AERO-USDC": {
+      "status": "all_quotes_failed",
+      "quoted_round_trip_at_clip": {
+        "n": 0
+      },
+      "quoted_round_trip_at_tiny_clip": {
+        "n": 0
+      },
+      "clip_dependent_impact_bp": null,
+      "fee_tiers_seen": [],
+      "book_rate_bp": 68.0,
+      "book_row_is_measured": true,
+      "ok_quotes": 0,
+      "failed_quotes": 2,
+      "failures": [
+        {
+          "clip": "full",
+          "status": "quote_failed",
+          "leg": "buy",
+          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
+        },
+        {
+          "clip": "tiny",
+          "status": "quote_failed",
+          "leg": "buy",
+          "error": "UniswapV3: no recipient (set w3.eth.default_account or pass recipient=)"
+        }
+      ]
+    }
+  }
+}

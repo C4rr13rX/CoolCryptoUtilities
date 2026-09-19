@@ -18902,3 +18902,42 @@ sits inside the shortest window. WETH-USDC 5h/12h/1d all give
 evaluations expect 0.373 candidates and P(0) = 0.688 — zero is the modal
 outcome. What this pass adds is the COMPARISON across 72 strategies on one tick
 series, not a sharper absolute. Never quote the 0.000 as the stronger result.
+
+## Pass 497 (Echo, senior) -- QUOTED deep-pool slippage probe: TOOL SHIPPED, NUMBER NOT TRUSTED
+
+Route: measure WETH-USDC round-trip cost at a $10 clip to evidence the
+`TOKEN_ROUND_TRIP["WETH"] = 0.0011` row, which is marked `n=0 -- ASSUMED` and
+which three separate results in this repo rest on.
+
+RESULT 1 -- the realised route is CLOSED, and now for a stated reason.
+`trade_fills` holds 38 live legs (live_entry 20, live_exit 18) and NOT ONE is
+WETH. All 11 WETH rows in the table are ghost_entry/ghost_exit and every one
+has `expected_price` EXACTLY equal to `executed_price`. A ghost row cannot
+carry slippage, so those 11 measure zero by construction. Item [017594f6]
+criterion 2 ("read BOTH receipts from chain, report the tx hashes") is
+UNMEASURABLE from the store. Only paying for a fill can close it. CLOSED as a
+data question; OPEN as a capital decision for the operator.
+
+RESULT 2 -- the QUOTED substitute ran, and I am NOT reporting its numbers as
+costs. `scripts/deep_pool_slippage_probe.py` quotes USDC->TOKEN->USDC on the
+live Base quoter. It returned WETH-USDC median 59.91bp over n=3 with a range
+of [1.71 .. 59.91]. A WETH-USDC pool does not move 58bp in one second, so the
+SPREAD is the finding and the median is an artifact. Two concrete defects,
+both in the probe/quoter and NOT in the pool:
+  (a) `quote_and_build` takes best-of-4 fee tiers (100/500/3000/10000). When
+      some tier calls fail intermittently, "best" silently degrades to
+      best-of-whatever-answered. 59.91bp is ~2x the 3000 tier; 1.71bp is
+      consistent with the 100 tier. This is the same class as the known
+      "quoter cannot tell a 429 from an empty pool" defect, and if it bites
+      production it routes a WETH trade through a 30bp pool when a 1bp pool
+      exists -- a 58bp error on the money path, larger than any edge measured
+      here. NOT YET CONFIRMED: my per-tier confirmation run died on an
+      address-checksum error in the ad-hoc harness, not on chain.
+  (b) The tiny-clip control is invalid for low-decimal tokens. CBBTC (8dp)
+      returned a $0.05 "floor" of 244.20bp against 11.10bp at $10, i.e. a
+      NEGATIVE 233bp price impact. That is integer truncation of token units,
+      not a cost. The control needs a decimals-aware minimum clip.
+
+STATUS: tool committed and reproducible; the measurement is NOT delivered.
+Do not quote 59.91bp or 11.10bp as a cost anywhere. The WETH row remains
+UNEVIDENCED and every result resting on it remains unevidenced with it.
