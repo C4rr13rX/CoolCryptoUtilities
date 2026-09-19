@@ -14549,3 +14549,63 @@ holds and term 3 needs no independent measurement.
 
 This is the one claim in the pass that everything else hangs on, so it is the
 one worth checking twice.
+
+## Pass 479 (Echo, senior running as worker -- solo pass) -- [be535a87] CLOSED
+
+ROUTE TRIED: remove the dead DEX routes from base's swap path.
+
+THE ITEM'S OWN COST CLAIM IS DEAD, and I killed it before doing the work.
+[be535a87] said camelot and sushi on base are "wasted work and a wasted timeout
+on the money path". I handed both providers an RPC callable that RAISES if
+anything touches it and called each 1000 times:
+
+    SushiV2    base -> {'__error__': 'SushiV2 unsupported on base'}    0.47 us/call
+    CamelotV2  base -> {'__error__': 'CamelotV2: no router configured'} 4.07 us/call
+
+The raising callable NEVER FIRED. sushi_v2.py:41 and camelot_v2.py:79 both
+return above their `self._w3(chain)` line. No socket, no RPC, no timeout. The
+two dead routes cost ~4.5 microseconds per base swap. CLOSED: there is no
+latency to recover on the money path here, and any future pass claiming one is
+repeating a guess that has now been measured.
+
+WHAT WAS REAL: false redundancy. Every base swap logged
+`routes=uniswap->camelot->sushi` and printed "[UniswapV3] failed, trying
+Camelot..." into a chain where Camelot cannot answer.
+
+    BEFORE (hard-coded, every chain): uniswap->camelot->sushi
+    AFTER  base     : uniswap
+    AFTER  arbitrum : uniswap->camelot->sushi
+    AFTER  ethereum : uniswap->camelot
+    AFTER  polygon  : camelot
+    AFTER  optimism : camelot
+
+The mapping lives in `services/swap_service.py::route_availability(chain)`,
+read LIVE from each provider's own router table -- not copied -- so setting
+CAMELOT_V2_ROUTER_BASE restores the route with no code change. Reasons are
+coded: `unconfigured` (empty env knob, operator-fixable) vs
+`unsupported_on_chain` (code fact). Those were previously indistinguishable
+from a pool with no liquidity.
+
+BASE HAS ONE WORKING DEX ROUTE. That is not new and this change did not cause
+it -- it made it visible. If UniswapV3 stops answering on base the swap ends;
+the outcome reason now carries `all_routes_failed[base:uniswap]`, so a failure
+states its own width instead of implying three attempts. This corroborates
+base-has-one-quoting-venue and base-has-no-dex-fallback from a second,
+independent direction (the SWAP path, where those were measured on the QUOTE
+path).
+
+THREE TESTS PINNED THE IMAGINARY FALL-THROUGH, not one. The item named two
+files; a `-k "swap or route or quote"` sweep found a third
+(test_money_path_records_tx_hash.py) asserting base tries all three routes. All
+three passed only because the fall-through was unconditional. Each was moved to
+arbitrum, where three routers genuinely resolve, and base was pinned separately.
+A pass that had trusted the item's file list would have shipped a red suite.
+
+PROVEN BY: python -X utf8 -m pytest tests/ -q -k "swap or route or quote or
+money_path"  ->  210 passed, 1 skipped, 0 failed.
+Commits f9e51bb, ac859df.
+
+NOT MEASURED, and I am not estimating it: whether production is currently
+running this code. It serves stale code until restarted and I did not restart
+it. The change is inert until then, and it is hygiene either way -- it moves no
+P/L. Scoreboard unmoved at -0.1864 over 18.
