@@ -16318,3 +16318,27 @@ REJECTED THIS PASS, premise falsified: [e1101dc6] "71 of 72 strategies persist
   no per-tick signal, build an emitter" -- they DO. trading_ops action='enter'
   rows carry strategy_id in details, 2815 of 2815 attributed, 16 strategies,
   plus score/confidence/expected_return. [310c3dad] answered by the same data.
+
+ROUTE (pass 486, formed and killed in the same pass): "the 45-min paths are
+  favourably skewed (median max-favourable +23.69bp vs median max-adverse
+  -11.06bp, 2.14:1) and the strategy's 150bp take-profit only fills 7.0% of
+  the time, so an ACHIEVABLE take-profit near +24bp harvests the skew."
+  CLOSED, REFUTED BY SIMULATION. python -X utf8 scripts/exit_surface_sweep.py
+  -- first touch in path order, 1408 paths, 7 take-profits x 4 stops = 28
+  cells. EVERY CELL IS NEGATIVE after the 27.77bp toll. Best is -12.74bp at
+  TP=150/SL=30 (gross +15.03). And the gradient runs the OPPOSITE way to the
+  hypothesis: gross rises MONOTONICALLY with a WIDER take-profit (TP=20 gives
+  +0.81bp gross, TP=150 gives +15.03bp), because a tight TP caps the winners
+  while the stop still pays every loser. This EXONERATES atf_static's own
+  150bp take-profit, which sits near the gross optimum of the whole surface --
+  do not file it as a defect.
+  UPPER BOUND: ghost prices, no slippage, first-touch fills exactly at the
+  level. Ghost fills cannot carry slippage here, so reality is worse.
+
+NET POSITION AFTER PASS 486: atf_static is closed from BOTH ends. Entry
+  ranking swept (+2.69bp vs a 27.77bp toll; the ranked field is a config
+  literal) and exit surface swept (best of 28 cells -12.74bp). There is no
+  threshold, horizon, take-profit or stop on this strategy that reaches
+  break-even. The remaining gap is not a tuning gap -- it needs a different
+  signal, and no other strategy on the roster produces enough proposals to
+  measure (1-5 each in 7 days against atf_static's 2761).
