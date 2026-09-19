@@ -15130,3 +15130,38 @@ symbols are priced at all, covering 98 of 177 ghost rows. Eight symbols have
 no_address_in_book (BASECAT CBXRP CBADA OMARCHY CBZEC PUMP CBMEGA MOG) and
 NONE of them gets a default cost. A universe rule built on this census must
 say what it does with an unpriced symbol.
+
+### Pass 480, eighth -- [449305ff] STRENGTHENED: the COMP/DRB contamination is ATTRIBUTED, and it lands on strategies the graduation table ranks.
+
+I had written that the 21 COMP/DRB round trips poison "the evidence that
+drives graduation". That was an INFERENCE -- I had counted rows but never
+checked attribution. Checked before letting it stand.
+
+All 21 are status='closed'. TOTAL NET -1.4309.
+
+    COMP  n=16  net -1.2368   obv_accumulation@1w 6, obv_accumulation@5d 4,
+                              bus_schedule 1, and 5 with NO strategy_id
+    DRB   n=5   net -0.1941   rsi_reversal@5d 3, rsi_reversal 1,
+                              stochastic_reversal 1
+
+rsi_reversal, rsi_reversal@5d and obv_accumulation@1w ALL appear in the
+"closest to the bar" graduation ranking in this pass's own status block, and
+rsi_reversal's tradeable win rate there is 0%.
+
+So the defect is sharper than filed: strategies are being scored down -- in at
+least one case sitting at 0% win in the graduation ranking -- on symbols where
+a PERFECT direction call still loses. That is not a strategy failing; it is a
+strategy charged for an arithmetic impossibility.
+
+NOT ESTABLISHED, and deliberately not guessed: how much of any strategy's
+standing is due to these rows. That is now the item's second criterion,
+because it is the number that decides BACKFILL vs merely STOP.
+
+THE THING THAT WILL BREAK A NAIVE FIX, written into the item: the 20260917
+census prices only 9 of 18 qualifying symbols and 8 have no_address_in_book
+with NO default cost. A rule that defaults unknown-to-allowed reproduces this
+exact defect on every symbol nobody has measured. UNKNOWN IS NOT CHEAP.
+
+Note the 5 COMP rows with NO strategy_id are consistent with the anonymous-row
+problem recorded in pass 479 (96 of 248 anonymous) -- attribution gaps and cost
+contamination are compounding on the same table.
