@@ -17831,3 +17831,18 @@ obvious next place. SKIP trade_outcomes.details -- you will find nothing.
 
 STANDING CONCLUSION: -0.1864 is the best available figure, but until the BSTONK
 row is tied to a settled exit its error bar is ONE-SIDED and points DOWN.
+
+### PARTIAL, ran out of clock: BSTONK fills sampled are all GHOST
+trade_fills schema: id, ts, chain, symbol, expected_amount, executed_amount,
+expected_price, executed_price, details. NO tx_hash COLUMN -- it is inside
+details. First 6 BSTONK-USDC fills: mode=ghost_entry / ghost_exit alternating,
+no hash key on any.
+
+A SAMPLE OF SIX IS NOT THE POPULATION and I concluded nothing from it. Memory
+already records that 87% of trade_fills read as perfect ghost fills, so this
+was always likely.
+
+EXACT NEXT STEP: scan ALL trade_fills for BSTONK-USDC (no LIMIT), find the row
+whose mode is live rather than ghost_entry/ghost_exit, read its hash. If no
+live fill exists for BSTONK then the +0.2420 row has no settled exit behind it
+and -0.1864 is optimistic by up to a quarter.
