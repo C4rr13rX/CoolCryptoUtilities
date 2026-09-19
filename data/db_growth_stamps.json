@@ -1,0 +1,37 @@
+[
+  {
+    "stamped_utc": "2026-09-19T02:25:54Z",
+    "stamped_epoch": 1789784754,
+    "pass": 481,
+    "by": "Echo (senior)",
+    "sizes_bytes": {
+      "storage/trading_cache.db": 27843190784,
+      "storage/trading_cache.db-wal": 1664797272,
+      "storage/trading_cache.db-shm": 1376256
+    },
+    "volume_D": {
+      "total": 960179990528,
+      "used": 944314032128,
+      "free": 15865958400,
+      "pct_used": 98.35
+    },
+    "why": "Baseline for backlog item [1706fe9e]. Its first acceptance criterion is the GROWTH RATE of storage/trading_cache.db, which cannot be measured inside one pass. Re-run scripts/db_growth_stamp.py on a later pass: it appends a new row and prints GB/day and days-of-headroom against the interval between stamps."
+  },
+  {
+    "stamped_utc": "2026-09-19T02:26:53Z",
+    "stamped_epoch": 1789784813,
+    "note": "pass 481 second stamp",
+    "sizes_bytes": {
+      "storage/trading_cache.db": 27843190784,
+      "storage/trading_cache.db-wal": 1664797272,
+      "storage/trading_cache.db-shm": 1376256
+    },
+    "volume": {
+      "path": "D:\\",
+      "total": 960179990528,
+      "used": 944314048512,
+      "free": 15865942016,
+      "pct_used": 98.35
+    }
+  }
+]
