@@ -18345,3 +18345,42 @@ NUMBER THAT READ AS A VERDICT: the flat window (ema_cross), the pooled mean
 (TILCAYO), and now the empty context (seven strategies). Each was caught by
 asking "what would make this number certain regardless of the tape?" That
 question is the reusable part of this pass.
+
+### PASS 493 ADDENDUM 4 -- A POSITIVE, ON THE PRE-REGISTERED COST AXIS, AND ITS KILL TEST CANNOT BE RUN
+
+Partitioning donchian_breakout's 342 resolved round trips by the CHEAP/DEAR
+cost cohort -- route (b) in the standing instructions, not a post-hoc cell:
+
+  donchian CHEAP (cost<=0.20%)  n= 44  win 65.9%  gross +0.246% t=+4.612
+                                       NET +0.136% t=+2.549  CI95 [+0.036%, +0.241%]
+  donchian DEARER(cost >0.20%)  n=298  win 16.1%  gross +0.121% t=+1.085
+                                       NET -1.118% t=-8.195  CI95 [-1.381%, -0.844%]
+
+  cheap cohort = ETH-USDC, ETH-USDT, WETH-USDC, WETH-USDT. Four symbols.
+
+  WETH-USDT n= 8  88% win  gross +0.340% t=2.476  net +0.230%
+  ETH-USDT  n= 9  78% win  gross +0.324% t=3.157  net +0.214%
+  ETH-USDC  n=13  62% win  gross +0.246% t=2.126  net +0.136%
+  WETH-USDC n=14  50% win  gross +0.142% t=1.749  net +0.032%
+
+The WIN RATE is the part that does not depend on the cost constant: 65.9% vs
+16.1%, same rule, same tape, same 15-minute horizon. That is a DIRECTION
+result. The NET is a different claim and it is not established.
+
+KILL TEST RUN, AND IT CANNOT BE RUN. I pre-registered: if the WETH/ETH live
+round trip exceeds ~24bp the net is dead. trade_fills has 1,472 rows with both
+prices and EVERY symbol's median per-leg slippage is 0.00bp -- the ghost-fill
+artifact, since a ghost fill records executed == expected. Pass 492's correct
+filter finds 38 non-ghost rows in the entire table, across CBBTC, AERO and
+BSTONK only.
+
+SO: we have never traded WETH or ETH live, and the cohort carrying the only
+positive result in this pass is exactly the cohort with NO live cost evidence.
+The 0.11% constant behind +13.6bp has never been confirmed by a fill. AERO,
+the one symbol family we can check, came in at 2.76x its quoter number.
+
+STATUS: direction result REAL and unexplained by cost; net result UNPROVEN and
+blocked on a cost measurement that our own book cannot supply. Next step is a
+quote sweep on those four pairs at a fundable clip ([1504e406]), carrying pass
+492's caveat that the quoter understates and cannot distinguish a 429 from an
+empty pool.
