@@ -17745,3 +17745,27 @@ what you cannot measure' is NOT obviously right: it would ban every new listing
 forever, and a 0-window symbol may be one we started streaming an hour ago. The
 defect is that TOO NEW and TOO ILLIQUID TO EVER PAY are indistinguishable at
 line 213 and get the same ALLOW.
+
+### ANSWERED, same pass, and it DOWNGRADES the item above: the ignorance filter
+### is almost entirely LATENT -- 3 symbols, 7 outcomes, 14 days
+Ran criterion 3 of [113a75c0] myself rather than hand over an item whose
+priority I could not justify:
+
+    thin-tape symbols allowed by ignorance : 94
+    symbols with outcomes in 14d           : 36
+    OF WHICH thin-tape                     :  3
+        PUMP-USDC 4    CBMEGA-USDC 2    XRP-USDC 1
+
+Of 94 admitted symbols, 91 never reached an outcome at all. The downstream
+gates -- the quote step's 146-to-19 and the rest -- absorb almost the entire
+hole the motion gate leaves open. The mechanism and the join are as described;
+the BLAST RADIUS is 7 outcomes in two weeks. [113a75c0] is a correctness
+cleanup with a known small footprint, NOT a route to the scoreboard, and not
+worth 3 points ahead of [8ad1db3d]'s 2.
+
+THE INVERSE IS THE MORE USEFUL READING, and it bears on this loop's standing
+instructions: the universe funnel is not leaky, it is REDUNDANT. Four filters
+in series, and the one furthest upstream can admit 94 symbols without 91 of
+them ever reaching an outcome. Widening any single gate to enlarge the
+tradeable universe will change almost nothing, because three more are behind
+it. Route (b) "restrict/relax the universe" is bounded by that redundancy.
