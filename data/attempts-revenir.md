@@ -18022,3 +18022,33 @@ CORRECT STATEMENT, replacing the withdrawn one:
 criterion 4 is hereby amended: a log grep CANNOT answer it. The observability
 must be built -- route the swallowed exception to log_message, not _dbg -- before
 the rate can be measured at all. Do not close criterion 4 with a grep.
+
+### CROSS-CHECKED SAME PASS: the quoter understates AERO's round trip by 2.8x
+A quote is not a fill, so the 13.58bp above was checked against the book.
+
+    storage/trading_cache.db, trade_fills where symbol='AERO-USDC',
+    non-ghost rows carrying BOTH expected_price and executed_price:
+
+      fills total              124
+      non-ghost, both prices    16
+      median slippage per leg   18.72 bp
+      implied round trip        37.45 bp
+
+      quoter said : 13.58 bp
+      fills say   : 37.45 bp
+      ratio       : 2.76x understated
+
+The quoter carries no gas and no slippage; the fills carry both. CAVEAT the
+13.58bp: it is a lower bound, now measured as one on AERO rather than assumed.
+
+LIMITS OF THE CHECK, so it is not over-read either: n=16; it is a median of
+per-leg slippage doubled, not a matched round-trip pairing; 108 of 124 AERO
+fills are excluded as ghost or missing a price. An independent CHECK, not a
+better census.
+
+CHANGES NOTHING ABOUT THE ROUTE: q = 46.4%, (2q-1) = -0.072, negative at
+toll = 0. Cost cannot pay at 13.58bp or at 37.45bp. The cost axis stays closed.
+
+SHARPENS [557240ef]: the quoter both understates cost 2.8x AND silently drops
+fee tiers it was throttled on. Two independent reasons its output is not a
+measurement.
