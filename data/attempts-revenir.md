@@ -18637,3 +18637,42 @@ THE RULE, restated because I broke it in the same pass I applied it: a claim
 derived from `system.log` is NOT evidence about production until the STORE
 agrees. Run `tx_forensics --symbol` first. I checked the store for the cost
 work and did not for the ban work.
+
+### Pass 494 final -- the surviving headline, put through the same test that killed the retracted one
+
+After retracting the CBBTC ban I re-tested my one remaining recommendation
+against the store rather than handing it over unchecked:
+
+    python -X utf8 scripts/tx_forensics.py --symbol CBETH-USDC
+
+      0x076978740803789cd40564  size=0.000273750474589586  spent=7.5e-13
+      0xee36a71d5b0ff542a66a33  size=0.000263622778421825  spent=0.75
+      0x5de159efe0d946b683c08f  size=0.000262122199594547  spent=0.75
+      rows citing an unreconciled settled buy: 0
+
+Three BOOKED live entries with settled tx hashes, and the sizes match the
+`trade_fills` rows my cost measurement used EXACTLY. Genuine chain-settled
+production entries, not fixtures. **CBETH stands.**
+
+AND IT EXPLAINS THE MALFORMED ROW. The row whose `executed_price` read
+2.739721278e-09 has size 0.000273750474589586 -- and its booking row records
+`spent=7.5e-13` where its two siblings record `0.75`. Off by exactly 1e-12.
+The price was not corrupted; it was DERIVED from a `quote_spent` written
+twelve orders of magnitude too small. A units defect in the booking, not a bad
+fill. Dropping it was correct.
+
+SEPARATE DEFECT NOTED, NOT FILED: whatever writes `quote_spent` can emit
+7.5e-13. Not filed deliberately -- the backlog is 148 open with 89 at p1 and
+this pass filed zero items.
+
+STANDING RECOMMENDATION FOR THE NEXT PASS: fix the CBETH row in
+`services/round_trip_cost.py`. Production charges 30bp and ADMITS CBETH past a
+35bp gate; its own chain-settled fills measure 47.63bp on four clean rows.
+Store-verified twice, small, provable, and independent of everything retracted.
+
+METHOD NOTE, the honest shape of this pass: I ran the store check on every
+cost claim and failed to run it on the ban claim, in the same pass, and the
+ban claim was the one I raised to p1 and recommended. The asymmetry was not
+that the log is untrustworthy in general -- it is that I never asked where the
+line came from. `scripts/tx_forensics.py --symbol` answers that in seconds and
+already existed.
