@@ -16631,3 +16631,27 @@ NOT WITHDRAWN: the CI on round-trip cost is still [-7.10, +91.59], the buy-leg
 asymmetry is still a null, the live gross is still negative, and gas is still
 ~69% of the toll at the $0.75 clip. Only the DAYS figure and the route-(a)
 closure that rested on it are withdrawn.
+
+### Pass 487 FINAL: the system is running; only the LIVE LANE is stopped.
+
+In the 13.4 days since the last live trade:
+  ghost round trips   82      (6.1/day)
+  live  round trips    0
+
+Comparable to the 7.66/day the LIVE lane managed during its 2.35-day burst. The
+bot runs, the feed feeds, strategies enter and exit, the book fills.
+
+THE PASS IN ONE SENTENCE: we are gathering the WRONG KIND of evidence at the
+RIGHT RATE, and have been for 13.4 days. Ghost rows book one scalar against the
+sell leg and charge the buy leg nothing (224 of 224), so 13 days of accumulated
+evidence cannot settle any cost question.
+
+Restarting the lane is therefore cheaper than it sounds: nothing needs building
+and there is no throughput problem to solve. Ladder step 6 is a GATE, and 82
+ghost round trips in the window prove everything upstream of it works.
+
+NEXT PASS, THE SINGLE MOST VALUABLE THING: file and work the item that restarts
+the live lane. Not because it makes money -- every point estimate here loses --
+but because it is ~7.66 round trips/day of the ONLY evidence that can settle a
+cost question, and it has been off for 13.4 days while step 6 read [FAIL] every
+pass with no price attached to it.
