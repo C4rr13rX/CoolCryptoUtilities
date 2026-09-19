@@ -187,7 +187,13 @@ def main() -> int:
     #   clean   -- passed momentum AND move_exhausted AND slope_not_positive,
     #              i.e. the candidates ONLY the cost gate refused
     # ------------------------------------------------------------------
-    HORIZONS = (12.0, 20.0, 30.0, 45.0, 60.0, 90.0)
+    # Pass 480: extended DOWNWARD. Everything ever screened here was 12 min+,
+    # but the feed's median per-symbol gap is 66.6s and 101 of 111 symbols
+    # sample at <=2 min, so a 3-min hold already contains ~3 ticks. The band
+    # below 12 min is the only one never tested, and the tradeable book is
+    # POSITIVE inside 15 min and negative after -- which is the whole reason
+    # to look here. The old six are kept so the comparison is one table.
+    HORIZONS = (2.0, 3.0, 5.0, 8.0, 12.0, 20.0, 30.0, 45.0, 60.0, 90.0)
     CLEAN_GATES = {"edge_below_cost", "volume_faded", "confidence_below_floor", "(fired)"}
     hz: Dict[Tuple[str, float], List[float]] = defaultdict(list)
     hz_seq: Dict[Tuple[str, float], List[float]] = defaultdict(list)

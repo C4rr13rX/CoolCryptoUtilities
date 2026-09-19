@@ -14756,3 +14756,70 @@ Pass 477 already proved this repo has a stamped accumulator no query reproduces
 
 Recorded here rather than as a new backlog id, which would orphan the diagnosis
 on [82662e5d].
+
+## Pass 480 (Echo, senior) -- [46145c10] THE HORIZON AXIS IS CLOSED. Shortening the hold makes it MONOTONICALLY WORSE, and "the book is positive inside 15 min" is an exit-reason tautology.
+
+ROUTE TRIED: extend the horizon sweep BELOW 12 min -- the only band never
+tested. Standing-instruction route (c), "SHORTEN THE HOLD", rests on it.
+
+COMMAND: scripts/money_button_edge_terms.py HORIZONS extended from
+(12,20,30,45,60,90) to (2,3,5,8,12,20,30,45,60,90); `python -X utf8
+scripts/money_button_edge_terms.py --hours 168`. 148 symbols, 34,955
+evaluations, 0.70% round trip.
+
+RESULT -- NEGATIVE, AND MONOTONE. Up-rate (share of sequential windows whose
+gross clears the 70bp round trip), null population:
+
+    2min  3.0% | 3min  3.6% | 5min  4.3% | 8min  5.1% | 12min  6.4%
+   20min  8.6% | 30min 11.9% | 45min 14.2% | 60min 15.8% | 90min 21.0%
+
+Strictly increasing in horizon. The bleed does NOT shrink below 12 min; it
+GETS WORSE, and the horizon that minimises it is the LONG end (60 min, net
+mean -0.3637% on the guarded `aligned` population), not the short end. My
+pre-registered hypothesis was that cost is fixed while adverse drift
+accumulates, so the minimum sits at 2 min. That is DEAD.
+
+WHY, and it is not subtle: the median net is pinned at exactly -0.700% =
+-cost for every horizon at or below 45 min, i.e. THE MEDIAN GROSS MOVE IS
+EXACTLY ZERO. At 66.6s median sampling a 2-min hold is ~2 ticks and adjacent
+returns share a price print. Cost is fixed per round trip; the move scales
+with sqrt(time). Short holds pay the same 70bp toll on a smaller move.
+
+NOTHING CLEARS THE BAR ANYWHERE. Max lift at any horizon is +0.0385% =
+3.85bp (60 min). The bar is 11bp. So the criterion "any candidate over 11bp
+must survive --exclude-recent-hours 168" is satisfied VACUOUSLY -- there is
+no candidate to hold out, and re-screening the classical set "at the best
+short horizon" is moot because no short horizon is best at anything.
+
+DO NOT TRUST THE NULL MEANS AT 2/3/5 MIN: +1590%, +1943%, +2604%. Those are
+denomination-break / two-regime contamination, and it is WORSE at short
+horizons, not better. The guarded `aligned` and `clean` populations read
+-0.77%, -0.78%, -0.76% at the same cells. Judge this table by the UP-RATE,
+which is a rate and immune to outlier magnitude.
+
+SECOND, INDEPENDENT DIRECTION -- and this one explains the belief that sent
+me here. "The tradeable book is POSITIVE inside 15 minutes and negative
+after" is NOT hold-duration causation. It is the exit rule naming the
+outcome. Win rate by exit reason over trade_outcomes:
+
+    take_profit_limit   n=18   win 100.0%   sumnet +3.3060
+    timed-exit          n=55   win   0.0%   sumnet -1.4421
+    confidence_drop     n=72   win  43.1%   sumnet +0.1725
+    negative_margin     n=17   win  11.8%   sumnet -0.4196
+
+A take-profit exit is a winner BY CONSTRUCTION and fires EARLY. A timed exit
+is the position that never hit its target, BY CONSTRUCTION, and fires at max
+hold. 100% vs 0% is not a finding about time, it is a tautology about naming
+-- and it corroborates the existing note exit-reason-name-decides-whether-it-
+books. (The +3.3060 is additionally suspect per ghost-take-profit-fills-past-
+its-limit; I did not re-audit it and did not need to.)
+
+CONSEQUENCE: shortening the hold cannot convert a timed-exit loser into a
+take-profit winner. It cuts the position off earlier, with a smaller move,
+against the same toll -- which is exactly what the up-rate column measures.
+
+STATUS: CLOSED. The horizon axis is exhausted in both directions -- pass 427
+closed 12-90 min out-of-sample, this closes 2-12 min. Route (c) of the
+standing instructions is refuted and should stop being offered as a live
+option. The cost floor (70bp round trip against a median gross move of ZERO)
+is the binding constraint, and it is a TOKEN/DEPTH problem, not a timing one.
