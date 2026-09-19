@@ -19063,3 +19063,35 @@ not. The quoter answers and passes 496 and 497 were both wrong to end there.
 OPEN: [f433250c] the quoter swallow, [ff97b5d6] the RPC rotation gap. They
 are in different files and can be worked in parallel.
 BLOCKED ON THE OPERATOR: a base RPC endpoint with real quota.
+
+### Pass 498 second addendum -- OVERTURNS this pass's own headline. WETH is ~2bp, not 161bp.
+
+I ran the SAME $10 WETH-USDC round trip three more times. All three took
+tier 100 on BOTH legs:
+
+    back $9.997656   round trip 2.34 bp
+    back $9.998427   round trip 1.57 bp
+    back $9.997945   round trip 2.06 bp    median 2.06 bp
+
+WETH CLEARS BOTH DECISION THRESHOLDS: 2.06bp against 12.2bp (6x margin) and
+against 8.1bp (4x margin). With measured gas -- median `fee_cost` $0.004047
+over all 18 closed live rows, 4.05bp at a $10 clip -- the all-in is 6.11bp,
+still under 8.1bp.
+
+WITHDRAWN: 161.64bp (router artifact) and my own 45.32bp "upper bound",
+which was itself computed off a degraded sweep and is therefore worthless.
+The production book row of 11.0bp is roughly FIVE TIMES TOO HIGH.
+
+DEGRADATION FREQUENCY: 1 of 4 observed $10 round trips came back degraded
+(tiers 100/10000, 161.64bp). Intermittent, not constant. That makes
+[f433250c] MORE important, not less -- it is protecting a route that is
+genuinely cheap when it works, and roughly a quarter of sells are not
+getting it.
+
+STILL QUOTED, NOT REALISED. No MEV, no block delay, no tx hash. The
+deep-pool route is not alive on a quote. But the COST objection that has
+blocked it for several passes is now the weak part of the argument, and the
+DIRECTION call is the part that has to carry it. Per the item's own
+instruction: do not rescale an expectancy arithmetically off this -- the
+n=99 behind +0.1769% contains no WETH fill, so the WETH gross edge is still
+unmeasured and is a separate item.

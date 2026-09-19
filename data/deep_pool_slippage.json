@@ -40,7 +40,7 @@
     "pays_at_65pct_direction_60m": 12.2,
     "pays_at_60pct_direction_60m": 8.1
   },
-  "verdict_weth": "161.64bp is a ROUTER artifact. Best ANSWERING tier gives $9.954684 back on $10 = 45.31bp round trip, still above the 12.2bp and 8.1bp thresholds. Tiers 100 and 500 were rate-limited and never priced, so the market number is still unmeasured.",
+  "verdict_weth": "OVERTURNED WITHIN PASS 498. WETH-USDC at a $10 clip is ~2bp QUOTED when the tier sweep is healthy (1.57/2.06/2.34 across three consecutive runs, both legs tier 100). It CLEARS 12.2bp by ~6x and CLEARS 8.1bp by ~4x. All-in with measured gas of 4.05bp at $10 it is ~6bp, still under 8.1bp. The 161.64bp was a router artifact and is withdrawn. The book row of 11bp is ~5x too HIGH.",
   "gas_measured_bp_at_10usd": 4.047007887550228,
   "gas_source": "median fee_cost over all 18 closed live rows in trade_outcomes; gas only on the live path",
   "tier_sweep_evidence": {
@@ -60,5 +60,31 @@
     "tiers_lost_to_rate_limit": "2 of 4, at 2s spacing",
     "conclusion": "CONFIRMED: the sweep loses tiers to RPC 429 and keeps best-of-whatever-answered. quote_and_build selected 10000 earlier, so 3000 had also failed in that run. 161.64bp is a ROUTER artifact, not a market price.",
     "still_unmeasured": "tiers 100 and 500 never answered, so the true WETH market round trip at $10 is bounded above by 45.3bp (via tier 3000) and remains unknown below that."
-  }
+  },
+  "healthy_sweep_samples": {
+    "note": "Three consecutive $10 WETH-USDC round trips with the sweep HEALTHY (both legs tier 100).",
+    "runs": [
+      {
+        "tiers": "100/100",
+        "back_usd": 9.997656,
+        "round_trip_bp": 2.34
+      },
+      {
+        "tiers": "100/100",
+        "back_usd": 9.998427,
+        "round_trip_bp": 1.57
+      },
+      {
+        "tiers": "100/100",
+        "back_usd": 9.997945,
+        "round_trip_bp": 2.06
+      }
+    ],
+    "median_bp": 2.06,
+    "spread_bp": [
+      1.57,
+      2.34
+    ]
+  },
+  "degradation_frequency": "1 of 4 observed $10 round trips came back degraded (tiers 100/10000, 161.64bp). Intermittent, not constant. This makes the quoter fix MORE important, not less: it protects a route that is genuinely cheap when it works."
 }
