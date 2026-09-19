@@ -17438,3 +17438,41 @@ THREE CAVEATS, and they are why this is NOT actionable as it stands:
 NOT CLOSED, NOT OPEN. The move axis is real and insufficient. [f9f24f42]
 criterion 2 is answered NO for WETH/AERO/ALIGN and YES for ZORA/CAKE against
 the WRONG toll, which is not a pass.
+
+### Pass 490 addendum 2 -- the LOUD symbols are not more FAVOURABLE either
+
+Follow-up to addendum 1. If louder tapes are the opening, the long-only
+always-in baseline should be better there. Same 45-min windows, SIGNED return,
+bootstrap CIs, 30d. MEDIAN throughout per the standing mean-of-means warning.
+
+  symbol         n   up-rate            median signed return      mean
+  WETH-USDC    159   52.2% [44.7,59.7]   +1.08bp [ -2.98, +3.92]  +4.94
+  AERO-USDC    367   51.8% [46.6,56.9]   +1.57bp [ -1.55, +6.32]  +9.26
+  ZORA-USDC    215   55.3% [48.8,61.9]   +4.79bp [ -1.15,+11.68]  +9.25
+  ALIGN-USDC   175   48.0% [40.6,55.4]   -0.33bp [ -3.25, +0.39]  +4.20
+  CAKE-USDC    165   53.3% [46.1,61.2]   +4.70bp [ -3.08,+22.84]  +6.76
+
+EVERY up-rate CI CONTAINS 50%. Not one symbol is distinguishable from a coin
+flip, including the two loudest.
+
+EVERY median signed return CI CONTAINS ZERO. The best point estimate is ZORA
++4.79bp. And the decisive comparison: the UPPER CI bound on the best symbol
+(CAKE +22.84bp) is STILL BELOW the 27.77bp WETH toll -- and CAKE's own toll is
+unmeasured and, being a thinner token, is certainly higher than WETH's.
+
+CONSEQUENCE: the long-only always-in baseline is CLOSED on every loud symbol.
+Louder is noisier, not more favourable. Addendum 1's "CAKE median window is 4x
+WETH's" is a statement about |move| only; the SIGNED version of the same data
+is a null everywhere. The universe-selection route does not open by itself.
+
+SCOPE, stated precisely because it matters. This measures the BASE RATE, not a
+forecast. [f9f24f42] criterion 3 asked for per-symbol q -- the directional
+accuracy of an actual forecast -- and that is NOT what this is. A forecast
+could in principle beat the base rate. What this closes is the FLOOR: there is
+no free long-only drift on the loud symbols to collect. Note the repo's
+measured forecast accuracy is 46.4%, i.e. BELOW these base rates, so nothing
+here suggests a forecast would help.
+
+Also note mean > median on all five (+4.20 to +9.26 vs +1.08 to +4.79). The
+right skew is exactly the trap the standing note warns about -- a mean-based
+read of this table would have shown a "positive drift" on every symbol.
