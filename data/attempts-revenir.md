@@ -14680,3 +14680,33 @@ changed is that it is visible. base-has-one-quoting-venue has been in memory for
 passes while two more focus chains had the same disease unnoticed. Filed as
 [00f5a607], priority 3 -- it is a decision and a labelling job, not a live bug,
 and it moves no P/L.
+
+### Pass 479 correction -- I OVERSTATED THE ADDENDUM ABOVE, WITHIN THE HOUR
+
+The addendum said three of four chains "production is willing to swap on" have a
+single DEX route. That is WRONG in the direction that overstates live exposure,
+and the route-order commits are unaffected.
+
+TWO ENV VARS, ONE PREFIX APART, DIFFERENT LANES:
+
+    FOCUS_CHAINS       bot.py:792, UNSET, defaults base,arbitrum,optimism,polygon
+                       -> seeds sim_quote_balances. This is the GHOST universe.
+    LIVE_FOCUS_CHAINS  .env:431 = base
+                       -> bot.py:652-659 into PortfolioState.
+
+The live swap's focus_chain comes from self.primary_chain / wallet_state at
+bot.py:4445-4448, NOT from FOCUS_CHAINS. PRODUCTION SWAPS LIVE ON BASE ONLY.
+No real money routes through QuickSwap on polygon.
+
+VERIFIED AND UNAFFECTED: CAMELOT_V2_ROUTER_BASE is genuinely absent from .env
+(grepped), so base really does resolve to uniswap alone, and [be535a87] with its
+210 passing tests stands.
+
+WHAT SURVIVES: the ghost book seeds balances on four chains, and on
+optimism/polygon the only answering route is labelled "camelot" while the router
+is QuickSwap V2 / Sushi V2. Ghost evidence could carry the wrong VENUE.
+[00f5a607] rewritten to say that, dropped to p4/2pt, and its FIRST criterion is
+now a measurement: count ghost trades on optimism and polygon, and REJECT the
+item if it is zero. Seeding a balance is not using it.
+
+CLOSED: "production swaps on four chains". It swaps live on one.
