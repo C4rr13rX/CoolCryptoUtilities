@@ -18236,3 +18236,33 @@ leaning on. "money_button's momentum rule has a negative gross edge" is ALSO
 unmeasured -- its -0.765% is one symbol at 108% of the pooled sum. The honest
 statement is that money_button has not been shown to have an edge OR to lack
 one, at n=29 over 168h.
+
+### PASS 493 ADDENDUM 2 -- I AUDITED MY OWN INSTRUMENT AND ONE ROW OF IT WAS AN ARTIFACT OF MY OWN CONSTANT
+
+Nine of seventeen replayed strategies reported 0 fires in 31,984 evaluations.
+That shape is suspicious, so I tested the one parameter that could manufacture
+it -- the flat WINDOW = 40 -- by re-running the nine at WINDOW = 120:
+
+    strategy             min_samples   W=40   W=120
+    ema_cross                     40      0     210   <- the harness, not the gate
+    omen_reversion                60      0       0
+    obv_accumulation              36      0       0
+    momentum_breakout             30      0       0
+    dust_micro_swing              24      0       0
+    volume_spike                  24      0       0
+    vwap_reversion                20      0       0
+    swarm_consensus               12      0       0
+    genome_champion               12      0       0
+
+ema_cross DECLARES min_samples = 40. A flat WINDOW = 40 hands it 41 samples,
+leaves no room for its slow EMA, and prints "0 FIRES" beside its name as though
+the gate had refused 31,984 times. omen_reversion declares 60: at 41 samples
+its zero was arithmetically guaranteed before any tape was read.
+
+FIXED: window_for(strategy) = max(40, 3 * strategy.min_samples), and the size
+used is printed in that strategy's row so it is never a hidden parameter. The
+other eight zeroes stand at both window sizes.
+
+STILL OPEN, and stated rather than papered over: those eight zeroes remain
+"refusing or window-blind, indistinguishable". The ramp/crash/flat detector had
+no power to separate them and was deleted rather than shipped.

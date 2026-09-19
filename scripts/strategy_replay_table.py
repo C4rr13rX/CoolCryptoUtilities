@@ -217,6 +217,23 @@ def _classify(
     return None
 
 
+def window_for(strategy: Strategy) -> int:
+    """Samples to hand THIS strategy, from its own declared ``min_samples``.
+
+    A FIXED WINDOW SILENTLY ZEROES A STRATEGY, and the first version of this
+    script did exactly that. ``ema_cross`` declares ``min_samples = 40``; at a
+    flat WINDOW = 40 it receives 41 samples, has no room for its slow EMA, and
+    reports 0 fires in 31,984 evaluations -- which reads as "the gate refused
+    everything" and is really "the harness never gave it a chance". At 120 it
+    fires 210 times. ``omen_reversion`` declares 60 and could not fire at all.
+
+    So the window is the strategy's OWN requirement with headroom, never a
+    constant, and the size used is printed in its row so the number is not a
+    hidden parameter.
+    """
+    return max(WINDOW, 3 * int(getattr(strategy, "min_samples", 16) or 16))
+
+
 def _replay_one(
     strategy: Strategy,
     ticks: Dict[str, List[Tuple[float, float]]],
@@ -229,12 +246,13 @@ def _replay_one(
     evaluated = 0
     raised: Dict[str, int] = defaultdict(int)
     exit_fires = 0
+    window_n = window_for(strategy)
 
     for symbol, series in ticks.items():
         n = len(series)
-        for i in range(WINDOW, n):
+        for i in range(window_n, n):
             evaluated += 1
-            window = series[i - WINDOW:i + 1]
+            window = series[i - window_n:i + 1]
             last_price = float(window[-1][1])
             ctx = StrategyContext(
                 chain="base",
@@ -290,6 +308,7 @@ def _replay_one(
 
     return {
         "strategy": strategy.strategy_id,
+        "window": window_n,
         "evaluations": evaluated,
         "fires": len(fires),
         "exit_fires": exit_fires,
@@ -391,7 +410,7 @@ def main() -> int:
     print("STRATEGY REPLAY TABLE -- every registered gate, same tape, same cost")
     print("=" * 78)
     print(f"{args.hours:.0f}h of stored ticks: {len(ticks)} symbols, {tick_count} ticks, "
-          f"window {WINDOW} samples, forward horizon {args.horizon_min:.0f}m")
+          f"window per-strategy (3x its own min_samples, floor {WINDOW}), horizon {args.horizon_min:.0f}m")
     print(f"registry: {len(registry.all())} strategies -- "
           f"{len(replayable)} replayed, {len(blocked)} not replayable")
     print(f"gate fee handed to every strategy: {gate_fee:.4f}")
@@ -420,7 +439,7 @@ def main() -> int:
     # than sorting as zero -- an unmeasured rule is not a flat rule.
     rows.sort(key=lambda r: (np.isfinite(r["mean_net"]), r["mean_net"]), reverse=True)
 
-    header = (f"{'strategy':<22}{'evals':>8}{'fires':>7}{'fire%':>8}"
+    header = (f"{'strategy':<22}{'win':>5}{'evals':>8}{'fires':>7}{'fire%':>8}"
               f"{'resolved':>9}{'win%':>7}{'mean gross':>12}{'t gross':>9}"
               f"{'mean net':>11}{'t net':>8}  verdict")
     print(header)
@@ -446,7 +465,7 @@ def main() -> int:
         else:
             verdict = "gross edge measured NEGATIVE"
         win_s = "--" if not np.isfinite(r["win"]) else f"{r['win']:.0f}%"
-        print(f"{r['strategy']:<22}{r['evaluations']:>8}{r['fires']:>7}"
+        print(f"{r['strategy']:<22}{r['window']:>5}{r['evaluations']:>8}{r['fires']:>7}"
               f"{fire_rate:>7.3f}%{r['n']:>9}{win_s:>7}"
               f"{_fmt(r['mean_gross'], 11)}{_fmt(r['t_gross'], 9, 3, pct=False)}"
               f"{_fmt(r['mean_net'], 10)}{_fmt(r['t_net'], 8, 3, pct=False)}"
