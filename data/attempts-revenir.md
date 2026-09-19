@@ -15405,3 +15405,39 @@ outcome of `[0f07b8b6]` is a **correct gate and no change to tradeable
 supply**. Worth doing on correctness. Not worth overselling.
 
 Tool: `scripts/lattice_refusal_census.py` (read-only), commit `cb3c21f`.
+
+## Pass 483 (Echo, senior, solo) -- the live lane is SILENT, not refusing
+
+ROUTE TRIED: audit the step-6 RISK block that every recent pass has treated as
+"a gate is refusing us", and reconcile the -0.1864 scoreboard to its source.
+
+NUMBERS PRODUCED:
+- Scoreboard source is pass_gate.py:756-773 -- it sums lifetime.live.total_profit
+  from the strategy registry. It never reads a chain receipt and never reads fills.
+- atf_static: 18 live trades, -0.186371, NOT approved, demoted x7. That is 100% of
+  the scoreboard. money_button: 0 live trades, 2 ghost trades lifetime, approved.
+- money_button was HAND-APPROVED, not graduated: data/strategy_ledger.json records
+  live_approved_by "Dune (exec) pass 424, on USER instruction 2026-09-16 13:10".
+  Route (a) was already taken by the operator two days ago.
+- halt_live fix 821daa1 committed 2026-09-17 20:52; production booted 2026-09-18
+  16:47, 26.6h later. PRODUCTION IS RUNNING THE FIX.
+- Since that fix: live-entry 0, live-exit 0, live-entry-blocked 0, live-entry-failed
+  0, guard-blocked-live 0. ghost-entry 32 (23 since boot, last 0.0h ago).
+- No metrics row since boot with stage/category like sched or name like halt/live,
+  so the metrics.feedback(scheduler, label=halted) signal documented at
+  live_lane_refusal_census.py:28 is NOT being emitted.
+
+CLOSED: "the live lane is blocked by a gate we can find and loosen." The lane
+produces zero entries AND zero refusals while the ghost lane runs normally. Nothing
+is being refused, so loosening a gate cannot help and would remove a correct guard.
+CLOSED: "restart production to pick up the halt_live fix." Already picked up.
+
+RETRACTED WITHIN THE PASS: bus_plan.size x target_price on live-entry rows gives a
+median notional of $0.0404, which I nearly posted as "the clip is four cents and gas
+eats it". The EXECUTED notionals in trade_fills are $0.75-$2.91, 20-70x larger.
+bus_plan.size is a plan field and is not what settles. Do not quote the four cents.
+
+STILL OPEN (filed): [f7a6ee71] instrument the silent live path; [bd5619eb] a live
+fill carries executed_price=0.0 (CBETH-USDC, yields +1.03e14 percent); [e80b4777]
+gas is recorded nowhere -- fee_cost is None on all 38 live fills and
+live-swap-settled has no gas field, so no net-of-gas claim here is verifiable.
