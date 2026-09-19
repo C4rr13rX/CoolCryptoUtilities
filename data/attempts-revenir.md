@@ -16973,3 +16973,28 @@ attribution, but nobody should spend effort making COMP tradeable.
 I was wrong about this sweep TWICE in ten minutes: that it would fit easily, then
 that it had failed. Quote one at a time with a per-token timeout, and do not
 predict the wall clock.
+
+## Pass 488 (Echo) -- VIRTUAL IS LIVE ON THE TAPE, so the finding is actionable
+
+A cheap quote is worthless if the symbol never streams. Checked before letting it
+stand:
+
+    VIRTUAL ticks   last  1d   254     last 7d  846     last 14d  1875
+    VIRTUAL-USDC   n=1809   last tick   3.71 h ago   <- streaming, fresh
+    VIRTUAL-WETH   n= 239   last tick 290.84 h ago   <- stale, ignore
+
+THE COMPLETE CHAIN, every link measured rather than assumed:
+
+    the token streams          1809 ticks, last 3.71h ago
+    it round trips at          21.1bp read-only (fees 500/500)
+    the gate admits below      35bp                 scheduler.py:1794
+    it is currently refused    at an ASSUMED 70bp, not a measured cost
+    the clip that works        $10, against a $23.18 wallet -- FUNDABLE
+
+A live, streaming, fundable symbol refused purely because nobody priced it.
+
+STILL NOT A GREEN LIGHT: a quote is not a fill. 21.1bp carries no gas and no
+execution slippage; gas at a $10 clip is ~20bp on the standing numbers, which
+could put the true round trip near or over the 35bp gate. Record it as a dated
+LOWER-BOUND quote, let the gate read it, and watch whether a real fill agrees.
+Do not write it into the admitted set and call it done.
