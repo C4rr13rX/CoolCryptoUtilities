@@ -18771,3 +18771,35 @@ CONSEQUENCE FOR APPROVAL ORDER, and it is an inversion: money_button is the
 ONLY approved strategy and its target is 0.10% against a 61bp bar, while
 donchian_breakout on the deep names has gross **+0.246%**. If one strategy is
 to receive live evidence first it should be donchian. Filed as [0a35acb2].
+
+### Pass 495, third finding: the book CONTRADICTS the replay on donchian
+
+OPEN, and it undercuts the pass-493 headline this loop has been carrying.
+
+Checked at the end of p495 against `trade_outcomes`. 22 closed rows carry a
+donchian `strategy_id`; split on the same deep/thin cohort line the replay uses:
+
+    DEEP (WETH/ETH)          n=6    0 wins (0%)    sum net -0.0990
+    THIN (everything else)   n=16   4 wins (25%)   sum net +0.1207
+
+The replay says the opposite: deep 65.9% / +0.136%, thin 19.7% / -0.563%.
+**Opposite sign on both cohorts.** And it is not comfortably small-n: under a
+true 65.9% win rate, **P(0 wins in 6) = 0.0016**.
+
+All 6 deep rows are `mode=ghost`. `data/attempts` already records that the
+REPLAY HARNESS RUNS A DIFFERENT RULE than production -- the replay resolves each
+fire forward on the same tick series, holding to target or horizon, which is
+not what the ghost executor does. So the 65.9% is a HARNESS result the book
+disagrees with, and the disagreement is unexplained.
+
+DO NOT quote the 65.9% without the 0-of-6 beside it. This does not close the
+donchian route -- n=6 is small and ghost-only -- but it means the route rests
+on a harness whose agreement with the executor has never been demonstrated.
+`[13254b56]` now separates THREE things: whether WETH costs under 24.6bp,
+whether the donchian edge is real, and whether the harness agrees with the
+executor at all.
+
+METHOD NOTE. I posted the donchian recommendation BEFORE running this check and
+withdrew it forty minutes later. The check cost one query. The pattern across
+p494 and p495 is consistent: my first measurement is the one that CONFIRMS, and
+the refuting measurement is always cheap and always available. Run it first.
