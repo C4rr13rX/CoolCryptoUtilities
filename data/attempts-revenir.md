@@ -17678,3 +17678,40 @@ AND permanently banned by the unreadable-fill path. TWO independent bans on one
 symbol, so lifting the no_fill ban alone changes nothing on CBBTC. That makes
 [8b978275] a correctness fix, NOT a route to a trade. Re-read as correct but not
 urgent.
+
+### OPEN, and the best lead this pass produced: the motion gate admits exactly
+### the symbols it cannot judge, BY DESIGN, in its own comment
+Ran the gate's own diagnostic and nearly posted a false headline:
+
+    from services.symbol_motion_gate import refused_symbols
+      verdict cache size : 35     REFUSED : 35     ALLOWED : 0
+
+"The motion gate admits NOTHING" would have been wrong. refusal_reason does
+_cache.get(sym) and returns None -- ALLOW -- when the symbol is ABSENT, so the
+cache may hold refusals only. It does. services/symbol_motion_gate.py:208-216:
+
+    for symbol, prices in _load_feed(now).items():
+        if base in NEVER_BAN or symbol in NEVER_BAN:  continue
+        if windows < MIN_WINDOWS:                     continue
+        if rate >= MIN_PAY_RATE:                      continue
+
+Every ALLOW path is a continue, so nothing allowed is ever cached. "ALLOWED 0"
+is trivially true. refused_symbols() gives the BANNED list, never the universe.
+CORRECT NUMBERS: 35 refused right now, 75 distinct over the log's history.
+
+THE FINDING IS LINE 214 AND THE REPO SAYS IT ITSELF:
+
+    if windows < MIN_WINDOWS:
+        continue         # not enough feed to judge -- allowed, by design
+
+A symbol with too little tape to judge is ALLOWED. The gate refuses what it has
+measured and cannot pay, and admits what it could not measure -- fail-open on
+the exact axis 489/490 proved binding. Unlike the except-branch fail-open, this
+one is deliberate, commented, and visible.
+
+THE JOIN WORTH TESTING NEXT, and I am NAMING it, not claiming it: memory records
+expected_return is 214x its outturn and LARGEST WHERE THE TAPE IS THINNEST. If
+thin-tape symbols are exactly the ones this gate waves through, the universe
+filter and the forecast bias are the same defect seen twice. One read-only
+query: intersect the symbols skipped at MIN_WINDOWS against the thin-tape
+population behind the 214x. NOT MEASURED THIS PASS.
