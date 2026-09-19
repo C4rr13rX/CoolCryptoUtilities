@@ -17645,3 +17645,36 @@ missing gate must not stop trading", and a wedged gate halting all trading is
 the worse failure. The defect is invisibility. One log_message per except branch
 costs nothing and makes it greppable. Folded into [8ad1db3d] rather than filed
 as a fifth item -- the backlog is 148 open at 89 p1.
+
+### CLOSED, against my own alarm: the gates are NOT degraded. The motion gate
+### refuses 57,425 times across 75 distinct symbols
+The invisibility finding above invites a wrong reading -- that the gates might be
+silently erroring right now. There is a cheap test that separates that from a
+working gate, so I ran it:
+
+    grep 'SYMBOL MOTION GATE: refusing <SYMBOL>' over all 950MB of system.log
+
+    57,425  refusal lines
+        75  DISTINCT symbols refused
+
+    XCHAT 2390  DEGEN 2199  KEYCAT 1960  CBETH 1952  WTCOIN 1934  MM 1914
+    NOMEME 1914  MOONCOIN 1912  XCAT 1905  CBBTC 1883  BODEN 1877  MAMO 1874
+    (all -USDC)
+
+A gate erroring to ALLOW emits nothing. This one emits 57,425 refusals. It is
+alive and doing its documented job. The invisibility defect stands -- the except
+branch still cannot be counted -- but it is a completeness fix, not a fire.
+
+AND THE NUMBER IS THE BIGGER FINDING. 75 symbols refused on the can-this-symbol-
+move-enough-to-pay axis, against step 1 of the ladder reporting "19 fresh
+symbols". Nobody here has quantified the motion gate as a UNIVERSE CUT. It is
+the largest one measured in this repo -- larger than the quote step's 146-to-19,
+and UPSTREAM of it. It is not a bug: passes 489/490 proved the move axis does
+not pay, so a gate refusing 75 symbols for failing it is the system agreeing
+with its own evidence, reached from a completely independent direction.
+
+CONSEQUENCE FOR [8b978275]: CBBTC-USDC is refused 1,883 times by the motion gate
+AND permanently banned by the unreadable-fill path. TWO independent bans on one
+symbol, so lifting the no_fill ban alone changes nothing on CBBTC. That makes
+[8b978275] a correctness fix, NOT a route to a trade. Re-read as correct but not
+urgent.
