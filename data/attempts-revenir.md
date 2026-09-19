@@ -15165,3 +15165,67 @@ exact defect on every symbol nobody has measured. UNKNOWN IS NOT CHEAP.
 Note the 5 COMP rows with NO strategy_id are consistent with the anonymous-row
 problem recorded in pass 479 (96 of 248 anonymous) -- attribution gaps and cost
 contamination are compounding on the same table.
+
+---
+
+## Pass 481 (Echo, senior) -- RETRACTION: the 1.665 GB WAL is 0.06% live, and the "checkpoint copies 1.66 GB" line above (~L10877) is WRONG
+
+**Route tried:** [c720dcdc], "checkpoint the 1.55 GB WAL, prime suspect for the
+33% of event-loop samples parked ACQUIRING a db connection."
+**Result: the premise is REFUTED. CLOSED as a latency route.**
+
+I pre-registered the hypothesis and its complement before measuring:
+
+* **H** -- the WAL is a stale **high-water mark**: live frames are a tiny
+  fraction of the file, checkpoints are completing, nothing here stalls the loop.
+* **C** -- the WAL genuinely holds 1.665 GB of un-checkpointed frames. Item stands.
+
+**Kill test** (read-only parse of the WAL frame headers; no sqlite call, so it
+cannot disturb the live writer -- production PID 22264 confirmed attached by
+`tasklist` first):
+
+    page size                  : 4,096          frame size 4,120
+    capacity (frames on disk)  : 404,077
+    checkpoint sequence number : 121        <- 121 completed checkpoint+restart cycles
+    LIVE frames  (current salt):     225  =    0.9 MB
+    STALE frames (stale salt)  : 403,852  = 1586.8 MB
+    LIVE FRACTION              : 0.0557%
+
+**H wins.** Every load-bearing claim fails:
+
+1. **"388x (or 406x) past its own checkpoint threshold."** The *live* WAL is
+   **225 pages against a 1000-page threshold = 0.23x**. It has not *reached* the
+   threshold. Only the dead file is 404x, and dead frames are copied by nothing.
+2. **"A checkpoint copies 1.66 GB under a write lock."** A checkpoint copies
+   **225 frames = 0.9 MB**. Autocheckpoint is *working*: sequence number 121.
+3. **"CONFIRMED AND GETTING WORSE, up from 1.55 GB" (pass 458)** -- a **GiB-vs-GB
+   unit error**. `1,664,797,272` bytes = **1.5505 GiB = 1.6648 GB = 1587.7 MiB**,
+   the same number three ways. The filing used binary; pass 458 divided raw bytes
+   by 1000^3 and read the difference as growth. Passes **455, 458 and 481 all read
+   1,664,797,272 exactly** -- zero growth in three days of production.
+
+**Cause NAMED** (the original DONE criterion demanded one): it did **not** grow
+unbounded. It grew **once** and stayed, because SQLite rewinds a WAL in place
+after checkpoint and never truncates it unless `journal_size_limit` is set --
+and it is unset (default -1). **Dead disk, not a live checkpoint cost.**
+
+**Consequence for the open question:** the **33% of py-spy samples parked in
+`__enter__` acquiring a connection is UNEXPLAINED AGAIN.** A 0.9 MB checkpoint
+cannot produce a multi-second stall. The paragraph above that concludes "on this
+evidence it is a cause" is **retracted**. Surviving suspects: connection-pool
+exhaustion behind a long-held connection, and the standing finding that the loop
+is ~90% blocked on a **synchronous socket read**. Anyone re-attributing this to
+the WAL must first re-run the frame parse and show live frames in the *hundreds
+of thousands*.
+
+**What replaced it -- [1706fe9e], and it is a bigger risk than the item it came
+from:** `df -h /d` reports **895G size, 880G used, 15G avail, 99% full**, holding
+a **25.9 GiB** actively-written `storage/trading_cache.db`. If that volume fills,
+production *stops* and a partial write into a 25.9 GiB store is how sqlite
+corrupts -- taking the only on-chain evidence this loop has. **The growth rate is
+UNMEASURED**, which is the first acceptance criterion rather than the remedy. The
+safe reclaim is one line -- `PRAGMA journal_size_limit` beside the existing
+`PRAGMA journal_mode=WAL` at `db.py:89`, applied at the **next planned restart**,
+never a blocking `wal_checkpoint(TRUNCATE)` against the money path.
+
+**Closed:** the WAL as a latency cause. **Open:** the 33%, and the disk.
