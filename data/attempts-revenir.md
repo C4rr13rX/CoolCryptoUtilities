@@ -17813,3 +17813,21 @@ The 18 live closed rows behind -0.1864, by symbol:
 
 That lookup is the highest-value next action in this file. Nothing else filed
 this pass can move the scoreboard number; this can.
+
+### NARROWED, not answered: the BSTONK hash is NOT in trade_outcomes.details
+Ran the lookup I had just called the highest-value next action:
+
+    trade_outcomes, status='closed', mode='live', symbol IN (BSTONK, BPAD)
+    dumped every details key matching hash / tx / exit / sim
+
+    BSTONK-USDC   net +0.2420    -> NO matching key
+    BPAD-USDC     net -0.2549    -> NO matching key
+
+Neither row carries any hash/tx/exit/sim field in its details JSON. The question
+is NOT answered, but it is narrowed: the answer is NOT in trade_outcomes.details,
+which is the first place anyone would look. Memory records "tx hashes DO exist --
+18 rows carry entry+exit hashes", so they live elsewhere; trade_fills is the
+obvious next place. SKIP trade_outcomes.details -- you will find nothing.
+
+STANDING CONCLUSION: -0.1864 is the best available figure, but until the BSTONK
+row is tied to a settled exit its error bar is ONE-SIDED and points DOWN.
