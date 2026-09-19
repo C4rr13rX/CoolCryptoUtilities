@@ -15514,3 +15514,27 @@ ghost trades LIFETIME not 19 since boot. Confirm ownership before acting.
 CHECK FIRST, NOT LAST: memory confidence-floor-refuses-rsi-reversal-126-of-126
 records this SAME contention label being FALSE once before, masking a
 confidence_floor refusal. Verify the label is the real refusal, not a cover.
+
+### Pass 483 addendum 4 -- FINAL: the contention label is a COVER, open skipped{}
+
+entry-arbitration rows carry reason=one_tick_was_offered_to_many_and_spent_by_one
+at the TOP LEVEL. Each row ALSO has a skipped{} dict with the PER-STRATEGY reason.
+money_button is in skipped{} on ALL 745 rows since boot:
+
+  momentum_not_aligned  361 (48%)    edge_below_cost     198 (27%)
+  move_exhausted         83 (11%)    too_few_samples      54 (7%)
+  slope_not_positive     48  (6%)    mixed_denomination    1
+
+It never wins because it REFUSES, every time, on five reasons of its own.
+So "it declines its own ticks" is CORRECT; "it loses an arbitration" was the
+cover label. ANYONE READING entry-arbitration MUST OPEN skipped{}.
+confidence-floor-refuses-rsi-reversal-126-of-126 caught this same label lying
+once before. It has now lied twice.
+
+HIGH-VALUE LINK: edge_below_cost is 27% of money_button's refusals and it is a
+COST refusal, while [ad629479] shows the cost model is symbol-blind and misshapen
+3.5-9.6x on WETH. FIXING THE COST MODEL MAY UNBLOCK 27% WITHOUT TOUCHING A GATE.
+
+STILL OPEN: tick winners since boot are donchian_breakout@5d 293, @1w 167,
+rsi_reversal@5h 107, supertrend_follow@5d 31. atf_static wins essentially NONE,
+despite being the only emitter of bus_actions. TWO TICK SYSTEMS, UNRECONCILED.
