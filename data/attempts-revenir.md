@@ -16998,3 +16998,75 @@ execution slippage; gas at a $10 clip is ~20bp on the standing numbers, which
 could put the true round trip near or over the 35bp gate. Record it as a dated
 LOWER-BOUND quote, let the gate read it, and watch whether a real fill agrees.
 Do not write it into the admitted set and call it done.
+
+## Pass 489 (Echo, senior, solo) -- money_button's cost constant is 8.9x the measured cost, and that is the 0.00/day gating rate
+
+ROUTE TRIED: replay the one APPROVED strategy's real `evaluate()` over the real
+tape, per symbol, to find out whether its 0.00/day gating rate is a verdict or
+an artifact. Read-only. No capital moved, production not restarted.
+
+METHOD. Imported `MoneyButtonStrategy.evaluate` unmodified and walked
+`market_stream` tick by tick over 7 days, 77 symbols with 40+ ticks, rebuilding
+the trailing 120-minute window at each tick the way `sample_arrays` does. Then a
+second pass recomputing the conjunction with the strategy's OWN `_return_over`
+and `log_slope_per_min` to get a survival funnel rather than only first-failure.
+
+RESULT 1 -- ZERO FIRES.
+  evaluations 32,735   fires 0   rate 0.000%   0.00 fires/day
+Every one of the 77 symbols is zero, including VIRTUAL (802 evals), WETH-USDC
+(1226), CBBTC (508), AERO (3030), ZORA (3795).
+
+RESULT 2 -- THE FUNNEL. The wall is the COST test, not momentum.
+  evals                32735
+  reach momentum       24244   74.1% of prev
+  pass momentum         5522   22.8
+  pass move_exhausted   4424   80.1
+  pass slope            3253   73.5
+  pass projection       3253  100.0
+  pass edge_vs_cost       48    1.5   <- the wall
+  pass confidence         48  100.0
+So the rule IS satisfiable: 48 windows in 7d clear every conjunct at a 22bp bar.
+The pre-registered complement (unsatisfiable by construction) is REFUTED.
+
+RESULT 3 -- A HARD CEILING ON THE TAPE. Over the 3253 windows reaching the cost
+test, MAX conservative_edge in 7 days is 54.40bp; p50 is 0.00bp and 68.1% are
+exactly zero because the volatility penalty eats the whole projection. Fires/day
+vs the one-way fee the gate is handed:
+   1bp -> req  13.2bp -> 20.86/day     13.9bp -> req  41.6bp -> 2.43/day
+   5bp -> req  22.0bp ->  6.86/day       20bp -> req  55.0bp -> 0.00  <- cliff
+  10bp -> req  33.0bp ->  4.29/day       65bp -> req 154.0bp -> 0.00
+Above ~20bp one-way the strategy is not unlikely to fire, it is ARITHMETICALLY
+UNABLE to fire.
+
+RESULT 4 -- WHAT IT IS ACTUALLY HANDED, and it is double-counted twice.
+  trading/scheduler.py:823
+    fee_rate = fee_buffer + tax_buffer + gas_roundtrip_fee + slippage_bps/10000
+  defaults: fee_buffer 0.002 (:268), tax_buffer 0.003 (:269),
+            gas_roundtrip_fee 0.0025 (:315), slippage_bps 50 (:316)
+    => fee_rate = 0.0125 = 125bp, passed as a ONE-WAY rate
+  trading/strategies/money_button.py:243
+    round_trip_cost = 2.0 * ctx.fee_rate + slippage
+    => 2 x 125bp + 10bp = 260bp ; required_edge = x1.1 = 286bp
+
+TWO DOUBLE-COUNTS, both explicit:
+  (a) `gas_roundtrip_fee` is a ROUND-TRIP term by its own name and is multiplied
+      by 2;
+  (b) 50bp of slippage sits inside `fee_rate`, is doubled to 100bp, and then
+      MONEY_BUTTON_SLIPPAGE adds a further 10bp on top.
+
+THE COMPARISON:
+  required_edge                      286.0 bp
+  tape ceiling, best window in 7d     54.4 bp   (5.3x short)
+  MEASURED round trip at a $10 clip   32.3 bp   (27.77 + 45.70/clip_usd)
+  => the gate charges 8.9x the measured cost.
+
+STATUS: OPEN, and it is the most actionable thing found in several passes. This
+OVERTURNS pass 488's `step-6-is-the-system-refusing-correctly`. The 0.00/day
+gating rate is NOT an earned verdict; it is a double-counted cost constant.
+It also RETIRES pass 488's VIRTUAL-at-21.1bp lever: on VIRTUAL the rule dies 598
+times on momentum and 121 on cost, so a cheaper token was never the lever.
+
+NOT PROVEN, stated so nobody inherits it as fact: the replay is a reconstruction
+of the production call, not the production call; production was NOT restarted;
+and whether the executor would ACCEPT a money_button candidate once one exists
+is untested -- step 6 has never had one to refuse.
