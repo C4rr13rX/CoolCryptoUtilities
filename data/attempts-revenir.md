@@ -16779,3 +16779,42 @@ behaviour. Trace that fallback BEFORE changing the approval.
 
 [c44f48d6] criteria were rewritten in-pass to carry this correction rather than
 handing my wrong framing to the next agent.
+
+## Pass 488 (Echo) -- THE CHAIN, END TO END, EVERY LINK VERIFIED
+
+Verified pass 447's claim rather than trusting it. It holds exactly:
+
+    trading/scheduler.py:1794   MONEY_BUTTON_MAX_ROUND_TRIP_COST default 0.0035 = 35bp
+                                and this gate sits FIRST, before every price-action rung
+    services/round_trip_cost.py:89   TOKEN_ROUND_TRIP holds SIX tokens
+         WETH 11bp  ETH 11bp  USDC 11bp  CBETH 30bp  AERO 435bp  KTA 7498bp
+    services/round_trip_cost.py:100  DEFAULT_TOKEN_ROUND_TRIP 0.0070 = 70bp, everything else
+
+Exactly FOUR tokens can clear the first gate: WETH, ETH, USDC, CBETH. AERO and KTA
+are priced OUT. Every other streamed symbol is refused at 70bp, which is an
+ASSUMPTION -- round_trip_cost.py:83-88 says so itself and calls it deliberately
+pessimistic because understating cost is the direction that loses money. That
+reasoning is CORRECT and is not to be reversed.
+
+THE COMPLETE CHAIN:
+
+    step 6 blocks
+      <- the gate reads ONLY approved_ids = {money_button}        pipeline.py:4715
+      <- money_button has 1 ghost round trip in 14.8 days         0.00/day, measured
+      <- its FIRST gate admits 4 tokens of 160 streamed           scheduler.py:1794
+      <- because 154 of them are UNMEASURED and default to 70bp   round_trip_cost.py:100
+
+and separately, the strategy that DID trade live (atf_static, live=18, -0.18637)
+is correctly demoted for losing money live.
+
+NOTHING IN THIS CHAIN IS A BUG. Every link is a guard doing its job. That is
+exactly why no gate should be loosened to fix it.
+
+THE CHEAP LEVER IS THE LAST LINK, NOT THE FIRST. The 70bp default refuses tokens
+NOBODY HAS MEASURED, including the deepest pools on the tape -- [e0d52af3] names
+CBBTC (7.6M liq) and CBXRP (117M liq), both assumed at 70bp only because no one
+priced them. Measuring a deep token does not weaken the guard, it FEEDS it: if
+CBBTC prices under 35bp it enters the universe ON EVIDENCE, which is what the
+guard is for. This is the argument for [ec37fd2e] (measured WETH round trip) and
+[017594f6] (real slippage on deep-pool pairs) -- both feed the table that is
+currently refusing 154 symbols on an assumption.
