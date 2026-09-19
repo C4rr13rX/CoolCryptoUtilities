@@ -16258,3 +16258,63 @@ only strategy that publishes a score to `trading_ops`. donchian_breakout,
 rsi_reversal and supertrend_follow remain UNTESTED because their signals are not
 in this table -- that is now the whole of the remaining question, and finding
 their signal source is the larger half of [310c3dad].
+
+## Pass 486 (Echo, senior, solo) -- four routes priced, three closed on arithmetic
+
+Commands, all read-only, all reproduce:
+    python -X utf8 scripts/tape_drift_baseline.py
+    python -X utf8 scripts/per_strategy_tape_skill.py
+    python -X utf8 scripts/expected_return_calibration.py
+
+ROUTE: "the tape drifts down, so a long-only bot loses by construction".
+  CLOSED, REFUTED. Unconditional forward return, 148 symbols on a fixed 10-min
+  grid over 7d, median across symbols per window: 15min +0.94bp CI [-0.06,
+  +1.94] over 462 windows; 45min +4.21bp CI [+2.10,+6.33] over 442. The tape
+  is flat at 15 min and drifts UP at 45. It is not the enemy.
+  NOTE FOR ANYONE AGGREGATING THIS STORE: mean-of-window-MEANS on the same
+  rows is +167,333bp CI [-160320,+494987]. Five orders of magnitude from the
+  median. Use a median or the number is void.
+
+ROUTE: "entry selection is actively harmful -- it picks losers from a
+  zero-mean pool". CLOSED, REFUTED. Accepted arm vs the MEDIAN symbol on the
+  same tape, paired inside 10-min windows: 15min +1.46bp CI [-5.73,+8.66],
+  MDE 7.19bp; 45min +2.73bp CI [-18.13,+23.60], MDE 20.86bp. Both MDEs under
+  the 27.77bp toll, so both nulls are informative. Selection ties a random
+  symbol pick. This is a SECOND comparator agreeing with p485's accepted-vs-
+  refused null (+2.58bp, MDE 11.37bp), and it is the tighter of the two.
+
+ROUTE (a): "hand-approve one strategy at a minimum clip and let live fills be
+  the evidence". CLOSED ON ARITHMETIC. atf_static -- the only strategy with a
+  measurable edge -- beats its tape by +2.69bp CI [+0.16,+5.21] over 380
+  paired windows, MDE 2.52bp. The live-receipt toll is 27.77bp. Expected value
+  is -25.09bp per round trip, by design. That IS the -0.1864 over 18 trades.
+  The edge is MARGINAL (p about 0.047 one-sided, 2 strategies tested); even at
+  the CI's upper bound of +5.20bp the lane is 5.3x short.
+
+ROUTE (b): "attack the cost floor / restrict to deep pools". CLOSED AS
+  WRITTEN. Per-symbol, 14 of atf_static's symbols reach 5+ paired windows and
+  ZERO have a CI excluding zero -- the pooled +2.69bp does not concentrate.
+  And the universe restriction is self-defeating: atf_static's 7d proposal
+  book is 437 distinct symbols / 2759 proposals, of which WETH-USDC is 4
+  (0.14%), AERO-USDC 1, CBBTC-USDC 1. The top 6 names (ZORA, LINK, VIRTUAL,
+  UNI, DRB, VVV) are 50.1%. Restricting to deep pools does not make the
+  edge-bearing strategy cheaper; it makes it silent at 4 proposals a week.
+
+ROUTE: "tune a threshold on expected_return". CLOSED. The field is a FRACTION
+  (150bp to 1500bp, median 500bp) and is 214.4x its own outturn at 15min,
+  56.6x at 45min. Spearman rho +0.0453 (perm p=0.1129, 2000 shuffles) and
+  +0.0513 (p=0.0850). MDE 18.32/19.26bp, both under the toll. 80% of rows sit
+  at exactly the 150bp floor, so a threshold can only separate the top 20% --
+  and that top 20% realises a median of exactly 0.00bp.
+
+OPEN, AND THE ONLY NAMED MECHANISM LEFT -- filed as [aca39497]. expected_return
+  is largest where the tape is THINNEST. Top two deciles: 19.4% of rows have an
+  exactly-unchanged 15-min forward price vs 0.3% in deciles 1-8 (65x), median
+  716 ticks/symbol vs 1242 (-42%), spread over 40 symbols vs 11. The forecast
+  is ranking measurement error from sparse series. RULED OUT as the mechanism:
+  symbol rarity (only 2.8% of top-decile rows are on symbols proposed <=2x).
+
+REJECTED THIS PASS, premise falsified: [e1101dc6] "71 of 72 strategies persist
+  no per-tick signal, build an emitter" -- they DO. trading_ops action='enter'
+  rows carry strategy_id in details, 2815 of 2815 attributed, 16 strategies,
+  plus score/confidence/expected_return. [310c3dad] answered by the same data.
