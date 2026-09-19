@@ -15467,3 +15467,25 @@ gross +12.19bp CI [-1.07,+25.44] -- spans zero, so gross is UNMEASURED.
 OPEN, and it is the whole ballgame: WHAT BUILDS bus_actions AND WHY DOES THE
 CANDIDATE SET HAVE EXACTLY ONE MEMBER? Thread to pull: c0d3rv2_atf_candidate.
 Filed [01444d9a].
+
+### Pass 483 addendum 2 -- MECHANISM CORRECTED, counts stand
+
+The 6412-0 census is real but compares TWO RAILS THAT WERE NEVER COMPARABLE.
+bus_actions is emitted at services/atf_static_strategy.py:1793-1795, INSIDE
+atf_static's own module. No candidate enumeration at that layer, no ranking
+money_button is losing. money_button is on trading/scheduler.py:857.
+
+REAL CAUSE (trading/scheduler.py:32-47): money_button is TWO RULES IN OPPOSITE
+DIRECTIONS. The approved plugin trading/strategies/money_button.py is MOMENTUM
+CONTINUATION -- declines unless 5m, 10m AND 30m returns are ALL POSITIVE
+(momentum_not_aligned). The scheduler's _money_button_candidate is BUY THE DIP
+(2-5% BELOW peak) and was correctly relabelled away, since one id pooled buying
+strength with buying weakness so neither could graduate on its own evidence.
+
+SO THE APPROVED STRATEGY IS NOT STARVED -- IT DECLINES ITS OWN TICKS on a
+condition that is rarely true. 2 ghost trades lifetime, none in 14.6 days,
+against a 25-trade bar.
+
+OPEN QUESTION FOR THE OPERATOR: is money_button the momentum rule simply the
+WRONG HORSE? atf_static has 57 ghost and 18 live trades and is what produces.
+Measure momentum_not_aligned fires vs ticks offered, and put the ratio up.
