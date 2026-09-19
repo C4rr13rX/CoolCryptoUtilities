@@ -18589,3 +18589,51 @@ it. Replaced with a direct assertion on `token_round_trip_cost('CBBTC-USDC')`.
 
 STATUS: [23bb42fd] diagnosis COMPLETE, edit UNTOUCHED, not marked done.
 services/round_trip_cost.py is byte-identical to how this pass found it.
+
+### Pass 494 RETRACTION -- my CBBTC ban finding was TEST OUTPUT. The cost findings survive; the ban finding does not.
+
+ROUTE TRIED: unblock CBBTC, the only token measured cheap enough to trade, by
+lifting what I believed was a permanent unreadable-fill entry ban (7,499 log
+fires, all CBBTC-USDC).
+
+RESULT: **CLOSED NEGATIVE -- THE PREMISE WAS FALSE.** Retracted by me in the
+same pass, before handover.
+
+`logs/system.log` is written by the test suite, by CLI readers AND by
+production, with NOTHING in the line marking which. `_Swapper`, `_OldSwapper`
+and `_DeadSwapper` exist ONLY under `tests/`. Production's `SwapService` HAS
+`read_fill` (`services/swap_service.py:151`), so the `no_fill` branch that
+produced my entire case is UNREACHABLE outside a test double.
+
+Verified against the STORE, not the log:
+
+    python -X utf8 scripts/tx_forensics.py --symbol CBBTC-USDC
+
+      all four hashes I built the case on   <-- BOOKED
+      booking rows present, size ~9.27e-06, spent 0.75 each
+      rows citing an unreconciled settled buy: 0
+      newest activity: entry-refused-symbol-motion / entry-arbitration
+
+CBBTC IS NOT ENTRY-LOCKED. It is refused by the MOTION GATE like everything
+else -- an ordinary refusal, not a ban.
+
+THIS IS THE SECOND TIME THIS LOG LINE HAS COST A SPRINT ITEM. `[df638247]` was
+filed, estimated at 5 points and dealt on it; every factual claim was false.
+`scripts/tx_forensics.py` exists BECAUSE of that. I did not run it until the
+end of the pass, and only then because I went looking for where `_OldSwapper`
+is defined.
+
+WHAT DIES: the 7,499 count, the four-hash trace, the split hypothesis, the
+`_OldSwapper` root cause, the p1 raise on `[8b978275]` (reverted to p2), and my
+recommendation that unblocking CBBTC was the highest-value next action.
+
+WHAT SURVIVES, each checked as store-derived rather than log-derived:
+  * the whole cost-table audit (`trade_fills` / `trade_outcomes`)
+  * the `fee_cost` two-constants finding
+  * the pass-493 self-audit of `strategy_replay_table.py`
+  * CBBTC's thin tape (`market_stream`)
+
+THE RULE, restated because I broke it in the same pass I applied it: a claim
+derived from `system.log` is NOT evidence about production until the STORE
+agrees. Run `tx_forensics --symbol` first. I checked the store for the cost
+work and did not for the ban work.
