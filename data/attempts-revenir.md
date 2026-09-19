@@ -18133,3 +18133,82 @@ have been entered; one of its two rows is the +0.2420 that flatters -0.1864.
 CAVEATS: CBBTC n=9, AERO n=16, everything else n=2-5 -- the tail medians are not
 stable. Doubled per-leg median, not a matched round-trip pairing. Only the
 pooled 48.49 and the AERO/CBBTC pair are worth spending.
+
+## PASS 493 -- REPLAYED EVERY REGISTERED GATE OVER THE SAME 168h OF TAPE. NOT ONE STRATEGY IN THE REGISTRY HAS A GROSS EDGE THAT SURVIVES OUTLIER REMOVAL. CLOSED.
+
+ROUTE TRIED: generalise pass 441's single-strategy replay harness to the whole
+registry (item [f77cb49a]). New read-only instrument, scripts/strategy_replay_
+table.py. It calls each strategy's OWN shipped evaluate(state, ctx) -- never a
+hand-copy of its rule -- over the same 168h tick store, prices each fire against
+the per-token round trip, and ranks by mean net with a t-stat beside every mean.
+
+  python scripts/strategy_replay_table.py --hours 168 --per-token
+
+FIRST RESULT, AND IT IS THE POINT OF THE ITEM. 147 symbols, 35,851 ticks,
+31,991 evaluations per strategy:
+
+  strategy              fires   fire%  resolved  win%  mean gross  t     mean net   t
+  supertrend_follow        98  0.306%       98   20%   +175.301%  0.999  +174.605%  0.995
+  mean_reversion           22  0.069%       21   38%     +1.730%  1.335    +0.702%  0.522
+  stochastic_reversal     146  0.456%      143   17%     +0.695%  0.987    -0.279% -0.392
+  rsi_reversal            906  2.831%      904   17%     +0.489%  2.568    -0.518% -2.654
+  bollinger_squeeze        22  0.069%       22    9%     -0.360% -1.414    -1.060% -4.161
+  macd_momentum            20  0.062%       20    0%     -0.316% -1.311    -1.263% -3.528
+  money_button             29  0.091%       29   10%     -0.765% -3.734    -1.465% -7.149
+  donchian_breakout       406  1.269%      403   22%     -0.670% -1.266    -1.705% -3.204
+  (10 more: 0 fires in 31,991 evaluations each)
+
+EVERY MEAN NET IS NEGATIVE except two rows whose t is under 1.4. ONE row
+carried a t>2 gross: rsi_reversal at +0.489%, t=2.568, n=904.
+
+THEN I KILLED IT. The per-token split -- the criterion that looked like a
+nice-to-have -- is what did it:
+
+    TILCAYO-USDC     n=   6  sum  +247.807%  =  +56.3% of the pooled gross
+    BLUECHIP-USDC    n=  94  sum  -151.428%  =  -34.4%
+    LAPTOP-USDC      n=  13  sum  +125.416%  =  +28.5%
+    COBEE-USDC       n=   1  sum  +104.693%  =  +23.8%
+
+SIX ROWS of one symbol are 56% of the whole edge. Drop TILCAYO and LAPTOP --
+19 of 903 rows, 2.1% of the sample:
+
+    ALL          n=903  mean gross +0.4873%  t=+2.557   median -0.0070%
+    MINUS 2 junk n=884  mean gross +0.0756%  t=+0.568   median -0.0172%
+    bootstrap 95% CI on the minus-junk MEDIAN gross: [-0.0314%, +0.0000%]
+
+The only measured gross edge in the registry is 19 rows of feed contamination.
+It does not survive. supertrend_follow's +175.301% is the same defect louder --
+a mean gross of 175% at t=0.999 over 98 rows is one poisoned window, and a
+table without a t column would have crowned it.
+
+CLOSED: "some other registered strategy has the edge money_button lacks". No.
+Seventeen gates, one tape, one cost model, and the answer is uniform.
+
+55 OF 72 STRATEGIES CANNOT BE REPLAYED AT ALL, listed with reasons rather than
+dropped:
+  * 54 MultiHorizonStrategy wrappers -- horizons.py's evaluate never reads
+    state.samples; it calls _PROVIDER.get_bars(), and HistoryProvider._build
+    anchors on now = time.time(). At a historical tick they answer about TODAY.
+  * atf_static -- trading/strategies/atf_static.py:28 reads latest_signals()
+    with an 1800s freshness window. Same defect, and it is the strategy that
+    carries the entire -0.1864 live book.
+  These are not slow to replay, they are IMPOSSIBLE to replay, and that means
+  the graduation funnel's top four candidates (atf_static, rsi_reversal@1w,
+  donchian_breakout@5d, obv_accumulation@1w) are accumulating ghost evidence
+  nobody can reproduce offline.
+
+A DETECTOR I BUILT AND THREW AWAY, recorded so it is not rebuilt: hand each
+gate a +40% ramp, a -40% crash and a flat line, call it window-blind if all
+three return the same verdict. It called 15 of 18 blind, including mean_
+reversion and macd_momentum. The flaw is that "declined" is one bucket: three
+correct refusals for three different reasons are indistinguishable from never
+having looked. The shipped script names the now-anchored gates from SOURCE and
+reports every zero-fire row as "refusing or window-blind, indistinguishable".
+
+CAVEATS, and they all point the same way -- the table is OPTIMISTIC:
+  * market_stream has no volume, so every volume guard is inert; fire counts
+    are upper bounds.
+  * Cost is the TOKEN_ROUND_TRIP constant. Pass 492 measured live AERO fills at
+    37.45bp against the quoter's 13.58bp, so the constant is a LOWER bound.
+  * Nothing downstream of evaluate() is replayed. This is the GATE's verdict,
+    not the lane's.
