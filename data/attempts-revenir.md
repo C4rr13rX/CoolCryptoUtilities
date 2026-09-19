@@ -14329,3 +14329,43 @@ DISJOINT for this strategy and only the accumulator holds anything. The
 +0.1030 is self-reported by the writer and no de-contamination instrument in
 this repo can reach it. [82662e5d] corrected accordingly -- the job is making
 an unaudited counter auditable, NOT hunting a restatement.
+
+### PASS 478 FIFTH ADDENDUM -- TWO PRIORITY-1 ITEMS CONTRADICT ON SPENDING REAL MONEY
+
+Found while closing out, by reading [23ad8727] rather than trusting its title.
+
+  [23ad8727] EXECUTE THE LIVE TRADE: approve atf_static, clip 10 dollars.
+             Echo p424, on a DIRECT AND REPEATED USER INSTRUCTION. Argues the
+             7 demotions are a COST verdict misread as a signal verdict: all
+             17 losing trips ran at the 0.75 clip where a round trip is 0.933%
+             of notional, versus 0.427% at 10 dollars. Concludes: raise clip,
+             approve, trade. Contains a RESTART step.
+
+  [fdeb0316] atf_static is 0.45pp short of break-even GROSS at an INFINITE
+             clip. Break-even gross 0.4774% at the observed clip, 0.3187% at
+             an infinite one; atf_static delivers -0.13%. Raising 2.20 -> 20
+             dollars buys 0.14pp of a 0.61pp gap. Concludes, verbatim: the
+             clip is worth taking and IS NOT SUFFICIENT. REFUTED.
+
+Both p1, both todo, both about atf_static, neither references the other. One
+says the clip is the fix; the other measured the clip and says it closes under
+a quarter of the gap.
+
+WHY IT IS URGENT AND NOT MERELY UNTIDY: [23ad8727] restarts production, and per
+the first PASS 478 entry a restart ARMS REAL MONEY (persisted
+auto_execute_approved True, bot.py:12847 unguarded restore, bot.py:1557 treats
+UNSET as armed). So taking [23ad8727] means restarting into live execution on a
+strategy another p1 item measures as unable to pay at ANY clip size.
+
+NOT RESOLVED THIS PASS, DELIBERATELY. I argued route (b) negative earlier on
+[fdeb0316]'s arithmetic, so I am the wrong party to arbitrate it in the last
+minutes of a pass, and [23ad8727] carries a direct operator instruction that is
+not mine to downgrade quietly. Neither item was rejected or reprioritised.
+
+THE ONE MEASUREMENT THAT KILLS ONE OF THEM: atf_static's gross as a percentage
+of notional on the de-contaminated population. [fdeb0316] criterion 1 already
+asks for exactly this and nobody has produced it.
+
+ALSO STILL OPEN: [23ad8727] note (6) -- the author could not establish whether
+production was running, and could not distinguish a clean negative from a
+failed command.
