@@ -14973,3 +14973,63 @@ strength of a tautology.
 
 n SHRINKS AS THE HORIZON GROWS (CBBTC 286->200, COMP 233->140) because long
 windows run off the end of a 168h tape. The longest cells are the thinnest.
+
+### Pass 480, fifth measurement -- [5efa6ba2] PARTIAL: the clip does NOT explain the 6.3x AERO disagreement, and `probe_cost_pct` disagrees with its OWN curve.
+
+I started [5efa6ba2] rather than only filing it. Two results, one negative
+(good -- it removes the obvious suspect) and one new defect.
+
+NEGATIVE, AND IT KILLS THE EASY EXPLANATION. The census stores a full cost
+CURVE per symbol, so I checked whether the disagreement is just a clip-size
+mismatch. AERO's curve:
+
+    $0.10 0.1010 | $0.25 0.1004 | $0.50 0.1004 | $0.75 0.2429
+    $1.00 0.1302 | $2.00 0.1303 | $4.00 0.1020 | $6.00 0.1029
+
+At the $2.00 clip the census reads 0.1303% = 13.03bp. 879ea6e reads 0.6395%
+= 63.95bp AT THE SAME $2 CLIP. Still 4.9x apart. THE CLIP IS NOT THE
+EXPLANATION and that suspect is now closed. The leading remaining hypothesis
+is FEE TIER -- this census pins AERO at `fee_tier: 500` and I did not
+establish which tier 879ea6e used. That is the next thing to check and it is
+cheap.
+
+NEW DEFECT, AND IT IS THE REASON I LOOKED: `probe_cost_pct` IS NOT THE COST
+AT THE $2 MEDIAN CLIP, despite `fee_tier_chosen_by` describing itself that
+way. Scalar vs the curve's own $2.00 point:
+
+    sym       probe_pct   at $2.00   min of curve
+    AERO      0.1010      0.1303     0.1004
+    WETH      0.0408      0.0201     0.0200
+    CBBTC     0.1449      0.1479     0.1096
+    VIRTUAL   0.6762      0.6762     0.1290
+    COMP      33.0148     33.0153    3.4010
+    DRB       15.0759     15.0762    1.4400
+    VVV       2.1247      2.1247     2.0072
+    CBETH     0.6712      0.6712     0.6030
+    AAVE      0.6026      0.6026     0.6000
+
+Most symbols agree, but AERO's scalar is 29% BELOW its own $2 point and
+WETH's is 103% ABOVE its own $2 point (4.08bp scalar vs 2.01bp actual). So
+the scalar is not reliably the $2 cost and ANY consumer reading
+`probe_cost_pct` as "the" cost inherits a per-symbol error of unpredictable
+SIGN. That includes my own h* table earlier in this pass -- corrected below.
+
+CORRECTED h* USING EACH CURVE'S ACTUAL $2.00 POINT (mean|move| at 90min
+unchanged from my measurement above):
+
+    WETH    cost 2.01bp   move 35.0bp    h* = 0.529   (was 0.559)
+    AERO    cost 13.03bp  move 103.0bp   h* = 0.563   (was 0.549)
+    CBBTC   cost 14.79bp  move 130.4bp   h* = 0.557   (was 0.556)
+
+WETH IMPROVES AND AERO WORSENS, and they SWAP ORDER. The ranking of the two
+most-traded symbols in this system was set by a scalar that does not match
+its own curve. That is exactly the kind of quiet inversion recorded in
+symbol-blind-fee-inverts-which-tokens-look-payable.
+
+NOTE THE CURVE IS NON-MONOTONE, as [bc7b37c2] warned: AERO is 0.1004 at
+$0.50, 0.2429 at $0.75, then 0.1302 at $1.00. Pricing a trip at the wrong
+clip is not a rounding error here.
+
+UNCHANGED BY ALL OF THIS: COMP (h* 5.203) and DRB (h* 5.842) still fail at
+any tier or clip -- their minimum-of-curve costs, 3.4010% and 1.4400%, are
+STILL larger than their whole mean move. [449305ff] stands.
