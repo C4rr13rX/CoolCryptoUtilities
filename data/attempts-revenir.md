@@ -14862,3 +14862,61 @@ their own toll -- not a timing or clip problem.
 This is consistent with, and independent of, pass 478's book-wide finding
 (de-contaminated gross -0.0744% of notional vs a +0.3187% variable floor).
 Different instrument, different window, same sign.
+
+### Pass 480, third measurement -- THE MISSING TERM IS DIRECTION, NOT MOVEMENT. Six of eight symbols clear their OWN cost, and WETH needs 55.9% direction accuracy at 90 min.
+
+This REFINES my own addendum above. I wrote "the missing term is GROSS".
+That was measured on SIGNED gross at the gates (best +9.53bp, up-rate 51.9%).
+A different question -- is there enough MOVEMENT to pay the toll at all --
+has a different and more hopeful answer, and conflating them would have been
+my error.
+
+METHOD: per base symbol, 168h of market_stream, mean|forward move| at its
+best horizon, against that symbol's OWN round-trip cost from
+data/round_trip_quote_census_20260917T190210Z.json (probe_cost_pct, $2 median
+clip). h* = 0.5 + cost/(2*mean|move|) is the direction accuracy a strategy
+must hit to break even. h*>=1.00 means a PERFECT oracle still loses.
+
+    sym       n      cost_bp  mean|mv|bp  h*
+    AERO      3067   10.1     103.0       0.549
+    CBBTC     286    14.5     130.4       0.556
+    WETH      1304   4.1      35.0        0.559
+    CBETH     292    67.1     311.3       0.608
+    VVV       678    212.5    317.8       0.834
+    VIRTUAL   941    67.6     83.7        0.904
+    COMP      233    3301.5   351.0       5.203   PERFECT ORACLE LOSES
+    DRB       503    1507.6   141.1       5.842   PERFECT ORACLE LOSES
+
+SO THE UNIVERSE AXIS IS NOT CLOSED, unlike the horizon axis. On the three
+deep symbols the bar is 55-56% direction accuracy, not 90%. That is the
+first number in this repo's recent history that is not obviously out of
+reach. COMP and DRB are unpayable at ANY skill and should never be selectable.
+
+EVERY symbol's best horizon was 90 MIN -- the longest I measured -- and
+mean|move| was STILL RISING there. So the optimum may lie BEYOND 90 min and
+this sweep did not bracket it. That is a concrete, cheap follow-up and it is
+the one place the horizon axis is NOT closed: I closed 2-90 min, nobody has
+measured past 90.
+
+THREE CAVEATS, and the first is load-bearing:
+ 1. OVERLAPPING WINDOWS. Every tick is a window start, so the effective
+    independent n is far below the n column. CBBTC 286, CBETH 292 and COMP
+    233 are thin even before that discount. AERO (3067) and WETH (1304) are
+    the only two I would quote without a sequential re-run.
+ 2. mean|move| is a PERFECT-ORACLE ceiling, unattainable by construction. It
+    proves movement is SUFFICIENT; it proves nothing about whether any
+    strategy here can call direction at 55.9%. The measured up-rate on the
+    populations we actually select is 51.9% -- a coin flip.
+ 3. Costs are QUOTES, not fills; slippage and MEV are not modelled.
+
+**AUDIT FINDING -- TWO COST SOURCES DISAGREE 6x ON AERO AT THE SAME CLIP, AND
+THE STANDING INSTRUCTIONS QUOTE THE EXPENSIVE ONE.** The 2026-09-17 census
+reads AERO 0.101% at the $2 median clip. The operator's own 879ea6e
+measurement, quoted in every briefing and in [bc7b37c2], reads AERO 0.6395%
+at $2 -- and the standing instruction built on it says AERO "costs more per
+round trip than any edge ever measured here". These cannot both be right.
+WHICH ONE WINS DECIDES THE UNIVERSE: at 10.1bp AERO has the BEST h* on the
+board (0.549) on the largest n (3067) and is the most-traded ghost symbol;
+at 64bp its h* is 0.811 and the standing advice to avoid it is correct.
+I am NOT resolving this by picking the number that suits my conclusion.
+It needs a third, independent read before either is trusted. FILED.
