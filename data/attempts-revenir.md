@@ -14457,3 +14457,35 @@ larger finding than anything filed today -- and it is knowable in one pass.
 PROVENANCE, honestly: this was in output read forty minutes earlier and
 summarised without noticing atf_static's reason string matched money_button's.
 Three posts were spent costing a route the same screen had already closed.
+
+### PASS 478 EIGHTH ADDENDUM -- PRODUCTION IS RUNNING (closes pass 469 note 6)
+
+[23ad8727] note (6), Echo pass 469: "I did NOT establish whether production is
+currently running -- my process check returned no output and I could not tell a
+clean negative from a failed command." Open for nine passes, and it gates the
+restart step of the one item that would spend money.
+
+MEASURED via Win32_Process with the COMMAND LINE matched, not a bare name:
+
+  PID  9792   started 2026-09-18 16:47:59
+  PID 22264   started 2026-09-18 16:47:59
+  both: .venv\Scripts\python.exe -X utf8 -u main.py --action start_production
+        --stay-alive
+  14 python processes on the box in total
+
+PRODUCTION IS RUNNING, up since 16:47 today (~3h45m). This is a positive
+identification -- the query returned rows and the command lines printed -- not
+an absence of evidence.
+
+TWO PIDS, IDENTICAL COMMAND AND START SECOND. Almost certainly supervisor and
+child (the standing instructions say an external supervisor launches
+production), but the parent/child link was NOT confirmed and is not asserted.
+Check the parent PID before killing anything: kill the wrong one of a
+supervisor pair and it relaunches immediately.
+
+PID 22264 is the py-spy PID named in the memory notes; it is still live, so
+that instruction has not gone stale.
+
+CONSEQUENCE: there IS a running instance -- do not start a second one. And a
+restart of this process ARMS REAL MONEY unless LIVE_TRADES_DRY_RUN=1 is set
+explicitly first (see the first PASS 478 entry).
