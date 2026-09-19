@@ -15033,3 +15033,40 @@ clip is not a rounding error here.
 UNCHANGED BY ALL OF THIS: COMP (h* 5.203) and DRB (h* 5.842) still fail at
 any tier or clip -- their minimum-of-curve costs, 3.4010% and 1.4400%, are
 STILL larger than their whole mean move. [449305ff] stands.
+
+### Pass 480, sixth -- [5efa6ba2] NARROWED AGAIN: the disagreement is NOT AERO-specific, and it INVERTS on CBBTC. So it is not a scale factor.
+
+I read 879ea6e itself rather than the briefing's summary of it. It records NO
+fee tier -- it used scripts/routing_arbitrage_census.py, which prices a CLOSED
+LOOP, while the 20260917 census prices a "same-tier round trip". Different
+instruments.
+
+Comparing the two sources at the SAME $2 clip, per symbol:
+
+    symbol   879ea6e    census@$2   ratio
+    WETH     0.1074%    0.0201%     5.3x   (879ea6e HIGHER)
+    AERO     0.6395%    0.1303%     4.9x   (879ea6e HIGHER)
+    CBBTC    0.0728%    0.1479%     0.49x  (census HIGHER -- INVERTED)
+
+THIS KILLS THE "ONE OF THEM IS SYSTEMATICALLY WRONG" THEORY. If 879ea6e simply
+double-counted a leg or charged a wrong flat fee, every symbol would move the
+same way. WETH and AERO go one way by ~5x and CBBTC goes the OTHER way by 2x.
+That is the signature of a PER-SYMBOL path difference -- a different fee tier,
+a different pool, or a different route per token -- not a global arithmetic
+error in either instrument.
+
+CONSEQUENCE FOR THE ITEM: whoever takes [5efa6ba2] must compare POOL ADDRESS
+AND FEE TIER PER SYMBOL between the two instruments, not just re-quote AERO.
+Re-quoting AERO alone would produce a number and still not explain CBBTC, and
+the item would come back.
+
+AND IT WIDENS THE BLAST RADIUS BEYOND AERO. The standing instruction's WETH
+figure -- "WETH round-trips for ~0.04-0.11%", the cheapest-token claim the
+whole deep-pool universe argument rests on -- is itself one of the two
+disputed readings. The census says WETH is 0.0201% at $2, i.e. FIVE TIMES
+CHEAPER than the number every briefing quotes. If the census is right, WETH is
+cheaper than anyone here has assumed and the deep-pool case is STRONGER, not
+weaker. Nobody should assume this disagreement resolves against the cheap
+reading just because caution feels safer -- caution is not a measurement.
+
+STILL TRUE REGARDLESS: COMP and DRB fail at any tier or clip ([449305ff]).
