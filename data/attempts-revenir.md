@@ -16342,3 +16342,31 @@ NET POSITION AFTER PASS 486: atf_static is closed from BOTH ends. Entry
   break-even. The remaining gap is not a tuning gap -- it needs a different
   signal, and no other strategy on the roster produces enough proposals to
   measure (1-5 each in 7 days against atf_static's 2761).
+
+ROUTE (pass 486, handed over then answered in the same pass): "the other 15
+  strategies are STARVED of decision cycles ([583ba889]); unstarve them and we
+  get 15 measurable signal candidates." CLOSED, REFUTED. The evaluation count
+  IS recoverable -- trading_ops action='hold' rows carry strategy_id, 2890 of
+  12765 over 7d across 36 distinct strategies (more than the 16 that propose).
+  Per strategy: atf_static 2764 enter / 12 hold = 2776 evals at a 99.6% enter
+  rate; rsi_reversal@1w 5/760; stochastic_reversal@1w 1/443; donchian_breakout
+  @5d 5/343. atf_static evaluations 2776 against 2930 for all 37 OTHER
+  strategies COMBINED -- they get MORE, not fewer. 13 strategies have 30+
+  evaluations; exactly 1 has 30+ entries. They are evaluated abundantly and
+  DECLINE about 99% of ticks. DO NOT BUILD A SCHEDULER FIX.
+
+THE REFRAME THAT FALLS OUT OF IT, and it is the most useful thing in this
+  pass: atf_static enters on 99.6% of the ticks it sees and holds 12 times in
+  7 days. It is a NEAR-UNCONDITIONAL BUYER, not a selective signal. That one
+  fact explains, with no further mechanism, (i) why its edge over the tape is
+  +2.69bp -- it approximately IS the tape, (ii) why its expected_return is a
+  config literal for 80% of rows -- a constant decision needs no forecast, and
+  (iii) why the entry gate carries no forward-return information -- there is
+  no selection upstream of it to carry any. Treat these as ONE finding.
+  Everything measured in passes 485-486 is consistent with "we have been
+  measuring the skill of a strategy that does not refuse."
+
+RECORD CORRECTION: the standing note that no refusal names its strategy holds
+  for the 682 refusal-STATUS rows but NOT for action='hold' rows, 22.6% of
+  which are attributed across 36 strategies. Evaluation counts per strategy
+  ARE available.
