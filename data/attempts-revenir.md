@@ -15860,3 +15860,33 @@ thing is UniswapV3's exhaustive 2-hop search on tokens with no pool, ~241/day at
 suggests something like it exists -- the right fix is to NOT ASK for a token
 with no direct or 2-hop pool, which costs 0s instead of 45s. Better than
 anything filed today. Verify the snapshot can answer it before building on it.
+
+### Pass 484 addendum 6 -- the pre-filter is NOT buildable on the snapshot
+
+Checked before letting addendum 5's suggestion stand. `data/pool_depth_
+snapshot.json`, 4,187 bytes, 168 keys:
+
+  CBADA-USDC -> 3450      CBHYPE-USDC -> ABSENT
+  CBETH-USDC -> 2564.0    CBLTC-USDC  -> ABSENT
+                          ARGUS-USDC  -> ABSENT
+                          VCAT-USDC   -> ABSENT
+
+FOUR OF SIX ABSENT, and they are exactly the symbols a pre-filter must rule
+out. A filter with no row for the token cannot skip the quote, so it saves
+nothing on the population that costs 45s. **NOT BUILDABLE ON THIS FILE.**
+
+The file states its own limits correctly, which is worth copying: "null means
+ASKED AND UNRESOLVED, which is not the same as thin and not the same as
+unasked. POINT-IN-TIME: a pool can drain or fill."
+
+SECOND THING, cutting against depth-based selection generally: of the two
+symbols the snapshot DOES cover, CBETH at $2,564 quotes 6 of 6 while CBADA at
+$3,450 -- DEEPER -- quotes 1 of 4. Depth does not predict quote success. n=2,
+not a result, but it points the same way as the standing finding that pool
+depth does not predict round-trip cost.
+
+OPEN FOR THE NEXT PASS, honestly labelled UNVERIFIED: can UniswapV3Local be
+asked "does a direct or 2-hop pool exist" as a CHEAP question, separate from
+"quote me a route"? If yes, a 45s call becomes a fast one and it is the best
+throughput fix on the board. If no, the deadline is doing the only job
+available to it and this thread closes.
