@@ -17715,3 +17715,33 @@ thin-tape symbols are exactly the ones this gate waves through, the universe
 filter and the forecast bias are the same defect seen twice. One read-only
 query: intersect the symbols skipped at MIN_WINDOWS against the thin-tape
 population behind the 214x. NOT MEASURED THIS PASS.
+
+### MEASURED, same pass: the join lands. The gate admits 94 it cannot judge
+### against 14 it can
+Replicated _rebuild's own loop over the live feed, recording which branch each
+symbol leaves by. MIN_WINDOWS=200, MIN_PAY_RATE=3.0%, 15-minute window:
+
+    feed symbols                 147
+    ALLOWED never-ban              4   ETH/WETH -USDC/-USDT
+    ALLOWED too thin to judge     94   <-- 64% of the universe
+    ALLOWED measured and pays     14   AERO ALIGN BLUECHIP CAKE COMP DRB LDO MAMO
+    REFUSED                       35
+
+Of the 49 symbols it CAN judge it refuses 35 (71%). Then 94 it cannot judge pass
+untouched, the thinnest on ZERO windows: 1USDC, 3984, AMERICA, AOAS, ARC,
+BASED10, BASEDOG, BENJI, BLND, CADD, COBIE, COINOP -- all 0.
+
+So the gate is not a pay-rate filter with an ignorance exception. It is an
+IGNORANCE FILTER with a pay-rate filter attached, 94 to 14.
+
+THE JOIN CONFIRMED: memory records expected_return is 214x its outturn and
+LARGEST WHERE THE TAPE IS THINNEST. The population this filter waves through is
+the population where the forecast is most inflated. Two findings filed passes
+apart, from different directions, describing one defect. Filed [113a75c0] 3pts.
+
+NOT CLAIMED: that any of the 94 reached an entry -- the quote step and the other
+gates are downstream and cut hard -- or that this has cost money. AND 'refuse
+what you cannot measure' is NOT obviously right: it would ban every new listing
+forever, and a 0-window symbol may be one we started streaming an hour ago. The
+defect is that TOO NEW and TOO ILLIQUID TO EVER PAY are indistinguishable at
+line 213 and get the same ALLOW.
