@@ -15229,3 +15229,50 @@ safe reclaim is one line -- `PRAGMA journal_size_limit` beside the existing
 never a blocking `wal_checkpoint(TRUNCATE)` against the money path.
 
 **Closed:** the WAL as a latency cause. **Open:** the 33%, and the disk.
+
+## Pass 481 addendum -- the disk: cause found, and it is ONE table written by a subsystem we switched off
+
+Chased from the rejected WAL item. All read-only (`mode=ro`, `query_only=1`);
+readers never block a WAL writer, and production (PID 22264) stayed untouched.
+
+**Attribution** -- 800 random rowid *lookups* per table (B-tree point queries,
+not scans), accounting for **98% of the 25.93 GiB file**:
+
+    22.38 GiB  organism_snapshots   337,469 B/row x  71,204 rows   <- 86%
+     2.43 GiB  kv_store             156,398 B/row x  16,692 rows
+     0.26 trading_ops | 0.13 metrics | 0.07 feedback_events
+     0.02 GiB  market_stream    ~0.00 system_logs, trade_fills
+
+**The trading evidence is 0.02 GiB.** `trade_fills` ~1,124 live rows. It is not
+the problem and a prune aimed at `organism_snapshots` cannot harm it.
+
+**The writer is LIVE:** newest snapshot **17 minutes** old; 122 rows in 1h,
+7,235 in 24h, 24,945 in 7d (**35% of the whole table**). Deleting without
+stopping it refills the disk. The brain it serves is **paused and closed
+negative** (`OMEN_STRATEGY_ENABLED=0`).
+
+**Rate, two independent methods, 5% apart** -- this kills the short-window
+objection I raised against myself earlier in the pass:
+
+    A  raw file size, 12.5 min apart : 1.264 GB/day -> 12.6 days headroom
+    B  7d row count x sampled size   : 1.203 GB/day -> 13.2 days
+       (24h window, pessimistic      : 2.442 GB/day ->  6.5 days)
+
+**Two measurement traps recorded, both of which I fell into first:**
+
+1. **`MAX(rowid)` misreads this database by up to 800x.** `system_logs` shows
+   max rowid 6,246,951 but only **~7,808 rows exist** -- the rest are deleted
+   ids. My own "system_logs is 90% of rows, prune the logs" reading came from
+   this and is **wrong**; pruning logs reclaims ~0.00 GiB.
+2. **A modulo-sampled row length is not a byte estimate.** My first attempt
+   returned `n=2` rows for the biggest table and implied 1.8 GiB of content in a
+   25.93 GiB file -- i.e. "it's mostly free pages, VACUUM reclaims 24 GiB".
+   `freelist_count` = **192 pages, 0.0% free** refuted it outright. **That route
+   is CLOSED.**
+
+**VACUUM order is a trap:** an in-place VACUUM needs ~25.9 GiB free against
+14.78 GiB available. Use `VACUUM INTO` a new file, production **stopped**, then
+swap. `auto_vacuum=0`, so freed pages never return on their own.
+
+**Open, on `[1706fe9e]`:** stop the snapshot writer (the actual fix), then
+reclaim at a planned restart. Operator's call -- not taken.
