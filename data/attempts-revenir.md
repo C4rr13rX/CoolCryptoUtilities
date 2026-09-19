@@ -17279,3 +17279,24 @@ accuracy bar is LOWER than stated. One grep. Not done. First thing next pass.
 CAVEAT: n=20 entries / 18 exits at a 0.75 USD median notional, a clip the brief
 already calls below break-even. The 75.00 CONSTANCY is the robust part; the
 24.24 is a bare median over 38 legs with no CI.
+
+### Pass 489 addendum 6 -- the 27.77bp toll is CLEAN. The 79.9% bar stands.
+
+Addendum 5 warned the fixed toll might inherit the 75.00 `slippage_bps` literal,
+which would overstate it and LOWER the 79.9% accuracy bar. Checked. It does not.
+
+  scripts/roundtrip_cost_census.py:150,155 -> realised_slippage_bps()
+  services/fill_cost.py:196-215:
+      sign * (executed_price - expected_price) / expected_price * 10_000
+
+It reads `executed_price` against `expected_price` and NEVER touches the
+`slippage_bps` field. The 27.77bp is built from the observed price gap -- the
+same quantity measured independently this pass at 24.24bp median over 38 legs,
+the right order -- not from the config default.
+
+CONSEQUENCE: the toll is sound, the 79.9% break-even bar stands unchanged, and
+addendum 4's closure (46.4% CI [43.9,48.8]) is NOT weakened. The 75.00 literal is
+still junk in the fill records and will bite whoever reads that field next --
+noted on [7a439149] -- but it is not on the cost path.
+
+Went looking for a reason the conclusion might be too harsh; did not find one.
