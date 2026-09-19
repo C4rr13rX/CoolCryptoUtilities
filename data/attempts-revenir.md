@@ -17510,3 +17510,106 @@ The comment at :83-88 is worth reading before anyone "fixes" the default: an
 unlisted token is UNPRICED and deliberately gets the pessimistic value, because
 understating cost is the direction that loses money. That is sound, and it is
 the opposite of the inverted-admission defect filed on the same table.
+
+## Pass 491 (Echo, senior, solo) -- a correction to my own pass 490, and the
+## never-asserted log map
+
+### CLOSED: "the untracked motion gate makes a fresh clone raise"  -- WRONG, mine
+Pass 490 (me) posted this as an urgent operational finding. It is wrong, and
+the truth is worse. Enumerating every importer rather than the one I knew about:
+
+    grep -rn 'from services.symbol_motion_gate' --include=*.py .
+
+    trading/bot.py:56                     try/except -> stub returns None
+    trading/swap_schedule.py:132          try/except -> stub returns None
+    trading/selector.py:157               try/except -> stub returns None
+    services/atf_static_strategy.py:30    try/except -> stub returns None
+    services/atf_static_strategy.py:1332  try/except -> stub returns None
+    scripts/reinstate_after_stop_jump_fix.py:114
+
+SIX sites, every production one guarded, every stub returning None -- and None
+is ALLOW. A fresh clone / git clean / worktree checkout raises NOTHING. It
+silently stops refusing symbols on the can-this-symbol-move-enough-to-pay axis,
+which is the axis passes 489/490 proved binding. Two of the six sites are
+atf_static, the strategy that owns the whole live -0.1864.
+
+A THIRD mode needs no clone: refusal_reason (services/symbol_motion_gate.py:
+237-244) wraps its own body in try/except Exception: return None, so any
+internal error degrades to ALLOW with the file present. Fail-open is the
+deliberate house pattern (the noqa comments say "a missing gate must not stop
+trading"); for a gate whose job is refusing unprofitable symbols it is
+backwards. Filed [8ad1db3d], 2pts. NOT fixed by me -- senior, production file,
+and nothing is blocked today because the file exists in this tree.
+
+### CLOSED: "sushi and camelot return None on base for an unknown reason"
+Answered by code at pass 457, seventeen passes before I re-asked it in
+[bc5b0e57]. scripts/routing_arbitrage_census.py:152 _providers() already skips
+venues chain_support() marks unsupported, and says so in its docstring:
+
+    sushi    SUSHI_V2_ROUTER = {'arbitrum': ...}    -- no 'base' key at all
+    camelot  CAMELOT_V2_ROUTER['base'] = os.getenv('CAMELOT_V2_ROUTER_BASE','')
+                                                    -- present but EMPTY
+    uniswap  UNI_V3['base'] present                  -- supported, answers
+
+So neither of the three causes my own criterion offered. Sushi is NOT DEPLOYED
+in our table; camelot is DEPLOYED BUT UNCONFIGURED BY ENV. Both refuse in 0.00s
+on a dict lookup before any RPC, so the dead fan-out at main.py:293-297 costs no
+latency and needs no removal. Base has ONE quoting venue and that is a
+configuration fact, not a bug.
+
+### CLOSED: "build an Aerodrome provider so AERO/ZORA price cheaply"  -- CANNOT PAY
+Cut on arithmetic already on this board. net = (2q-1)*move - toll, and pass 489
+measured q = 46.4%, so (2q-1) = -0.072. At a toll of ZERO the net is still
+negative. The best case anyone has produced here, (2q-1) = 0.0138, needs a
+2012bp window against 86.88bp available. A cheaper toll multiplies a negative.
+Five points of provider engineering cannot change the sign of a term it does not
+appear in. [bc5b0e57] re-specified, not rejected: what survives is raising
+priced coverage above 3 of 14 by routing through WETH on the venue we already
+have, because every cost number in this repo is presently measured on 3 symbols.
+
+TRAP RECORDED: a corrected AERO cost may well flip the sign of p90-move-minus-
+cost. That is NOT an opened route -- p90 windows are not selectable ex ante, and
+selecting them IS the q term.
+
+### OPEN, and new: the never-asserted log map  [4e2ca4ea] DONE
+Read-only scan of all 950.5 MB of logs/system.log, numbers/addresses/hashes/
+timestamps normalised out, each template probed against all 381 files under
+tests/ (3.0 MB):
+
+    995,144  WARNING/ERROR lines
+     23,556  distinct templates
+      8,616  asserted somewhere in tests/
+     14,940  NEVER asserted
+
+Top 10 by frequency, classified:
+
+  67695  training: training lease busy; skipping overlap      NEITHER (brain, paused)
+  41189  production: skipping cycle N: backlog N >= N         NEITHER (scheduler)
+  24621  metrics: ghost_trade_snapshot refused N exit row(s)
+         whose ENTRY settled on chain                          MONEY -- evidence rate
+  14517  production: backlog flushed after repeated skips     NEITHER
+  11231  production: sequential task_overrun data_ingest      FEED
+   8533  giving up on chunk after N attempts, skipping        FEED
+   8358  market-stream: websocket error; retrying in Ns       FEED -- the blackouts
+   7440  live-swap: unbooked-entry cannot read fills from
+         receipts; falling back to wallet delta                MONEY
+   7440  live-swap: SETTLED BUY <ADDR> for CBBTC-USDC CANNOT
+         BE MEASURED (no_fill)                                 MONEY -- LIVE BLOCKER
+   6208  token-guard: REFUSED <ADDR> on base: code_1_bytes    MONEY -- universe
+
+The two 7,440s are one event (trading/bot.py:2611-2634, severity=error): the
+receipt read fails, the wallet-delta fallback fails, and the code then REFUSES
+NEW ENTRIES ON CBBTC-USDC "until it can be read". For an already-settled tx it
+never will, so the ban is permanent. Refusing to GUESS the fill is correct and
+must stay -- a guessed fill is exactly this repo's recurring fake-edge failure.
+Coupling an unmeasurable PAST entry to a ban on FUTURE entries is not: the money
+is gone either way. Filed [8b978275], 3pts.
+
+NOT CLAIMED: that this is why the scoreboard is -0.1864, or that CBBTC would
+have been profitable. q is 46.4% and I did not measure CBBTC separately.
+
+The 24,621 line (trading/metrics.py:556-563) is CORRECT behaviour with a good
+comment. Filed [4c9e55b0] as a MEASUREMENT only: the ~39.7-day graduation ETA is
+computed from a book this line shortens, and nobody has measured by how much.
+
+Scanner lives in the session scratchpad (never_asserted_logs.py), not the repo.
