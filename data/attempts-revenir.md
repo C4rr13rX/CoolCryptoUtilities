@@ -18212,3 +18212,27 @@ CAVEATS, and they all point the same way -- the table is OPTIMISTIC:
     37.45bp against the quoter's 13.58bp, so the constant is a LOWER bound.
   * Nothing downstream of evaluate() is replayed. This is the GATE's verdict,
     not the lane's.
+
+### PASS 493 ADDENDUM -- THE CONCENTRATION GUARD, AND IT EMPTIES THE TABLE
+
+Added a concentration check to the instrument after the first run: the share of
+a strategy's pooled gross held by its single biggest symbol, printed beside the
+t. A t-stat does not catch a heavy tail, and this repo has shipped the same
+defect before (98% of gross in 7 rows). Threshold 40%.
+
+  python scripts/strategy_replay_table.py --hours 168
+
+BOTH t>2 rows fail it, and there were only two:
+
+  rsi_reversal   +0.487% t=+2.557  -> TILCAYO-USDC alone is  56% of pooled gross
+  money_button   -0.765% t=-3.734  -> CBMEGA-USDC  alone is 108% of pooled gross
+
+After the guard EVERY row in the replayable registry reads UNMEASURED or
+0 FIRES. Not one of the 17 replayable strategies has a gross edge, positive or
+negative, that is a property of the RULE rather than of one symbol's tape.
+
+Note the second line carefully: it cuts against a conclusion this loop has been
+leaning on. "money_button's momentum rule has a negative gross edge" is ALSO
+unmeasured -- its -0.765% is one symbol at 108% of the pooled sum. The honest
+statement is that money_button has not been shown to have an edge OR to lack
+one, at n=29 over 168h.

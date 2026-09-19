@@ -309,7 +309,25 @@ def _summarise(row: dict) -> dict:
         return out
     gross = np.array([r["gross"] for r in resolved], dtype=float)
     net = np.array([r["net"] for r in resolved], dtype=float)
+    # CONCENTRATION. Added because the FIRST run of this script produced
+    # rsi_reversal at +0.489% gross, t=2.568, n=904 -- the only t>2 row in the
+    # registry -- and SIX rows of TILCAYO-USDC were 56.3% of that pooled gross.
+    # Dropping TILCAYO and LAPTOP (19 of 903 rows) took it to +0.0756% at
+    # t=0.568. A t-stat does not catch this: it is a mean over a heavy tail,
+    # and this repo has shipped the same defect before (98% of gross in 7 rows).
+    # So the share of the pooled gross held by the single biggest symbol is
+    # computed and printed beside the t.
+    by_symbol_sum: Dict[str, float] = defaultdict(float)
+    for r in resolved:
+        by_symbol_sum[r["symbol"]] += r["gross"]
+    total = float(gross.sum())
+    out["top_symbol"], out["top_share"] = "", float("nan")
+    if abs(total) > 1e-12 and by_symbol_sum:
+        top = max(by_symbol_sum.items(), key=lambda kv: abs(kv[1]))
+        out["top_symbol"] = top[0]
+        out["top_share"] = 100.0 * top[1] / total
     out.update(
+        median_gross=float(np.median(gross)),
         mean_gross=float(gross.mean()),
         mean_net=float(net.mean()),
         t_gross=_t_stat(gross),
@@ -418,6 +436,11 @@ def main() -> int:
             verdict = "fired but NO forward tape: unresolved"
         elif not np.isfinite(r["t_gross"]) or abs(r["t_gross"]) < 2.0:
             verdict = "UNMEASURED (|t| on gross < 2)"
+        elif np.isfinite(r["top_share"]) and r["top_share"] >= 40.0:
+            # A t>2 mean whose sign is held by one symbol is not a measurement
+            # of the RULE, it is a measurement of that symbol's tape.
+            verdict = (f"UNMEASURED -- CONCENTRATED: {r['top_symbol']} alone is "
+                       f"{r['top_share']:.0f}% of the pooled gross")
         elif r["mean_gross"] > 0:
             verdict = "gross edge measured"
         else:
