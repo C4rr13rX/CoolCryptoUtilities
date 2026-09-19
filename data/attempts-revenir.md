@@ -19095,3 +19095,68 @@ DIRECTION call is the part that has to carry it. Per the item's own
 instruction: do not rescale an expectancy arithmetically off this -- the
 n=99 behind +0.1769% contains no WETH fill, so the WETH gross edge is still
 unmeasured and is a separate item.
+
+## Pass 499 (Echo, senior) -- the scoreboard's 18 rows, tied to the chain and decomposed
+
+ROUTE TRIED: close the last open criterion on [42a65c7b] by tying each of the
+18 closed live rows to a settled on-chain transaction hash, then decompose the
+loss into the parts a different clip or a different token would change.
+
+CLOSED, AND CLOSED AGAINST AN INDEPENDENT SOURCE. `python
+scripts/live_book_forensics.py --verify`. All 18 rows carry BOTH an entry and
+an exit tx hash. All 36 legs return a receipt on Base: **36 status=1, 0
+reverted, 0 missing**. The -0.186371459137 is real and chain-verifiable. This
+is corroboration against the CHAIN, not between two of our own books, which is
+what every prior confirmation of this number had been.
+
+WHERE THE HASHES ARE, because five audits missed them: `trading_ops.details`
+as JSON -- the exit leg keyed by `outcome_id`, the entry leg by `trade_id`.
+Joining on either alone recovers half the book and reads as "no hashes exist".
+An absence proven in one table is not an absence in the store.
+
+THE FINDING THE ITEM DID NOT ASK FOR, and it is the larger one: **ZERO of the
+18 rows is WETH.** The entire live book is AERO 9, CBBTC 3, CBETH 2, and four
+one-shot memecoins (BSTONK, BASECAT, CBXRP, BPAD). AERO and CBBTC alone are 12
+of 18 rows and 75% of the $18.29 traded notional. The one token this loop has
+spent three passes costing -- WETH, quoted at 2.06bp round trip on a $10 clip
+-- has never been traded live here, not once.
+
+DECOMPOSITION, -101.9bp of traded notional:
+    gross (direction + slippage)   -46.4bp
+    fee                            -55.5bp
+The fee term is GAS. Median `fee_cost` $0.00405/round trip, independently
+corroborated at $0.0040 by pass 496 via a different route. $0.00405 is 55.5bp
+of a $0.75 clip and 4.0bp of a $10 one. So **54% of the scoreboard loss is a
+cost of trading SMALL, not a cost of trading**, and it is the half that a clip
+divides by 13.
+
+PER-SYMBOL (n, notional, net bp / gross bp / fee bp):
+    AERO-USDC     9  $8.16   -86.9 / -47.8 / -39.2
+    CBBTC-USDC    3  $5.62   -98.1 / -40.4 / -57.7
+    CBETH-USDC    2  $0.76   +65.2 / +165.7 / -100.5
+    BPAD-USDC     1  $1.50  -1699.5 (single memecoin row, dominates)
+    BSTONK-USDC   1  $0.75  +3227.1 (single memecoin row, dominates the other way)
+
+NOT CLOSED, AND I AM NOT CLAIMING IT: the counterfactual "same 18 round trips
+at a $10 clip = -52.0bp" holds gross bp FIXED across a 13x clip, and gross
+embeds slippage, which grows with clip. On AERO at 13x it grows a lot. -52.0bp
+is an OPTIMISTIC BOUND on these tokens, not a forecast. It is only a fair
+number on a pool deep enough that $10 is noise -- and there is exactly one of
+those in this universe, and it is the one with zero live rows.
+
+ALSO NOT ESTABLISHED: the -46.4bp gross residual sits AT the n=18 resolution
+limit of ~45bp. Pass 429 already flagged this. It is marginal. Do not report
+it as a finding and do not build a route on it.
+
+WHAT THIS DOES NOT SAY, stated because the scoreboard has anchored nine passes
+and is about to be quoted by a tenth: it does NOT establish that live trading
+here loses. It establishes that live trading at a 75-cent clip in AERO and
+CBBTC loses. Those are different claims, and the second one does not
+generalise to the token and clip the evidence now points at.
+
+CONTAMINATION, partly closed: `scripts/tradeable_book_repricing.py` now has
+`load_rows_by_mode` and defaults to `--mode ghost`.
+`scripts/deep_pool_reprice.py:419` still selects all rows unfiltered but
+prints a CONTAMINATED warning at :785 -- disclosed, no longer silent. The
+one-line filter is filed as [58b75119]. Current split: ghost 236 rows
++2.72973, live 22 rows -0.33199.
