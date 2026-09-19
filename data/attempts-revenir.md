@@ -15309,3 +15309,46 @@ drew the wrong conclusion from it.
 attribution (86% this table, 98% of the file accounted), 0.02 GiB of trading
 evidence, 1.2 GB/day corroborated two independent ways, 1-2 weeks of headroom.
 The diagnosis held; the remedy was wrong by one grep.
+
+### Pass 481 final: the snapshot payload dissected -- 62.9% of it is redundant, static or dead
+
+One row, 173,442 bytes, 26 top-level keys:
+
+    46,958 B  27.1%  activity          <- duplicated in other tables
+    40,505 B  23.4%  organism_graph    <- near-identical between consecutive rows
+    22,162 B  12.8%  decision          <- what the censuses read
+    21,489 B  12.4%  brain             <- subsystem is OFF
+    14,537 B   8.4%  pipeline
+     9,775 B   5.6%  process_clusters
+     8,658 B   5.0%  transition_plan
+     3,875 B   2.2%  discovery
+     2,725 B   1.6%  prediction        <- also read
+       745 B   0.4%  scheduler         <- also read
+
+Inside `activity`, the single biggest thing in the whole payload:
+
+    29,066 B  ghost_trades     <- already in their own tables
+     9,620 B  live_trades
+     4,180 B  metrics
+     4,023 B  feedback_events
+
+**Every decision cycle re-serialises a copy of recent ghost trades, live trades,
+metrics and feedback events that are already stored in `trade_fills`, `metrics`
+and `feedback_events`** -- the same data written twice, 7,235 times a day, at a
+third of a megabyte a go.
+
+    activity        27.1%   duplicated elsewhere
+    organism_graph  23.4%   near-static
+    brain           12.4%   subsystem OFF
+    -----------------------------------------
+                    62.9%   redundant, static or dead
+
+    decision + prediction + scheduler = 14.8%   <- what analyses actually read
+
+**Smallest useful fix:** drop `activity` from the payload at `db.py:2084`. 27% of
+every row, and nothing is lost -- the data is in its own tables, which is where
+censuses should read it from. `activity` + `brain` is ~40%, taking 1.2 GB/day to
+roughly 0.7 *before* anyone argues about a retention window.
+
+**Open on `[1706fe9e]`:** payload cut first, retention window second, `VACUUM
+INTO` with production stopped third. Operator's call, not taken.
