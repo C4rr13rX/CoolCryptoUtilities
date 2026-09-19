@@ -17613,3 +17613,35 @@ comment. Filed [4c9e55b0] as a MEASUREMENT only: the ~39.7-day graduation ETA is
 computed from a book this line shortens, and nobody has measured by how much.
 
 Scanner lives in the session scratchpad (never_asserted_logs.py), not the repo.
+
+### OPEN, and systemic: EVERY gate fails open internally, and none of them says so
+Chasing whether the untracked module was special. It is not. All four
+refusal_reason functions in services/ wrap their OWN body in try/except
+Exception and return None -- and None is ALLOW:
+
+    services/symbol_motion_gate.py:243-244       except Exception -> return None
+    services/strategy_edge_gate.py:360-361       except Exception -> return None
+    services/stop_survivability_gate.py:370-371  except Exception -> return None
+    services/symbol_edge_gate.py:636-637         except Exception -> return None
+
+In all four the return is on the line IMMEDIATELY after the except, with no
+log_message between. So a gate that ERRORED and a gate that DELIBERATELY ALLOWED
+are indistinguishable -- in logs/system.log, in the ops rows, and to every
+refusal census this repo has run.
+
+NOT CLAIMED: that any of these branches is being taken today. I did not measure
+it and I CANNOT, because they emit nothing. That is the finding -- the rate is
+unmeasurable by construction.
+
+CAVEAT THIS PUTS ON MY OWN PASS 489: "gating rate 0.00/day" and "fires 0 of 3450
+rows" were read as the gates correctly refusing nothing. A gate erroring to
+ALLOW produces the identical observation. The earned-verdict reading is probably
+still right -- step 6 has an independent conjunction at trading/pipeline.py:
+6315-6320 -- but the two have never been separated, and until one log line
+exists they cannot be.
+
+NOT A BUG IN THE POLICY. Fail-open is deliberate; the noqa comments read "a
+missing gate must not stop trading", and a wedged gate halting all trading is
+the worse failure. The defect is invisibility. One log_message per except branch
+costs nothing and makes it greppable. Folded into [8ad1db3d] rather than filed
+as a fifth item -- the backlog is 148 open at 89 p1.
