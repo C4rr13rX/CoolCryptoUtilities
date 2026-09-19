@@ -18309,3 +18309,39 @@ The constraint is not signal selection.
 WHAT THIS DOES NOT SAY: that these rules are bad. abs(t)<2 on gross means
 UNMEASURED at 168h of this tape. It says the graduation funnel cannot
 distinguish them either, on far less evidence than this table used.
+
+### PASS 493 ADDENDUM 3 -- SEVEN OF MY OWN EIGHT ZEROES WERE THE HARNESS, NOT THE GATE. ONLY ONE IS REAL.
+
+I left eight rows reading "0 FIRES -- refusing or window-blind,
+indistinguishable" and said an hour of reading the gates would separate them.
+It took fifteen minutes and the answer is that SEVEN were never asked:
+
+  volume_spike       volume_spike.py:29      refuses on baseline <= 0 (median volume)
+  obv_accumulation   obv_accumulation.py:38  refuses on sum(volumes[-window:]) <= 0
+  vwap_reversion     vwap_reversion.py:38    refuses on total_vol <= 0
+  dust_micro_swing   dust_micro_swing.py:32  needs ctx.extras['dust_micro']
+  swarm_consensus    swarm_consensus.py:26   needs ctx.extras['swarm_consensus']
+  genome_champion    genome_champion.py:59   needs ctx.extras['genome_signals']
+  omen_reversion     OMEN_STRATEGY_ENABLED=0 by standing instruction
+
+market_stream stores (ts, price) and NO volume, so the first three return None
+on their FIRST guard on every tick, by arithmetic, before any price is read.
+The next three need live context this harness does not carry. Every one of
+those zeroes was certain before the tape was opened.
+
+ONE genuine zero survives: momentum_breakout, a price-only gate that refused
+all 28,407 evaluations on the real tape. That is a finding. The other seven
+were my instrument describing itself.
+
+The volume caveat was already printed in the header as an "upper bound on fire
+count" -- and that framing was too weak. For three strategies it is not a
+bound on the count, it is a GUARANTEE of zero. They are now in the NOT
+REPLAYABLE list with the guard line that makes the zero certain.
+
+  replayed: 10 of 72.  not replayable: 62, each with a source-cited reason.
+
+THIS IS THE THIRD TIME IN ONE PASS THE INSTRUMENT'S OWN PARAMETERS PRODUCED A
+NUMBER THAT READ AS A VERDICT: the flat window (ema_cross), the pooled mean
+(TILCAYO), and now the empty context (seven strategies). Each was caught by
+asking "what would make this number certain regardless of the tape?" That
+question is the reusable part of this pass.

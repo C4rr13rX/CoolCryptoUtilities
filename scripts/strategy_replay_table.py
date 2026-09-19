@@ -89,6 +89,40 @@ ORACLE_GATES: Dict[str, str] = {
         "freshness window and never reads state.samples -- at a historical "
         "tick it answers about TODAY, so its replay says nothing about then"
     ),
+    # SEVEN OF MY OWN EIGHT ZEROES WERE THIS, NOT A REFUSAL. The first version
+    # printed "0 FIRES" beside each of these as though the gate had declined
+    # ~30,000 times. It had not been asked: each returns None on its FIRST
+    # guard given what this harness can supply, every time, by arithmetic.
+    # Line numbers are the guard that makes the zero certain.
+    "volume_spike": (
+        "NEEDS VOLUME: volume_spike.py:29 refuses on `baseline <= 0` where "
+        "baseline is the median of the window's volumes -- market_stream "
+        "stores no volume, so this returns None on every tick by arithmetic"
+    ),
+    "obv_accumulation": (
+        "NEEDS VOLUME: obv_accumulation.py:38 refuses on "
+        "`sum(volumes[-window:]) <= 0` -- market_stream stores no volume"
+    ),
+    "vwap_reversion": (
+        "NEEDS VOLUME: vwap_reversion.py:38 refuses on `total_vol <= 0`; a "
+        "VWAP has no meaning without volume -- market_stream stores none"
+    ),
+    "swarm_consensus": (
+        "NEEDS ctx.extras['swarm_consensus'] (swarm_consensus.py:26), which "
+        "is produced by the live swarm and is not in the tick store"
+    ),
+    "genome_champion": (
+        "NEEDS ctx.extras['genome_signals'] (genome_champion.py:59), which "
+        "the live publisher writes and the tick store does not carry"
+    ),
+    "dust_micro_swing": (
+        "NEEDS ctx.extras['dust_micro'] with enabled=True "
+        "(dust_micro_swing.py:32), a live wallet-dust context"
+    ),
+    "omen_reversion": (
+        "OMEN_STRATEGY_ENABLED=0 by standing instruction, so it emits nothing "
+        "by design; it also declares min_samples=60"
+    ),
 }
 
 
