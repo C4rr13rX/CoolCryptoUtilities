@@ -16733,3 +16733,49 @@ data is the source (`rest`), and it does NOT separate the regimes. All 4877 tick
 
 169 of the 170 contaminated ticks come from the SAME provider that supplies 4481
 clean ones. A source-based refusal cannot separate them. Route CLOSED.
+
+## Pass 488 (Echo) -- SELF-CORRECTION: step 6 is the system REFUSING CORRECTLY, not a plumbing bug
+
+I filed the empty-intersection finding above and then audited the structural bar
+before recommending anything. The audit overturned my own diagnosis. The MECHANISM
+above stands; the DIAGNOSIS does not.
+
+FULL LEDGER STATE, data/strategy_ledger.json:
+
+    money_button       approved=TRUE   grad_blocked=False  ghost=2    live=0    P/L  0.0
+    atf_static         approved=False  demotions=7         ghost=59   live=18   P/L -0.18637
+    atf_static_scout   approved=False  grad_blocked=TRUE   ghost=255  live=0    P/L  0.0
+
+1. atf_static holds the ENTIRE SCOREBOARD. live=18, P/L -0.18637145913731235 --
+   that is the scoreboard number to the digit, not a strategy near it.
+
+2. The scout's structural bar is DELIBERATE, TEST-PINNED CODE, not a config flag.
+   scripts/pass_gate.py:88-101: 368 of atf_static's 376 closed trades were taken
+   by a scout hardcoding wallet="ghost" with no live branch, while the id holding
+   live_approved could not spend. Two executors on one ledger id produced 94
+   live-gate passes and ZERO live trades. The split is the FIX, pinned by
+   tests/test_scout_evidence_is_not_the_bots.py. ROUTE CLOSED: approving the scout
+   re-creates the defect that test exists to prevent. I had filed a criterion
+   asking a worker to audit this; I audited it myself and the answer is NO.
+
+3. atf_static's demotion is EARNED. Its own demote_reason: "live P/L -0.1585 over
+   17 trades is not profitable". The intersection is not empty by misconfiguration.
+   It is empty because the only strategy that ever traded live LOST MONEY LIVE and
+   the demotion guard did exactly what it is for.
+
+HONEST STATEMENT OF STEP 6, and it reframes several passes of work: there is no
+strategy that is BOTH able to trade live AND demonstrated profitable. The gate,
+the demotion and the structural bar all agree and all are working as designed.
+Step 6 is not hiding a profitable strategy behind a bug. It reports, accurately,
+that nothing here has earned live money. DO NOT loosen any of the three to turn
+it green.
+
+THE ONE UNEARNED STATE: money_button is approved=True on 2 ghost trades all time,
+0 live, hand-approved and never graduated. That is the only element of this
+picture that did not earn its state. NOTE for whoever acts on it: removing the
+only approved id makes _live_gate_candidates() EMPTY, and pipeline.py:4716-4717
+then falls back to the POOLED _ghost_validation(), a different gate with different
+behaviour. Trace that fallback BEFORE changing the approval.
+
+[c44f48d6] criteria were rewritten in-pass to carry this correction rather than
+handing my wrong framing to the next agent.
