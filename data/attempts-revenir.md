@@ -15538,3 +15538,90 @@ COST refusal, while [ad629479] shows the cost model is symbol-blind and misshape
 STILL OPEN: tick winners since boot are donchian_breakout@5d 293, @1w 167,
 rsi_reversal@5h 107, supertrend_follow@5d 31. atf_static wins essentially NONE,
 despite being the only emitter of bus_actions. TWO TICK SYSTEMS, UNRECONCILED.
+
+---
+
+## Pass 484 (Echo, senior, solo) -- two of my own leads killed, both mine
+
+**ROUTE TRIED (1): fix the cost model to unblock money_button's 27%
+edge_below_cost refusals. RESULT: REFUTED. CLOSED.**
+
+I closed pass 483 claiming this was the high-value link. It is not, and
+`scripts/money_button_edge_terms.py` already held the refutation:
+
+    inside edge_below_cost, n=3170
+      projected move      median +0.0640%  p95 +0.5043%  max +1.5488%
+      conservative edge   median +0.0000%  p95 +0.1279%  MAX +0.5440%
+      required edge       +0.7700%   (= round_trip 0.70% * margin 1.1,
+                                       money_button.py:250)
+
+The MAXIMUM conservative edge over 3170 refusals is 54.4bp against a 77bp bar.
+Cutting the fee to WETH-class (11bp) admits roughly the top 5%, since p95 is
+12.8bp. And the counterfactual shows those admits lose money BEFORE cost:
+
+    raw projection clears cost   n=70   GROSS mean -0.3833%  win 1.4%
+    drop both discounts          n=57   GROSS mean -0.3998%  win 0.0%
+    drop the momentum decay      n=25   GROSS mean -0.6467%  win 0.0%
+
+Gross is before cost. Set the fee to zero and these still lose 38-65bp. A cost
+fix cannot rescue a negative gross.
+
+DEEPER REASON -- the signal has no skill at any tradeable horizon. Aligned-
+minus-null lift, medians, sequential:
+
+    2min +0.0008%  3min +0.0005%  5min +0.0001%  8min +0.0005%
+    12min -0.0024% 20min -0.0040% 30min -0.0058% 45min -0.0075%
+    60min +0.0507% 90min +0.0267%
+
+Sub-basis-point and MONOTONE DOWNWARD to 45 min. The only positive lift sits at
+60/90 min, ABOVE the 45-min hold ceiling (.env:169), and 5.1bp is still under
+the 11bp WETH floor. Ignore the null net +1624% cells at 2/3/5 min -- one
+uncensored outlier; the MEDIAN columns read null -0.700% vs aligned -0.699%.
+
+**ROUTE TRIED (2): the deep tier minus AERO, +40.1bp on 13 rows [0fcc938d].
+RESULT: CLOSED NEGATIVE on three independent legs. Command:
+`python -X utf8 scripts/deep_tier_oos_check.py`.**
+
+I filed this myself in pass 429 as a TRAP with a pre-registered bar. It fails.
+
+LEG 1 -- there is no fresh sample, and one symbol genuinely stopped. Per the
+standing note that a short window on a slow process reads as death, I put the
+expected count beside the observed one:
+
+    symbol       all  rate/d  expected  observed
+    CBBTC-USDC     7    0.45      1.44         1   p=0.5795  normal
+    CBXRP-USDC     6    1.82      5.80         0   p=0.0030  STOPPED
+
+1 fresh row of 13 required. CBBTC is not dead, it is slow -- 28.8 days to reach
+13. CBXRP IS dead: p=0.0030 is not a window artifact.
+
+LEG 2 -- criterion 3 fires IN-SAMPLE, so half the number was never poolable:
+
+    CBBTC   n=6   +35.1bp  [ +7.0,  +63.2]   top-1 share 43.1%
+    CBXRP   n=6   +54.5bp  [ -9.9, +119.0]   top-1 share 62.4%  <-- ONE ROW
+    POOLED  n=12  +44.8bp  [+10.8,  +78.8]   top-1 share 27.7%
+
+The item's own rule says a symbol whose largest row exceeds 50% of its gross is
+one row and must not be pooled. CBXRP is 62.4%, and its CI already contained
+zero on the in-sample data the lift was extracted from.
+
+LEG 3 -- the selection bar, which needs no fresh data at all. SE of the mean is
+32.6/1.96 = 16.6bp. Slices taken: 5 depth tiers, then 3 symbols, then 1
+exclusion = 9 reported cells.
+
+    slices    z   half-width   corrected 95% interval   excludes 0?
+         1  1.960    32.6bp     [ +7.5,  +72.7]         yes
+         3  2.394    39.8bp     [ +0.3,  +79.9]         yes
+         5  2.576    42.8bp     [ -2.7,  +82.9]         NO
+         9  2.773    46.1bp     [ -6.0,  +86.2]         NO
+
+The honest count is AT LEAST 5 -- five depth tiers were screened before any
+symbol was looked at. The interval contains zero there and is not close at 9.
+
+CAVEAT, STATED NOT BURIED: my reconstruction finds n=12 at +44.8bp, against the
+published n=13 at +40.1bp. Within one row and 4.7bp -- consistent, but it is NOT
+an exact reproduction and I am not claiming one. The multiplicity leg uses the
+PUBLISHED interval, so it does not depend on my reconstruction.
+
+**STATUS: [0fcc938d] CLOSED NEGATIVE. The trap worked. Route (b) -- restrict
+the universe to deep pools -- has no surviving positive number on this tape.**
