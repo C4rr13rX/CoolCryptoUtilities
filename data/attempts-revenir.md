@@ -16860,3 +16860,26 @@ That stays. Measuring a token FEEDS the guard -- a token pricing under the 35bp
 first gate enters the universe ON EVIDENCE, which is what the guard is for.
 A token that prices ABOVE 35bp is a RESULT, not a failure: it would mean
 money_button's starvation is structural and would close the route.
+
+## Pass 488 (Echo) -- CAVEAT CLEARED: attribution is COMPLETE over the 14-day window
+
+I flagged against my own headline that 89 closed ghost rows over 30 days carry
+strategy_id NULL -- more than any named strategy. If any were money_button, the
+0.00/day gating rate is wrong, since an unattributed row is exactly where a missed
+money_button trade would hide. Ran it knowing it could go the other way:
+
+    last 14d   NULL strategy_id    0  of  91 closed ghost rows
+    last 30d   NULL strategy_id   89  of 236 closed ghost rows
+
+    NULL rows by date:  2026-09-03  45   2026-09-02  13   2026-08-31  22
+                        2026-08-28   1   2026-08-26   8
+
+ZERO unattributed rows in the last 14 days; every NULL is 2026-08-26..2026-09-03,
+all older than 16 days, before attribution was wired. THE HEADLINE STANDS and is
+tighter than when posted: money_button has 0 of 91 ATTRIBUTED closed ghost round
+trips in 14 days, with no unattributed pool for a missed one to hide in.
+
+STANDING WARNING FOR ANY OTHER MEASUREMENT: 89 of 236 rows (37.7%) are
+unattributed on a 30-day window. Any per-strategy rate quoted over 30 days or
+longer on this store is understated by up to that much. Use 14 days, or state the
+NULL count beside the number.
