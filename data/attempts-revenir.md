@@ -17200,3 +17200,48 @@ STATUS: this supersedes addenda 1 and 2 as the standing summary. The horizon
 axis is closed BELOW 45 min and the cost/gate/token routes are closed. What
 remains is a single testable quantity -- directional accuracy at 45 min -- and a
 single unexamined constant, the 27.77bp fixed toll.
+
+### Pass 489 addendum 4 -- THE ROUTE IS CLOSED. Bar 79.9%, measured 46.4%, CI [43.9,48.8].
+
+Answered addendum 3's open question in the same pass. 45-min realised directional
+accuracy from 1630 attributed `trading_ops action='enter'` rows over 7d, each
+matched to its own forward move on `market_stream`. All entries are LONG.
+Bootstrap CI, 2000 resamples, seed 7.
+
+  strategy       n    accuracy      95% CI      median |mv|   net at q
+  atf_static  1630       46.4%   [43.9, 48.8]      26.4bp      -36.2bp
+
+  break-even bar           79.9%
+  tape's own 45m up-rate   44.0%
+
+THREE COMPARISONS, deliberately kept separate:
+  vs the BAR       46.4 vs 79.9, CI upper bound 48.8. Not close, not
+                   underpowered. No amount of data moves 46.4 to 79.9. CLOSED.
+  vs a COIN FLIP   46.4 vs 50.0, and the CI EXCLUDES 50 -- significantly WORSE
+                   than a coin flip.
+  vs the TAPE      46.4 vs 44.0 -- it DOES beat the tape by 2.4 points, which
+                   independently reproduces the standing +2.69bp edge result
+                   from a different route. The edge is real and is worth
+                   -36.2bp per round trip.
+
+ONLY ONE STRATEGY HAS 30+ ENTRIES; 15 have fewer and are reported UNRESOLVED,
+not 50%. Reproduces the known "13 strategies have 30+ evaluations, exactly 1 has
+30+ entries".
+
+SKIPPED (so 1630 is not read as the whole population): no_tape 875,
+exit_gap_too_wide 136, no_exit_tick_45m 107, entry_after_tape 23. The 875 are
+symbols with entries but no 7d tape -- a feed problem, not a measurement choice.
+
+THE COMPLETE MEASURED CHAIN:
+  perfect direction at 45 min pays   +21.79 bp
+  our direction at 45 min             46.4 %
+  required direction                  79.9 %
+  realised net at our accuracy       -36.2 bp
+  scoreboard                         -0.1864 over 18 live trades
+The -36.2bp and the -0.1864 agree in SIGN and MAGNITUDE CLASS. That is the only
+claim made -- pass 487 called a 3bp agreement a "validation" and retracted it
+eight minutes later; not repeating that.
+
+STATUS: CLOSED NEGATIVE. The directional route on existing strategies is dead.
+The ONE unexamined quantity left in the whole chain is the 27.77bp FIXED toll
+[7a439149]; every bp removed from it lowers the 79.9% bar directly.
