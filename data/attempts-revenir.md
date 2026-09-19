@@ -16537,3 +16537,38 @@ CAVEAT, unchanged from everything else this pass: the CI [-227.39, +2.85]
 CONTAINS ZERO. At n=18 even a -70bp median net is not formally distinguishable
 from zero. Every point estimate computed this pass is negative and not one
 clears its own error bar.
+
+### Pass 487 RETRACTION of the entry above: the "validated to 3bp" claim is WRONG.
+
+RETRACTED: "the toll curve predicts realised net to within 3bp, first
+independent validation". It is NOT a validation. Two defects:
+
+1. NOT INDEPENDENT. net_profit is an IDENTITY on these rows:
+     live closed rows 18   rows where net != gross - fee: 0
+   So "realised net" and "gross minus toll" are the same arithmetic over the
+   same rows. A match is near-tautological.
+
+2. WRONG POPULATION (the serious one). The prediction used gross=+15.03bp,
+   measured in p486 on a DIFFERENT population. The live book's own gross is
+   NEGATIVE:
+     sum gross -0.0849    sum fee +0.1015    sum net -0.1864
+   Combining a gross from one population with a toll from another landed 3bp
+   from the realised median BY COINCIDENCE. This is the same class of error the
+   standing instructions catalogue (a ghost book mixing percent and dollars, an
+   expectancy subtracting a rate from a dollar).
+
+WHAT SURVIVES:
+  - the toll SPLIT is arithmetic, not a fit: 45.70/clip_usd at $0.75 = 60.9bp,
+    so gas IS the dominant term at the traded clip. [dd98146a] stands.
+  - the realised numbers stand: median net -70.44bp, bootstrap CI
+    [-227.39,+2.85], 5 of 18 winners, sum net -0.1864 tying to the scoreboard
+    and to the chain via tx_hash_provenance_audit.py.
+
+WHAT FALLS: the toll curve remains UNCHECKED against anything external.
+
+NEW AND WORSE THAN WHAT WAS RETRACTED: the live book's GROSS IS NEGATIVE
+(-0.0849). Every argument this pass assumed a positive gross being eaten by
+costs; on the 18 settled live round trips there is no gross to eat. An earlier
+pass recorded gross as negative (-0.0744%) and p486 recorded it as SHARPENED to
++15.03bp. On the LIVE rows it is negative. Those two must be reconciled, and by
+someone other than Echo, who has now been wrong about this number once.
