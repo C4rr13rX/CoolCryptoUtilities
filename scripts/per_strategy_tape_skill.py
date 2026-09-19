@@ -233,6 +233,53 @@ def main() -> int:
               % (len(powered), len(testable)))
         print("         the cost floor, so this is an edge famine, not a data famine.")
         print("         Cost work, gate work and evidence-rate work all multiply zero.")
+
+    # ---- does the edge concentrate in the CHEAP symbols? --------------------
+    # A pooled 27.77bp toll is not the toll on every token: the live-fill
+    # census puts AERO near 10.8bp and WETH round trips at 4-11bp, while KTA
+    # has been measured up to 74.98%. So a strategy whose edge sits in the
+    # cheap names could clear a per-symbol floor it cannot clear pooled. This
+    # is the one remaining way route (b), attack the cost floor, stays open.
+    if testable:
+        top = testable[0]
+        sid = top["sid"]
+        print("-" * 84)
+        print("PER-SYMBOL BREAKDOWN for %s (the only well-powered strategy)" % sid)
+        print("-" * 84)
+        per_sym = defaultdict(lambda: defaultdict(list))
+        for t, sym in by_strat[sid]:
+            v = _fwd(book, sym, t, HORIZON)
+            if v is not None:
+                per_sym[sym][int(t // WINDOW)].append(v)
+        rows_out = []
+        for sym, by_w in per_sym.items():
+            diffs = [statistics.median(vals) - tape[w]
+                     for w, vals in by_w.items() if w in tape]
+            if len(diffs) < MIN_WINDOWS:
+                continue
+            d, lo, hi = _ci(diffs)
+            rows_out.append((d, lo, hi, sym, len(diffs),
+                             sum(1 for x in diffs if x > 0)))
+        rows_out.sort(reverse=True)
+        print("%-18s %8s %10s %21s %8s" % ("symbol", "windows", "diff(bp)", "95% CI", "win%"))
+        for d, lo, hi, sym, n, w in rows_out:
+            print("%-18s %8d %+10.2f [%+8.2f,%+8.2f] %7.1f%%"
+                  % (sym[:18], n, d, lo, hi, 100.0 * w / n))
+        pos = [r for r in rows_out if r[1] > 0.0]
+        clr = [r for r in rows_out if r[1] > COST_FLOOR_BP]
+        print("  symbols with >= %d windows: %d | CI excludes zero: %d | CI clears %.2fbp: %d"
+              % (MIN_WINDOWS, len(rows_out), len(pos), COST_FLOOR_BP, len(clr)))
+        if not rows_out:
+            print("  NO symbol reaches %d paired windows. The pooled edge is spread thin"
+                  % MIN_WINDOWS)
+            print("  across many names, so there is no cheap subset to retreat to.")
+        elif not pos:
+            print("  NO single symbol carries a significant edge. The pooled +%.2fbp is an"
+                  % top["diff"])
+            print("  aggregate of noise, not a concentration in a tradeable name.")
+        else:
+            print("  Candidates for a symbol-restricted lane are listed above; check each")
+            print("  against its OWN round-trip cost, not the pooled floor.")
     print("=" * 84)
     return 0
 
