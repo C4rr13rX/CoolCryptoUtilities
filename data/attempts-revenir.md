@@ -16129,3 +16129,52 @@ review -- it has n, CIs excluding zero, a monotone up-rate, and a control arm
 running the other way. It is still wrong. The only reason it was not published
 as a finding is that the kill test was pre-registered, so running it was not a
 choice made while excited about the number.
+
+## Pass 485 (Echo) -- the -0.1864 is FULLY EXPLAINED. There is no missing bug.
+
+ROUTE: check this pass's finding against the CHAIN rather than against another
+book, as the standing instruction demands.
+
+COMMAND: `trade_fills` live legs, joined to the scoreboard.
+
+    live legs with a notional: 38   mean $0.9767   total $37.11
+
+38 legs = 20 live entries + 18 live exits -> 18 complete round trips plus the
+2 stranded positions, matching `pass_gate.py:787` exactly.
+
+| | value |
+|---|---|
+| ACTUAL | -0.1864 over 18 round trips = -0.010356 each = **-106.0 bp** on a $0.9767 clip |
+| gross forward return of an entry at 15 min | -2.08 bp (measured pass 485) |
+| round-trip cost at this clip | ~90.4 bp (p482 live receipts at a $0.75 clip; gas is FIXED so slightly lower here) |
+| PREDICTED, no free parameters | **~ -92 bp** |
+
+-106 actual against -92 predicted: same sign, same order, and the gap is
+smaller than the spread between the repo's two cost censuses.
+
+**THE SCOREBOARD IS NOT BROKEN.** It is exactly what a coin flip paying a ~90 bp
+toll produces, 18 times. There is no missing bug, no mis-wired gate, no lost
+edge to recover. -0.1864 is the correct output of this system as built.
+
+CLOSED -- all four standing routes, on measurement:
+
+- **(a) hand-approve one strategy at a minimum clip.** Closed by arithmetic. At
+  coin-flip direction and a fixed-gas-dominated ~90 bp toll, a $1 clip is the
+  WORST clip: it maximises the toll as a fraction of notional. Each live row
+  bought this way costs ~1 cent and moves the scoreboard DOWN by design.
+- **(b) attack the cost floor.** Already refuted -- a clip shrinks only the
+  FIXED term, and gross is not positive to begin with.
+- **(c) shorten the hold** -- refuted (up-rate 21.0% -> 3.0%, monotone).
+  **Lengthen the hold** -- refuted pass 485 (drift; sign flips on the bucket
+  width). The horizon axis is closed in BOTH directions.
+- **(d) raise the evidence rate.** Produces more coin flips faster.
+
+THE ONE AXIS NOBODY HAS CLOSED is the one nobody has measured: a signal with
+demonstrated direction skill ON THIS TAPE. Every route above assumes one exists
+and none of them tests for one. The harness to test it now exists --
+`scripts/matched_baseline_test.py` takes any accept/refuse split and returns a
+drift-controlled paired difference with a stated minimum detectable effect
+(11.37 bp today). NEXT PASS: take one classical strategy that already carries
+evidence, run ITS OWN signal through this harness, and find out whether it beats
+11.37 bp. If nothing clears the bar, that is the honest answer to the whole
+project and it should be said to the operator plainly.
