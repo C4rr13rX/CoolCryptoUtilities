@@ -14369,3 +14369,51 @@ asks for exactly this and nobody has produced it.
 ALSO STILL OPEN: [23ad8727] note (6) -- the author could not establish whether
 production was running, and could not distinguish a clean negative from a
 failed command.
+
+### PASS 478 SIXTH ADDENDUM -- THE CONTRADICTION IS RESOLVED: THE CLIP ARGUMENT IS REFUTED
+
+ROUTE TRIED: produce the one number that kills one of the two contradicting p1
+items -- gross as a percentage of notional on the de-contaminated population.
+[fdeb0316] criterion 1 has asked for it since pass 102. scripts/tradeable_book.py
+already computes it and takes about four minutes.
+
+RESULT: CLOSED. The clip argument is dead.
+
+    variable cost floor          0.3187% of notional
+    de-contaminated gross       -0.0744%   -> BELOW the floor
+
+    clip      modelled cost   net per trip
+    $5.00        0.3997%        -0.4741%   loses
+    $10.00       0.3592%        -0.4336%   loses
+    $20.00       0.3389%        -0.4134%   loses
+    $50.00       0.3268%        -0.4012%   loses
+
+GROSS IS NEGATIVE, and that settles it without the cost model needing to be
+right. A clip shrinks only the FIXED component of cost; it cannot manufacture
+gross. -0.0744% against a 0.3187% variable floor is 0.393pp short BEFORE any
+fixed cost. The script's own words: "gross must beat THIS or no clip size ever
+helps." The sweep agrees at 5/10/20/50 dollars and the script notes the sign
+holds across it, so this is a property of the BOOK, not of the cap.
+
+VERDICT: [fdeb0316] CORRECT. [23ad8727]'s central premise -- that the 7
+demotions are a COST verdict curable by moving 0.75 -> 10 dollars -- REFUTED.
+At 10 dollars the trip still loses 0.4336%.
+
+THE LIMIT, STATED: -0.0744% is the BOOK-WIDE de-contaminated gross.
+atf_static's OWN row in this 7d window is n=1, 0% win, -0.0328. One trade
+arbitrates nothing, and atf_static's individual gross remains UNMEASURED with
+any power. The book-level claim stands because clip-cannot-fix-negative-gross
+is arithmetic, not statistics, and [23ad8727] is a clip argument.
+
+NOT REJECTED: [23ad8727] carries a direct operator instruction. Overriding that
+is the operator's call, not the senior's at the end of a pass. Recorded so the
+decision is made WITH the number rather than without it. Note it contains a
+RESTART, and a restart arms real money (see the first PASS 478 entry).
+
+ROUTE STATUS, FINAL FOR THIS PASS:
+    raise the clip to make atf_static pay      CLOSED, refuted above
+    loosen the ghost gate                      CLOSED, first PASS 478 entry
+    route (b) restore atf_static               COSTED NEGATIVE
+    route (a) admit atf_static_scout           OPEN but its edge is UNAUDITED
+                                               (0 of 246 receipts) -- [82662e5d]
+                                               is the prerequisite
