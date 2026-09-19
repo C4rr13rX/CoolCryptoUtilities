@@ -17953,3 +17953,35 @@ points with a unit test that needs no RPC.
 
 STILL OPEN from this pass: does production's RPC actually throttle? That is
 criterion 4 of [557240ef] and it decides whether the defect is live or latent.
+
+### ANSWERED SAME PASS: the 429 defect is LIVE, not latent
+The open question above was whether production's RPC actually throttles.
+
+    grep -c "Too Many Requests" logs/system.log   ->  8911
+
+    by host:
+      4922  https://mainnet.base.org
+      3275  https://base-mainnet.g.alchemy.com      <- the PAID endpoint
+       479  https://base-rpc.publicnode.com
+        72  https://mainnet.optimism.io
+        53  https://api.coingecko.com
+        40  each polygon/opt/arb alchemy
+         8  https://api.geckoterminal.com
+
+8,676 of 8,911 are against the three BASE endpoints, and base is where every
+production swap goes (LIVE_FOCUS_CHAINS=base). Rotating to a paid RPC is NOT
+the fix -- alchemy is throttled 3,275 times on its own. [557240ef] stays
+priority 1.
+
+NOT PROVEN, and must not be over-read: no single one of those 8,676 lines has
+been tied to a call inside quote_and_build. The quoter is one of several
+callers of those hosts. What is certain is that the provider's bare
+`except Exception` cannot distinguish 429 from revert (unconditional, in code)
+and that base RPCs throttle production 8,676 times. Joining the two is the
+remaining half of criterion 4 and it is one grep for log context.
+
+CONSEQUENCE FOR EVERY COST NUMBER IN THIS FILE: a swallowed 429 does not lose a
+quote, it returns a WRONG price built from the surviving fee tiers. Every census
+run through UniswapV3Local -- including this pass's own AERO 13.58bp -- has an
+unknown number of throttled tiers missing from its max. Treat quoter-derived
+costs as a LOWER BOUND on the best tier until [557240ef] lands.
