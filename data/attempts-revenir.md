@@ -15787,3 +15787,48 @@ and it is three symbols, not a programme.
 UNCHANGED: step 1 of [3bad78ef], short-circuit the 0x 403, is still worth doing
 on its own merits -- it pays latency back on the 379 quotes that SUCCEED at
 median 15.49s, not only on the failures. That argument never depended on the 140.
+
+### Pass 484 addendum 4 -- FINAL. The deadline DOES destroy real quotes, and
+### the proof is a symbol I never nominated.
+
+Asked of the six high-liquidity failed-only symbols: TIMEOUT, or a real
+verdict? Both were on the table. 24h:
+
+  CBHYPE-USDC   n=9   timeout 8, no_viable_pool 1   median 45.1s
+  CBMEGA-USDC   n=4   timeout 3, no_viable_pool 1   median 45.1s
+  VCAT-USDC     n=3   no_viable_pool 2, timeout 1   median 44.7s
+  ARGUS-USDC    n=2   timeout 2                     median 46.0s
+  CBLTC-USDC    n=2   timeout 2                     median 45.5s
+  USXT-USDC     n=1   timeout 1                     median 45.0s
+
+CBHYPE, CBMEGA and VCAT each returned a REAL verdict at least once -- "no
+viable pool direct or 2-hop". **CLOSED.** Their timeouts are that same answer
+failing to finish. ARGUS, CBLTC, USXT have never returned a verdict: UNKNOWN.
+
+VCAT reports $8.2M liquidity_usd and has NO UniswapV3 base pool. That settles
+the field: `liquidity_usd` is not measuring a base UniV3 pool and must not be
+used to select symbols.
+
+THE EXISTENCE PROOF, found only by pulling the working siblings for contrast:
+
+  CBETH-USDC    OK 6                 <- clean
+  CBADA-USDC    OK 1, timeout 3      <- SAME TOKEN, 1 IN 4
+
+**CBADA-USDC quotes successfully AND times out, in the same 24h, on the same
+token.** One attempt in four returned a route. Not a no-pool verdict, not a
+liquidity story -- a token sitting right at the 45s wall losing 3 quotes in 4
+to the clock. An hour earlier I said this data could not give me that proof.
+It could, and it did not come from any symbol I nominated.
+
+BOTH THINGS ARE TRUE; HOLD BOTH:
+  * ~94% of the 140 lost symbols are genuinely thin. The universe does NOT
+    widen. The pass-484 deflation stands.
+  * The deadline nevertheless destroys REAL quotes on borderline symbols, and
+    CBADA proves it at a 1-in-4 success rate.
+
+RECOMMENDATION UNCHANGED AND NOW BETTER SUPPORTED: fix the LATENCY, do not
+widen the DEADLINE. CBADA succeeding once means it sits just under 45s, so
+recovering the seconds wasted on the 0x 403 -- which fires on every call
+before the only live venue is consulted -- pulls CBADA's kind back across the
+line without giving all 241 doomed quotes a longer rope. Widening to 120s
+would make every doomed quote take 120s and CUT throughput. [3bad78ef] step 1.
