@@ -14259,3 +14259,47 @@ ROUTE STATUS AFTER THIS PASS:
                                    INFINITE clip. Opens the lane onto a proven
                                    loser. Evidence-buying only, minimum clip.
     loosen the ghost gate          CLOSED, see the first PASS 478 entry.
+
+### PASS 478 THIRD ADDENDUM -- I AUDITED A DONE ITEM AND IT HOLED MY OWN ROUTE
+
+ROUTE TRIED: audit [b3cef28b] (done, Cove pass 103) by re-running it rather
+than reading its note.
+
+RESULT: the finding still holds and it lands on my own recommendation.
+
+    trade_outcomes rows TOTAL       246
+    rows naming atf_static_scout      0
+
+ZERO, all time. Cove measured 0 of 210 at pass 103; it is 0 of 246 now. The
+scout IS running (trading_ops rows name it) and has never written a receipt.
+
+WHY THIS IS LOAD-BEARING. Route (a) on [9ef737d3] rests on the scout clearing
+the graduation bar (22/68%/+0.1030) and all three live-gate terms. Both read
+the LEDGER. Every de-contamination instrument in this repo -- implausibility
+filter, TP clamp, tradeable predicate, scripts/tradeable_book.py -- reads
+trade_outcomes. So the scout's book is the one book none of them can audit.
+Its +0.1030 can be quoted but not checked, and this repo's standing rule is
+that a profit with no settled receipt did not happen. I applied that rule to
+live P/L all pass and failed to apply it to the ghost book I was recommending.
+
+AN UNRESOLVED SIGN FLIP, LEFT ON THE RECORD BY TWO PASSES: pass 103 put the
+scout's TRADEABLE subset at 4 trips / 25% / -0.1097 (NEGATIVE). The same field
+today reads 22 / 68% / +0.1030 (POSITIVE). No receipts underneath either to
+arbitrate. I cannot say which is right and did not guess. Filed [82662e5d].
+
+ROUTE (a) RESTATED, WITH A NEW STEP 0:
+    0. make atf_static_scout write trade_outcomes rows, then re-measure its
+       book on the de-contaminated population              <- NEW, FIRST
+    1. build the live execution branch
+    2. only then remove it from the ghost-only set
+Steps 1 and 2 are worth doing only if the edge survives being audited, and it
+has never been audited once.
+
+THIS STRENGTHENS THE ledger.py:76 TRAP WARNING. That bar is holding out a
+strategy whose record cannot be checked, so it is doing MORE work than the
+previous addendum credited. Clearing the constant to turn step 6 green would
+license live money against an unauditable book.
+
+SEPARATE DEFECT FROM THE SAME QUERY: 96 of 246 receipt rows (39%) carry NO
+strategy id. Every per-strategy conclusion drawn from that table uses 61% of
+it. Filed on [82662e5d] as a reporting criterion.
