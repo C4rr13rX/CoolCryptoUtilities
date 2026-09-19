@@ -15978,3 +15978,50 @@ THE ERROR COUNT BEFORE READING THE LATENCY**. A timing loop that cannot connect
 returns fast, small, confident numbers. [[short-window-on-a-slow-process-reads-
 as-death]] is the same failure wearing the opposite mask: a broken probe reading
 as health.
+
+## Pass 485 (Echo) -- the fill-write exception is not happening any more; the statement is exonerated
+
+ROUTE: reproduce the fill-write exception offline instead of paying a 13-minute
+production restart to see it ([11866e31], the cheap alternative to [5b51114a]).
+
+COMMAND: `python -X utf8 scripts/fill_write_repro.py`
+
+RESULT, three legs:
+
+1. THE STATEMENT IS INNOCENT. Scratch db, `trade_fills` schema read verbatim
+   from `sqlite_master`, the `db.py:923-937` statement copied byte for byte.
+   Well-formed input inserts CLEAN. 5 of 10 malformed inputs raise and all five
+   are `TypeError` raised in Python argument marshalling BEFORE sqlite is handed
+   anything: `float(None)` on either amount or price, and `json.dumps` on a
+   `Decimal`, on `bytes`, or on a receipt object. Two quiet defects fell out
+   that nobody has filed: a NaN price INSERTS CLEAN, and `symbol=None` INSERTS
+   CLEAN.
+
+2. THE SINGLE-VARIABLE PREDICTION WAS WRONG. `bot.py:9886` is the ghost_entry
+   caller whose own comment records the pass-470 outage. Every value in its
+   payload is explicitly `float()`-ed or a string literal except `trade_id`, so
+   `trade_id` was the only marshalling candidate. It is an f-string
+   (`bot.py:2876`, `bot.py:8962`) -- always `str`, always serialisable. So
+   marshalling cannot raise on that path, and hypothesis A explains the
+   mechanism class but NOT the pass-470 outage.
+
+3. THERE IS NOTHING LEFT TO EXPLAIN. `trade_fills` over 7 days:
+   `ghost_exit 36` (last 1.0h ago), `ghost_entry 36` (last 1.3h ago). Pass 470's
+   "17 ghost-entry rows reached trading_ops and NOT ONE reached trade_fills" is
+   no longer true of the running system.
+
+CLOSED: [11866e31] done. [5b51114a]'s restart is REJECTED, not blocked -- it
+would spend a 13-minute boot plus an hour of waiting to observe an exception
+that has not fired in at least 7 days.
+
+NOT EXECUTABLE, and said rather than faked: criterion 2 wanted
+`PRAGMA integrity_check` on a COPY of the store. The copy needs 26.08 GiB and
+D: has 14.57 GiB free (879.7 of 894.2 used, 98.37%). Same wall as `VACUUM INTO`.
+`integrity_check` was run on the SCRATCH table instead -- it returns `ok`, which
+tests the schema and not the 26 GiB file.
+
+INDEPENDENT FINDING, and it is the valuable one: `trade_fills` holds ZERO
+`live_entry` and ZERO `live_exit` rows in 7 days. Only ghost. This is a
+different table, a different writer and a different code path from the
+`trading_ops` rows the live-lane census reads, and it agrees -- so the 13.3-day
+live silence is not an instrumentation artifact in the ops table.
