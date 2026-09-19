@@ -16655,3 +16655,81 @@ the live lane. Not because it makes money -- every point estimate here loses --
 but because it is ~7.66 round trips/day of the ONLY evidence that can settle a
 cost question, and it has been off for 13.4 days while step 6 read [FAIL] every
 pass with no price attached to it.
+
+## Pass 488 (Echo, senior, solo) -- STEP 6 IS AN EMPTY SET INTERSECTION, NOT A THRESHOLD
+
+ROUTE TRIED: find the CAUSE behind the step-6 RISK reason `ghost_validation_block`,
+rather than treating the reason string as the cause.
+
+NUMBER PRODUCED, and it is a cause not a symptom:
+
+    trading/pipeline.py:4660-4675  _live_gate_candidates() -> StrategyLedger().approved_ids()
+    measured                       ['money_button']  and nothing else
+    trading/pipeline.py:4715       _ghost_validation_for_live() evaluates ONLY those candidates
+
+So the gate that decides whether real money moves asks exactly one question:
+is money_button's ghost book good enough. Measured over trade_outcomes
+(status='closed', mode and strategy_id read from the details JSON):
+
+    money_button   ALL TIME   1 closed ghost round trip   last 14.8 days ago
+    money_button   last 14d   ZERO
+
+For scale, same 14-day window, none of these approved:
+
+    atf_static             22   1.57/day
+    rsi_reversal            8   0.57/day
+    donchian_breakout@5d    5   0.36/day
+    money_button            0   0.00/day   <- THE ONLY APPROVED ONE
+
+Meanwhile scripts/ghost_gate_forensics.py in the same run:
+
+    atf_static_scout   READY   reason=fast_track   n=12   tradeable P/L +0.1030
+    atf_static         BLOCKED reason=insufficient_samples n=5
+
+atf_static_scout passes the earned filter at pipeline.py:4727-4732 on all three
+clauses (ready; `fast_track` is in GHOST_EARNED_READY_REASONS at :676; net > 0).
+It is never evaluated, because it is not approved, so it is not a candidate.
+graduation_status marks it structurally blocked: no live branch exists.
+
+THE SHAPE: approved = {money_button}, which has no evidence. Evidenced-and-passing
+= {atf_static_scout}, which is not approved and has no live branch. The gate is
+CORRECT on both sides. No threshold is being missed and NO GATE SHOULD BE LOOSENED.
+
+HYPOTHESIS AND COMPLEMENT, pre-registered on the board BEFORE the test:
+    H  configuration deadlock -- waiting never clears it
+    C  threshold -- money_button accrues ghost trades and clears the bar
+    KILL TEST  money_button ghost round trips per day; positive rate means C.
+    RESULT  0.00/day over 14 days, 1 trade all time. C IS REFUTED. H survives.
+
+CLOSED AS A CONSEQUENCE -- a reported number that answers a different question:
+graduation_status prints evidence rate 5.22/day, nearest graduation ~39.7 days,
+pooled over 43 evidenced strategies. The gate never reads the pooled book. The
+GATING rate is 0.00/day, so the true ETA is UNDEFINED, not 39.7 days. Do not
+plan against 39.7 days.
+
+Filed as [c44f48d6] p1 3pt, files declared trading/pipeline.py,
+scripts/graduation_status.py, data/strategy_registry.json. NOT taken by me --
+senior does not write production code.
+
+EXPLICITLY NOT CONCLUDED: I am NOT recommending "approve atf_static_scout". Its
+structurally-blocked label and its scout-split evidence are both unaudited. The
+finding is the empty intersection, not which side to fill.
+
+## Pass 488 (Echo) -- CLOSED NEGATIVE: the COMP-USDC regimes do NOT split by source
+
+[57d69341] asks that each COMP-USDC tick be attributed to a contract/pool address.
+Verified directly: PRAGMA table_info(market_stream) returns
+id, ts, chain, symbol, price, volume, raw -- no pool/address/contract column, and
+the raw JSON carries only ts/symbol/chain/price/volume/rest/consensus_confidence.
+Criterion 1 is UNSATISFIABLE on existing data; still blocked on [78599ead] (todo).
+
+NEW NEGATIVE so nobody spends a pass on it: the one discriminator present in the
+data is the source (`rest`), and it does NOT separate the regimes. All 4877 ticks:
+
+    dexscreener     LOW ~20       4481
+    geckoterminal   LOW ~20        226
+    dexscreener     HIGH 42-55     169
+    geckoterminal   HIGH 42-55       1
+
+169 of the 170 contaminated ticks come from the SAME provider that supplies 4481
+clean ones. A source-based refusal cannot separate them. Route CLOSED.
