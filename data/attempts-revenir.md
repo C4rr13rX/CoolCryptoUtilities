@@ -16383,3 +16383,34 @@ ROUTE (pass 486, last measurement): "the 14 SELECTIVE strategies refuse 99% of
   on 31 proposals. A single strategy's edge could be buried in the pool. The
   30+-entries bar in [583ba889] remains the right next step -- more TAPE (same
   rule, more symbols or a longer window), not more cycles.
+
+## Pass 487 (Echo, senior, solo)
+
+ROUTE: decompose the 27.77bp variable toll that closed routes (a)-(d) in p486.
+NUMBER: buy slippage +21.73bp, sell slippage +6.04bp, n=12 live round trips.
+        21.73 + 6.04 = 27.77 exactly. 78.3% of the toll is the BUY leg.
+STATUS: **OPEN AND THE ONLY LIVE ROUTE**. Filed [96c5f532] priority 1.
+        Fixing buy to the sell leg's rate gives 15.03 - 12.08 = +2.95bp, positive.
+        Break-even requires buy 21.73 -> 8.99bp.
+        Ruled out already: configured tolerance (symmetric 75bp, fill_cost.py:8)
+        and fee tier (fee is INSEPARABLE, inside executed_price on both legs, so
+        it cancels in the difference -- fill_cost.py:29-36).
+        UNTESTED COMPLEMENT: buy expected_price may be stamped at SIGNAL time vs
+        sell pre-swap => the gap is decision drift, not execution. Test first.
+
+ROUTE: gas double-counting via repeated entry tx hashes.
+NUMBER: 6 transactions serve 13 of 18 row-slots (one buy, several partial sells).
+STATUS: **CLOSED**. Real, but it only shrinks the FIXED term of
+        toll(clip) = 27.77bp + 45.70/clip_usd. At infinite clip and ZERO gas the
+        asymptote still gives 15.03 - 27.77 = -12.74bp, which independently
+        matches the best cell of the p486 28-cell exit sweep. Gas is irrelevant
+        to the verdict. Do not reopen.
+
+ROUTE: is the -0.1864 scoreboard hiding a larger loss?
+NUMBER: no. 22 live rows net -0.3320; the 4 excluded are status='annulled',
+        net -0.1456, and 22-4=18, -0.3320+0.1456=-0.1864 exactly.
+STATUS: **CLOSED, scoreboard vindicated**. The 4 have no settling ERC-20
+        Transfer (marked out against the feed while execution was disarmed).
+        scripts/tx_hash_provenance_audit.py: scoreboard rows 18, both legs
+        hashed 18, net -0.186371. Accounting and chain criteria drop the SAME 4.
+        TRAP: querying mode='live' without status='closed' inflates loss 78%.
