@@ -17385,3 +17385,56 @@ live comes from a different module the item does not name.
 CONFIRMED REAL, though, and cheap: the saturation bug is exactly as filed.
 `confidence = math.sqrt(min(1.0, total / 200.0))` gives 200 and 1423 trades an
 IDENTICAL 1.0. The diagnosis is right; the priority was not.
+
+### Pass 490 addendum -- the MOVE axis: hypothesis SURVIVED, route still NOT open
+
+Ran the kill test I pre-registered on [f9f24f42] ten minutes after filing it.
+Non-overlapping 45-min windows (the .env:169 cap), move = |close-open|/open in bp,
+30d of market_stream, ALL sources. Script in scratchpad, reproduced from this note.
+
+  symbol      windows  span   median|move|  persist corr(|m_t|,|m_t+1|)  topdec  /day
+  WETH-USDC      159   10.6d     13.09bp    +0.131 CI [+0.059,+0.286]   19.45bp  1.42
+  AERO-USDC      367   23.4d     27.70bp    +0.356 CI [+0.145,+0.566]   24.66bp  1.54
+  ZORA-USDC      215   10.6d     37.76bp    +0.287 CI [+0.125,+0.441]   86.88bp  1.97
+  ALIGN-USDC     175   10.6d     19.39bp    +0.260 CI [+0.105,+0.428]   24.09bp  1.60
+  CAKE-USDC      165   23.0d     50.96bp    +0.137 CI [-0.037,+0.291]   69.25bp  0.70
+
+  topdec = median |move| of the decile ranked by the PRECEDING window's realised
+  vol -- a real forecast, no lookahead.
+
+RESULT 1 -- VOLATILITY PERSISTS. 4 of 5 CIs exclude zero. The complement (abs
+move is iid, prior vol says nothing) is REFUTED. Selection works: ZORA 37.76 ->
+86.88bp, CAKE 50.96 -> 69.25bp. NOTE the WETH figure moved from +0.089
+CI[-0.007,+0.241] to +0.131 CI[+0.059,+0.286] purely by dropping a kucoin-only
+source filter -- the first run was underpowered, not negative.
+
+RESULT 2 -- AND IT STILL DOES NOT OPEN A ROUTE. gross = (2q-1)*move, and the
+move axis only MULTIPLIES a near-zero coefficient:
+
+    q=0.5069 (point)      (2q-1)=0.0138  -> need move > 2012 bp
+    q=0.5727 (upper CI)   (2q-1)=0.1454  -> need move >  191 bp
+    best selected window measured                        86.88 bp
+
+Even at the 97.5th percentile of the friendliest q, the best selectable window
+on the densest symbol is 2.2x too small. At the point estimate it is 23x too
+small. THE BINDING CONSTRAINT IS STILL q. Selecting big windows cannot fix a
+coefficient of 0.0138.
+
+RESULT 3 -- THE ONE GENUINELY NEW FACT, and it is a caution about our own
+arithmetic. Every number this repo reasons with -- the 54.09bp ceiling, the
+0.00bp median window, the 27.77bp toll -- is measured ON WETH. WETH is the
+QUIETEST symbol on the tape. CAKE's MEDIAN window is 50.96bp, nearly 4x WETH's
+13.09bp, and 67.9% of CAKE windows clear the WETH toll against WETH's 22.6%.
+
+THREE CAVEATS, and they are why this is NOT actionable as it stands:
+  (a) THE TOLL IS WRONG FOR THESE SYMBOLS. 27.77bp is WETH-measured. AERO is
+      ~45.3bp at a 10usd clip; ZORA and CAKE round trips are UNMEASURED and
+      these are thin tokens. Comparing a ZORA move to a WETH toll is the
+      symbol-blind-fee error this repo has already made twice.
+  (b) q IS ALSO WETH-MEASURED. Nobody has measured direction accuracy per
+      symbol. A louder tape is not a more predictable one.
+  (c) OBSERVABILITY. Top-decile windows arrive 0.70-1.97 per day.
+
+NOT CLOSED, NOT OPEN. The move axis is real and insufficient. [f9f24f42]
+criterion 2 is answered NO for WETH/AERO/ALIGN and YES for ZORA/CAKE against
+the WRONG toll, which is not a pass.
