@@ -14728,3 +14728,31 @@ here rather than in an item nobody will reach.
 LESSON WORTH REUSING: putting the number that would kill an item INTO its
 acceptance criteria let it be closed in ten minutes instead of worked for an
 hour. CLOSED: optimism/polygon venue labelling, on an empty universe.
+
+### Pass 479 handover audit -- [82662e5d]'s premise CONFIRMED, plus the fact it is missing
+
+Audited rather than trusting pass 478. trade_outcomes has NO strategy column;
+attribution lives in the `details` JSON. Extracted:
+
+    atf_static           40
+    rsi_reversal         10
+    obv_accumulation@1w   9
+    obv_accumulation@5d   8
+    rsi_reversal@1w       6
+    ...
+    atf_static_scout      0     <- the premise, CONFIRMED independently
+
+AND THE FACT THE ITEM DOES NOT CARRY:
+
+    rows with NO strategy name in details at all:  96 of 248  (38.7%)
+
+The scout's +0.1030 cannot be sourced from this table even in principle for
+nearly four rows in ten -- they are anonymous. A worker expecting to reconcile
+246 attributed rows will find 152. Before concluding the number is fabricated
+they must establish whether the scout's trips are INSIDE that 96 or genuinely
+absent. Those are different findings: "no receipts" vs "receipts carry no name".
+Pass 477 already proved this repo has a stamped accumulator no query reproduces
+(graduation-tradeable-count-is-a-stamped-accumulator) -- same family.
+
+Recorded here rather than as a new backlog id, which would orphan the diagnosis
+on [82662e5d].
