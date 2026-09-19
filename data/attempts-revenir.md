@@ -14218,3 +14218,44 @@ WHAT THIS RECLASSIFIES: the system is not short of a qualifying verdict. It
 holds one, fully earned, in a strategy it never shows the gate, while
 licensing one with n=0. That is an ADMISSION defect, not an evidence famine,
 and it is far smaller than finding 0.45pp of gross in atf_static ([fdeb0316]).
+
+### PASS 478 SECOND ADDENDUM -- WHY THE SCOUT IS HELD OUT, AND THE ONE-LINE TRAP
+
+atf_static_scout MEETS THE GRADUATION BAR. Bar is 20 tradeable / 55% / P/L
+above 0; its record is 22 trades, 68% win, +0.1030. It clears all three, and
+per the previous addendum it also clears all three live-gate terms. It is held
+out by exactly one mechanism:
+
+    ledger.py:76    _GHOST_ONLY_DEFAULT = "atf_static_scout"
+    ledger.py:84    _ghost_only_ids() reads GHOST_ONLY_STRATEGY_IDS, default
+                    that constant
+    ledger.py:536   _revoke_ghost_only_approval() runs ON LOAD and strips live
+                    approval "whatever the file says"
+    ledger.py:836, 1376, 1408   the same check repeated at three more sites
+
+THE TRAP, WRITTEN DOWN SO NOBODY FINDS IT UNDER PRESSURE: step 6 can be
+cleared in ONE LINE by emptying GHOST_ONLY_STRATEGY_IDS or deleting that
+constant. The scout's record is already good enough that the ladder would go
+green immediately. There is NO live execution branch behind that id, and
+removing the bar does not create one -- it grants a live licence to a strategy
+that cannot place an order. The reason string at ledger.py:78 states it
+exactly: "no live branch exists, so this record can never be spent and must
+not read as permission to spend." A green step 6 on a permission that cannot
+be exercised is strictly WORSE than today's red, because today's red is
+telling the truth.
+
+ORDER, NON-NEGOTIABLE, written into [9ef737d3] as a criterion:
+    1. BUILD the live execution branch for atf_static_scout.
+    2. THEN remove the id from the ghost-only set.
+    3. Its passing graduation record and passing gate verdict take effect
+       unaided.
+Step 2 before step 1 is the failure mode and must be reverted on sight.
+
+ROUTE STATUS AFTER THIS PASS:
+    route (a) admit the scout      OPEN, both bars already passed, blocked
+                                   only by a missing live branch
+    route (b) restore atf_static   OPEN BUT COSTED NEGATIVE -- [fdeb0316] has
+                                   it 0.45pp short of break-even gross at an
+                                   INFINITE clip. Opens the lane onto a proven
+                                   loser. Evidence-buying only, minimum clip.
+    loosen the ghost gate          CLOSED, see the first PASS 478 entry.
