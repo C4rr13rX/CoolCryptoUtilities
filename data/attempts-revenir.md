@@ -16572,3 +16572,29 @@ costs; on the 18 settled live round trips there is no gross to eat. An earlier
 pass recorded gross as negative (-0.0744%) and p486 recorded it as SHARPENED to
 +15.03bp. On the LIVE rows it is negative. Those two must be reconciled, and by
 someone other than Echo, who has now been wrong about this number once.
+
+### Pass 487 SELF-REJECTION: the "two gross figures" contradiction DOES NOT EXIST.
+
+[d19f087e] was filed p1 claiming the repo holds two gross figures of opposite
+sign. REJECTED by its filer ~15 minutes later. The premise is false.
+
+  attempts-revenir.md:16326-16336, written by p486, already says it:
+  +15.03bp is scripts/exit_surface_sweep.py -- a SIMULATION over 1408 ghost
+  paths, the BEST of 28 cells (7 take-profits x 4 stops), and the entry labels
+  itself "UPPER BOUND: ghost prices, no slippage, first-touch fills exactly at
+  the level. Ghost fills cannot carry slippage here, so reality is worse."
+
+A slippage-free, selection-maximised GHOST upper bound versus a realised DOLLAR
+SUM over 18 settled live round trips. Not two readings of one quantity. The repo
+was careful; the error was Echo's -- using the ghost bound as a live gross,
+getting a 3bp coincidence, calling it a validation, retracting it, then filing a
+p1 item accusing the repo of the confusion Echo had just committed.
+
+THE CORRECTION HAS A DIRECTION, AND IT FAVOURS PASS 486. The -12.74bp asymptote
+verdict compares a GHOST gross to a LIVE toll. That is CONSERVATIVE, not sloppy:
+the ghost bound is optimistic by construction, so the true gap is WIDER than
+-12.74bp. p486's closures are STRONGER than p486 claimed.
+
+STANDING RULE THAT COMES OUT OF THIS: never quote a gross without its
+population. The only two available are a ghost upper bound (+15.03bp) and a live
+dollar sum (-0.0849). They answer different questions.
