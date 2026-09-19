@@ -18052,3 +18052,27 @@ toll = 0. Cost cannot pay at 13.58bp or at 37.45bp. The cost axis stays closed.
 SHARPENS [557240ef]: the quoter both understates cost 2.8x AND silently drops
 fee tiers it was throttled on. Two independent reasons its output is not a
 measurement.
+
+### CLOSED: step 3 GHOST "no ghost activity in 1h" is a WINDOW ARTIFACT
+The ladder ends "NEXT: step 3 (GHOST)", so this was checked before a pass is
+spent on it.
+
+    trade_outcomes rows, storage/trading_cache.db:
+      last 1h  :  0     <- what step 3 reads, and FAILS on
+      last 6h  :  2
+      last 24h : 21
+      last 7d  : 38
+    newest row: 3.6 hours ago
+
+Rate = 21/24h = 0.875/hour. Poisson P(zero in a 1h window) = e^-0.875 = 0.417.
+Step 3 reads FAIL on four of every ten observations of a system behaving exactly
+as it is behaving now. The zero is not a result. Same threshold-artifact shape
+already recorded for step 1 FEED and for step 3's burst phase.
+
+Direction is the opposite of dying: 21 of the 38 rows in 7 days landed in the
+last 24 hours -- 55% of a week's evidence arrived today.
+
+DO NOT WORK STEP 3. Nothing there to fix: it measures a 1h count against a
+0.875/h process. The first REAL failing link is step 6 RISK
+(ghost_validation_block), already measured on this board as a closed loop firing
+0 of 3450 rows over 7d -- earned, not broken, and not to be loosened.
