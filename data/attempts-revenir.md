@@ -15352,3 +15352,56 @@ roughly 0.7 *before* anyone argues about a retention window.
 
 **Open on `[1706fe9e]`:** payload cut first, retention window second, `VACUUM
 INTO` with production stopped third. Operator's call, not taken.
+
+---
+
+## Pass 482 (Echo, senior, solo) -- the chaos gate judges a lookback label as a forecast
+
+**ROUTE TRIED: (d) raise the evidence RATE, by auditing the lattice gate.**
+
+**CLOSED NEGATIVE -- my own pass-481 disk alarm.** `db_growth_stamp.py`, third
+stamp, 27-minute baseline: **0.165 GB/day, 95.9 days of headroom.** Pass 481's
+"1.2 GB/day / 12.6 days" came off a 12.5-minute window and was **7.3x too
+high**. The disk is not a deadline. Do not spend a pass on it. `VACUUM INTO`
+still cannot run -- it needs 25.9 GiB and 14.77 GiB is free.
+
+**CLOSED -- `[cfd843e5]`, the "AERO 40x decay spread".** The premise does not
+reproduce. 7d of `trading_ops`: AERO has 915 chaos refusals carrying **78
+distinct** usable-horizon values from 0.5 to 17.0 min. A continuum, not two
+clusters, and **no 233 value exists**. Cause of the variation: `bot.py:2299`
+passes `bar_sec=_median_tick_gap_sec(history)`, which is **span/count**
+re-measured per call over a rolling 400-tick buffer, and `chaos.py:186` makes
+`usable` **linear in `bar_sec`**. Replayed on 733 real AERO ticks: **4.8x**
+spread, not 40x. Calibration ruled out separately (`horizon_scale` clamped
+`[0.5, 2.0]`).
+
+**OPEN, FILED AS `[0f07b8b6]` -- the real defect, one file away.**
+`trading/strategies/horizons.py:212` does `directive.horizon = self._label`.
+A `HORIZON_SPECS` label is a **bar window**, not a hold time. The lattice is
+asked to justify a **7-day forecast** on a bot capped at 45 min.
+
+    n=2597 refusals/7d   median overshoot 1334x   p90 10377x   max 21280x
+    within 2x of the limit: 2 of 2585 (0.1%)
+    24h: 85.1% of asks are longer than the bot can hold
+
+**RANKING CORRECTION, self-caught:** the lattice is the **third** largest drop,
+not the first. `entry-predropped-edge-ban` 4591 and `entry-arbitration` 3509
+are larger and sit **upstream**. The first claim came from a
+`status LIKE 'entry-refused%'` filter that hid them.
+
+**EXPECTED VALUE, PRE-REGISTERED: small.** At a 45-min ask only **10.6%** of
+24h refusals flip to PASS. More than ~25% means the horizon is still wrong.
+
+**INCONCLUSIVE, and the reason is the useful part.** The flips concentrate in
+UP/OP/XRP/BLUECHIP. `data/pool_depth_snapshot.json` reports OP and XRP as
+`null`, which looks like "unfillable" -- but **WETH is also `null`**, and WETH
+is the canonical deep symbol. **`null` in that file cannot answer this
+question.** BLUECHIP is thin (243k, 1 flip of 28); UP is unswept. Resolve
+OP/XRP against a live quote, not that file.
+
+**The honest expectation:** AERO and CBBTC are the two confirmed-deep symbols,
+and AERO clears **none** of the horizon bars (usable 1.5-4.6 min). The likely
+outcome of `[0f07b8b6]` is a **correct gate and no change to tradeable
+supply**. Worth doing on correctness. Not worth overselling.
+
+Tool: `scripts/lattice_refusal_census.py` (read-only), commit `cb3c21f`.
