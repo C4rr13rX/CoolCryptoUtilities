@@ -15908,3 +15908,46 @@ buys nothing on any call.
 Caveat kept attached: the 0x 403 costs AT MOST 15.49s, so short-circuiting it
 does NOT rescue the 45s failures. It is a latency fix for the quotes that
 already work — and CBADA-USDC (OK 1 / timeout 3) is why that still matters.
+
+### Pass 484 addendum 8 -- TRULY FINAL. My own headline ask was wrong, and the
+### constriction is one layer lower than the whole quote thread.
+
+**THE TRIM ASK IS DEAD, corrected in the same pass I made it.**
+`MID_TOKENS['base']` (`services/providers/uniswap_v3.py:140`) is exactly TWO
+entries -- WETH and cbBTC -- and `.env` has no UNIV3 override. So the 2-hop
+search is 2 mids x 16 fee pairs = 32 eth_calls plus ~8 direct = ~40 total.
+There is nothing to trim: halving a two-element list discards half the routing
+on base, and the two entries are the intermediates anyone would choose.
+
+**~40 eth_calls in 45s is ~1.1 SECONDS PER CALL.** A healthy node answers 40
+eth_calls in a few seconds. That is a SLOW OR RATE-LIMITED RPC, not an
+expensive search.
+
+**I COULD NOT TIME IT AND DID NOT ESTIMATE IT.** There is no base RPC URL in
+`.env`; the only RPC-ish keys are `PREFER_FREE_RPC` and `WIZARD_NODE_URL`, and
+neither is an http endpoint for base. The URL resolves somewhere I did not find
+in the time. The timing loop is STILL OPEN.
+
+**But `.env:15` reads `PREFER_FREE_RPC=1`.** Free public base endpoints are
+aggressively rate-limited, and a throttle presents as exactly what was
+measured: ~1s per call, consistent, with no fast failures anywhere. CONFIG FACT
+PLUS A FITTING HYPOTHESIS -- NOT A MEASUREMENT. The complement is live: the RPC
+may be fast and something in the provider may be serialising or retrying.
+
+If the free-RPC reading holds, ONE cause explains everything found today -- the
+87% symbol loss, the 45s wall, the ~3.0 hours/day of burned quote budget, and
+CBADA failing 3 quotes in 4. Unlike every route closed this pass, it has a
+cheap fix that is not a code change.
+
+NEXT, IN ORDER (all on [b6be1b81]):
+  1. Find where the base RPC URL resolves -- NOT `.env`, already checked.
+  2. Time 40 sequential eth_calls. Near 45s => the RPC is the whole story;
+     a few seconds => look inside the provider.
+  3. Only then price a paid base endpoint, and put the number in front of the
+     operator rather than provisioning anything (AWS is down; cost matters).
+
+PASS 484 SELF-AUDIT: five of my own claims killed this pass -- the cost-model
+lead, the deep-tier +40.1bp, the raise-the-deadline fix, the snapshot
+pre-filter, and the trim-the-mid-tokens ask that was my own report's headline.
+The counts never moved; the story moved five times. Check the SIZE of a finding
+before acting on its mechanism.
