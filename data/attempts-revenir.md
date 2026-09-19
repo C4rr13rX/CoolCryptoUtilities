@@ -17769,3 +17769,21 @@ in series, and the one furthest upstream can admit 94 symbols without 91 of
 them ever reaching an outcome. Widening any single gate to enlarge the
 tradeable universe will change almost nothing, because three more are behind
 it. Route (b) "restrict/relax the universe" is bounded by that redundancy.
+
+### CLOSED as LATENT: the ignorance filter has cost ZERO real money
+"Reached an outcome" is not "cost money", so I checked the last step on the 7:
+
+    CBMEGA-USDC  closed  mode=ghost  net -0.0177
+    CBMEGA-USDC  closed  mode=ghost  net -0.0385
+    PUMP-USDC    closed  mode=ghost  net -0.0070   (x4)
+    XRP-USDC     closed  mode=ghost  net +0.0607
+    7 rows   SUM -0.0236   LIVE ROWS: ZERO
+
+Every one is mode=ghost. Not one thin-tape symbol the motion gate waved through
+has touched real capital in 14 days. [113a75c0] is LATENT in the strict sense:
+correct diagnosis, real mechanism, ZERO realised cost. Filed p2; it is closer
+to p4 and I am saying so rather than leaving my own priority to stand.
+
+Noted and NOT read as signal: 6 of 7 are negative and the single positive (XRP
++0.0607) exceeds the other six combined. A 7-row sample where one row carries
+the sign is the shape this repo has been fooled by before.
