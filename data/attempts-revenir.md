@@ -17245,3 +17245,37 @@ eight minutes later; not repeating that.
 STATUS: CLOSED NEGATIVE. The directional route on existing strategies is dead.
 The ONE unexamined quantity left in the whole chain is the 27.77bp FIXED toll
 [7a439149]; every bp removed from it lowers the 79.9% bar directly.
+
+### Pass 489 addendum 5 -- PARTIAL on [7a439149]. `slippage_bps` on live entries is a CONFIG LITERAL.
+
+Opened the 27.77bp fixed-toll decomposition with the time left. PARTIAL --
+3 of 4 criteria untouched, item stays TODO.
+
+`trade_fills` = 1478 legs: ghost_entry 1194, ghost_exit 240, gas_refill 6,
+live_entry 20, live_exit 18. On the 38 live legs:
+  median notional         0.7500 USD
+  median recorded slip   75.00 bp   <- on 20 of 20 live_entry legs
+  median gas              0.00 bp   <- across all 38
+  median |price slip|    24.24 bp   <- executed_price vs expected_price
+
+THE FINDING: every live_entry carries `slippage_bps` EXACTLY 75.00, twenty of
+twenty. That is a configured TOLERANCE written to the fill record as though it
+were realised. Any cost model reading `slippage_bps` off live entries is reading
+its own default back -- the precise failure mode the standing brief names ("a
+round-trip cost that measured its own default"), recurring.
+
+What IS measured: `executed_price` vs `expected_price` gives median |slip|
+24.24bp. That is a real on-chain observation. 75.00 is not.
+
+GAS IS ABSENT FROM ENTRIES: all 20 live_entry legs record `fee_cost_usd` 0.00;
+only exits carry gas (44-114bp at these notionals). So the standing note that
+`fee_cost` is gas-only on live rows is true but INCOMPLETE -- it is gas only,
+AND only on the exit leg.
+
+OPEN AND UNANSWERED: whether the 27.77bp fixed term inherits the 75.00 literal
+or the 24.24bp observation. If the former, the toll is overstated and the 79.9%
+accuracy bar is LOWER than stated. One grep. Not done. First thing next pass.
+
+CAVEAT: n=20 entries / 18 exits at a 0.75 USD median notional, a clip the brief
+already calls below break-even. The 75.00 CONSTANCY is the robust part; the
+24.24 is a bare median over 38 legs with no CI.
