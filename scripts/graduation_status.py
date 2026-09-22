@@ -590,6 +590,8 @@ def render(r: dict) -> str:
         else:
             A("    Every link passes.")
         A("")
+        for line in _live_refusal_arithmetic():
+            A(line)
 
     pipe = r.get("pipeline") or {}
     if pipe:
@@ -609,6 +611,74 @@ def _pct(v) -> str:
         return "%.0f%%" % (float(v) * 100)
     except (TypeError, ValueError):
         return "?"
+
+
+def _live_refusal_arithmetic() -> list:
+    """Print the ARITHMETIC behind step 6, not the label 'ghost_validation_block'.
+
+    The ladder renders each link's detail truncated to 52 characters, so step 6
+    has been printing "blocked: ghost_validation_block" for weeks. That string
+    names a category, not a cause: it is identical whether the gate refused on
+    tail risk, on a loss streak, on drawdown, or -- as measured on 2026-09-22 --
+    on a strategy that has never traded.
+
+    The cause is one subtraction and the report never showed it. Production
+    publishes the whole verdict in data/reports/confusion_matrices.json under
+    ``transition_plan``; every number below is read from there, so this cannot
+    drift away from what the gate actually decided. The only hard-coded thing is
+    the source line, which is a pointer for the reader, not a value.
+
+    Best-effort like every other section: a missing or malformed report returns
+    no lines rather than taking the report down.
+    """
+    try:
+        path = ROOT / "data" / "reports" / "confusion_matrices.json"
+        if not path.exists():
+            return []
+        blob = json.loads(path.read_text(encoding="utf-8"))
+        plan = blob.get("transition_plan") or {}
+        flags = plan.get("risk_flags") or {}
+        if not flags.get("halt_live"):
+            return []
+        ghost = plan.get("ghost_validation") or {}
+        age_min = (time.time() - float(blob.get("updated_at", 0) or 0)) / 60.0
+
+        sid = ghost.get("strategy_id") or "(unnamed)"
+        samples = int(ghost.get("samples", 0) or 0)
+        need = int(ghost.get("min_trades", 0) or 0)
+        reason = str(ghost.get("reason") or flags.get("live_blocked_reason") or "")
+
+        out = [
+            "  WHY STEP 6 REFUSES -- the arithmetic, not the label",
+            "    (read from the transition plan production published %.0f min ago)"
+            % age_min,
+            "    gate        : _ghost_validation_for_live  trading/pipeline.py:4749-4752",
+            "    reason      : %s" % reason,
+            "    judging     : %s -- %d ghost trades of %d required"
+            % (sid, samples, need),
+            "    consequence : halt_live=%s  live_mode=%s  recommended_live_usd=$%.2f"
+            % (
+                flags.get("halt_live"),
+                flags.get("live_mode", "?"),
+                float(flags.get("recommended_live_usd", 0.0) or 0.0),
+            ),
+        ]
+        if "cold_start_bootstrap" in reason:
+            out += [
+                "    NOT A BUG, A DEADLOCK. An empty book returns ready=True with",
+                "    reason='cold_start_bootstrap' (pipeline.py:5159-5165) -- the bypass that",
+                "    lets a fresh system start collecting. Line 4750 refuses to spend that as",
+                "    evidence, correctly: per-strategy it would hand a live-money 'ready' to",
+                "    every strategy that has never been tried. So the ONLY live-approved",
+                "    strategy must produce %d ghost trades to be allowed live, and the live" % need,
+                "    gate is not what stops it trading -- it simply does not fire.",
+                "    The fix is upstream of this gate: either %s must enter more often," % sid,
+                "    or a strategy that DOES enter must be the one approved.",
+            ]
+        out.append("")
+        return out
+    except Exception as exc:  # noqa: BLE001 - a diagnostic must never take the report down
+        return ["  (live refusal arithmetic unavailable: %r)" % (exc,), ""]
 
 
 def metrics(r: dict) -> dict:
