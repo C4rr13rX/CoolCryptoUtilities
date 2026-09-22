@@ -19160,3 +19160,76 @@ CONTAMINATION, partly closed: `scripts/tradeable_book_repricing.py` now has
 prints a CONTAMINATED warning at :785 -- disclosed, no longer silent. The
 one-line filter is filed as [58b75119]. Current split: ghost 236 rows
 +2.72973, live 22 rows -0.33199.
+
+## Pass 670 (Dune, worker) -- [a9bbe626] THE TWO CENSUSES ARE CENSORED, AND THE DEPTH HEADLINE DIES WITH THEM
+
+ROUTE TRIED: apply the ledger's own refusal rule on the READ side to the two
+scripts whose agreement made the pool-depth finding "established", and report
+the GAP rather than replacing the numbers.
+
+Proof: `python -X utf8 scripts/roundtrip_cost_coverage.py`
+       `python -X utf8 scripts/deep_pool_reprice.py --json data/deep_pool_reprice_censored.json`
+
+BOTH now call `services.outcome_plausibility.partition` and print CENSORED,
+UNCENSORED and the difference. Both also now dig `strategy_id` out of the JSON
+`details` blob -- trade_outcomes has no such COLUMN, so without it the dollar
+arm of the plausibility test silently never ran and only the ratio arm censored.
+
+SIX ROWS OF 265 ARE REFUSED (all ratio arm) and they carry gross +5.4193:
+AAVE +174.16%, AERO +160.99%, COMP -55.33%, AERO -54.93%, UNI +122.89%,
+BASELINE +57.94%.
+
+roundtrip_cost_coverage.py                 UNCENSORED   CENSORED       GAP
+  rows                                            265        259        -6
+  book net                                    +2.1174    -3.2392   -5.3566   SIGN FLIPS
+  MEASURED-cost net                           +1.2356    -0.8596   -2.0951   SIGN FLIPS
+  ASSUMED-default net                         +0.8818    -2.3797   -3.2615
+  share of |net| on an assumed cost             41.6%      73.5%
+
+deep_pool_reprice.py                       UNCENSORED   CENSORED       GAP
+  measured net BEFORE                         +2.8782    -1.5674   -4.4456   SIGN FLIPS
+  measured net AFTER                         -12.7152   -16.5353   -3.8201
+  DEEP gross                                  +2.1974    +0.0763   -2.1211
+  DEEP net AFTER                              +2.0241    -0.0918   -2.1159   SIGN FLIPS
+  THIN gross                                  +2.2270    -0.1495   -2.3765   SIGN FLIPS
+  THIN net AFTER                             -14.7393   -16.4435   -1.7041
+
+THE FINDING. The uncensored read says DEEP pools survive their own round trip
+at +2.0241. Censored it is -0.0918, and its GROSS over 71 rows is +0.0763 --
+seven hundredths of a dollar, which is not an edge, it is noise. "Cost is
+survivable where the pool is deep" was carried entirely by rows the ledger
+already refuses at record() time.
+
+WHAT DID **NOT** CHANGE SIGN -- stated because an honest null is a result:
+  * PASS 426's conclusion is UNCHANGED. It censored with its own private >20%
+    move rule and landed on DEEP n=16 gross -0.0291 net -0.0864. Under the
+    ledger's rule I land on DEEP net -0.0918. Same sign, same order. "Symbol
+    selection does not set the sign" survives censoring.
+  * PASS 488's HEADLINE is unchanged: coverage is 32.8% of rows either way,
+    so "66.3% of the ghost book is priced at an ASSUMPTION" stands. The net
+    figures it printed beside that headline (+2.3977 book, +1.2356 measured)
+    do NOT -- both flip, and are superseded by the table above.
+  * PASS 446's numbers (+3.1448 -> -2.2118, under-$50k +1.8844 -> -0.4661,
+    over-$1M +1.5809 -> -0.5142) are CONFIRMED in direction by an independent
+    pair of scripts. Row counts differ (265 vs 215) because the book has grown
+    and because 446 bucketed non-live rows only.
+
+NOT CLAIMED. Criterion 1 of [a9bbe626] is NOT met and I am not calling it met.
+15 of 22 ANALYSIS scripts that read trade_outcomes still censor nothing and
+print no banner. They are outside this item's declared files and several are
+owned by other agents this pass, so I filed them rather than editing them:
+  _live_data_isolation, deep_tier_oos_check, destroyed_evidence,
+  entry_basis_census, exit_conf_vs_realised_margin, graduation_status,
+  hold_time_edge, live_book_forensics, loop_status, money_button_universe,
+  pass_gate, routing_arbitrage_census, stop_width_replay,
+  tradeable_book_repricing, tx_hash_provenance_audit
+Note that live_book_forensics and tx_hash_provenance_audit read the LIVE book,
+where the six refused rows do not appear and a censor may be the wrong tool --
+that needs deciding per script, not applied in bulk.
+
+ALSO CLOSED: deep_pool_reprice.py's `--max-move-pct 20` was a THIRD private
+copy of the plausibility rule, never reconciled against the ledger's. It now
+defaults to 0 (off) and the shared rule governs.
+
+NOT CLAIMED: no restart, no live trade, no gate changed, no production code
+touched. The live scoreboard is unmoved at -0.1864 over 18 rows.

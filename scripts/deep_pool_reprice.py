@@ -76,6 +76,10 @@ from typing import Any, Dict, List, Optional, Tuple
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from services.outcome_plausibility import (  # noqa: E402
+    booked_return, partition, summarise,
+)
+
 # Gale's routing census, 879ea6e, 2026-09-11. Read-only quotes on base:
 # USDC -> token -> USDC, cost as a POSITIVE percentage of notional, by clip size.
 # Keys are the base symbol of a <BASE>-USDC pair. Nothing else is measured.
@@ -416,11 +420,32 @@ def load_rows(db_path: str) -> List[Dict[str, Any]]:
     try:
         cur = con.execute(
             "SELECT symbol, quantity, entry_price, exit_price, gross_profit, "
-            "fee_cost, net_profit, status, ts FROM trade_outcomes"
+            "fee_cost, net_profit, status, details, ts FROM trade_outcomes"
         )
-        return [dict(r) for r in cur.fetchall()]
+        rows = [dict(r) for r in cur.fetchall()]
     finally:
         con.close()
+    for r in rows:
+        r["strategy_id"] = _strategy_id(r)
+    return rows
+
+
+def _strategy_id(row: Dict[str, Any]) -> str:
+    """The row's strategy, dug out of the JSON ``details`` blob.
+
+    trade_outcomes has no strategy_id COLUMN, and the dollar arm of
+    ``services.outcome_plausibility`` judges a row against its own strategy's
+    scale. Without this the dollar arm silently never runs.
+    """
+    blob = row.get("details")
+    if not blob:
+        return ""
+    try:
+        d = json.loads(blob) if isinstance(blob, str) else blob
+    except Exception:  # noqa: BLE001
+        return ""
+    return str(d.get("strategy_id") or d.get("strategy") or "").strip() \
+        if isinstance(d, dict) else ""
 
 
 def reprice(rows: List[Dict[str, Any]], depth_bar: float,
@@ -749,9 +774,13 @@ def main() -> int:
     ap.add_argument("--db", default=os.environ.get("TRADING_DB_PATH", "storage/trading_cache.db"))
     ap.add_argument("--depth-bar", type=float, default=DEFAULT_DEPTH_BAR_PCT)
     ap.add_argument("--json", dest="json_out", default=None)
-    ap.add_argument("--max-move-pct", type=float, default=20.0,
-                    help="censor round trips whose realised move exceeds this; "
-                         "0 disables the censor and reports the raw book")
+    ap.add_argument("--max-move-pct", type=float, default=0.0,
+                    help="LEGACY private censor, now OFF by default and "
+                         "superseded by services.outcome_plausibility. It was a "
+                         "THIRD copy of the plausibility rule with a threshold "
+                         "(20%%) nobody reconciled against the ledger's. Leave "
+                         "it at 0 unless you are deliberately measuring the "
+                         "difference between the two rules.")
     ap.add_argument("--census", default=None,
                     help="path to a round_trip_quote_census artifact; default "
                          "is the newest under data/")
@@ -771,13 +800,39 @@ def main() -> int:
             return 2
 
     censor = args.max_move_pct if args.max_move_pct and args.max_move_pct > 0 else None
-    rows = load_rows(args.db)
-    res = reprice(rows, args.depth_bar, censor)
+    all_rows = load_rows(args.db)
+
+    # THE PRE-GUARD CENSOR. trade_outcomes keeps every row ledger.record()
+    # refused, so a re-pricing read straight off it prices a dirtier book than
+    # graduation ever sees. Both books are computed and BOTH are printed: the
+    # GAP is the finding, and publishing only the clean column would delete the
+    # evidence that the contamination exists.
+    kept, refused = partition(all_rows)
+    plaus = summarise(all_rows)
+    res = reprice(kept, args.depth_bar, censor)
+    res_raw = reprice(all_rows, args.depth_bar, censor)
 
     print("=" * 78)
     print("GHOST BOOK RE-PRICED AT EACH SYMBOL'S OWN MEASURED ROUND-TRIP COST")
     print("=" * 78)
-    print("rows in trade_outcomes: %d      depth bar: round trip < %.2f%%" % (len(rows), args.depth_bar))
+    print("rows in trade_outcomes: %d      depth bar: round trip < %.2f%%"
+          % (len(all_rows), args.depth_bar))
+    print()
+    print("PLAUSIBILITY CENSOR -- services.outcome_plausibility.partition, the")
+    print("ledger's own refusal rule applied on the read side.")
+    print("  read %d   countable %d   REFUSED %d   reasons %s"
+          % (len(all_rows), plaus["kept"], plaus["dropped"],
+             plaus["reasons"] or "{}"))
+    print("  refused rows carry gross %+.4f   net %+.4f"
+          % (plaus["gross_dropped"], plaus["net_dropped"]))
+    for r in sorted(refused,
+                    key=lambda r: -abs(float(r.get("gross_profit") or 0.0)))[:8]:
+        ret = booked_return(r)
+        print("    %-14s gross %+9.4f   booked return %s"
+              % (str(r.get("symbol")), float(r.get("gross_profit") or 0.0),
+                 "%+.2f%%" % (100.0 * ret) if ret is not None else "(unpriced leg)"))
+    print("  EVERY table below is the CENSORED book; the UNCENSORED figures it")
+    print("  supersedes are printed in the GAP block at the end.")
     print()
     for line in provenance_lines():
         print(line)
@@ -790,10 +845,10 @@ def main() -> int:
     print()
 
     if censor is None:
-        print("CENSOR: OFF -- every row included, artifacts and all.")
+        print("LEGACY --max-move-pct CENSOR: OFF (superseded above).")
     else:
-        print("CENSOR: round trips moving more than %.1f%% are EXCLUDED as artifacts."
-              % censor)
+        print("LEGACY --max-move-pct CENSOR: round trips moving more than %.1f%% "
+              "are ALSO excluded." % censor)
         cr = res["censored_rows"]
         print("  %d row(s) censored: %s" % (len(cr), ", ".join(
             "%s %+.1f%% (gross %+.4f)" % (c["symbol"], c["move_pct"], c["gross"])
@@ -900,12 +955,53 @@ def main() -> int:
     else:
         verdict = "indeterminate on this sample."
     print("  VERDICT: " + verdict)
+    print()
+
+    # ------------------------------------------------------------------
+    # THE GAP. Six refused rows set the sign of every depth bucket in this
+    # repo's published depth finding; printing only the censored column would
+    # hide that, so both are stated and the difference is named.
+    print("-" * 78)
+    print("CENSORED vs UNCENSORED -- the GAP is the finding, not a correction")
+    print("%-30s %12s %12s %12s" % ("", "UNCENSORED", "CENSORED", "GAP"))
+    pairs = (
+        ("measured net BEFORE", _tot(res_raw["measured"], "net_before"), mb),
+        ("measured net AFTER", _tot(res_raw["measured"], "net_after"), ma),
+        ("DEEP gross", _tot(res_raw["deep"], "gross"), gross_deep),
+        ("DEEP net AFTER", _tot(res_raw["deep"], "net_after"), da),
+        ("THIN gross", _tot(res_raw["thin"], "gross"), gross_thin),
+        ("THIN net AFTER", _tot(res_raw["thin"], "net_after"), ta),
+    )
+    flipped = []
+    for label, a, b in pairs:
+        flip = "  <- SIGN FLIPS" if (a > 0) != (b > 0) else ""
+        if flip:
+            flipped.append(label)
+        print("%-30s %12.4f %12.4f %12.4f%s" % (label, a, b, b - a, flip))
+    if flipped:
+        print("  !! CENSORING FLIPS THE SIGN OF: %s" % ", ".join(flipped))
+        print("  !! Any published depth conclusion resting on those lines was")
+        print("  !! resting on rows the ledger already refuses at record() time.")
+    else:
+        print("  no bucket changes sign under censoring on this run.")
     print(CAVEATS)
 
     if args.json_out:
         Path(args.json_out).write_text(json.dumps({
             "depth_bar_pct": args.depth_bar,
-            "rows": len(rows),
+            "rows": len(all_rows),
+            "censored": {"kept": plaus["kept"], "refused": plaus["dropped"],
+                         "reasons": plaus["reasons"],
+                         "gross_dropped": plaus["gross_dropped"],
+                         "net_dropped": plaus["net_dropped"]},
+            "uncensored_totals": {
+                "measured_before": _tot(res_raw["measured"], "net_before"),
+                "measured_after": _tot(res_raw["measured"], "net_after"),
+                "deep_after": _tot(res_raw["deep"], "net_after"),
+                "thin_after": _tot(res_raw["thin"], "net_after"),
+                "gross_deep": _tot(res_raw["deep"], "gross"),
+                "gross_thin": _tot(res_raw["thin"], "gross"),
+            },
             "measured": {s: a for s, a in res["measured"].items()},
             "unmeasured_n": _n(res["unmeasured"]),
             "totals": {

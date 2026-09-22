@@ -26,6 +26,15 @@ THE TRAP IT IS BUILT AGAINST. A coverage number computed over DISTINCT SYMBOLS
 flatters itself -- 5 of 49 symbols sounds like a rounding error, but those 5
 carry a third of the rows. Coverage is reported by ROWS and by NET, because
 rows are what a re-pricing charges and net is what a conclusion rests on.
+
+THE SECOND TRAP, FIXED 2026-09-22 ([a9bbe626]). ``trade_outcomes`` is a
+PRE-GUARD source: ``trading/strategies/ledger.py::record`` refuses an outcome
+whose shape says it did not happen, but the table keeps the refused row anyway.
+Until this pass every number above was read straight off that table, so this
+script measured a DIRTIER book than graduation does. It now partitions through
+``services.outcome_plausibility.partition`` and prints BOTH columns with the
+gap between them, because the gap IS the finding: hiding the uncensored figure
+would remove the only evidence that the contamination exists.
 """
 
 from __future__ import annotations
@@ -38,6 +47,31 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+
+from services.outcome_plausibility import (  # noqa: E402
+    booked_return, partition, summarise,
+)
+
+
+def _strategy_id(row: dict) -> str:
+    """The row's strategy, dug out of the JSON ``details`` blob.
+
+    The dollar arm of the plausibility test judges a row against ITS OWN
+    strategy's scale, and trade_outcomes carries no strategy_id column -- it is
+    inside ``details``. Without this the dollar arm never runs and only the
+    ratio arm censors, which is a quieter filter than the ledger's.
+    """
+    import json
+    blob = row.get("details")
+    if not blob:
+        return ""
+    try:
+        d = json.loads(blob) if isinstance(blob, str) else blob
+    except Exception:  # noqa: BLE001
+        return ""
+    if not isinstance(d, dict):
+        return ""
+    return str(d.get("strategy_id") or d.get("strategy") or "").strip()
 
 #: Symbols this repo has actually quoted on chain, USDC in and back.
 #: Sources: scripts/routing_arbitrage_census.py output recorded in 879ea6e
@@ -70,63 +104,121 @@ def main() -> int:
         return 2
 
     conn = sqlite3.connect(path)
-    cur = conn.cursor()
-    cur.execute(
-        "select symbol, count(*), sum(net_profit) from trade_outcomes "
-        "where symbol is not null group by symbol"
-    )
-    rows = cur.fetchall()
-    if not rows:
+    conn.row_factory = sqlite3.Row
+    all_rows = [dict(r) for r in conn.execute(
+        "select symbol, entry_price, exit_price, quantity, gross_profit, "
+        "fee_cost, net_profit, status, details, ts from trade_outcomes "
+        "where symbol is not null")]
+    conn.close()
+    if not all_rows:
         print("coverage census: trade_outcomes is empty at %s" % path)
         return 2
 
-    total_n = sum(r[1] for r in rows)
-    total_net = sum((r[2] or 0.0) for r in rows)
+    for r in all_rows:
+        r["strategy_id"] = _strategy_id(r)
 
-    meas_n = meas_net = 0.0
-    unmeas_n = unmeas_net = 0.0
-    unpriced: list[tuple[int, str, float]] = []
-    for symbol, n, net in rows:
-        base = str(symbol).split("-")[0].upper()
-        net = net or 0.0
-        if base in MEASURED:
-            meas_n += n
-            meas_net += net
-        else:
-            unmeas_n += n
-            unmeas_net += net
-            unpriced.append((n, base, net))
+    keep, dropped = partition(all_rows)
+    summary = summarise(all_rows)
 
-    pct = lambda x: 100.0 * x / total_n if total_n else 0.0  # noqa: E731
+    def census(rows: list[dict]) -> dict:
+        per: dict[str, list[float]] = {}
+        for r in rows:
+            base = str(r.get("symbol") or "").split("-")[0].upper()
+            per.setdefault(base, []).append(float(r.get("net_profit") or 0.0))
+        meas_n = meas_net = 0.0
+        unmeas_n = unmeas_net = 0.0
+        unpriced: list[tuple[int, str, float]] = []
+        for base, nets in per.items():
+            n, net = len(nets), sum(nets)
+            if base in MEASURED:
+                meas_n += n
+                meas_net += net
+            else:
+                unmeas_n += n
+                unmeas_net += net
+                unpriced.append((n, base, net))
+        return {
+            "symbols": len(per), "total_n": len(rows),
+            "total_net": sum(float(r.get("net_profit") or 0.0) for r in rows),
+            "meas_n": meas_n, "meas_net": meas_net,
+            "unmeas_n": unmeas_n, "unmeas_net": unmeas_net,
+            "unpriced": unpriced,
+        }
+
+    raw = census(all_rows)
+    cen = census(keep)
 
     print("=" * 74)
     print("ROUND-TRIP COST COVERAGE OF THE GHOST BOOK")
     print("=" * 74)
     print("store: %s" % path)
-    print("ghost book: %d rows across %d distinct symbols, net %+.4f"
-          % (total_n, len(rows), total_net))
     print()
-    print("  MEASURED cost symbols : %4d rows (%5.1f%%)   net %+.4f"
-          % (meas_n, pct(meas_n), meas_net))
-    print("  ASSUMED default cost  : %4d rows (%5.1f%%)   net %+.4f"
-          % (unmeas_n, pct(unmeas_n), unmeas_net))
+    print("CENSORING -- services.outcome_plausibility.partition, the ledger's own")
+    print("refusal rule applied on the READ side. trade_outcomes is PRE-GUARD: it")
+    print("keeps every row ledger.record() refused, so an uncensored census here")
+    print("measures a dirtier book than graduation reads.")
+    print("  rows read %d   countable %d   REFUSED %d   reasons %s"
+          % (len(all_rows), summary["kept"], summary["dropped"],
+             summary["reasons"] or "{}"))
+    print("  the refused rows carry gross %+.4f  net %+.4f"
+          % (summary["gross_dropped"], summary["net_dropped"]))
     print()
-    print("  distinct symbols measured: %d of %d"
-          % (len(rows) - len(unpriced), len(rows)))
-    if total_net:
-        print("  share of book NET sitting on an assumed cost: %.1f%%"
-              % (100.0 * abs(unmeas_net) / (abs(meas_net) + abs(unmeas_net))))
+
+    hdr = "%-38s %10s %10s %10s" % ("", "UNCENSORED", "CENSORED", "GAP")
+    print(hdr)
+    print("-" * len(hdr))
+
+    def line(label: str, a, b, fmt: str = "%10.4f") -> None:
+        print(("%-38s " + fmt + " " + fmt + " " + fmt)
+              % (label, a, b, b - a))
+
+    line("rows", raw["total_n"], cen["total_n"], "%10.0f")
+    line("distinct symbols", raw["symbols"], cen["symbols"], "%10.0f")
+    line("book net", raw["total_net"], cen["total_net"])
+    line("MEASURED-cost rows", raw["meas_n"], cen["meas_n"], "%10.0f")
+    line("MEASURED-cost net", raw["meas_net"], cen["meas_net"])
+    line("ASSUMED-default rows", raw["unmeas_n"], cen["unmeas_n"], "%10.0f")
+    line("ASSUMED-default net", raw["unmeas_net"], cen["unmeas_net"])
     print()
-    print("UNPRICED SYMBOLS BY ROWS CARRIED -- these set the book's sign and")
-    print("no on-chain quote has ever been taken for any of them:")
+
+    for label, c in (("UNCENSORED", raw), ("CENSORED", cen)):
+        tn = c["total_n"] or 1
+        share = (100.0 * abs(c["unmeas_net"])
+                 / ((abs(c["meas_net"]) + abs(c["unmeas_net"])) or 1.0))
+        print("  %-10s  coverage %5.1f%% of rows measured; %5.1f%% of |net| "
+              "sits on an assumed cost; sign of book net %s"
+              % (label, 100.0 * c["meas_n"] / tn, share,
+                 "POSITIVE" if c["total_net"] > 0 else "NEGATIVE"))
+    if (raw["total_net"] > 0) != (cen["total_net"] > 0):
+        print("  !! THE SIGN OF THE BOOK FLIPS UNDER CENSORING. Every conclusion")
+        print("  !! drawn from the uncensored column is drawing it from the")
+        print("  !! refused rows.")
     print()
-    print("    %-16s %6s   %10s" % ("symbol", "rows", "net"))
-    for n, base, net in sorted(unpriced, reverse=True)[: args.top]:
-        print("    %-16s %6d   %+10.4f" % (base, n, net))
+
+    print("UNPRICED SYMBOLS BY ROWS CARRIED (CENSORED book) -- these set the")
+    print("book's sign and no on-chain quote has ever been taken for any of them:")
     print()
-    print("A re-pricing run today charges the default to %d of %d rows (%.1f%%)."
-          % (unmeas_n, total_n, pct(unmeas_n)))
+    raw_by_sym = {b: (n, net) for n, b, net in raw["unpriced"]}
+    print("    %-16s %6s   %10s   %10s" % ("symbol", "rows", "net", "uncens.net"))
+    for n, base, net in sorted(cen["unpriced"], reverse=True)[: args.top]:
+        rn = raw_by_sym.get(base, (n, net))[1]
+        flag = "  <- censoring changes this symbol" if abs(rn - net) > 1e-9 else ""
+        print("    %-16s %6d   %+10.4f   %+10.4f%s" % (base, n, net, rn, flag))
+    print()
+    print("A re-pricing run today charges the default to %d of %d CENSORED rows "
+          "(%.1f%%)." % (cen["unmeas_n"], cen["total_n"],
+                         100.0 * cen["unmeas_n"] / (cen["total_n"] or 1)))
     print("Those rows are not re-priced. They are restated at a constant.")
+    if dropped:
+        print()
+        print("THE %d REFUSED ROWS, largest |gross| first -- printed, never hidden:"
+              % len(dropped))
+        for r in sorted(dropped, key=lambda r: -abs(float(r.get("gross_profit") or 0.0)))[:10]:
+            ret = booked_return(r)
+            print("    %-14s gross %+9.4f  net %+9.4f  booked return %s"
+                  % (str(r.get("symbol")), float(r.get("gross_profit") or 0.0),
+                     float(r.get("net_profit") or 0.0),
+                     "%+.2f%%" % (100.0 * ret) if ret is not None else "(unpriced leg)"))
     return 0
 
 
