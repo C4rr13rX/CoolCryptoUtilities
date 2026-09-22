@@ -19365,3 +19365,22 @@ At the ETH price implied by this pass's own WETH quotes (~$2775) that is
 $0.0050 -- 5.0bp of a $10 clip, and 66bp of the median $0.750 live notional.
 Gas is irrelevant at $10 and fatal at 75 cents; the CLIP, not the gas price, is
 the lever. This is consistent with `gas-is-tiny-but-the-live-clip-was-median-75-cents`.
+
+### Pass 670, third measurement -- the LIVE book is CLEAN, and that is measured not assumed
+
+    mode     rows   refused   gross dropped
+    live       22         0         +0.0000
+    ghost     243         6         +5.4193
+
+All six contaminated rows are GHOST. The LIVE book -- the 22 rows the
+scoreboard -0.1864 is drawn from -- has ZERO plausibility refusals, so
+`scripts/live_book_forensics.py` and `scripts/tx_hash_provenance_audit.py`
+are genuinely EXEMPT from the censor rather than merely presumed so. The
+-0.1864 scoreboard is UNAFFECTED by everything this pass found. That is the
+important null: the contamination is entirely in the evidence layer that
+decides what graduates, and not in the on-chain record.
+
+Command:
+  python -X utf8 -c "import sys,json,sqlite3; sys.path.insert(0,'.'); ..."
+  (inlined in the pass log; partitions trade_outcomes by details.mode through
+   services.outcome_plausibility.summarise)
