@@ -141,20 +141,61 @@ def default_token_round_trip() -> float:
     return float(os.getenv("TOKEN_ROUND_TRIP_DEFAULT", str(DEFAULT_TOKEN_ROUND_TRIP)))
 
 
-def token_round_trip_cost(symbol: str) -> float:
-    """Full round-trip cost for ``symbol``'s BASE token, as a fraction.
+#: Quote tokens whose own crossing cost is already inside the base token's
+#: row. Every row in ``TOKEN_ROUND_TRIP`` was measured on fills of a
+#: ``TOKEN-USDC`` pair, so the stable leg's spread is ALREADY in the number --
+#: charging it again would double-count. A quote token that is NOT in here is
+#: a second volatile leg whose cost is nowhere in the base token's row.
+#:
+#: Kept local rather than imported from ``trading.portfolio.STABLE_TOKENS``
+#: (which is this set minus the base-chain aliases): this module is a leaf on
+#: the money path and must not pull the portfolio package in to price a gate.
+#: ``USDBC``/``USDC.E`` are the base-chain bridged aliases that
+#: ``services/atf_static_strategy.py:704`` already adds to that same set.
+STABLE_QUOTES = {"USDC", "USDT", "DAI", "USDP", "BUSD", "TUSD", "USDBC",
+                 "USDC.E", "USDS"}
 
-    ``symbol`` is a pair like ``WETH-USDC``; the base is what sets the cost,
-    because the quote leg on this venue is the stable side. Unlisted tokens
-    get ``default_token_round_trip()`` -- an assumption, and by construction a
-    pessimistic one. Callers that need to know the difference should check
-    membership in ``TOKEN_ROUND_TRIP`` themselves rather than inferring it
-    from the returned number.
-    """
-    base = str(symbol or "").split("-")[0].strip().upper()
-    if base in TOKEN_ROUND_TRIP:
-        return float(TOKEN_ROUND_TRIP[base])
+
+def _leg_cost(token: str) -> float:
+    """One token's round-trip row, or the pessimistic default if unlisted."""
+    if token in TOKEN_ROUND_TRIP:
+        return float(TOKEN_ROUND_TRIP[token])
     return default_token_round_trip()
+
+
+def token_round_trip_cost(symbol: str) -> float:
+    """Full round-trip cost for the pair ``symbol``, as a fraction.
+
+    BOTH LEGS ARE PRICED. This used to take ``symbol.split('-')[0]`` and
+    charge the base token alone, justified by "the quote leg on this venue is
+    the stable side" -- which is simply false for pairs the gate was already
+    admitting. ``CBETH-CBBTC``, ``CBETH-WETH`` and ``AERO-WETH`` have no
+    stable leg at all, and each was being charged HALF a round trip and
+    allowed to clear a 35bp bar on it.
+
+    Every row in ``TOKEN_ROUND_TRIP`` is a full round trip measured against a
+    STABLE quote, so the stable side is already inside the row. A pair whose
+    quote is in ``STABLE_QUOTES`` therefore costs exactly its base row; a pair
+    with a second volatile leg costs both rows summed, because that round trip
+    crosses two spreads and pays two lots of slippage. An unlisted volatile
+    quote adds ``default_token_round_trip()``, which is the pessimistic
+    direction and the intended one -- understating cost is how this repo has
+    lost money before.
+
+    A bare token with no quote leg (``"WETH"``) is priced as the base alone;
+    there is no second leg to charge for.
+
+    Callers that need to know whether a number is measured or assumed should
+    check membership in ``TOKEN_ROUND_TRIP`` for BOTH legs rather than
+    inferring it from the returned figure.
+    """
+    parts = [p.strip().upper() for p in str(symbol or "").split("-")]
+    base = parts[0] if parts else ""
+    cost = _leg_cost(base)
+    quote = parts[1] if len(parts) > 1 and parts[1] else ""
+    if quote and quote not in STABLE_QUOTES:
+        cost += _leg_cost(quote)
+    return cost
 
 #: Smallest notional whose fee ratio is meaningful. Below this the division
 #: turns rounding into a double-digit "cost" -- the book holds a row at
