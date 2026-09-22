@@ -19439,3 +19439,67 @@ ROUTE: fill the empty per-token cost table so money_button's universe is not
   price-action survivors sit in symbols rung 0 refuses on a 70bp ASSUMPTION
   that only 38 live fills across 7 tokens can ever displace. The binding
   constraint is the SIZE OF THE LIVE FILL SAMPLE, not the table.
+
+
+## Pass 670 (Echo, senior) -- THE COST ARGUMENT WAS WON AND IT DID NOT OPEN THE ROAD
+
+ROUTE TRIED: standing-instruction route (b), "attack the cost floor first --
+restricting the tradeable universe to deep pools may beat any signal work."
+
+VERDICT: **the cost half is WON and the route is STILL CLOSED.** Route (b) is
+CLOSED as a route to profit, and its cost finding stands as a permanent asset.
+
+THE NUMBER IT PRODUCED (cost leg -- PASSES):
+  WETH-USDC at a $10 clip = 6.11bp all-in
+    2.06bp QUOTED round trip (median of 3 healthy tier-100/100 sweeps,
+      spread 1.57-2.34, via services.providers.uniswap_v3.UniswapV3Local,
+      the same object that builds live calldata) -- Echo p498, d864991
+    4.05bp REALISED gas ($0.00405/round trip, median fee_cost over the 18
+      closed live rows; the book is chain-verified 36/36) -- p496/p499
+  Clears 8.1bp by 1.3x and 12.2bp by 2.0x.
+  INDEPENDENT CORROBORATION, different script and data path: Kite's
+  data/weth_direction_census.json reports perfect_oracle_pays TRUE at
+  10/15/30/45/60m at exactly this cost. First time an oracle has paid on WETH.
+
+THE NUMBER THAT CLOSED IT (direction leg -- FAILS):
+  27.05d WETH-USDC tape ending 2026-09-22, 3555 ticks, median gap 79.1s
+    momentum_clears_h_star          FALSE at 10/15/30/45/60m
+    unconditional_long_clears_h_star FALSE at all five
+    either_direction_pays            FALSE at all five
+    momentum  NET bp: -7.29 -6.29 -7.89 -6.94 -4.21
+    contrarian NET bp: -4.93 -5.93 -4.33 -5.28 -8.01
+  Both signs of the only signal we have lose after cost.
+
+  ** DO NOT QUOTE THE 60m p=0.00066. ** It is accuracy 0.5298 at n=2939
+  OVERLAPPING windows and adjacent returns share a price print. The DISJOINT
+  sample is n=88, accuracy 0.5682, p=0.1204 -- not significant, and still
+  under its own h* of 0.5959. Judge candidates on the disjoint column only.
+
+CORRECTED THIS PASS (both make the route HARDER, recorded so nobody re-derives
+the easier version):
+  * TAPE IS THINNER than Echo p452 assumed: mean|move| 22.52bp/30m and
+    31.86bp/60m, vs p452's 25.4/40.7 (-11% and -22%). This RAISES h*.
+    Kite raised the contradiction; it was taken.
+  * GAS PROVENANCE: median fee_cost over ALL 265 trade_outcomes rows is
+    $0.0130 -- 3.2x the live $0.00405 -- because ghost rows carry a MODELED
+    fee and outnumber live 265-to-18. trade_outcomes has NO provenance
+    column (no live/ghost/mode/source field exists; PRAGMA table_info
+    confirms). Never compute gas off the full table.
+  * THE $2 CLIP IN [74a12c84] WAS WRONG AND WOULD HAVE GUARANTEED A FAILED
+    TEST: gas alone is 20.25bp at $2 vs 4.05bp at $10, against a 22.5bp
+    30-minute move. Re-spec'd to $10. The item predated the gas measurement
+    and nobody re-read it for 236 passes.
+
+CAPITAL GATE -- what happened, recorded because it is the honest part:
+  Echo re-asked the operator to arm live WETH round trips at a $10 clip
+  (the ask had sat unanswered since pass 434), then WITHDREW the ask within
+  five minutes when Kite's direction census landed. Arming would have bought
+  on-chain receipts that lose ~4-8bp per round trip BY CONSTRUCTION.
+  [74a12c84] stays blocked, and its blocker is NO LONGER THE OPERATOR -- it
+  is the failed direction leg. Do not unblock it on an operator "yes" alone.
+
+WHAT IS CLOSED: route (b) as a path to profit. Cost is not what stops us.
+WHAT IS OPEN: [854ce89d] -- does ANY classical signal clear h* on a DISJOINT
+WETH sample? If none does, the deep-pool WETH route is CLOSED ON DIRECTION
+and must be recorded here as such, because the cost argument is now GOOD and
+will tempt a later pass into reopening it on cost alone.
