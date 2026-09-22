@@ -19316,3 +19316,52 @@ outnumber ghost EXITS **4.9:1** -- about 954 ghost entries never produced a clos
 leg. That, not the entry rate, is where the tradeable evidence rate is going. And the
 newest `trade_outcomes` row was 878.1 minutes (14.6h) old, with all 6 outcomes in 48h
 inside one 6-hour window 14-19h ago.
+
+## Pass 670 -- Cove -- [b43300b1] base gets a SECOND quoting venue: Aerodrome. CLOSED POSITIVE.
+
+ROUTE TRIED: base had exactly ONE venue that could quote (`SUSHI_V2_ROUTER` has
+no 'base' key; `CAMELOT_V2_ROUTER['base']` is the empty string), and
+`dispersion()` returns None below two live quotes. So every routing-dispersion
+and routing-arbitrage number on base was structurally n=0 -- UNMEASURABLE, not
+measured-small. Pass 449 got 0 readings from 12 observations and that is why.
+
+WHY IT COULD NOT BE DONE BY CONFIG: Aerodrome's router is a Velodrome-V2 fork,
+not a Uniswap-V2 clone. It replaced `address[] path` with
+`Route{from,to,stable,factory}` -- `stable` selects the solidly stable
+invariant, `factory` exists because pools can come from more than one
+deployment. A V2 ABI does not decode against it, so filling in
+`CAMELOT_V2_ROUTER['base']` could never have worked.
+
+NUMBER PRODUCED (3 symbols x 4 rounds, $10 clip, USDC->token, commit 4a9400d):
+  12 of 12 observations produced a dispersion reading (was 0 of 12)
+  both venues answered 12/12, 0 timeouts, 0 benchings
+  MEDIAN BEST-VS-WORST 21.5bp   (min 2.6, max 50.45)
+  WETH 24.43bp n=4 | CBBTC 20.77bp n=4 | AERO 6.74bp n=4
+  best venue: uniswap 11 of 12, aerodrome 1 of 12
+  one leg of round_trip_cost() measured 23.27bp at the same moment
+So routing dispersion is the SAME ORDER as the entire modelled cost of a leg.
+
+WHAT IS *NOT* CLAIMED: 21.5bp is not 21.5bp of recoverable edge. Uniswap won 11
+of 12, so a best-of-two router that already uses uniswap captures only the
+INVERSIONS. The single measured inversion was CBBTC (aerodrome 11554 vs uniswap
+11496 sats, 50.45bp on that leg). 12 points, ~6 minutes, one clip, one
+direction. This is a FLOOR ON MEASURABILITY, not an edge. Filed as [4a9b738e]:
+measure the inversion RATE and the bp gained by best-of-two over
+uniswap-always, which is the only recoverable number.
+
+SIDE FINDING, and it is the reusable one: bursting the four candidate routes at
+mainnet.base.org returned HTTPError on 7 of 10 eth_calls. The route loop was
+about to reproduce `the-quoter-cannot-tell-a-429-from-an-empty-pool` exactly --
+a throttled route silently reads as an absent pool and the router then prices
+through a worse one. Fixed before the first measurement was taken:
+`_amount_out()` retries THROTTLES (429/timeout/connection) with backoff,
+returns REVERTS immediately, and a fully-throttled pair errors with
+"RPC THROTTLED on N of M routes -- this is NOT evidence of an empty pool".
+ANY new base quoter needs this or its numbers are RPC weather.
+
+OPENING MEASUREMENT (chosen before reading the assignment): Base gas_price is
+0.006 gwei at block 51664744. A 2-leg round trip at 150k gas/leg is 1.8e-6 ETH.
+At the ETH price implied by this pass's own WETH quotes (~$2775) that is
+$0.0050 -- 5.0bp of a $10 clip, and 66bp of the median $0.750 live notional.
+Gas is irrelevant at $10 and fatal at 75 cents; the CLIP, not the gas price, is
+the lever. This is consistent with `gas-is-tiny-but-the-live-clip-was-median-75-cents`.
