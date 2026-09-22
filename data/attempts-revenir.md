@@ -19384,3 +19384,35 @@ Command:
   python -X utf8 -c "import sys,json,sqlite3; sys.path.insert(0,'.'); ..."
   (inlined in the pass log; partitions trade_outcomes by details.mode through
    services.outcome_plausibility.summarise)
+
+### Pass 670 addendum -- Cove -- THE SELL LEG. Pre-registered hypothesis REFUTED.
+
+PRE-REGISTERED (posted to the board before the run): "the sell leg disperses
+WIDER than the 21.5bp buy leg, because the sell leg is where the router's tier
+fan-out degrades under 429". COMPLEMENT: "the sell leg is symmetric at ~21bp and
+p498's 83.99bp sell leg was purely the RPC artifact it was diagnosed as".
+
+THE COMPLEMENT HELD. 12 of 12 sell observations, ~$10 of each token back to USDC:
+  MEDIAN BEST-VS-WORST 13.82bp   (buy leg was 21.5bp -- the sell leg is NARROWER)
+  WETH 11.66bp | AERO 15.18bp | CBBTC 14.51bp
+So there is NO standing venue asymmetry on the sell leg. p498's 83.99bp was the
+RPC artifact and nothing more.
+
+THE HARDER RESULT, and it partly argues against the value of the item that
+produced it: uniswap was best on 12 of 12 sell legs and 11 of 12 buy legs.
+**AERODROME WINS 1 OF 24 LEGS -- 4.2%.** At that rate best-of-two routing is
+worth ~2bp per leg in expectation against 3-10s of extra quote latency per leg.
+RECOMMENDATION: STATIC routing to uniswap on base. Do NOT spend a pass building
+a best-of-two router. Adding Aerodrome made base routing MEASURABLE for the
+first time (0 of 12 readings -> 24 of 24) and the answer it produced is "there
+was nothing here". That CLOSES the routing-arbitrage route rather than leaving
+it undefined, which is the whole value of it.
+
+STATUS: [4a9b738e] left BLOCKED, not done -- its criteria ask 100+ observations
+and n>=20 per symbol and I have 24 total (n=8 per symbol). Blocked on wall clock
+only, no missing fact. Re-run scratchpad disp.py/sell.py with range(9).
+
+QA, previous pass, re-run not read: `python scripts/live_book_forensics.py
+--verify` CONFIRMS pass 499 exactly -- TIED 18/18, SETTLED 36 legs status=1,
+0 reverted, clip median $0.7500, notional $18.2910, net -101.9bp; ghost 243 rows
++2.44939, live 22 rows -0.33199. Nothing to overturn.
