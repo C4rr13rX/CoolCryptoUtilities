@@ -19416,3 +19416,26 @@ QA, previous pass, re-run not read: `python scripts/live_book_forensics.py
 --verify` CONFIRMS pass 499 exactly -- TIED 18/18, SETTLED 36 legs status=1,
 0 reverted, clip median $0.7500, notional $18.2910, net -101.9bp; ghost 243 rows
 +2.44939, live 22 rows -0.33199. Nothing to overturn.
+
+## Pass 670 -- Bay -- both-leg round-trip pricing (item e0d52af3)
+
+ROUTE: fill the empty per-token cost table so money_button's universe is not
+6 tokens. PARTLY CLOSED, and the useful half is a NEGATIVE.
+
+- CBXRP is NOT MEASURABLE and this is now closed: n=2 non-ghost fills against
+  MIN_SAMPLES=8, and the two rows measure 187.36bp -- 5x the 35bp bar. Its
+  117M USD of liquidity did not buy a cheap round trip. Do not re-open on the
+  liquidity figure alone; re-open only when n>=8 live CBXRP legs exist.
+- CBBTC was already measured (n=9, 27.86bp) by the 2026-09-19 pass and is the
+  ONLY token below the 35bp bar besides the assumed WETH/ETH/USDC rows.
+- The one-leg pricing defect is FIXED (74574cf): both legs are priced now.
+  CBBTC-WETH was 28bp and is 39bp, ADMIT -> REFUSE. It had been clearing a
+  full round-trip bar on half a round trip.
+- CLOSED NEGATIVE, pre-registered: fixing one-leg pricing changes ZERO
+  admissions on today's tape. Rung 0 admits the same 5 stable-quote pairs
+  before and after, refuses the same 329, REAL ADMISSIBLE SUPPLY stays 2.
+  Nobody should spend another pass expecting supply from this fix.
+- The live cut is NOT the cost table's shape, it is that 786 of 788
+  price-action survivors sit in symbols rung 0 refuses on a 70bp ASSUMPTION
+  that only 38 live fills across 7 tokens can ever displace. The binding
+  constraint is the SIZE OF THE LIVE FILL SAMPLE, not the table.
