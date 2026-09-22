@@ -101,6 +101,11 @@ VENUES: Tuple[Tuple[str, str, str, str], ...] = (
     ("uniswap", "services.providers.uniswap_v3", "UniswapV3Local", "UNI_V3"),
     ("sushi", "services.providers.sushi_v2", "SushiV2Local", "SUSHI_V2_ROUTER"),
     ("camelot", "services.providers.camelot_v2", "CamelotV2Local", "CAMELOT_V2_ROUTER"),
+    # Added pass 670. Before this row base had exactly ONE venue that could
+    # quote (sushi has no 'base' key, camelot's base router is ''), and
+    # dispersion() returns None below two live quotes -- so every routing
+    # number on base was structurally n=0 rather than measured-small.
+    ("aerodrome", "services.providers.aerodrome", "AerodromeLocal", "AERODROME_ROUTER"),
 )
 
 
