@@ -69,7 +69,46 @@ def _rows(con: sqlite3.Connection) -> List[Tuple[str, float, float, float, float
             continue
         out.append((str(sym or ""), float(ts or 0.0), e, x, float(net or 0.0)))
     out.sort(key=lambda r: r[1])
+    _uncensored_banner(out)
     return out
+
+
+def _uncensored_banner(rows: List[Tuple[str, float, float, float, float]]) -> None:
+    """Say how many rows here the ledger would have refused, and DO NOT drop them.
+
+    trade_outcomes is a PRE-GUARD source: it keeps every outcome
+    ``trading/strategies/ledger.py::record`` refused at write time. Most
+    censuses must censor -- measured 2026-09-22, six such rows flip the sign of
+    the pooled ghost book (+2.1174 -> -3.2392) and of DEEP net AFTER (+2.0241 ->
+    -0.0918) in scripts/deep_pool_reprice.py.
+
+    THIS SCRIPT IS THE EXCEPTION AND SAYS SO RATHER THAN CENSORING. Its whole
+    subject is entry-basis contamination -- an outcome opened at a fictional
+    price -- so the refused rows are the EVIDENCE here, not noise. Dropping them
+    would delete the thing being measured. What is not acceptable is being
+    silent about it, so the count is printed and the reader is told which way
+    the filter was pointed.
+    """
+    import sys as _sys
+    from pathlib import Path as _Path
+    _root = str(_Path(__file__).resolve().parents[1])
+    if _root not in _sys.path:
+        _sys.path.insert(0, _root)
+    from services.outcome_plausibility import IMPLAUSIBLE_RET
+    bad = [r for r in rows if abs(r[3] / r[2] - 1.0) > IMPLAUSIBLE_RET]
+    print("UNCENSORED BY DESIGN -- %d of %d rows exceed the ledger's own "
+          "|return| > %.0f%% refusal" % (len(bad), len(rows),
+                                         100.0 * IMPLAUSIBLE_RET))
+    print("  bar and are KEPT, because a fictional entry basis is this script's "
+          "subject.")
+    print("  Any book TOTAL taken from these rows is contaminated; every other "
+          "census")
+    print("  in this repo must censor via services.outcome_plausibility. "
+          "Largest: %s" % (", ".join(
+              "%s %+.1f%%" % (r[0], 100.0 * (r[3] / r[2] - 1.0))
+              for r in sorted(bad, key=lambda r: -abs(r[3] / r[2] - 1.0))[:4])
+              or "(none)"))
+    print()
 
 
 def basis_ratio(
