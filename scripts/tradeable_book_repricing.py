@@ -105,6 +105,16 @@ TIERS: List[Tuple[str, float, float]] = [
 ]
 
 
+from services.outcome_plausibility import (  # noqa: E402
+    booked_return,
+    partition,
+    # ALIASED. This file defines its own module-level ``summarise(rows, key)``
+    # at the bottom, which shadows a plain import and makes the censor call
+    # fail with a TypeError about a missing 'key'.
+    summarise as plausibility_summary,
+)
+
+
 def load_depths(path: str) -> Dict[str, Optional[float]]:
     p = Path(path)
     if not p.exists():
@@ -183,6 +193,11 @@ def load_rows_by_mode(db_path: str, mode: Optional[str]) -> List[Dict[str, Any]]
             except (TypeError, ValueError):
                 meta = {}
             d["mode"] = meta.get("mode")
+            # trade_outcomes has no strategy_id COLUMN; it is inside details.
+            # The dollar arm of the plausibility test judges a row against its
+            # own strategy's scale, so without this it silently never runs.
+            d["strategy_id"] = str(
+                meta.get("strategy_id") or meta.get("strategy") or "").strip()
             if mode is not None and d["mode"] != mode:
                 continue
             out.append(d)
@@ -193,8 +208,18 @@ def load_rows_by_mode(db_path: str, mode: Optional[str]) -> List[Dict[str, Any]]
 
 def build(db_path: str, depth_bar: float, max_move_pct: float,
           mode: Optional[str] = "ghost") -> Dict[str, Any]:
-    rows = load_rows_by_mode(db_path, mode)
+    all_rows = load_rows_by_mode(db_path, mode)
     depths = load_depths(DEPTH_SNAPSHOT)
+
+    # THE PRE-GUARD CENSOR. trade_outcomes keeps every row
+    # trading/strategies/ledger.py::record refused at write time, so a re-pricing
+    # read off it prices a DIRTIER book than graduation ever sees. Measured
+    # 2026-09-22: six refused rows carry gross +5.4193 and flip the sign of
+    # DEEP net AFTER in scripts/deep_pool_reprice.py (+2.0241 -> -0.0918).
+    # ``max_move_pct`` below was this file's own private copy of that rule and is
+    # kept only as an extra, deliberately-requested filter.
+    rows, refused = partition(all_rows)
+    plaus = plausibility_summary(all_rows)
 
     kept: List[Dict[str, Any]] = []
     censored = 0
@@ -229,7 +254,8 @@ def build(db_path: str, depth_bar: float, max_move_pct: float,
             "nonmono_span": span,
         })
     return {"rows": kept, "censored": censored, "depth_bar": depth_bar,
-            "n_depths": len(depths)}
+            "n_depths": len(depths), "plausibility": plaus,
+            "refused_rows": refused, "rows_read": len(all_rows)}
 
 
 def summarise(rows: List[Dict[str, Any]], key: str) -> Dict[str, Any]:
@@ -290,6 +316,23 @@ def main() -> int:
     print(f"book: {args.mode.upper()}   rows kept {len(rows)}   "
           f"censored |move|>{args.max_move_pct}%: {st['censored']}"
           f"   depth rows available: {st['n_depths']}")
+    pl = st["plausibility"]
+    print(f"PLAUSIBILITY CENSOR -- services.outcome_plausibility.partition, the")
+    print(f"ledger's own refusal rule applied on the READ side. trade_outcomes is")
+    print(f"PRE-GUARD: it keeps every row ledger.record() refused at write time.")
+    print(f"  read {st['rows_read']}   countable {pl['kept']}   "
+          f"REFUSED {pl['dropped']}   reasons {pl['reasons'] or '{}'}")
+    print(f"  refused rows carry gross {pl['gross_dropped']:+.4f}   "
+          f"net {pl['net_dropped']:+.4f}")
+    for r in sorted(st["refused_rows"],
+                    key=lambda r: -abs(float(r.get("gross_profit") or 0.0)))[:6]:
+        ret = booked_return(r)
+        print("    %-14s gross %+9.4f   booked return %s"
+              % (str(r.get("symbol")), float(r.get("gross_profit") or 0.0),
+                 "%+.2f%%" % (100.0 * ret) if ret is not None else "(unpriced leg)"))
+    if pl["dropped"] == 0:
+        print("  NONE refused in this book -- the contamination is not here.")
+    print()
     if mode is None:
         print("  WARNING: --mode all MIXES the ghost and live books. 22 of 237")
         print("  rows are live. This is the pre-2026-09-16 behaviour and is")
