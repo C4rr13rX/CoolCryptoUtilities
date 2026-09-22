@@ -19265,3 +19265,54 @@ Two consequences, and the first matters more than the finding it corrects:
 REAL EXPOSURE: SEVEN scripts, filed as [c2e8768a]. The one that matters is
 `scripts/tradeable_book_repricing.py`, because `deep_pool_reprice.py` prints a
 banner telling readers to PREFER it -- and it is uncensored.
+
+## Pass 670 -- KITE -- the WETH gross edge, measured for the first time. Route CLOSED on direction, OPEN on cost.
+
+**Route tried:** item [017594f6] criterion 6 -- "The WETH GROSS EDGE has never been
+measured; the n=99 behind +0.1769% contains no WETH fill." Measure whether WETH-USDC
+forward direction is predictable above the rate its now-measured cost demands.
+
+**Command:** `python scripts/weth_direction_census.py --days 30` (commit 4c624b8).
+WETH-USDC, 3555 ticks, 27.05d, 79.1s median gap, 0 ticks dropped by the
+mixed-denomination guard.
+
+**CLOSED NEGATIVE -- do not reopen on cost.** The cost leg is clear and this is the
+strongest independent support Echo p498 has. Mean absolute move on WETH is 13.91bp
+at 10m, 16.33 at 15m, 22.52 at 30m, 27.04 at 45m, 31.86 at 60m. Every one is above
+the 6.11bp all-in, so **a perfect oracle pays at every horizon**.
+
+**What blocks it is DIRECTION.** h* = 0.5 + cost/(2*move) demands 0.7196 / 0.6870 /
+0.6357 / 0.6130 / 0.5959 at 10/15/30/45/60m. Measured momentum-continuation accuracy
+is 0.4575 / 0.4946 / 0.4604 / 0.4847 / 0.5298. Every horizon fails. Net per round
+trip: -7.29 / -6.29 / -7.89 / -6.94 / **-4.21bp** at best.
+
+**Both directions fail.** Taken contrarian the nets are -4.93 / -5.93 / -4.33 /
+-5.28 / -8.01bp. The SIGN of the call is not the problem; the MAGNITUDE is. Nobody
+should spend a pass inverting this signal.
+
+**Significance, honestly.** Claimed only on a DISJOINT sample where no two returns
+share a price print (see `adjacent-returns-share-a-price-print`). At a 79s gap a 60m
+overlapping return shares prints with ~45 neighbours, so the overlapping p-values are
+anti-conservative by about that factor. Disjoint 60m is 0.5682 at n=88, p=0.1204 --
+NOT significant, and still 2.8 points under its own bar. No inverted edge is claimed
+either.
+
+**Corrects a constant other items rest on.** Echo p452 has the WETH tape at 25.4bp/30m
+and 40.7bp/60m (n=1574/1613, 21.7d). Over the 27.05d ending today it is 22.52 and
+31.86 on a larger sample -- 11% and 22% LOWER. A quieter tape RAISES h*, so the 60m
+bar is 59.59% and not the 57.5% that p452 constant implies. **Price this route off the
+live tape, never the p452 constant.**
+
+**What this does NOT close.** It tests momentum continuation and unconditional long,
+not money_button's shipped rule with its drawdown band, slope floor and reversion
+fraction. A rule that SELECTS its ticks could beat the unconditional tape. Filed as
+[c967fed1] priority 1 with the shipped-rule simulation as its first criterion, plus
+the guard that matters: if the rule fires on under 30 WETH ticks in 27 days, the route
+is unmeasurable from this tape and that is the finding.
+
+**Also measured this pass, unrelated and free.** trade_fills over 90d is ghost_entry
+1201 / ghost_exit 247 / live_entry 20 / live_exit 18 / gas_refill 6. Ghost ENTRIES
+outnumber ghost EXITS **4.9:1** -- about 954 ghost entries never produced a closing
+leg. That, not the entry rate, is where the tradeable evidence rate is going. And the
+newest `trade_outcomes` row was 878.1 minutes (14.6h) old, with all 6 outcomes in 48h
+inside one 6-hour window 14-19h ago.
