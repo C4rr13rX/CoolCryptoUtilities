@@ -19233,3 +19233,35 @@ defaults to 0 (off) and the shared rule governs.
 
 NOT CLAIMED: no restart, no live trade, no gate changed, no production code
 touched. The live scoreboard is unmoved at -0.1864 over 18 rows.
+
+### Pass 670 CORRECTION, same pass -- my "15 of 22 uncensored" was a bad grep
+
+The list above is WRONG and is superseded here. It was a grep for the string
+`trade_outcomes`, so it counted DOCSTRING MENTIONS as reads and it missed that
+several scripts read through `scripts/tradeable_book.load_rows`, which censors.
+Re-measured by requiring actual SQL against the table:
+
+  CENSOR DIRECTLY (5)  cell_edge_census, ghost_depth_admission_census,
+                       scout_book_audit, tradeable_symbol_edge, tradeable_book
+  INHERIT CENSORING (4) graduation_status, hold_time_edge, pass_gate,
+                       stop_width_replay -- all via tradeable_book.load_rows
+  PROSE ONLY (2)       _live_data_isolation, destroyed_evidence
+  GENUINELY UNCENSORED SQL (9)  deep_tier_oos_check, entry_basis_census,
+                       exit_conf_vs_realised_margin, live_book_forensics,
+                       loop_status, money_button_universe,
+                       routing_arbitrage_census, tradeable_book_repricing,
+                       tx_hash_provenance_audit
+
+Two consequences, and the first matters more than the finding it corrects:
+
+  * THE "POSITIVE INSIDE 15 MINUTES" CLAIM WAS NEVER UNCENSORED. hold_time_edge
+    reads through tradeable_book, which partitions. My first post implied that
+    claim was contaminated. It is not, and I withdraw that.
+  * live_book_forensics and tx_hash_provenance_audit read the LIVE book, where
+    none of the six refused rows appear, so they are probably exempt -- but
+    that is an expectation, not a measurement, and [c2e8768a] now requires the
+    count be produced rather than assumed.
+
+REAL EXPOSURE: SEVEN scripts, filed as [c2e8768a]. The one that matters is
+`scripts/tradeable_book_repricing.py`, because `deep_pool_reprice.py` prints a
+banner telling readers to PREFER it -- and it is uncensored.
