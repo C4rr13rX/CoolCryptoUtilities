@@ -77,6 +77,88 @@ def _can_denominate_pnl_in_usd(symbol: str) -> bool:
     return is_usd_accounting_symbol(symbol)
 
 
+#: WHAT AN UNPRICED SYMBOL IS ADMITTED AS. This is the STATED default that
+#: backlog item fb660668 exists to replace -- until it was written there was no
+#: line to point at, only a fall-through: `try_add_candidate` asked for USD
+#: accounting, volume, a live price, a streaming feed and OHLCV, and never once
+#: asked whether the symbol could be COST-judged. A symbol whose base token has
+#: no address in `data/token_addresses.json` cannot be quoted, so no cost census
+#: of any kind can price its round trip, and "no cost" was silently read as
+#: "cheap enough".
+#:
+#: MEASURED PASS 677, over every symbol in `trade_outcomes` (58 symbols, 265
+#: closed rows), splitting on exactly the test below:
+#:
+#:   PRICEABLE  25 symbols  157 rows  net  +4.3848
+#:   UNPRICED   33 symbols  108 rows  net  -2.2674
+#:
+#: The unpriced half of the whole book is net NEGATIVE while the priceable half
+#: pays, and it is not one bad symbol: BASECAT-USDC is -1.9138 of it, leaving
+#: the other 32 unpriced symbols at -0.3536 over 71 rows. That is why the
+#: default is REFUSE and not ALLOW.
+#:
+#: THE BLAST RADIUS OF REFUSING IS LARGE AND IS STATED HERE RATHER THAN HIDDEN.
+#: Over `market_stream` on base: 168h = 182 distinct streamed symbols, 29
+#: priceable and 153 (84.1%) unpriced; 24h = 46 streamed, 7 priceable, 39
+#: unpriced. Refusing deletes most of the DISCOVERED universe. It is taken
+#: anyway because those 153 are overwhelmingly symbols that never booked a
+#: round trip -- their contribution to the book is zero -- while the 33 that did
+#: trade are the -2.2674 above.
+#:
+#: TWO CARVE-OUTS, both load-bearing:
+#:
+#:   * SYNONYMS ARE RESOLVED. The book holds WETH, not ETH, and ETH-USDC is the
+#:     deepest pair here. A naive base-token-in-book test refuses our best pair,
+#:     so the lookup goes through `_token_synonyms`/`TOKEN_NORMALIZATION`.
+#:   * HELD POSITIONS ARE EXEMPT. A held symbol refused a bot is a position
+#:     nothing can sell; this file already records one stranded 362.9h that way.
+#:     The wallet-holdings loop passes `held=True` and skips this test.
+#:
+#: FAILS OPEN on an unreadable book: if `data/token_addresses.json` cannot be
+#: parsed the answer is "priceable", because a selector that refuses everything
+#: because a file moved is worse than the defect this closes.
+UNPRICED_SYMBOL_ADMISSION = os.getenv(
+    "SELECTOR_UNPRICED_ADMISSION", "refuse"
+).strip().lower()
+
+#: The address book the test above reads. Named so a reader can find it.
+UNPRICED_SYMBOL_ADDRESS_BOOK = Path("data/token_addresses.json")
+
+
+@functools.lru_cache(maxsize=8)
+def _address_book_tokens(chain: str) -> frozenset:
+    """Upper-cased tokens with a known address on ``chain``. Empty on failure."""
+    try:
+        raw = json.loads(UNPRICED_SYMBOL_ADDRESS_BOOK.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - unreadable book fails open, see above
+        return frozenset()
+    entry = raw.get(str(chain or "").lower()) if isinstance(raw, dict) else None
+    if not isinstance(entry, dict):
+        return frozenset()
+    return frozenset(str(token).upper() for token in entry)
+
+
+def _is_priceable(symbol: str, chain: str) -> bool:
+    """True when ``symbol``'s base token has an address, so cost is knowable."""
+    tokens = _address_book_tokens(chain)
+    if not tokens:
+        return True  # fail open -- an unreadable book never empties the universe
+    try:
+        base, _quote = _split_symbol(symbol)
+    except Exception:  # noqa: BLE001
+        base = str(symbol or "").upper().split("-")[0]
+    if not base:
+        return True
+    return bool(_token_synonyms(str(base).upper()) & tokens)
+
+
+def _unpriced_symbol_refused(symbol: str, chain: str) -> bool:
+    """The one line that decides what an UNPRICED symbol is admitted as."""
+    if UNPRICED_SYMBOL_ADMISSION != "refuse":
+        return False
+    return not _is_priceable(symbol, chain)
+
+
 #: Rank a symbol DOWN when no strategy may open a position in it.
 #:
 #: A bot slot is not a subscription, it is the decision cycle. Every entry
@@ -870,9 +952,16 @@ def select_pairs(
                     datapath=Path("."),
                 )
 
-        def try_add_candidate(symbol: str, *, priority: bool = False) -> None:
+        def try_add_candidate(
+            symbol: str, *, priority: bool = False, held: bool = False
+        ) -> None:
             cand = candidate_map.get(symbol.upper())
             if not cand:
+                return
+            # UNPRICED symbols are refused here by the stated default
+            # UNPRICED_SYMBOL_ADMISSION. `held=True` is the documented exemption
+            # -- a held position refused a bot is a position nothing can sell.
+            if not held and _unpriced_symbol_refused(cand.symbol, chain):
                 return
             # Checked BEFORE the priority escape below, deliberately. The
             # manual watchlist and the wallet-holdings loop both enter here
@@ -930,7 +1019,7 @@ def select_pairs(
                     break
                 for pair_symbol in (f"{held}-{stable}", f"{stable}-{held}"):
                     _ensure_candidate(pair_symbol)
-                    try_add_candidate(pair_symbol, priority=True)
+                    try_add_candidate(pair_symbol, priority=True, held=True)
 
         for symbol in DEFAULT_LIVE_PAIRS:
             if len(picked) >= limit:
@@ -960,6 +1049,11 @@ def select_pairs(
             # (0011_CBETH-WETH.json), so a gate wired only into the helper
             # would leave the largest producer untouched.
             if not _can_denominate_pnl_in_usd(cand.symbol):
+                continue
+            # Repeated here for the same reason the USD test above is: this bulk
+            # scan never calls try_add_candidate, so a gate wired only into the
+            # helper would leave the largest producer of candidates untouched.
+            if _unpriced_symbol_refused(cand.symbol, chain):
                 continue
             token_key = (tuple(sorted(cand.tokens)), chain.lower())
             if token_key in seen_tokens:
