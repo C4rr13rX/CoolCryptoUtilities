@@ -20217,3 +20217,125 @@ Criterion 6 of [a2bfd079] is correct to call this an operator decision.
 
 **Status: the instrument is fixed and committed; the item stays OPEN** on a
 criterion that needs a restart plus a full 6h window.
+
+
+## Pass 673 (Bay) -- [f7a6ee71] ghost_ready: the thresholds, the measured values, and the distance
+
+ROUTE: answer what `_ghost_validation_for_live()` (trading/pipeline.py:4677) requires
+for `ready=True`, and how far away we are. CLOSED NEGATIVE -- the distance is not a
+duration, it is a RATE GAP OF 92.6x, so the demotion is PERMANENT at the current rate.
+
+WHO IS BEING JUDGED. `_ghost_validation_for_live` evaluates only
+`_live_gate_candidates()`, i.e. the live-APPROVED set. That is one strategy,
+`money_button`. Every other strategy's ghost evidence is invisible to this gate.
+Read from the plan production published 5.8 min before this was written
+(data/reports/confusion_matrices.json -> transition_plan.ghost_validation):
+`strategy_id money_button`, `samples 0`, `reason no_qualified_strategy:cold_start_bootstrap`.
+
+THRESHOLDS, each with its CURRENT MEASURED VALUE:
+
+    threshold                       source                        required   measured
+    min_trades                      pipeline.py:928 default 25     >= 25      0
+    min_win_rate                    pipeline.py:932 default 0.55   >= 0.55    0.0
+    min_margin (MIN_REALIZED_MARGIN)  default 0.0                  >  0.0     0.0
+    min_profit_factor               MIN_GHOST_PROFIT_FACTOR 0.95   >= 0.95    1.0 (vacuous, n=0)
+    total_net_profit                pipeline.py:4732               >  0.0     0.0
+    reason earned                   ghost_reason_is_earned()       True       False (cold_start)
+    tail_risk vs tail_guardrail     0.1                            <= 0.1     0.0 (unmeasured)
+    loss_rate vs guardrail          0.6                            <= 0.6     0.0
+    loss_streak vs guardrail        5                              <= 5       0
+    stale vs stale_guardrail_sec    86400                          False      True
+    FAST TRACK min_trades           12                             >= 12      0
+    FAST TRACK win_rate Wilson LB   0.55 at z=1.96                 >= 0.55    0.0
+
+    Only ONE of these is set in .env: GHOST_VALIDATION_LOOKBACK_SEC=432000 (.env:263)
+    = 120 HOURS, not the 48h the item's note assumed. Everything else is a default.
+
+THE DISTANCE, AND WHY IT IS NOT A NUMBER OF DAYS. The window is ROLLING 120h, so
+evidence does not accumulate -- it ages out. `ready=True` therefore requires a
+sustained RATE, not a total:
+
+    main bar       25 trades / 120h  =  5.00 tradeable ghost trades per day, at >= 55% win
+    fast track     12 trades / 120h  =  2.40 per day, and Wilson LB 0.55 at n=12
+                   needs 10 of 12 WINS (83.3%); 9 of 12 gives LB 0.468 and fails
+
+    money_button's MEASURED production, trade_outcomes read-only, keyed on
+    json_extract(details,'$.strategy_id'):
+        120h window (the gate's own window):  n=0
+        7d:   n=0      30d:  n=1      all-time: n=1, a LOSS of -0.0214
+        newest money_button outcome: 445.1 HOURS OLD (18.5 days)
+
+    rate = 1 / 445.1h = 0.0539 trades/day.
+    main bar needs 5.00/day  -> 92.6x the measured rate
+    fast track needs 2.40/day -> 44.5x the measured rate
+
+    SO: NEVER, AT THE CURRENT RATE. Not "464 days" (which is what 25/0.0539 gives
+    if you wrongly treat the window as cumulative) -- the sliding window means
+    waiting does not help at all. And the win rate is worse than the count: the
+    fast track needs 83.3% wins and money_button's lifetime record is 0 wins of 1.
+
+    For scale, the whole ghost population inside the same 120h window is
+    rsi_reversal@12h 3, obv_accumulation@5h 1, ema_cross@3d 1, ema_cross 1 -- six
+    trades across four strategies, none of them the approved one. Even POOLED the
+    population is 1.2/day against a 5.00/day bar.
+
+WHAT THIS CLOSES. Route (d), "raise the evidence RATE rather than lower the bar",
+cannot reach this gate by raising the rate of the strategies that are producing,
+because the gate does not read them. The only two things that move it are: a
+strategy that ENTERS at >= 5/day becomes the approved one, or money_button's
+entry condition is widened. Both are upstream of this gate. The gate itself is
+refusing correctly and MUST NOT be loosened -- money_button was hand-approved on
+USER instruction 2026-09-16 and never earned a verdict.
+
+SIDE FINDING, and the causal half of it is KILLED -- see the next entry.
+
+## Pass 673 (Bay) -- the ghost_collection_ready deadlock: REAL, and NOT the cause of the decay
+
+ROUTE: the `metrics.feedback("scheduler", label="halted")` signal documented at
+scripts/live_lane_refusal_census.py:28 was recorded by pass 483 as dead code
+("NO metrics row since boot"). CONFIRMED REACHABLE -- 483 read the wrong table --
+and it named a deadlock. Then the causal claim I built on it was KILLED by my own
+pre-registered test. Both halves below.
+
+CONFIRMED. It is `feedback_events`, not `metrics`. Read-only:
+    source='scheduler' label='halted'   n=1524 all-time, 98 in the last 24h,
+                                        newest 1.69h old
+    all 98 of 98 carry details {"reason":"ghost_validation_block","ghost_multiplier":0.0}
+    against 1286 source='scheduler' label='cycle_tick' rows in the same 24h.
+The docstring's chain was WRONG, not just stale: `if plan_flags.get("halt_live"):
+risk_budget = 0.0` was DELETED by 821daa1 and bot.py:6350-6360 says so in its own
+comment, so "arming the live lane is what switches the decision path off" has been
+false since 2026-09-17. Fixed in commit edb696c (docstring only, no behaviour).
+
+THE ACTUAL CHAIN, and it is a deadlock:
+    pipeline.py:6244  ghost_risk_multiplier = 0.0   # when not ghost_collection_ready
+    bot.py:6383       risk_budget *= ghost_multiplier
+    bot.py:6389       if risk_budget <= 0  ->  scheduler.evaluate() is NEVER CALLED
+    pipeline.py:6175  the ONLY override is `if not ghost_collection_ready and
+                      ghost_ready: ghost_collection_ready = True`
+`ghost_ready` is False -- that is what `ghost_validation_block` MEANS. So ghost
+collection is off because collection is "not ready", and the only thing that would
+mark it ready is the evidence the off lane cannot collect. Same shape 821daa1
+removed at the live layer, alive at the ghost layer. A halted tick decides nothing:
+no candidates, no ghost entries, no evidence. Latched (`if not self._scheduler_halted`),
+so 98 rows is 98 EPISODES and the halted-tick count is strictly larger and NOT
+recoverable from the table.
+
+KILLED -- the causal claim, by the test I posted to the board BEFORE running it.
+I claimed this deadlock was a candidate cause of the ghost-entry decay
+(Cove's [c6598f7c]: 6h=0, 24h=6, 72h=6, 7d=65, 30d=1718). Pre-registered test:
+whether ghost-entry volume tracks the halt share of ticks. Daily series, 14d, as
+day_ago / halt_transitions / cycle_ticks / ghost_entries:
+    0: 98/1286/6   2: 22/312/0    3: 137/796/11   4: 35/1589/22   5: 7/1462/7
+    6: 80/2022/19  10: 59/977/4   11: 84/1094/11  12: 91/1445/7   13: 50/953/15
+    corr(halt_share_of_ticks, ghost_entries) = -0.207   over n=10 days
+    corr(cycle_ticks,         ghost_entries) = +0.638
+Right sign, far too weak to explain anything, and day 5 has the LOWEST halt share
+(0.5%) with only 7 entries. The ghost decay tracks HOW MANY SCHEDULER CYCLES RAN
+AT ALL, not what fraction were budget-halted -- and cycle_ticks is itself
+collapsing, 2022 six days ago to 1286 today with 312 on day 2.
+
+CLOSED for now: do NOT spend a pass fixing the multiplier deadlock as the cause of
+the ghost decay. It is real and costs >= 98 decided-nothing ticks a day, but it is
+second-order. The first-order term is the cycle count, which is
+[a2bfd079]'s subject (feed darkness / loop lag), not a gate.
