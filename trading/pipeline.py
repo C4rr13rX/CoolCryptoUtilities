@@ -795,6 +795,49 @@ def ghost_tail_guardrail() -> float:
     return max(explicit, derived)
 
 
+def _graduation_min_trades() -> int:
+    """The trade count step 5 licenses on, so step 6 cannot use a second one.
+
+    Step 5 grants the live licence at ``STRATEGY_GRADUATION_MIN_TRADES``
+    (default 20) in ``trading/strategies/ledger.py``'s
+    ``_evaluate_graduation_locked``. Step 6 then judges EXACTLY the strategies
+    step 5 licensed -- its candidate list is built from
+    ``StrategyLedger().approved_ids()`` -- and was refusing any of them holding
+    fewer than ``MIN_GHOST_TRADES_FOR_PROMOTION``, default 25.
+
+    That is a five-trade window in which a strategy is licensed by step 5 and
+    guaranteed to be refused by step 6 for the same reason step 5 just cleared
+    it on: sample size. A licence that is void on arrival.
+
+    The drift is visible in what did NOT drift. Every other bar the two stages
+    share was deliberately set to the same number -- the win rate is 0.55 on
+    both sides (``STRATEGY_GRADUATION_MIN_WINRATE`` and
+    ``MIN_GHOST_WIN_RATE``) -- and step 6's own docstring lists its guardrails
+    as tail risk, drawdown, loss rate, streak, staleness, concentration,
+    profit factor and expectancy. A trade COUNT is not among them; it is step
+    5's question, and holding a second answer to it is the defect.
+
+    So the count is read from ONE place. Both env overrides still work and an
+    operator who raises ``STRATEGY_GRADUATION_MIN_TRADES`` raises both stages
+    together, which is the only way the two can stay honest.
+
+    This does NOT open step 6 today, and must not be reported as though it
+    did: the live ladder refuses ``money_button`` at 0 ghost trades, nowhere
+    near either bar. What it removes is a window that can only ever produce a
+    dead licence -- and ``atf_static``, the nearest strategy to the bar, lands
+    on exactly 20.
+    """
+    try:
+        from trading.strategies.ledger import _env_int
+
+        return int(_env_int("STRATEGY_GRADUATION_MIN_TRADES", 20))
+    except Exception:  # noqa: BLE001 - never let a threshold read break boot
+        try:
+            return int(os.getenv("STRATEGY_GRADUATION_MIN_TRADES", "20"))
+        except (TypeError, ValueError):
+            return 20
+
+
 def price_book_at_live_clip(trades: Sequence[Any]) -> List[Any]:
     """The simulated book, re-priced at the ONE clip the live lane will use.
 
@@ -947,7 +990,12 @@ class TrainingPipeline:
         self._confusion_stale_warn_last = 0.0
         self._confusion_stale_judgments = 0
 
-        self.min_ghost_trades = int(os.getenv("MIN_GHOST_TRADES_FOR_PROMOTION", os.getenv("MIN_GHOST_TRADES_OVERRIDE", "25")))
+        self.min_ghost_trades = int(
+            os.getenv(
+                "MIN_GHOST_TRADES_FOR_PROMOTION",
+                os.getenv("MIN_GHOST_TRADES_OVERRIDE", str(_graduation_min_trades())),
+            )
+        )
         self.max_false_positive_rate = float(
             os.getenv("MAX_FALSE_POSITIVE_RATE_OVERRIDE", os.getenv("MAX_FALSE_POSITIVE_RATE", "0.15"))
         )
