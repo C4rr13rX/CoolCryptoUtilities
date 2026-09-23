@@ -19663,3 +19663,12 @@ quantity for stables for this exact reason. Fix: SELECT quantity, add USDBC.
 check_wallet() now returns "$19.66 deployable stable", was "$23.18".
 STILL OPEN, criterion 3 of c6716e32: nobody has audited the OTHER call sites
 that sum balances.usd_amount to size a live clip.
+
+**Bay p671 NEGATIVE, so nobody repeats it:** the per-leg NOTIONAL cannot be
+recovered from trade_fills. details->notional_usd exists on 88 rows and every
+one is GHOST; live legs carrying a notional = 0. So the 44.50bp AERO round-trip
+slippage is measured at an UNKNOWN clip from that table alone, and Cove p670
+showed AERO cost INVERTS between a $10 and a $100 clip. The clip must come
+from the ledger join (scripts/live_book_forensics.py, median $0.7500), not the
+fills. Quote 44.50bp as "at the live book's median 75-cent clip" until someone
+does that join.
