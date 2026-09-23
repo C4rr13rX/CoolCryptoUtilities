@@ -19503,3 +19503,45 @@ WHAT IS OPEN: [854ce89d] -- does ANY classical signal clear h* on a DISJOINT
 WETH sample? If none does, the deep-pool WETH route is CLOSED ON DIRECTION
 and must be recorded here as such, because the cost argument is now GOOD and
 will tempt a later pass into reopening it on cost alone.
+
+
+## Pass 671 -- Echo (senior) -- THE EVENT-LOOP BLOCK: cause named, two routes CLOSED
+
+ROUTE TRIED: attribute the event-loop block that manufactures feed darkness ([a2bfd079]).
+
+CLOSED NEGATIVE 1 -- "dead endpoints cause the loop block via synchronous TLS".
+  Pre-registered kill test: loop_lag is a global clock reading, so if the block is
+  global every endpoint reports the SAME lag in the same minute; if TLS handshakes to
+  dead hosts block locally, mexc/coingecko report HIGHER lag than dexscreener.
+  RESULT: mexc vs dexscreener, 918 paired minutes, MEDIAN DIFF +0.00s (mean -0.76s).
+  coingecko vs dexscreener, 731 paired minutes, MEDIAN DIFF +0.00s (mean -0.80s).
+  Per-endpoint medians all within 1s: gecko 15.2, dexscreener 15.2, mexc 14.8,
+  kucoin 14.7, coingecko 14.2, bitstamp 14.9.
+  HYPOTHESIS KILLED. Removing mexc+coingecko reclaims 19.0% of POLL SLOTS
+  (5574+2184 of 40737 timeouts/24h, both ZERO rows in 7d) but moves loop_lag BY NOTHING.
+  CLOSED: do not re-open as a loop_lag fix.
+
+CLOSED POSITIVE 2 -- "seq-dataset_warmup (production.py:609) is the GIL holder" (p474).
+  ALREADY FIXED. detach=True landed in commit bcabb78 on 2026-09-11; production
+  restarted 2026-09-21 22:57, so it is live. It is why max loop_lag fell 3570.8s -> 585.3s.
+  CLOSED: do not spend a pass on production.py:609.
+
+SURVIVING SUSPECT -- services/resource_governor.py:295, a full stop-the-world gc.collect().
+  py-spy on the live production pid 6340: resource-governor active+gil in 4 of 5 dumps,
+  same thread 37244, same line every dump. Branch at line 292 tests
+  mem >= GOVERNOR_CRITICAL_MEM (default 0.82); system memory measured 83.9% -> TRUE
+  continuously. Sample interval 2s, gc cooldown 10s => a full gen-2 collection every
+  ten seconds with the GIL held uninterruptibly. Second identical call at line 285.
+  WHAT IT BUYS: governor's own log lines read "GC collected 0 / 34 / 100 / 1643 objects"
+  on a process tree of 13903MB. Near-zero benefit, whole-event-loop cost.
+  CAVEAT, NOT BURIED: logs/services/production-console.log and logs/console.log were last
+  WRITTEN 2026-09-16 19:34. The log is DEAD, so the gc cannot be confirmed from logs --
+  the chain rests on py-spy plus a live memory reading. Take 10+ dumps, not 5.
+  Filed as [307d969d], 3 pts, priority 1, one file.
+
+NUMBERS MOVED (post-restart, parsed from logs/services/market-stream.log loop_lag_sec):
+  loop_lag 6h : median 14.9s  p90 59.7s  max 585.3s  n=9643   (p476 baseline 22.4 / 93.4 / 3570.8, n=60722)
+  loop_lag 24h: median 14.9s  p90 49.9s  max 585.3s  n=40737  -- 72.8% of polls over the 10s budget
+  p90-under-60s PARTIAL CREDIT is BANKED. Median is NOT under 10s, so [a2bfd079] is NOT done.
+  FEED DARKNESS, INNER runs only, edges unpadded: 6h 22.3% dark, longest run 9 min;
+  24h 20.2% dark, longest run 14 min. The title's "49.4% / 52 min" is STALE -- halved.
