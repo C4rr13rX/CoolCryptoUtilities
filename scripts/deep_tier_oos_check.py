@@ -74,6 +74,57 @@ def _rows(cur, symbol):
     return out, dropped
 
 
+def _censor_banner(cur):
+    """Lines naming, AT RUNTIME, what the private CENSOR rule left uncensored.
+
+    The comment on CENSOR above states the gap as a measurement taken once.
+    A stated gap goes stale silently, so this recomputes it every run against
+    ``services.outcome_plausibility`` -- the shared rule graduation reads --
+    over exactly the rows this report draws on.
+    """
+    cur.execute(
+        "SELECT ts, symbol, entry_price, exit_price, quantity, gross_profit, "
+        "net_profit, details FROM trade_outcomes WHERE symbol IN (%s)"
+        % ",".join("?" * len(SYMBOLS)),
+        SYMBOLS,
+    )
+    rows, private_dropped = [], 0
+    for ts, sym, entry, exit_, qty, gross, net, details in cur.fetchall():
+        try:
+            d = json.loads(details or "{}")
+        except (ValueError, TypeError):
+            d = {}
+        if d.get("mode") != "ghost":
+            continue
+        row = {
+            "ts": ts, "symbol": sym, "entry_price": entry,
+            "exit_price": exit_, "quantity": qty, "gross_profit": gross,
+            "net_profit": net, "strategy_id": d.get("strategy_id") or "",
+        }
+        if entry and qty and abs((exit_ - entry) / entry) > CENSOR:
+            private_dropped += 1
+            continue
+        rows.append(row)
+
+    out = ["  PRIVATE CENSOR (|move| <= %.0f%%): refused %d of %d ghost rows on "
+           "%s." % (CENSOR * 100, private_dropped, private_dropped + len(rows),
+                    "/".join(SYMBOLS))]
+    try:
+        import sys  # noqa: PLC0415
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from services import outcome_plausibility as op  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        out.append("  !! UNCENSORED BY THE SHARED RULE and the gap is UNKNOWN: "
+                   "services.outcome_plausibility did not import (%s). The "
+                   "%d rows below carry whatever it would have refused."
+                   % (exc, len(rows)))
+        return out
+    out.extend("  " + ln for ln in op.banner(rows, censored=True))
+    return out
+
+
 def _ci(values):
     """Mean and 95% half-width. Returns (mean, half_width) or (mean, None)."""
     n = len(values)
@@ -109,6 +160,10 @@ def main():
     print("=" * 74)
     print("[0fcc938d] deep tier minus AERO -- out-of-sample check")
     print("=" * 74)
+
+    print("\n--- 0. WHAT THIS REPORT DID NOT CENSOR ---")
+    for line in _censor_banner(cur):
+        print(line)
 
     # ---- 1. feasibility -------------------------------------------------
     print("\n--- 1. IS THERE A FRESH SAMPLE? ---")

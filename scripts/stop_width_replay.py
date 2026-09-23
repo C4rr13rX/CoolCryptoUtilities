@@ -163,6 +163,29 @@ def _book(rows: Sequence[Dict[str, Any]], key: str = "cgross") -> Dict[str, Any]
     }
 
 
+def _censor_lines(kept: Sequence[Dict[str, Any]], seen: int, dropped: int
+                  ) -> List[str]:
+    """What the PRIVATE censor above refused, and what the SHARED rule adds.
+
+    The comment on the ``|gross| > 0.5 * notional`` line states the gap to
+    ``services.outcome_plausibility`` as a measurement taken once. A stated gap
+    goes stale in silence, so this recomputes it on every run over exactly the
+    rows this report carries.
+    """
+    out = ["CENSOR: private rule (|gross| > 0.5 x notional, no dollar arm) "
+           "refused %d of %d attributed tradeable ghost rows." % (dropped, seen)]
+    try:
+        from services import outcome_plausibility as op
+    except Exception as exc:  # noqa: BLE001
+        out.append("!! UNCENSORED BY THE SHARED RULE and the gap is UNKNOWN: "
+                   "services.outcome_plausibility did not import (%s). The %d "
+                   "rows below carry whatever it would have refused."
+                   % (exc, len(kept)))
+        return out
+    out.extend(op.banner(list(kept), censored=True))
+    return out
+
+
 def replay(
     *,
     days: float = 7.0,
@@ -185,6 +208,8 @@ def replay(
                              "tradeable population is unjudgeable"}
         raw = tb.load_rows(db, now - days * 86400.0)
         rows = []
+        censor_seen = 0
+        censor_dropped = 0
         for r in raw:
             if str(r.get("mode", "")).lower() == "live":
                 continue
@@ -208,11 +233,17 @@ def replay(
                 continue
             g = tb.clamped_gross(r)["gross"]
             notional = float(r.get("notional", 0.0) or 0.0)
+            censor_seen += 1
             if notional <= 0 or abs(g) > 0.5 * notional:
+                censor_dropped += 1
                 continue
             r = dict(r)
             r["cgross"] = g
             rows.append(r)
+        censor = _censor_lines(rows, censor_seen, censor_dropped)
+    else:
+        censor = ["CENSOR: rows supplied by the caller; this run applied NO "
+                  "plausibility rule of its own and cannot state a gap."]
 
     if paths is None:
         con = sqlite3.connect(str(db))
@@ -257,6 +288,7 @@ def replay(
         "baseline_all": baseline,
         "baseline_placed": baseline_placed,
         "columns": cols,
+        "censor": censor,
     }
 
 
@@ -266,6 +298,8 @@ def render(rep: Dict[str, Any]) -> str:
     out = ["=" * 88,
            "STOP WIDTH REPLAY -- the live-tradeable ghost book against its own ticks",
            "=" * 88,
+           *rep.get("censor", ["CENSOR: not recorded by this run."]),
+           "-" * 88,
            f"window {rep['days']}d   population {rep['rows']} plausible attributed "
            f"tradeable round trips"]
     b, bp = rep["baseline_all"], rep["baseline_placed"]
