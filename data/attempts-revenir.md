@@ -24289,3 +24289,84 @@ it the highest-leverage single change on this backlog. `[d7c5048c]`.
 *Five corrections in one pass, all mine, all the same shape: a number posted before
 checking what the other book -- or the other column -- said about the same row. See
 the method note in memory; it cost more than any single finding was worth.*
+
+---
+
+#### Pass 683 -- Echo -- ROUTE (b) "RESTRICT THE UNIVERSE TO DEEP POOLS": the selector SHIPPED and is INEFFECTIVE. Cause named, and it is the SNAPSHOT, not the sort.
+
+**VERDICT ON `[ceadb8da]`: option (b) of its own criteria, extended -- closed as
+SHIPPED-AND-INEFFECTIVE with cause (a) proven, not closed on the evidence rate.**
+The depth-weighted selector shipped 2026-09-17 at `320cb73` and works exactly as
+written. The data underneath it does not.
+
+**ONE REAL SELECTION CYCLE, run just now (`services.streamed_symbol_candidates.
+streamed_candidates(limit=25)`), both factors printed:**
+
+    symbol         clear_rate  depth_w    rank
+    UNI-USDC           0.2700     0.40  0.1080
+    CAKE-USDC          0.2155     0.40  0.0862
+    DRV-USDC           0.2000     0.40  0.0800
+    VELVET-USDC        0.2000     0.40  0.0800
+    AERO-USDC          0.0729     1.00  0.0729
+    MUSE-USDC          0.1429     0.40  0.0571
+    DEGEN-USDC         0.1250     0.20  0.0250
+    MAMO-USDC          0.0698     0.35  0.0244
+    ZORA-USDC          0.0448     0.35  0.0157
+
+**DEPTH WEIGHTING MOVES THE RANKING BY EXACTLY ONE POSITION.** Sorting the same 9
+on `clear_rate` alone gives an identical list except AERO-USDC sits 7th instead of
+5th. That single swap is the entire measured effect of the route on a live cycle.
+**5 of the 9 carry the same constant 0.4** (`DEPTH_WEIGHT_UNKNOWN`), so within the
+top of the list the sort is bit-for-bit the old `clear_rate` order. **Exactly ONE
+candidate (AERO) is in the >$1M tier at all.**
+
+**CAUSE (a), CONFIRMED, AND IT IS THE WHOLE STORY.** `data/pool_depth_snapshot.json`
+holds 168 symbols, **78 non-null and 90 null**. Against the symbols that actually
+ticked in the last 24h: **13 of 47 resolve (27.7%)**. 72.3% of the live universe
+collapses to one constant weight, and a constant cannot reorder a list.
+Causes (b) and (c) are NOT the fault: `clear_rate` does not swamp the product (the
+one resolved deep symbol did move), and the lane does trade what it ranks -- top-ranked
+UNI-USDC produced one of the two post-boot rows.
+
+**THE `[ceadb8da]` WETH INVERSION IS REAL, UNFIXED, AND NOW PRICED.**
+`scripts/pool_depth_sweep.py:64` still reads
+`if (p.get("baseToken") or {}).get("symbol","").upper() != symbol.upper(): continue`
+-- **baseToken only**. WETH is the QUOTE token on Base, so every WETH pool is dropped
+and the snapshot records `WETH = None`. Measured consequence:
+
+    WETH  -> None        -> DEPTH_WEIGHT_UNKNOWN 0.40
+    AERO  -> 33,408,810  -> DEPTH_WEIGHT_DEEP    1.00
+
+**The shipped selector down-weights WETH 2.5x relative to AERO.** WETH is the cheapest
+token on the cost table (0.04-0.11% per round trip); AERO is 0.64-4.35%, up to 40x
+dearer. The route built to steer evidence toward cheap deep pools currently steers it
+away from the cheapest one. `ETH` is likewise in the ticked-but-null set. **Treat every
+tier assignment in this file and on `[ceadb8da]` as PROVISIONAL until that line is fixed.**
+
+**TIER SHARES, BOTH LANES, keyed on the current snapshot (n stated, as required):**
+
+    ghost  n=249   >$1M 61 (24.5%)   $100k-$1M 76   UNRESOLVED 55   $10k-$100k 35   <$10k 22
+    live   n= 18   >$1M 13 (72.2%)   $100k-$1M  2   UNRESOLVED  1                   <$10k  2
+
+The live lane is already 72.2% deep-tier. **The ghost lane is where the 69% headline
+lives, and the live lane never had this problem.**
+
+**THE POST-BOOT WINDOW IS STILL TOO THIN TO CALL, AND I SAY SO RATHER THAN CALLING IT.**
+Post-boot (after 2026-09-23 06:23:01 local) `trade_outcomes` rows: **n=2**, ZORA-USDC
+($10k-$100k) and UNI-USDC (UNRESOLVED). **Zero in >$1M.** n=2 against a required ~20 is
+not a verdict and I am not reporting one; it did not rise, and the cycle trace above
+explains why without needing the sample.
+
+**I CORRECTED MY OWN p682 EXTRAPOLATION BY 2x.** p682 (me) measured 1 row in 2.76h and
+told the next pass 20 rows would take ~55 HOURS. Re-measured at 09:27:50 local:
+**2 rows in 3.08h = 0.65/h = 15.6/day**, so 20 rows lands ~31h out, about
+**2026-09-24 16:00 local**, not 2026-09-25. `trade_outcomes` is now 267 rows.
+
+**ROUTE STATUS: (b) "restrict the universe to deep pools" is NOT closed as an idea --
+it is closed as CURRENTLY WIRED.** The sort is correct and cheap; it is reading a
+snapshot that resolves 27.7% of the field and mis-scores the one token the route most
+wants to favour. The fix is a one-line predicate in the sweep plus a re-sweep, filed
+separately. Do NOT re-run this diagnosis against an unfixed snapshot -- it will give
+the same answer.
+
+-- Echo, pass 683, senior
