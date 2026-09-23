@@ -109,7 +109,12 @@ def main() -> int:
     from db import get_db
     from trading.pipeline import TrainingPipeline, price_book_at_live_clip
     from trading.metrics import MetricsCollector
-    from services.roundtrip_cost import ghost_clip_usd, roundtrip_cost_usd, roundtrip_cost_rate
+    from services.roundtrip_cost import (
+        ghost_clip_usd,
+        roundtrip_cost_usd,
+        roundtrip_cost_rate,
+        roundtrip_cost_rate_detail,
+    )
 
     db = get_db()
     pipeline = TrainingPipeline(db=db)
@@ -142,9 +147,8 @@ def main() -> int:
             print(f"  {'':<20} ^^ COLD-START BYPASS on a ZERO-trade book. "
                   f"pipeline.py calls this 'evidence of nothing'.")
 
-    trades = price_book_at_live_clip(
-        MetricsCollector(db).ghost_trade_snapshot(limit=500, lookback_sec=lookback)
-    )
+    raw = MetricsCollector(db).ghost_trade_snapshot(limit=500, lookback_sec=lookback)
+    trades = price_book_at_live_clip(raw)
     rows: List[Tuple[float, float, str]] = []
     for t in trades:
         entry = float(getattr(t, "entry_ts", 0.0) or 0.0)
@@ -172,40 +176,119 @@ def main() -> int:
         print(f"  {label:>10} {len(sub):4d} {wins:5d} {wins / len(sub):9.3f} "
               f"{net:+9.4f} {pf:8.3f}")
 
-    print("\n-- 3. GROSS vs NET -- undo the flat fee, then bar BOTH --")
-    print("  price_book_at_live_clip -> net_profit_usd = ret*notional - roundtrip_cost_usd(notional),")
-    print("  and roundtrip_cost_usd takes NO SYMBOL. So gross = net + the flat fee.")
-    net_bp = [r[1] / clip * 1e4 for r in rows]
-    gross_bp = [(r[1] + fee) / clip * 1e4 for r in rows]
+    print("\n-- 3. GROSS vs NET, PER SYMBOL -- the flat fee against the measured one --")
     try:
         bar = float(pipeline._ghost_validation(None).get("min_win_rate") or 0.55)
     except Exception:  # noqa: BLE001
         bar = 0.55
-    describe("net (what the gate reads)", net_bp, bar)
-    describe("gross (market only)", gross_bp, bar)
-    nonzero = [v for v in gross_bp if abs(v) > 1e-9]
-    if len(nonzero) != len(gross_bp):
-        print(f"  {'':<26} NOTE: {len(gross_bp) - len(nonzero)} row(s) have gross EXACTLY 0.0 --")
-        print(f"  {'':<26}       entry price == exit price. A frozen feed, not an outcome.")
-        describe("gross, ex zero-return", nonzero, bar)
 
-    if len(gross_bp) >= 2:
-        sd = st.stdev(gross_bp)
-        se = sd / math.sqrt(len(gross_bp))
-        print(f"\n  THE RATIO THAT MATTERS: the fee is {fee / clip * 1e4 / se:.1f} SEs of this"
+    # Rebuilt from the RAW snapshot, not from the priced book, because this
+    # section compares two costings of the same rows. Inverting one of them out
+    # of ``profit`` and calling the remainder "gross" only works while the fee
+    # is a constant; it stops working the moment the fee is per symbol, which
+    # is the change this section exists to measure.
+    book: List[Dict[str, Any]] = []
+    frozen: List[Tuple[str, str]] = []
+    for t in raw:
+        ret = getattr(t, "return_pct", None)
+        if ret is None:
+            continue
+        try:
+            ret = float(ret)
+        except (TypeError, ValueError):
+            continue
+        sym = str(getattr(t, "symbol", "") or "?")
+        sid = str(getattr(t, "strategy_id", "") or "(unattributed)")
+        # FROZEN: exit price == entry price to the bit. That is a feed that did
+        # not move between two reads, not a round trip that returned nothing,
+        # and it is the same data-quality class as [bd5619eb]. It is excluded
+        # from EVERY book below -- gross, net-blind and net-census -- rather
+        # than from the gross book only, because a row that is not an outcome
+        # is not an outcome at any costing.
+        if ret == 0.0:
+            frozen.append((sym, sid))
+            continue
+        cost_blind = roundtrip_cost_usd(clip)
+        rate_sym, source = roundtrip_cost_rate_detail(clip, sym)
+        cost_sym = roundtrip_cost_usd(clip, sym)
+        book.append({
+            "symbol": sym,
+            "strategy": sid,
+            "gross_bp": ret * 1e4,
+            "net_blind_bp": (ret * clip - cost_blind) / clip * 1e4,
+            "net_census_bp": (ret * clip - cost_sym) / clip * 1e4,
+            "source": source,
+            "rate_bp": rate_sym * 1e4,
+        })
+
+    if frozen:
+        print(f"  EXCLUDED {len(frozen)} FROZEN row(s) -- entry price == exit price to the bit.")
+        counts: Dict[Tuple[str, str], int] = {}
+        for pair in frozen:
+            counts[pair] = counts.get(pair, 0) + 1
+        for (sym, sid), count in sorted(counts.items(), key=lambda kv: -kv[1]):
+            print(f"    {count:3d}  {sym:<14} {sid}")
+        print("    These are a feed that did not move between two reads. Excluded from EVERY")
+        print("    book below, not just the gross one.")
+    if not book:
+        print("  no rows with a usable return in this window.")
+        return 0
+
+    describe("net, FLAT fee (was)", [r["net_blind_bp"] for r in book], bar)
+    describe("net, PER-SYMBOL fee (is)", [r["net_census_bp"] for r in book], bar)
+    describe("gross (market only)", [r["gross_bp"] for r in book], bar)
+
+    flips = [r for r in book
+             if (r["net_blind_bp"] > 0) != (r["net_census_bp"] > 0)]
+    print(f"\n  SIGN CHANGES under the corrected model: {len(flips)} of {len(book)} rows.")
+    for r in flips[:12]:
+        direction = "loss -> win" if r["net_census_bp"] > 0 else "win -> loss"
+        print(f"    {r['symbol']:<14} {direction}  {r['net_blind_bp']:+8.2f}bp ->"
+              f" {r['net_census_bp']:+8.2f}bp   ({r['source']})")
+    if len(flips) > 12:
+        print(f"    ... and {len(flips) - 12} more")
+
+    print("\n-- 3b. PER SYMBOL, NEVER POOLED -- a pooled book cannot answer a cost question --")
+    by_symbol: Dict[str, List[Dict[str, Any]]] = {}
+    for r in book:
+        by_symbol.setdefault(r["symbol"], []).append(r)
+    for sym, group in sorted(by_symbol.items(), key=lambda kv: -len(kv[1])):
+        source = group[0]["source"]
+        print(f"\n  {sym}  n={len(group)}  fee {group[0]['rate_bp']:.2f}bp"
+              f" ({source})   flat was {fee / clip * 1e4:.2f}bp")
+        describe("  net, per-symbol fee", [r["net_census_bp"] for r in group], bar)
+        if len(group) >= 2:
+            wins = sum(1 for r in group if r["net_census_bp"] > 0)
+            p = wins / len(group)
+            pse = math.sqrt(p * (1 - p) / len(group))
+            low = max(0.0, p - 1.96 * pse)
+            verdict = ("CLEARS the bar with a CI that excludes it" if low > bar
+                       else f"does NOT clear {bar:.2f} with a CI that excludes it")
+            print(f"    win rate {p:.3f}, CI low {low:.3f} -> {verdict}")
+
+    if len(book) >= 2:
+        gross = [r["gross_bp"] for r in book]
+        sd = st.stdev(gross)
+        se = sd / math.sqrt(len(gross))
+        print(f"\n  THE RATIO THAT MATTERS: the flat fee is {fee / clip * 1e4 / se:.1f} SEs of this"
               f" distribution.")
-        print(f"  A signal below ~{1.96 * se:.1f}bp cannot be read at n={len(gross_bp)}."
+        print(f"  A signal below ~{1.96 * se:.1f}bp cannot be read at n={len(gross)}."
               f" Anything the book 'says' about")
         print("  strategy quality inside that band is the fee model talking, not the market.")
         for effect in (5.0, 10.0, 20.0):
             print(f"    to resolve a {effect:.0f}bp edge at 2 sigma: n = {(2 * sd / effect) ** 2:.0f} trades")
 
-    print(f"\n  cost curve (symbol-blind -- this is the defect):")
-    print("   " + "  ".join(f"${c:g}" for c in (0.75, 2, 6, 20, 100)))
-    print("   " + "  ".join(f"{roundtrip_cost_rate(c) * 1e4:.1f}bp" for c in (0.75, 2, 6, 20, 100)))
-    print("  real on-chain costs (operator, 2026-09-11): WETH 4-11bp, AERO 64-435bp, KTA to 7498bp.")
-    print("  so at a $6 clip the flat charge is 3.5-9.6x TOO DEAR on WETH and 1.7-11.3x TOO CHEAP")
-    print("  on AERO (194x on KTA). Wrong in OPPOSITE directions on the two tokens we trade most.")
+    print(f"\n  cost curve, flat vs measured (clip on the left):")
+    header = "  ".join(f"${c:g}" for c in (0.75, 2, 6, 20, 100))
+    print(f"    {'':<10}{header}")
+    print(f"    {'blind':<10}" + "  ".join(f"{roundtrip_cost_rate(c) * 1e4:.1f}bp" for c in (0.75, 2, 6, 20, 100)))
+    for sym in sorted({r["symbol"] for r in book if r["source"] == "census"}):
+        print(f"    {sym:<10}" + "  ".join(
+            f"{roundtrip_cost_rate(c, sym) * 1e4:.1f}bp" for c in (0.75, 2, 6, 20, 100)))
+    unpriced = sorted({r["symbol"] for r in book if r["source"] != "census"})
+    if unpriced:
+        print(f"    UNPRICED and therefore UNCHANGED ({len(unpriced)}): {', '.join(unpriced[:12])}"
+              + (" ..." if len(unpriced) > 12 else ""))
     return 0
 
 

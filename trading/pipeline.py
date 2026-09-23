@@ -840,6 +840,28 @@ def price_book_at_live_clip(trades: Sequence[Any]) -> List[Any]:
     Rows with no usable return are left exactly as written: they cannot be
     re-priced without inventing a price, and dropping them would shorten the
     book silently.
+
+    AND THE FEE IS CHARGED PER SYMBOL, not flat. ``services/roundtrip_cost.py``
+    has priced nine base tokens against the Uniswap V3 quoter since 2026-09-17,
+    but ``net_profit_usd`` was called here without a symbol, so every row in the
+    book the gate reads paid the token-blind ``DEFAULT_RATE`` -- 38.62bp at the
+    $6 clip -- whatever it traded. Measured against the census at that clip:
+
+        symbol     blind    census    blind is
+        WETH      38.62bp    8.79bp    4.39x TOO DEAR
+        AERO      38.62bp   17.04bp    2.27x TOO DEAR
+        CBBTC     38.62bp   17.71bp    2.18x TOO DEAR
+        VIRTUAL   38.62bp  187.62bp    4.86x too cheap
+        COMP      38.62bp  7237.62bp   187x too cheap
+
+    Both directions at once, so no single constant fixes it. A symbol the
+    census never priced is UNCHANGED -- ``roundtrip_cost_usd`` falls back to
+    the same constant and records ``source="unpriced_default"`` -- so this
+    cannot silently shorten or re-shape the unpriced part of the book.
+
+    It does NOT flatter the gate either. The cheap symbols get cheaper and the
+    dear ones get dearer, and the dear ones are the ones the live lane has
+    actually been booking round trips on.
     """
     from services.roundtrip_cost import ghost_clip_usd, net_profit_usd
 
@@ -851,7 +873,7 @@ def price_book_at_live_clip(trades: Sequence[Any]) -> List[Any]:
             priced.append(trade)
             continue
         try:
-            repriced = float(net_profit_usd(float(ret), clip))
+            repriced = float(net_profit_usd(float(ret), clip, getattr(trade, "symbol", None)))
         except (TypeError, ValueError):
             priced.append(trade)
             continue

@@ -212,10 +212,15 @@ class ReplayTest(unittest.TestCase):
         verdict = self._verdict()
         self.assertGreaterEqual(float(verdict["tradeable_profit_factor"]), 1.5)
         self.assertGreater(float(verdict["tradeable_expectancy"]), 0.0)
+        # PER SYMBOL, not flat. Every row in this book is CBBTC-USDC, which the
+        # round-trip census priced at 17.71bp against the token-blind 38.62bp,
+        # so charging the constant here would over-charge each row by $0.012545
+        # at the $6 clip -- exactly the over-charge [ad629479] is about. The
+        # clip is still ONE clip; it is the FEE that is now the symbol's own.
         self.assertAlmostEqual(
             float(verdict["tradeable_expectancy"]),
-            (0.5 * (0.030 * CLIP - roundtrip_cost_usd(CLIP))
-             + 0.5 * (-0.004 * CLIP - roundtrip_cost_usd(CLIP))),
+            (0.5 * (0.030 * CLIP - roundtrip_cost_usd(CLIP, "CBBTC-USDC"))
+             + 0.5 * (-0.004 * CLIP - roundtrip_cost_usd(CLIP, "CBBTC-USDC"))),
             places=9,
         )
 
