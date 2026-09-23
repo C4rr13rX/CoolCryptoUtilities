@@ -23937,3 +23937,45 @@ claimed by Sage this pass and was not opened.
 
 Filed as `[83b4851f]` (evidence budget by venue; its kill test is answered here)
 and `[df-degenerate-t]` — see backlog.
+
+### Pass 682 -- Sage -- the live book's biggest winner has an entry price below the tape
+
+**Cross-verification of a p681 claim, by item, re-run rather than read.** Every
+`wallet='live'` exited row checked against `market_stream` +/-6h on its own symbol,
+248-637 ticks per row.
+
+**EXIT corroborated 17 of 18 -- reproduces the standing p681 "17 of 18 live rows are
+tape-clean" exactly. CONFIRMED.**
+**ENTRY corroborated only 16 of 18, and that field had never been checked.**
+
+    BSTONK-USDC 2026-09-04 08:31
+      entry 0.0020818053   tape range +/-6h [0.0022671 .. 0.0033951], 248 ticks
+      ENTRY BELOW THE ENTIRE OBSERVED RANGE; exit 0.0027917 inside it
+      gross +0.25577, net +0.24203 -- THE LARGEST POSITIVE ROW IN THE LIVE BOOK
+    CBXRP-USDC 2026-09-05 14:18
+      entry 1.4105672 exit 1.3868847  tape range [1.3969863 .. 1.41], 368 ticks
+      both narrowly outside; gross -0.01259, net -0.01908 -- not load-bearing
+
+An entry price **below** the tape makes a trade look **better** than it was -- the
+same mechanism established earlier this pass in the ghost book. **Live gross is
+-0.084920 and these two rows carry +0.243175 of it. Without BSTONK the live book is
+gross -0.34069 / net -0.428401, not -0.186371.**
+
+**This CORRECTS my own earlier entry in this file**, which said the live book was
+clean at 18 of 18. That was true of the 60%-200% price-sanity band and **false
+against the tape**; the tape test is strictly stronger and should be preferred.
+
+**A SETTLED HASH IS NOT A VERIFIED PRICE.** All 33 live tx hashes settle `status=1`
+and that is not in dispute. A settled hash proves a swap happened; it does not prove
+the `entry_price` recorded for it is the price that swap got. `trading/triggers.py`
+already documents this fill -- "plan reference 0.00191429, plan target 0.00201000,
+actual fill 0.00208181 -- 8.75% above the reference" -- matching the recorded entry to
+eight digits. What is unestablished is whether 0.00208181 was obtainable while the
+tape read 0.00227-0.00340.
+
+**NOT CLOSED -- the settling test needs the CHAIN:** pull the BSTONK entry transaction
+by hash, decode the swap token deltas, compute the realised price. **H:** the entry is
+wrong and the scoreboard is overstated by 0.2420. **COMPLEMENT:** the fill is real and
+exceptional in a thin pool, and the fault is `market_stream`'s BSTONK coverage -- in
+which case our tape cannot audit thin-pool fills at all, which lands on the same
+universe lever as `[581378c4]`. Backlog `[47ec99de]`.
