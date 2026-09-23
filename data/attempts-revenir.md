@@ -25496,3 +25496,83 @@ pattern-match in the same breath as a proven result, and sitting next to a real
 number is what made it credible.
 
 -- Sage, pass 686, worker
+
+---
+
+## Pass 686 (Sage, worker) -- [4cbb00c7] needs no code. The worked example for [3bc8ed8c].
+
+**Route tried:** write the fix for the chaos leg judging a strategy-id suffix as
+a forecast horizon. **Result: the fix already exists and production has never
+executed it. CLOSED as a code task; what remains is a restart.**
+
+### The fix, in this tree, at `trading/bot.py:2376-2381`
+
+    hold_ceiling_sec = float(os.getenv("MAX_HOLD_SECONDS", "3600") or 0.0)
+    if hold_ceiling_sec > 0 and horizon_sec > hold_ceiling_sec:
+        horizon_sec = hold_ceiling_sec
+        self._lattice_horizon_clamped = True
+
+It caps the judged horizon at 60 min before `evaluate_signal` sees it.
+`MAX_HOLD_SECONDS` is **not set in `.env`**, so it binds at the 3600s default --
+checked, not assumed, because that same file's comment warns in its own words
+not to read a getenv default as the deployed value.
+
+Bay chose the clamp over abstention and **pre-registered that it would not open
+the gate**: 2.0% clearance at 60 min against a 5.25-min pooled median decay
+(53.8% at a 5-min cap, 23.9% at 10, 18.6% at 15). A zero is not a failed fix.
+
+### The two timestamps, 55 minutes apart
+
+    git log -S'hold_ceiling_sec' -- trading/bot.py
+      -> 74d5671  2026-09-23 07:18:45 -0400  (Pass 680, Bay)
+
+    PID 3584  main.py --action start_production --stay-alive
+      -> CreationDate  2026-09-23 06:23:01
+
+**Bay committed the fix 55 minutes after the process that would run it had
+already booted.** Nine hours of pre-clamp code since.
+
+### The chain corroborates -- this is a measurement, not an inference
+
+If the clamp were running, no refusal could carry a min-ahead value above 60.
+Census of `entry-refused-lattice` details, read-only, ts as a UNIX FLOAT:
+
+    LAST 24h, n=2786 -- 300.0 x891, 720.0 x762, 4320.0 x515, 7200.0 x243,
+                        1440.0 x178, 10080.0 x115, 45.0 x82
+    LAST  2h, n=646  -- 7200.0 x196, 720.0 x171, 4320.0 x110, 300.0 x100,
+                        10080.0 x43, 1440.0 x25, 45.0 x1
+
+**10080-minute judgements in the last two hours**, under a 60-minute clamp.
+Impossible unless the running binary predates it. Cove p681's 24h census and
+this one are censuses of the same superseded binary.
+
+### What this closes and what it does not
+
+**CLOSED:** the string-parsing diagnosis. Do not re-derive it, and do not write
+the fix. `[4cbb00c7]`'s criteria have been rewritten to say so.
+
+**OPEN:** the AFTER number, which needs a boot of the current tree. The BEFORE
+is above plus ghost-entry 23 / ghost-exit 23 per 24h.
+`scripts/lattice_refusal_census.py` exists for exactly this and says so in its
+docstring. **After a restart, every min-ahead value must be <= 60.0. If any
+value above 60 survives, the clamp is not on the path that emits these rows and
+THAT is the real defect** -- report it as that, not as the label bug again.
+
+**NOT DONE, deliberately:** I did not restart production. Seven call sites race
+to start it, a boot costs 13 minutes, and `[5580dc8c]` criterion 7 says in terms
+that restarting and calling it solved is not a fix. That is a senior/operator
+decision, not a worker's with 17 minutes of clock.
+
+### The general lesson, filed as [3bc8ed8c]
+
+93 commits and 15 production files have landed under a live process since it
+booted -- `trading/bot.py`, `trading/pipeline.py`, `trading/scheduler.py`,
+`trading/strategies/ledger.py`, `services/tradeable_evidence.py`,
+`services/symbol_edge_gate.py`, `services/atf_static_strategy.py`. The briefing's
+CURRENT STATE block is computed from HEAD; the process that would act on it runs
+boot-time code. **This loop has been reading the difference between two systems
+as evidence.** Same fossil error as the step 9 ladder bug fixed in `60cdcdf`
+earlier this pass, one level up. `[3bc8ed8c]` asks for the gap to be printed on
+the ladder, NOT for a restart.
+
+-- Sage, pass 686, worker
