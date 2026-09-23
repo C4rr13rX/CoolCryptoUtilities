@@ -25083,3 +25083,64 @@ urgent than when I filed it. AERO is currently refused -- by the edge gate, not
 by the stop.
 
 -- Echo, pass 685, senior
+
+## Pass 685 (Echo, senior) -- THE FEED FILTER IS RISK CONTROL, NOT A PROFIT FIX. ROUTE (b) IS NARROWER THAN THE STANDING INSTRUCTION CLAIMS
+
+ROUTE TRIED: restrict the live universe by FEED CONTINUITY (the discriminator
+that explains the single row carrying 137% of the scoreboard).
+NUMBER PRODUCED: **it improves the live book by +0.0652 and leaves it at
+-0.121156, still negative, on 14 rows.** CLOSED AS A PROFIT ROUTE. OPEN, and
+worth doing, AS RISK CONTROL.
+
+WHY IT LOOKED LIKE THE ANSWER. `[b576f923]` criterion 1 resolved to GAPPED:
+BPAD-USDC's feed went -1.36% -> **-61.36%** between two consecutive ticks three
+minutes apart, then dark for 28 minutes; ZERO ticks in the band between the 2%
+stop level and the exit price, out of 20 ticks in the 35.3-minute window. The
+stop fired on the first actionable tick. Not a stop defect -- a feed defect.
+
+THE DISCRIMINATOR IS REAL AND IT IS CLEAN. Max absolute inter-tick price jump
+per symbol, `market_stream`, 14 days, 127 symbols with >=30 ticks:
+
+    WETH-USDC    3547 ticks   3.75%      TRUMP-USDC   291,400,142%
+    WETH-USDT    4393         4.03%      XRP-USDC      18,535,985%
+    AERO-USDT     563         4.62%      SPIKE-USDC        89,824%
+    UNI-USDC     2346         4.76%      PEPE-USDC         17,934%
+    AERO-USDC    7897         6.86%      DOT-USDC          12,472%
+    CBBTC-USDC    743         6.96%
+    VIRTUAL-USDC 1542         7.46%      AAVE-USDC  18.40%, 1 event
+    COMP-USDC     693         9.33%          (the only borderline name)
+    CBETH-USDC    872         9.65%
+
+Every deep pair is under 10% with ZERO ticks exceeding a 10% jump in fourteen
+days. Six orders of magnitude of daylight; no threshold calibration needed.
+BPAD-USDC is **absent from the census entirely** -- under 30 ticks in 14 days.
+
+THE KILL, which is criterion 5 of the item, written for a worker and run by me:
+
+    THIN FEED (0 ticks/14d), 4 of 18 rows
+      BPAD-USDC     -16.660%   net -0.254927
+      BASECAT-USDC   -3.881%   net -0.033240
+      CBXRP-USDC     -1.679%   net -0.019078
+      BSTONK-USDC   **+34.102%  net +0.242029**  <- the BIGGEST WINNER is thin too
+                                  subtotal  **-0.065216**
+    CLEAN FEED (AERO/CBBTC/CBETH), 14 of 18   subtotal  **-0.121156**
+
+**The clean-feed book is the BIGGER loss.** The filter removes a +/-0.25 tail
+from BOTH sides -- BPAD -0.2549 and BSTONK +0.2420 nearly cancel -- so the book
+goes -0.186371 -> -0.121156 and stays negative. Worth shipping, because an
+unstoppable tail is how a small book dies. It is not the profit route.
+
+WHAT THE CLEAN ROWS SAY, and it is harsher than anything else measured today. On
+the best feeds we have, AERO's nine live rows run -1.794, -1.352, -2.328, -0.139,
++0.165, +0.230, +0.736, +0.800, +1.357. **Ten of the fourteen clean rows lose,
+and the losses are systematically larger than the wins.** Not a feed problem, not
+a stop problem. The cost floor, now evidenced in the LIVE book rather than the
+ghost book.
+
+THREE HYPOTHESES KILLED THIS PASS, ALL MINE: (1) "the stop did not function" --
+no, it gapped; (2) "the UNI row is excluded for being an untradeable symbol" --
+no, it passes both predicates today and I never ran them; (3) "feed continuity
+is the profit route" -- no, it is risk control worth +0.0652 against a book that
+stays negative.
+
+-- Echo, pass 685, senior
