@@ -22822,3 +22822,60 @@ DEAD INSTRUMENT, do not quote it: scripts/money_button_edge_terms.py reports
 +1486.4413% beside a -0.700% median. Those are the same contamination. Its verdict
 on the MOMENTUM gate is not reproducible in either direction. Its verdict on the
 COST gate is (-0.7382 -> -0.7419), and all 7 loosening counterfactuals still lose.
+
+## Pass 681 -- Bay. Four routes, three closed, one opened as a LEAD not a claim.
+
+CLOSED: "the live lane is being REFUSED, so a gate fix opens it." DEAD, and it was my
+own opening hypothesis. Every status LIKE 'live%' in trading_ops -- executions AND
+refusals alike -- stops on 2026-09-05: live-exit 18 (newest 21:10:42), live-entry 20,
+live-swap-settled 46, live-position-dark-feed 419, guard-blocked-live 62 (newest
+2026-09-04 23:18), live-entry-failed 11, live-entry-blocked 6, and five more. ZERO
+live%-prefixed rows in 17.6 days, against 6164 ghost ops in 24h. A gate that refuses
+writes a refusal; silence is not refusal. .env:40 has ENABLE_LIVE_TRADING=1, so the
+arm is CONFIGURED on and still produces no observable output of any kind.
+NOT proven: that the live loop is not executing. Proven: it has logged nothing.
+
+CLOSED: "the 5-day ghost gate window (.env:263 GHOST_VALIDATION_LOOKBACK_SEC=432000,
+NOT the 172800 in the code default) is the blocker; widen it and step 6 opens." DEAD.
+With the window discarded entirely and every strategy judged on its LIFETIME book
+through the gate's own calls, atf_static reads 304 trips at 43.8% win repriced --
+still short of MIN_GHOST_WIN_RATE=0.55. The window IS massively binding (it discards
+299 of atf_static's 304 trips; inside it the strategy has FIVE trips at 0% win and
+net -0.1185) but widening it does not open step 6. Do not spend a pass on it.
+
+CLOSED: "restrict the universe to deep pools and atf_static's edge concentrates."
+DEAD as stated. 36.5% of its 304 trips are BSTONK/BPAD/BASECAT/MOONBASE and they
+carry 77.6% of the entire gross return (+3.4606 of +4.4578). Strip them and the
+remainder is n=193, win 49.2%, MEDIAN EXACTLY 0.00000; at 2bp the median is negative.
+Restricting does not concentrate the edge, it deletes three quarters of it.
+RETRACTED en route: I claimed those four symbols were already gate-refused, citing
+pipeline.py's _ghost_validation docstring. They are NOT. services.stop_survivability_
+gate.refusal_reason() ADMITS all four today -- the docstring is stale and it misled me.
+
+OPEN, AS A LEAD ONLY: atf_static on AERO-USDC. Restricted to the four MEASURED deep
+pools (WETH+AERO+CBBTC+CBETH) the book is n=87, win 56.3%, median +4.7bp, and it
+clears the 0.55 bar; at 2bp win 52.9% and the median is still positive. AERO alone is
+n=26, win 69.2%, MEDIAN +37.5bp against a measured 10.41bp round trip -- 3.6x cover on
+the median trip. Filed as [9a831d2a]. NOT A CLAIM: n=26; the mean is 7.5x the median
+so it is tail-driven; CBBTC is 55 of the 87 trips at 47.3% win and a median of zero;
+and AERO is the ONE symbol where this repo has already proven ghost and live disagree
+by 2.52pp WITH THE SIGN FLIPPING (ghost +1.9757% n=46 vs live -0.5427% n=8, bootstrap
+rules out small-n). No ghost measurement can settle it. Only settled tx hashes can.
+
+INSTRUMENT DEFECTS FOUND, both filed: [76e8d7c5] ladder step 9 LIVE is a LIFETIME
+count with no ts predicate (live_path_check.py:392), so it prints PASS forever on rows
+17.6 days old, and the 1h live-refusal count it computes at :393-397 is only printed
+when total<=0, i.e. never. [99b20ee2] stop_survivability_gate is a 13-NAME BLOCKLIST:
+of 176 symbols in its 7-day window, 13 refused, 28 measured-and-passed, and 135
+(76.7%) ADMITTED WITHOUT MEASUREMENT (115 abstained as too thin, 20 no computable
+jumps). BSTONK/BPAD/BASECAT/MOONBASE are all in the unmeasured 135. WETH and AERO are
+measured and pass with p99 tick jumps of 0.26% and 0.39% against a 4.00% ceiling.
+
+METHOD WARNING that cost me two wrong numbers and cost Sage one independently, four
+minutes apart: "details LIKE '%<strategy>%'" over trading_ops IS NOT A STRATEGY FILTER
+-- the details blob names other strategies in other fields. And trade_outcomes is NOT
+the gate's book: the gate pairs ghost-entry/ghost-exit rows out of trading_ops via
+MetricsCollector.ghost_trade_snapshot. Use that call, not SQL. return_pct is the only
+figure price_book_at_live_clip leaves untouched (verified bit-identical); the dollar
+profit it returns is not -- repricing flips the sign of 33 of 304 rows and the per-row
+ratio ranges from -8123.684 to +155.754.
