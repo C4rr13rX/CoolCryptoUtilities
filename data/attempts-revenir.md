@@ -20157,3 +20157,63 @@ if you quote loop_lag at all.
 **LOG TRAP:** the governor's logger does **not** reach `logs/system.log` — zero
 governor lines of any kind there across three days. It writes to
 `logs/prod_direct.err`. Absence in `system.log` is not evidence about this module.
+
+---
+
+## p673 (Dune) — [a2bfd079] the governor holds the GIL a SECOND way, and f7cb718 does not touch it — FIXED, NOT YET LIVE
+
+**Route:** after Cove's `f7cb718` removed the 10-second full `gc.collect()`, ask
+whether that was the *only* stop-the-world call in `services/resource_governor.py`.
+Complement, which is what p672's work implies: the GC was the only holder and
+`f7cb718` alone is sufficient.
+
+**The call:** `_sample()` walked our own process tree every tick —
+`psutil.Process().children(recursive=True)` plus `memory_info()` per descendant.
+On Windows `children(recursive=True)` enumerates the **whole system process
+table** to build a ppid map, and it holds the GIL while it does.
+`GOVERNOR_SAMPLE_INTERVAL` defaults to **2 seconds**, so this ran **5x more
+often than the GC ever did**.
+
+**Measured** against live production pid 6340, 388 processes on the box, 1
+descendant, n=30: median **40.3 ms**, p90 **372.2 ms**, max **521.8 ms** per
+walk. At the 2s cadence that is a **2.01% GIL duty cycle at the median and
+18.6% at p90**. Pre-registered kill threshold was "under 1% and I am wrong";
+it is 2.01%, so the hypothesis stands.
+
+**But keep it in proportion — this is NOT the missing explanation.** The GC that
+`f7cb718` removed was measured at a 9.8% duty cycle. This is ~a fifth of that at
+the median and about twice it at the tail. **74.4% of loop polls blow the
+budget; a 2% duty cycle cannot produce that.** A third holder is still unnamed.
+
+**Why throttling is safe:** all seven consumers of `_our_rss_mb` (≈389, 470,
+559, 645, 655) read the **cached** field under `_lock`, never a fresh reading,
+so a value up to 30s old changes no decision. The memory guards do not read it
+at all — `_CRITICAL_MEM` and `_EMERGENCY_MEM` both branch on `mem` from
+`virtual_memory()`, still sampled every tick. The one branch that does read
+`our_rss` is the RSS-pressure GC, which fired **zero times in 40,892** governor
+log lines (Bay, p672).
+
+**Fix:** `750ead6`, `services/resource_governor.py` only, +40/-11. The walk runs
+on `GOVERNOR_RSS_SCAN_SEC` (default 30) and the previous reading is carried
+forward between scans.
+
+**Proof**, both arms back to back on the same loaded box, GC branch disabled to
+isolate the walk, n=25 each: scans **25/25 → 1/25**, median sample 301.4 → 195.6
+ms, p90 887.5 → 386.5, max 1324.1 → 427.6, and `our_rss` **identical at 21.8 MB
+in both arms** (the cache is correct, not zeroed). *Caveat: six agents were
+loading this box, so the absolute levels are inflated against the 40.3 ms
+figure. Both arms ran under the same load, so the **delta** is the honest
+quantity, not the levels.*
+
+**NOT LIVE.** Production pid 6340 started 2026-09-21 22:57 and serves stale code,
+exactly like `f7cb718`. Whoever restarts gets **both** commits at once, so a
+post-restart loop_lag reading **cannot attribute between them** — do not credit
+either one alone.
+
+**RESTART PRE-CHECK, VERIFIED INDEPENDENTLY THIS PASS (not read from a report):**
+`kv_store['state']['ghost_trading']['auto_execute_approved']` is **`True`** in
+`storage/trading_cache.db` right now. A restart **will** rehydrate arming.
+Criterion 6 of [a2bfd079] is correct to call this an operator decision.
+
+**Status: the instrument is fixed and committed; the item stays OPEN** on a
+criterion that needs a restart plus a full 6h window.
