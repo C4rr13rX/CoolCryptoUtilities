@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -73,8 +74,86 @@ def _db():
     return sqlite3.connect(DB_PATH, uri=True)
 
 
+SYSTEM_LOG = ROOT / "logs" / "system.log"
+_LOG_TS_RE = re.compile(rb"(20\d\d-\d\d-\d\d \d\d:\d\d:\d\d)")
+
+
+def _production_procs() -> Optional[List[float]]:
+    """Start times of every live ``main.py --action start_production``.
+
+    Returns None -- an UNKNOWN, never an empty list -- when psutil is missing.
+    A absent dependency must not be reported as a dead host: that is the exact
+    confusion this whole function exists to remove.
+    """
+    try:
+        import psutil  # type: ignore
+    except Exception:
+        return None
+    started: List[float] = []
+    for proc in psutil.process_iter(["cmdline", "create_time"]):
+        try:
+            if "start_production" in " ".join(proc.info.get("cmdline") or []):
+                started.append(float(proc.info.get("create_time") or 0.0))
+        except Exception:
+            continue
+    return started
+
+
+def _log_silent_minutes(now: float) -> Optional[float]:
+    """Minutes since the newest line in logs/system.log, or None if unreadable.
+
+    Read by seeking to the end: the file is ~1GB and this runs on the ladder.
+    """
+    try:
+        size = SYSTEM_LOG.stat().st_size
+        with SYSTEM_LOG.open("rb") as fh:
+            fh.seek(max(0, size - 65536))
+            tail = fh.read().splitlines()
+        # Lines are '[2026-09-23 07:22:14] [INFO] ...' -- the stamp is NOT at
+        # offset 0, and slicing [:19] silently yields an unparseable string and
+        # a None that reads as 'log unreadable'. Match it instead.
+        for line in reversed(tail):
+            m = _LOG_TS_RE.search(line[:48])
+            if not m:
+                continue
+            try:
+                stamp = time.mktime(time.strptime(m.group(1).decode(), "%Y-%m-%d %H:%M:%S"))
+            except Exception:
+                continue
+            return max(0.0, (now - stamp) / 60.0)
+    except Exception:
+        return None
+    return None
+
+
 def check_feed(now: float) -> Link:
-    link = Link(1, "FEED")
+    """Is there a tick? -- but FIRST, is there a process to produce one?
+
+    These are different failures with opposite fixes and this link used to
+    print the same eight words for both. Measured over the 528 hours to
+    2026-09-23 06:00: 60 hours had no production log line at all, and a
+    FURTHER 54 hours -- including an unbroken 60-hour run from 2026-09-13
+    11:00 -- had production alive and logging with ZERO market_stream rows.
+    "no ticks in 10min" was the verdict for all 114, and it cost three wrong
+    readings in pass 679 alone. So:
+
+      no process          -> UNKNOWN. With nothing running there is no feed
+                             measurement to report, and reporting one invites
+                             a fix aimed at the feed when the host is down.
+      process, no ticks   -> FAIL, and say how long the process has been up,
+                             because a 2-minute-old process has not had time
+                             to fill a 10-minute window.
+      process and ticks   -> PASS, worded exactly as it always was.
+    """
+    procs = _production_procs()
+
+    if procs is not None and not procs:
+        silent = _log_silent_minutes(now)
+        detail = "PRODUCTION IS NOT RUNNING -- no feed verdict"
+        if silent is not None:
+            detail += " (log silent %.0f min)" % silent
+        return link_unknown_process(detail)
+
     try:
         c = _db()
         fresh = list(c.execute(
@@ -82,10 +161,32 @@ def check_feed(now: float) -> Link:
         ))[0][0]
         total = list(c.execute("SELECT COUNT(*) FROM market_stream WHERE ts > ?", (now - 600,)))[0][0]
     except Exception as exc:
-        return link.unknown("db unreadable: %s" % exc)
+        return Link(1, "FEED").unknown("db unreadable: %s" % exc)
+
+    link = Link(1, "FEED")
+    if procs is None:
+        note = " (process state unknown: psutil missing)"
+    elif len(procs) > 1:
+        note = " (%d production processes alive)" % len(procs)
+    else:
+        note = ""
+
     if total <= 0:
-        return link.failed("no ticks in 10min", "check MarketDataStream / endpoint allowlist")
-    return link.passed("%d ticks/10min across %d fresh symbols" % (total, fresh))
+        up = ""
+        if procs:
+            up = ", production up %.0f min" % ((now - max(procs)) / 60.0)
+        return link.failed(
+            "process ALIVE but no ticks in 10min%s%s" % (up, note),
+            "feed is starved, not dead-host: check MarketDataStream / endpoint allowlist")
+    return link.passed(
+        "%d ticks/10min across %d fresh symbols%s" % (total, fresh, note))
+
+
+def link_unknown_process(detail: str) -> Link:
+    link = Link(1, "FEED")
+    link.fix = ("start production (an external supervisor normally does this); "
+                "60 of the last 528 hours had no production process at all")
+    return link.unknown(detail)
 
 
 def check_signals(now: float) -> Link:
