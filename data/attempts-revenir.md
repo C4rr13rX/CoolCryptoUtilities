@@ -22571,3 +22571,95 @@ P/L sum, and when they disagree in sign, believe the win rate and go find the ro
 
 REPRODUCE: scratchpad/replay2.py (read-only; run with and without the argument
 'nozombie'). No repo file was edited to produce this.
+
+
+================================================================================
+PASS 681 (Echo) -- ROUTE (c), "SHORTEN THE HOLD", IS CLOSED. TWO INDEPENDENT
+INSTRUMENTS, SIMULATED AND REALISED, AGREE THERE IS NO POSITIVE HOLD REGION.
+================================================================================
+
+THE CLAIM BEING CLOSED, quoted from the standing instructions as they were
+still issued to every agent on pass 681:
+
+    "SHORTEN THE HOLD. The tradeable book is POSITIVE inside 15 minutes and
+     negative after. Hold time may be worth more than signal."
+
+KILL #1 -- SIMULATED. Not mine; it is [bd851275]'s own closing note, already in
+the backlog and already marked done. That claim's SOLE source was the
+money_button dip sweep at deep pools + 2% floor + 15m hold: 9 trades, 89% win,
++0.429% mean net. Extending the tape on the SAME shipped simulate():
+
+    168h   n= 9   89% win   +0.4286%   t=+2.91
+    336h   n=16   75% win   +0.1947%   t=+1.28
+    526h   n=18   67% win   -0.0677%   t=-0.29
+
+Monotone in all three statistics and it CROSSES ZERO. 526.1h is the full span of
+market_stream, so this is the whole tape, not a chosen window. All 9 winners sit
+inside the most recent 168h -- a clock artifact. The |return|>20% filter censors
+ZERO rows in every window, so it is not an outlier story either.
+REPRODUCE: python -X utf8 scripts/money_button_dip_expectancy.py --hours 168 --sweep --horizon-sec 900
+
+KILL #2 -- REALISED. Mine, pass 681, a different population and a different
+method. bd851275 measured a SIMULATED signal over stored history; this measures
+what the strategies ACTUALLY DID. 263 paired round trips over 30d, pairing
+trading_ops 'enter' (trade_id out of details JSON) to trade_outcomes by trade_id,
+both ts treated as UNIX FLOATS. Reproduces Bay's p680 pairing exactly: realised
+hold median 56.2 min, p90 220.1, max 6970.6.
+
+    HOLD(min)    n     GROSS     FEES       NET    win%
+    0-5         12   -0.3009   0.1449   -0.4459   58.3
+    5-15        26   -0.9263   0.4588   -1.3852   53.8
+    15-30       50   -0.1095   0.9369   -1.0464   32.0
+    30-60       49   -0.7601   0.6025   -1.3626   61.2
+    60-240     100   -0.8358   1.3333   -2.1691   42.0
+    240+        26   +7.6395   0.2771   +7.3624   42.3
+    TOTAL      263   +4.7068   3.7535   +0.9533
+
+THE 0-15 MIN REGION THE INSTRUCTION CALLS POSITIVE IS GROSS -1.2272 OVER 38 ROWS
+-- NEGATIVE BEFORE ANY FEE. The instruction is not merely stale, it is backwards.
+
+THE ONE POSITIVE BUCKET IS FICTION, AND THIS REPO'S OWN DETECTOR CAUGHT IT. The
+note immediately above this one recommends: "print the win rate next to any P/L
+sum, and when they disagree in sign, believe the win rate and go find the row."
+The 240+ bucket is 42.3% win -- below half -- carrying +7.6395. That disagreement
+is the tell. The rows:
+
+    ghost AAVE-USDC    hold  804.2 min   gross +3.4830  time_take_profit:1.7416
+    ghost AERO-USDC    hold 4218.9 min   gross +3.2196  time_take_profit:1.6099
+    ghost BSTONK-USDC  hold 1337.5 min   gross +0.8642  take_profit_limit
+
+Three rows are 99.0% of that bucket and +7.5668 of the WHOLE book's +4.7068.
+They are NOT a new discovery: they are the feed-contamination family this repo
+diagnosed on 2026-09-10 and guarded at services/entry_price_corroboration.py.
+Selecting independently on |(exit-entry)/entry| > 0.5 over all closed rows
+reproduces that pass's headline figure to four decimals without having read it:
+
+    ALL closed rows        n=262   net +2.2327
+    of which |ret|>50%     n=  6   net +5.3566   <- guard docstring says +5.3566
+    REMAINDER              n=256   net -3.1240
+
+REMOVE THEM AND EVERY HOLD BUCKET FROM 0 TO 9999 MINUTES IS GROSS-NEGATIVE.
+
+CONCLUSION: there is no positive hold region anywhere on the realised book and
+none on the simulated one. No exit-timing change -- MAX_HOLD_SECONDS,
+MAX_HOLD_FORCE_SECONDS, stale_exit_secs, TRIGGER_WINNER_MAX_HOLD_SEC -- can move
+trades into a positive region that does not exist. ROUTE (c) IS CLOSED AS A
+PROFIT ROUTE. Those four settings remain CORRECTNESS levers (see [0a293758], the
+time-exit coverage hole) and should not be tuned for edge.
+
+REOPENING THIS NEEDS NEW TAPE, NOT NEW ANALYSIS. Both instruments are already at
+the full span of market_stream.
+
+SIDE RESULT WORTH KEEPING -- THE 2026-09-10 GUARD IS STILL HOLDING, AND THAT IS
+DATEABLE. The six contaminated rows are dated 2026-08-26 (x4), 2026-09-03 and
+2026-09-04. The guard shipped f68f649 on 2026-09-10. There have been ZERO
+contaminated rows in the 19 days since. A shipped fix that is verifiably still
+working is rare enough here to record.
+
+ROUTES STILL OPEN AFTER THIS PASS: (a) hand-approve one strategy onto the live
+lane at a minimum clip; (d) raise the evidence RATE. Route (b), the cost floor,
+is closed on the live book per Cove p680 [a57d2cb1] -- gross -0.0849 before any
+fee. Route (c) is closed as of this entry.
+
+NO PRODUCTION FILE WAS EDITED TO PRODUCE THIS. All measurements are read-only
+against storage/trading_cache.db opened with mode=ro.
