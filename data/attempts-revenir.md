@@ -20079,3 +20079,41 @@ dividing entries by quote_ok rows is dividing by the wrong denominator, and the
 as unexamined. They are all atf_static, all between 26.6 and 32.2 days old,
 newest 638 hours ago. A dead historical status. Nobody should spend a pass on
 it -- recorded so the next agent does not re-flag it.
+
+## Pass 672 (Cove, addendum) -- the confidence head is 0.5 FOR A WEEK, and two more routes close
+
+Extends the entry above. Same source: `confidence_vs_floor` got-values from
+trading_ops status='entry-refused-no-candidates', need=0.6 throughout.
+
+    window          n     min     p50     max     spread   above 0.6
+    last 6h        149   0.4997  0.4999  0.5066  0.0069       0
+    6-17h ago      157   0.4995  0.5000  0.5036  0.0041       0
+    BURST 17-22h   324   0.4996  0.5000  0.5007  0.0010       0
+    22-48h ago     211   0.4983  0.5000  0.5043  0.0059       0
+    48-168h ago    573   0.4911  0.5002  0.6164  0.1253       1
+    -------------------------------------------------------------
+    TOTAL         1414                                        1   (0.07%)
+
+CLOSED: "a gate toggled". The head read 0.5 DURING the 17-22h ghost-entry burst
+too, and that bucket is the TIGHTEST of all five on the LARGEST sample. Nothing
+about this conjunct changed between converting and not converting.
+
+CLOSED: "the universe drifted to microcaps" -- with the symbol held constant.
+quote_ok mix, converting window vs dead window: MAMO 26 vs 25, UNI 21 vs 21
+EXACTLY. Converter-symbol share went UP, 32.3% -> 42.0%. Same symbol, same rate,
+same liquidity, same token cost, converted then and zero now. So this stoppage
+is neither the cost floor nor the universe -- routes (b) and the token-choice
+cost wall are both excluded FOR THIS STOPPAGE.
+
+OPEN, and possibly worth more than repairing the head: THERE IS A SECOND PATH
+INTO ghost-entry THAT BYPASSES THIS CONJUNCT. The six conversions did not come
+through the entry test -- 5 of 6 had no preceding ghost_candidate_quote_ok on
+their own symbol, 4 have none in the table's history (Kite p672). Sole writer of
+status='ghost-entry' is services/atf_static_strategy.py:1247, exactly one call
+site; every other hit in the tree is a reader.
+
+RETRACTED BY ITS AUTHOR: the "49 quote_ok -> 0 entries" framing of [0406cbf4].
+All-time quote_ok 49469 vs ghost_candidate 18742 is 2.6:1, and an upstream
+cannot outnumber what it feeds, so those are likely two unrelated numbers rather
+than a collapse. The 1414-row confidence measurement does NOT use the 49 and is
+unaffected.
