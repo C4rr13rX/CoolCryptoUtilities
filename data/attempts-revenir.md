@@ -26403,3 +26403,84 @@ Gross-positive and net-negative again, at n=23 -- too small to promote, but the
 same shape as the 30d book.
 
 -- Sage, pass 687, auditor
+
+## Pass 687 (Echo, senior) -- CLOSED: [28131071] THE LEDGER/STORE GAP IS 66% BENIGN, AND THE STORE'S POSITIVE SIGN IS TWO ROWS
+
+**Route:** the item proposed "the counter has DRIFTED, the store is the truth,
+recompute repairs it". **That hypothesis LOSES.** Read-only, storage/trading_cache.db
+and data/strategy_ledger.json. Nothing was edited or recomputed.
+
+### Both numbers, reproduced at my own head
+
+`_live_tradeable` was IMPORTED from `trading.strategies.ledger`, never re-implemented
+(scripts/tradeable_book.py:73 documents why).
+
+    LEDGER  (sum of ghost.tradeable over data/strategy_ledger.json)
+        116 trades   30 wins   25.9%   -2.4145
+      -> reproduces the briefing's printed "tradeable" line to the last digit,
+         which confirms this IS the number graduation_status.py:219 reads via
+         trading/strategies/ledger.py:440 _tradeable_of(ghost).
+
+    STORE   (trade_outcomes, status='closed', wallet='ghost', predicate imported)
+        177 trades   58 wins   32.8%   +6.1535
+
+    GAP     +8.5680 over 61 trades, opposite in sign.
+
+### The decomposition is the whole answer
+
+    52 of the 177 store rows carry NO strategy_id at all  ->  +5.6552   66.0% of the gap
+    the attributed remainder genuinely disagrees          ->  +2.9128   34.0% of the gap
+
+The ledger is keyed BY STRATEGY. It **cannot** hold an unattributed row, by
+construction, so two thirds of this gap is not drift and never was.
+
+**Kite measured +2.99 for the attributed disagreement six passes ago, on a
+different row set. I measure +2.9128. Two independent measurements, six passes
+apart, agreeing to 0.08.** So the real defect is STABLE at ~2.9, and all of the
+apparent growth from Kite's headline 2.99 to today's 8.57 is the benign block.
+
+### THE KILL SHOT ON "RECOMPUTE FROM THE STORE"
+
+The unattributed block's +5.6552 is **two rows**:
+
+    AAVE-USDC  +3.4700
+    AERO-USDC  +3.2066
+    ---------------------
+    sum        +6.6766   = 118% of the block, and 108% of the store's WHOLE positive
+
+Strip those two and the store book is **negative**. The win rates say the same
+thing independently: unattributed rows win **55.8%**, everything attributed wins
+**23.2%** -- a 32.6pp gap, and the unattributed rows are the pre-2026-09-03 rows
+from before strategy attribution existed.
+
+**A recompute-from-store would have written a +5.66 positive whose sign is two
+rows into the single counter the graduation gate reads.** This repo has shipped
+that exact failure three times already (six rows carrying 236% of the ghost book;
+five rows whose entry price the tape refutes; a take-profit where 98% of gross was
+7 rows). **DO NOT RECOMPUTE. The store is not a more trustworthy book than the
+ledger -- it is a less attributable one.**
+
+### Effect on the graduation decision: NONE. Zero of 44.
+
+Checked PER STRATEGY, because the bar is per strategy and a pooled win rate cannot
+answer it. Bar = 20 tradeable trades, 55% win, P/L > 0.
+
+    strategies crossing the bar differently under the two books:  NONE
+
+Nearest either way: atf_static_scout is LEDGER 29/19/65.5% but P/L -0.8429 (fails
+on P/L, not on win rate) and STORE 6 trades (fails on count); atf_static is LEDGER
+17 trades and STORE 21/9/42.9% (fails on win rate). Neither book promotes or demotes
+anything the other does not.
+
+**So the bar is reporting an UNRECONCILED number, not making a WRONG decision.**
+That is materially smaller than this item's title claims, and it is a documentation
+-and-test problem rather than a data problem.
+
+### Status
+
+[28131071] CLOSED. Criterion 1 resolves to the COMPLEMENT: the two books index
+different populations and neither is corrupt. Criterion 4's warning stands and is
+now stronger -- the recompute is not merely unnecessary, it is actively dangerous.
+Follow-up filed for the reconciliation test that knows about the population split.
+
+-- Echo, pass 687, senior
