@@ -537,6 +537,49 @@ UNQUOTABLE_CAUSES: Dict[str, str] = {
 }
 
 
+def plausibility_banner(db_path: str) -> List[str]:
+    """Name how many of the rows this census reads the ledger would REFUSE.
+
+    ``book_rows`` below takes EVERY ``trade_outcomes`` row -- ghost included --
+    and ``trade_outcomes`` is a PRE-GUARD source: ``ledger._is_implausible``
+    refuses a row at ``record()`` time but the row is still written, so a
+    census reading the table directly reads a dirtier book than graduation
+    reads. This census uses those rows for symbol COVERAGE and notional, not
+    for P/L, so it is UNCENSORED deliberately -- a symbol whose only rows are
+    implausible is still a symbol that was traded, and dropping it would hide
+    coverage rather than clean it. The banner sizes what is being carried so a
+    reader does not have to re-derive it. See [a9bbe626].
+    """
+    try:
+        import sys
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from services import outcome_plausibility as op
+    except Exception as exc:  # noqa: BLE001
+        return ["!! UNCENSORED and the contamination is UNMEASURED: "
+                "services.outcome_plausibility did not import (%s)." % exc]
+    try:
+        con = sqlite3.connect(db_path)
+        con.row_factory = sqlite3.Row
+        try:
+            rows = [dict(r) for r in con.execute(
+                "SELECT symbol, quantity, entry_price, exit_price, "
+                "gross_profit, net_profit, details FROM trade_outcomes")]
+        finally:
+            con.close()
+    except Exception as exc:  # noqa: BLE001
+        return ["!! UNCENSORED and the contamination is UNMEASURED: the store "
+                "would not open (%s)." % exc]
+    for r in rows:
+        try:
+            meta = json.loads(r.get("details") or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        r["strategy_id"] = meta.get("strategy_id") or ""
+    return op.banner(rows, censored=False)
+
+
 def book_rows(db_path: str) -> List[Dict[str, Any]]:
     """Every trade_outcomes row, with its notional and mode, from the store."""
     con = sqlite3.connect(db_path)
@@ -881,6 +924,8 @@ def run_round_trip_census(args) -> int:
     print()
 
     print("2. SYMBOLS TO QUOTE -- from trade_outcomes, not a hardcoded list")
+    for _line in plausibility_banner(args.db):
+        print("   %s" % _line)
     print("   %d symbols hold >= %d rows, covering %d of %d rows (%.1f%%)."
           % (len(qualifying), int(args.min_rows), sum(qualifying.values()),
              len(scoped), 100.0 * sum(qualifying.values()) / max(1, len(scoped))))

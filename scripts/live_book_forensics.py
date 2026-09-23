@@ -148,6 +148,32 @@ def settle(w3, tx_hash: str) -> dict:
     }
 
 
+def _plausibility_banner(con: sqlite3.Connection) -> list[str]:
+    """How many rows in the mode split the ledger REFUSES, sized in dollars."""
+    try:
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from services import outcome_plausibility as op
+    except Exception as exc:  # noqa: BLE001
+        return ["!! UNCENSORED and the contamination is UNMEASURED: "
+                f"services.outcome_plausibility did not import ({exc})."]
+    cur = con.cursor()
+    cur.execute("SELECT symbol, quantity, entry_price, exit_price, "
+                "gross_profit, net_profit, details FROM trade_outcomes")
+    cols = [d[0] for d in cur.description]
+    rows = []
+    for r in cur.fetchall():
+        row = dict(zip(cols, r))
+        try:
+            meta = json.loads(row.get("details") or "{}")
+        except (TypeError, ValueError):
+            meta = {}
+        row["strategy_id"] = meta.get("strategy_id") or ""
+        rows.append(row)
+    return op.banner(rows, censored=False)
+
+
 def ghost_live_split(con: sqlite3.Connection) -> dict:
     """How much of `trade_outcomes` is live, so a ghost census can exclude it."""
     cur = con.cursor()
@@ -169,6 +195,7 @@ def main() -> int:
     rows = scoreboard_rows(con)
     by_outcome, by_trade = hash_index(con)
     split = ghost_live_split(con)
+    censor_lines = _plausibility_banner(con)
     con.close()
 
     total_net = sum(float(r["net_profit"] or 0) for r in rows)
@@ -246,6 +273,15 @@ def main() -> int:
     print("trade_outcomes by mode -- a ghost census must exclude the live rows:")
     for mode, agg in split.items():
         print(f"  {mode:<10} {agg['rows']:>4} rows   net {agg['net'] or 0:+.5f}")
+    # This split sums net_profit over EVERY row, ghost included, and
+    # `trade_outcomes` is a PRE-GUARD source: the ledger refuses a row at
+    # record() time but the row is still written. The scoreboard above is
+    # live-only and chain-tied, so it is unaffected; the ghost line is not.
+    # Uncensored on purpose -- a mode census that dropped rows would
+    # understate the table it exists to describe -- with the size printed.
+    # See [a9bbe626].
+    for line in censor_lines:
+        print(f"  {line}")
 
     if args.json:
         with open(args.json, "w", encoding="utf-8") as fh:
