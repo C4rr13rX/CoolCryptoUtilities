@@ -19929,3 +19929,54 @@ STATUS: both routes closed negative. [a2bfd079] left in progress with its
 criteria refined; its one remaining criterion needs a production restart, which
 arms money_button_dip (gross -0.3816% over n=333) against a $19.66 wallet and
 is an operator decision, not a measurement gap.
+
+## Pass 672 (Dune) -- [82662e5d] the scout's missing receipts, and what the kill tests closed
+
+**Route tried: make atf_static_scout's book auditable.** CLOSED POSITIVE (partly).
+Cause found at `services/atf_static_strategy.py:986`: the scout's exit wrote a
+`trading_ops` `ghost-exit` event and called `StrategyLedger.record`, and neither is
+`trade_outcomes`. The canonical writer is `db.py:993 record_trade_outcome` and the
+scout never called it. Fixed in `2ba187f`. Proof: a real `TradingDatabase` on a
+scratch db driving the real `_run_ghost_quote_scout`, rows naming `atf_static_scout`
+0 -> 1, entry 100.0 exit 85.0 qty 0.06 gross -0.9000 fee 0.0232 net -0.9232, net ==
+gross - fee. `pytest -k "atf_static or ghost_exit or scout"` 42 passed 1 skipped.
+
+**Route CLOSED: "the scout's receipts are hiding among the 96 anonymous rows."**
+My own hypothesis, killed by measurement. Recovered ids by matching each
+unattributed outcome to a `trading_ops` `action=exit` row on the same symbol within
++/-90s: **79 of 96 recoverable, ZERO ambiguous, 17 unrecoverable**. The 79 are 31
+atf_static, 13 rsi_reversal@5h, 9 rsi_reversal, 5 obv_accumulation@5d, 5
+donchian_breakout@1d, 1 money_button, and eleven others -- **not one is
+atf_static_scout**. The scout wrote nothing; it did not write anonymously. All 96
+fall 2026-08-26..2026-09-03 (newest attributed row is 2026-09-22), so the root cause
+is a closed historical tail already fixed at `bot.py:10853`. Filed as `[7211556d]`.
+The 17 unrecoverable carry net **+4.4454** that nothing can attribute.
+
+**Route CLOSED: "ladder steps 2 and 3 are instrument failures."** My opening
+measurement, killed by the test I pre-registered against it. Step 2 does not read
+`trading_ops` at all -- `scripts/live_path_check.py:94` calls `latest_signals(1800)`
+against the KV blob `atf_static_strategy:signals`. Measured it: 3 rows aged
+2.2/2.8/5.3 min, `check_signals` returns **ok=True, "3 candidates"**. Step 2 PASSES;
+the FAIL in the p672 briefing ladder is a stale snapshot. Step 3 counts status
+exactly `ghost-entry`/`ghost-exit` and is correct: a `ghost_candidate` is not an
+entry.
+
+**Route OPEN and this is the number worth having: step 3 converts 1.04%.**
+24h `trading_ops` statuses: `ghost_candidate` 302 + `ghost_candidate_quote_ok` 276 =
+**578 candidates**, `ghost-entry` **6**, `ghost-exit` **6**. Newest entry **16.94h**
+old, newest exit 16.64h, zero of each in the last hour. 7d: 65 entries, 56 exits.
+**270 of the 276 that already passed the quote probe still died**, so quote failure
+cannot explain them. Filed as `[67b50ab3]`.
+
+**Sub-route CLOSED NEGATIVE: "the position cap explains the 1.04%."** Pre-registered
+as the complement, then run: `atf_static_strategy:ghost_positions` holds **ZERO open
+positions** and `ATF_STATIC_MAX_POSITIONS` is **12** in this environment, not the
+code default 3. Twelve free slots, nothing held, a candidate every two minutes. The
+cap is not binding and cannot be the explanation. The loss is a refusal inside the
+entry loop. **Do not re-run this test; do not raise the cap.**
+
+**Caveat on 2ba187f, recorded so nobody over-claims it.** With zero open positions
+the scout has nothing to close, so the receipt does not appear in production on
+restart -- it appears when the scout next enters *and* exits, currently ~6 round
+trips a day, not 255. The scout's +0.1030 over 22 tradeable trades (which route (a)
+of `[9ef737d3]` leans on) is now **CHECKABLE but still UNCHECKED**.
