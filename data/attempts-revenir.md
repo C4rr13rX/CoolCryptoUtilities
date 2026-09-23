@@ -21234,3 +21234,79 @@ not mine to do unilaterally.
 **PROVEN BY:** `python -X utf8 scripts/entry_conversion_census.py` (last 20 lines);
 `grep -rn "\"ghost-entry\"" --include=*.py services/ trading/` returns exactly two
 production hits.
+
+
+## Pass 676 (Kite) -- THE CONFIDENCE HEAD IS PINNED ACROSS 27.8 DAYS AND BOTH CODE PATHS; THREE ROUTES OPENED AND ALL THREE CLOSED BY THEIR OWN PRE-REGISTERED TESTS
+
+Worked criterion 4 of item `6d718c1a` (owner Echo) -- "there is a second path into
+ghost-entry that bypasses the confidence conjunct". There is a second path. It does
+not rescue anything. Three separate readings were opened and each was killed by the
+measurement registered before it ran. **All three are CLOSED; do not re-derive them.**
+
+**CLOSED (1) -- the `is_tf_neutral` bypass is INERT, not a hole and not a lane.**
+`trading/scheduler.py:1856-1866` carries an explicit, commented bypass: when
+`direction_prob`, `confidence` and `net_margin` are all at exact neutral, the
+dir/conf refusal is skipped ("When the TF model isn't available the bot passes
+neutral 0.5/0.5/0.0"). It reads like the second path. It is not.
+PREDICTED: if the bypass fires, exact-0.5 rows can never appear in the refused set,
+so their count is ~0. MEASURED over 7d, n=1408 parsed refusal rows: exactly 0.5
+within 1e-6 = **104 (7.39%)**. Hypothesis dead. The reason is that the bypass is
+CONJUNCTIVE across three independently-varying fields; rows meeting all three are
+**2 of 1408 (0.14%)**. In the world that runs, confidence is pinned while
+direction_prob and net_margin vary, so the three effectively never coincide.
+Recorded because the next reader WILL find that branch and misread it as a bypass.
+
+**CLOSED (2) -- the two paths are NOT different distributions, and there is NO
+changeover date.** The refusal path and the ghost-entry path read the SAME key with
+the SAME default (`trading/scheduler.py:778` `confidence = float(pred_summary.get("exit_conf", 0.5))`
+and `trading/bot.py:6612` `exit_conf_val = float(summary.get("exit_conf", 0.5))`).
+An apparent 9x spread difference (refusal 0.4911-0.6164 vs ghost-entry 0.2273-0.8442)
+was **my own window artifact**: 7 days against all-history. Windowed the same, ghost-
+entry last 7d spread **0.1382** (n=35) vs refusal last 7d **0.1253** (n=1408). The same.
+Bucketing by age then showed an apparent monotone collapse in raw SPREAD (14-30d
+0.5932 / 7-14d 0.3522 / 2-7d 0.1382 / 0-1d 0.0977) that reads as "the head died ~14
+days ago". **That is a confound: spread is an extreme-order statistic and grows with
+n** (old bucket n=1129 vs recent n=29). Controlled with n-robust statistics it
+INVERTS: age 14-21d n=1031 **IQR 0.0000, 97.4% within 1e-3 of exactly 0.5**; age
+21-30d n=98 **IQR 0.0000, 100.0% within 1e-3 of 0.5**. The OLDEST buckets are the
+MOST pinned. Nothing died. **Do not go looking for a changeover date.**
+
+**CLOSED (3) -- the 20 rows that clear the floor are NOT a broken-tape artifact.**
+Over 27.8 days, **20 of 1193** confidence-carrying ghost-entry rows ever exceeded 0.6.
+COMP-USDC (two price regimes, item `57d69341`) appears 3x and DRB-USDC (frozen tape,
+p673) 1x, suggesting the head only escapes 0.5 where the tape is an artifact. TESTED:
+base rate of those two symbols across all 1193 = 135 (11.32%); in the above-0.6 subset
+4 of 20 (20.0%); enrichment 1.8x; **binomial P(>=4 of 20 at 0.1132) = 0.184. NOT
+SIGNIFICANT.** Not reported as a finding. The 20 survivors span 10 distinct symbols,
+max 6 on any one, and are indistinguishable from chance at this n.
+
+**WHAT SURVIVES, AND IT STRENGTHENS `6d718c1a` RATHER THAN COMPETING WITH IT.** Cove
+p672 established the pinning over 7 days on the refusal path (n=1414). This extends it
+to **27.8 days, to the SECOND code path, and to ~2600 evaluations**, measured
+independently. It also CROSS-VERIFIES Cove: an independent 7d pull reproduces
+n=1408, min 0.4911, p50 0.500018, max 0.6164, spread 0.1253 (matching Cove's
+48-168h bucket exactly) and **exactly one row above the 0.6 floor**.
+
+The criterion-4 answer is therefore: **the second path exists and enters on the same
+dead head.** `services/atf_static_strategy.py` ghost-entries: **1173 of 1193 (98.3%)
+entered BELOW the 0.6 floor** that refuses 1408 of 1408 on the other path, and **236
+of 1193 (19.8%) are FULLY DEGENERATE** -- direction_prob exactly 0.5 AND
+expected_delta exactly 0.0, a literal coin flip with zero expected move, entered anyway.
+This makes criterion 5's warning the operative one: with 20 of 1193 clearing in a month,
+lowering the floor to 0.5 admits 100% on a number that has carried no information for
+27.8 days. **DO NOT LOWER THE FLOOR.**
+
+**SEPARATE, AND NOT PART OF THIS ITEM -- THE LIVE LANE IS NOT SLOW, IT IS FROZEN.**
+Opening measurement this pass: `trade_outcomes` wallet='live' n=18, net -0.1864
+(reproduces the scoreboard exactly), oldest row 472.0h old, **NEWEST 415.6h old =
+17.3 DAYS**. Every live-flavoured status in `trading_ops` agrees to the hour:
+live-entry n=20, live-exit n=18, live-swap-settled n=46, all newest ~17.3 days ago.
+COMPLEMENT KILLED: "the system is simply down" -- max(ts) over ALL of `trading_ops`
+is **0.02 hours old**, and the last 24h carries hold 8954, enter 558,
+strategy_publish 131, exit 5. The system is writing hard; the LIVE lane specifically
+has placed nothing for 17.3 days. **-0.1864/18 is a DEAD number, not a worsening one.**
+
+**PROVEN BY:** all numbers above are single sqlite reads against
+`storage/trading_cache.db` over `trading_ops` (status in 'ghost-entry',
+'entry-refused-no-candidates') and `trade_outcomes` (wallet='live'); the two quoted
+source lines by `grep -n "exit_conf" trading/scheduler.py trading/bot.py`.
