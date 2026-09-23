@@ -160,11 +160,32 @@ class TestTheGateAsksTheMeasuredCost:
         # floats here raised AttributeError and read as a source bug for
         # several passes -- it was only ever this fixture lagging the signature.
         returns = [gate.Trip(ret=0.0055, gross=0.55, notional=100.0)] * 12
+
+        # EACH TRIP IS NOW CHARGED AT ITS OWN CLIP, so the cost this asserts
+        # on is `modelled_cost`, not the flat `round_trip_cost`. Patching only
+        # the flat accessor stopped reaching the verdict when the mean screen
+        # and the t-test moved to `_trip_cost_fraction`: at a $100 notional
+        # the modelled charge is rate-dominated and tiny, so +0.550% cleared
+        # BOTH costs and `stale` came back None. The fixture was pinning the
+        # costing that was replaced, not a property of the gate.
+        #
+        # The property is unchanged and is the one in the method name: the
+        # verdict must MOVE when the measured cost moves. Expressing it
+        # against the per-trip model keeps the same two numbers -- the stale
+        # 0.650% literal and the measured 0.4738% -- and charges them the way
+        # the verdict now charges. `round_trip_cost` stays patched so no leg
+        # can reach the production book for the unusable-notional fallback.
         monkeypatch.setattr(gate, "round_trip_cost",
                             lambda **_: 0.0065, raising=True)
+        monkeypatch.setattr(gate, "modelled_cost",
+                            lambda notional: 0.0065 * float(notional),
+                            raising=True)
         stale = gate._verdict(returns)
         monkeypatch.setattr(gate, "round_trip_cost",
                             lambda **_: 0.004738, raising=True)
+        monkeypatch.setattr(gate, "modelled_cost",
+                            lambda notional: 0.004738 * float(notional),
+                            raising=True)
         honest = gate._verdict(returns)
 
         assert stale is not None, (
@@ -189,15 +210,39 @@ class TestTheGateAsksTheMeasuredCost:
             "a literal cost read survives inside the verdict")
 
     def test_the_cost_is_bound_once_per_verdict(self):
+        """The accessor is CALLED once, so no cache expiry can split the legs.
+
+        Counted over CODE lines only. The scan used to count the raw text and
+        so could not tell a call from a sentence: on 2026-09-23 it read 2 and
+        failed, and the second match was the prose in a comment that says the
+        function "used to subtract a single ``round_trip_cost()`` fraction
+        from every return". One real call, one description of the old
+        behaviour. Reporting that as a second binding would have had someone
+        restructure correct costing code to satisfy a string count.
+
+        Stripping comments also gives the scan teeth it did not have: a
+        genuine second call sitting on a line with a trailing comment was
+        already counted, but so was any mention, so the count could never be
+        trusted in either direction.
+        """
         import inspect
 
         from services import symbol_edge_gate as gate
 
         body = inspect.getsource(gate).split("def _verdict", 1)[1]
         body = body.split("\ndef ", 1)[0]
-        assert body.count("round_trip_cost(") == 1, (
+        code = "\n".join(
+            line for line in body.splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        assert code.count("round_trip_cost(") == 1, (
             "calling the accessor per clause lets a cache expiry compare the "
-            "mean against one cost and the sign test against another")
+            "mean against one cost and the sign test against another; call "
+            "sites found: %r"
+            % [
+                line.strip() for line in code.splitlines()
+                if "round_trip_cost(" in line
+            ])
 
     def test_the_cost_follows_the_book_the_gate_was_pointed_at(self, tmp_path):
         # A caller that redirects DB_PATH to a throwaway book must not be
