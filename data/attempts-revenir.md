@@ -20788,3 +20788,47 @@ across the whole range. A conclusion that survives a 1.5x swing in its input is
 worth handing forward; the precise integer is not. The `+/-10` and `+/-5` rows
 are extrapolated far outside the two anchors the exponent was fitted at and
 should be treated as order-of-magnitude only -- the script says so in its output.
+
+## Pass 675 (Cove) -- [c967fed1] WETH deep-pool route: DIRECTION leg CLOSED
+
+Route tried: simulate money_button's SHIPPED entry rule on the WETH-USDC tape
+and ask whether its selected ticks beat h* = 0.5 + c/(2m).
+
+Command: `python -X utf8 scripts/weth_moneybutton_direction.py --days 30`
+(commit 0de440c). The rule is IMPORTED, not re-typed -- `MoneyButtonStrategy`
+with only `make_candidate` stubbed, so every gate and env default is the
+shipped one.
+
+Numbers:
+  * shipped rule fires **0 of 3598 ticks** over 27.25d. Top decline
+    `momentum_not_aligned` 2605 (72.4%).
+  * complement test (pre-registered in the script): at `ctx.fee_rate = 0`,
+    cheaper than any venue that can exist, it fires **16** -- still under 30,
+    and `momentum_not_aligned` is UNCHANGED at 2605. `edge_below_cost` moves
+    354 -> 334. **The blocker is the momentum SHAPE, not the cost gate.**
+  * criterion 1 re-run: all five horizons still fail h* in BOTH directions
+    (10m 0.4576 vs 0.7196 ... 60m 0.5293 vs 0.5958; every contrarian net
+    negative, -4.39 to -7.98bp).
+  * Kite p670's one live lead -- 60m trailing-move decile 10 -- **dies on
+    disjoint returns**: 0.4444 vs its own h* 0.5574, net -12.02bp, p=0.7461.
+  * 10m deciles on the disjoint walk (n=260): all ten FAIL, none reaches
+    p<0.05. Confirms Kite's overlapping-sample partial answer.
+
+CLOSED:
+  * "money_button on WETH" -- it does not fire, so there is nothing to measure.
+  * "trade only the loud hour" (60m high-trailing-move regime) -- CLOSED.
+  * the WETH deep-pool route **on DIRECTION**.
+
+NOT closed, and must not be reopened as if it were: the COST leg. Mean |move|
+is 13.91-31.89bp against 6.11bp all-in, so a perfect oracle still pays at
+every horizon. Any future pass that reopens this route on cost is repeating
+a measurement that has now been made twice.
+
+OBSERVED, NOT THE BLOCKER, recorded so nobody chases it: `money_button.py:314`
+computes `round_trip_cost = 2.0 * ctx.fee_rate + slippage`, but the
+`ctx.fee_rate` production passes comes from `trading/bot.py:2205`
+`_roundtrip_fee_rate` -> `services.roundtrip_cost.roundtrip_cost_rate`, which
+is ALREADY a round-trip rate -- so the fee half is doubled, and it is priced
+with no symbol so WETH (2.01bp pool cost) is charged the default. The zero-fee
+run above RULES THIS OUT as the reason the lane is silent on WETH. Fixing it
+would be correct and would not make this route trade.
