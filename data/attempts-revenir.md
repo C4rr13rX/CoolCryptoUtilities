@@ -22701,3 +22701,54 @@ seconds, so a living loop in an active outage must print twice a minute; it prin
 consecutive minutes while the rest of the process wrote 3617 lines in one of them. Suggestive, not
 proof. Clean test: unconditional heartbeat at the top of the loop at `:880`, then restart. Tracked
 as [b37ca646]. The boot-decay backoff ratchet is separate and tracked as [5cd3dd65].
+
+## Pass 681 (Dune) — ROOT CAUSE of the dead base feed, confirmed on the LIVE process
+
+**This supersedes every other feed explanation, including two I filed myself earlier the same
+pass.** Not a backoff, not a websocket timeout, not the lock-error storm.
+
+**The evidence.** `.venv/Scripts/py-spy.exe dump --pid 20452` (read-only attach to live
+production; the root pid 3584 fails with `Failed to find python version from target process` —
+use the sibling pid). **Four successive dumps, identical stack frame-for-frame:**
+
+    Thread 20940 (idle): "Thread-20 (_run_supervisor_loop)"
+        record_feedback_event     (db.py:1782)
+        feedback                  (trading/metrics.py:306)
+        _record_endpoint_failure  (trading/data_stream.py:3243)
+        _poll_rest_data           (trading/data_stream.py:1284)
+        start                     (trading/data_stream.py:968)
+        _run                      (asyncio/events.py:89)
+        _run_once                 (asyncio/base_events.py:2042)
+        run_forever               (asyncio/base_events.py:683)
+        run_until_complete        (asyncio/base_events.py:712)
+        _run_supervisor_loop      (production.py:275)
+
+`db.py:1782` is `with self._lock: with self._conn: self._conn.execute("INSERT INTO
+feedback_events(...)")` — a blocking, lock-holding write to the 22GB `storage/trading_cache.db`,
+executed **on the event loop thread** as a plain synchronous callback. While it waits on the
+database lock, `run_forever` cannot advance, so every task on that loop stops at once.
+
+**The feed is wedged by its own attempt to record that it is failing** (`_record_endpoint_failure`),
+so the stall is worst exactly when the endpoints are worst and the retry that would have recovered
+is the thing being blocked.
+
+**What it explains that nothing else did.** 34 of 36 symbols stopped inside a *three-second*
+window across *two different code paths* (14 heartbeat records `url_set=True`, 42 `url_set=False`;
+url-less symbols never reach `_consume_ws` — `data_stream.py:962` routes them to
+`_poll_rest_data`). The unconditional heartbeat at `data_stream.py:881` read ZERO for the 20
+consecutive minutes 07:07–07:26 and the 34 consecutive minutes 07:31–08:04. `env_load` kept firing
+1–2/min in the same log from the same process throughout — a different *thread*, unaffected.
+
+**Closed this pass, same investigation.** (a) *The boot-decay backoff ratchet explains the
+blackout* — **no**: a backoff sleeps inside the loop and the loop was not iterating; the ratchet
+is real but worth only 2.8–5.4x on warm uptime. (b) *A websocket await with no timeout* — **no**:
+`ws_connect` at `:1086` has no `heartbeat=` and `ws.receive()` at `:1104` no timeout, a genuine
+defect, but url-less symbols stopped in the same three seconds. (c) The `database is locked`
+*error* storm stays closed at its 7.30% ceiling — the errors were never the mechanism, the **lock
+wait** is; contention blocks the loop long before sqlite raises.
+
+**The fix (not shipped — no time to restart and measure).** Move the write off the loop (queue,
+writer thread, or `run_in_executor`) at `data_stream.py:3243` / `metrics.py:306` / `db.py:1782`,
+and check the sibling call sites — grep the `_poll_rest_data` and `_consume_ws` call trees for
+anything ending in `self._conn.execute`, or the failure mode just moves. Baseline to beat, in
+MINUTES not hours: **40.0% of minutes dead (767/1917)**. Tracked as `[b37ca646]`.
