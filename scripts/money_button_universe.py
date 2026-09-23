@@ -213,6 +213,14 @@ def traded_clips(db: str) -> Dict[str, float]:
     """
     con = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
     try:
+        # UNCENSORED, DELIBERATELY, and here is the reason rather than an
+        # omission: this reads NOTIONAL (entry_price * quantity), not profit.
+        # services.outcome_plausibility refuses a row for an implausible booked
+        # RETURN or an out-of-scale PROFIT -- neither arm says the row's clip
+        # size is wrong, and a refused row was still placed at a real size.
+        # Censoring here would bias the median clip toward the symbols that
+        # happen to have clean P/L. Measured 2026-09-22: 6 of 265 rows are
+        # refused book-wide, and every one of them carries a usable notional.
         out: Dict[str, List[float]] = {}
         for symbol, notional in con.execute(
                 "select symbol, entry_price * quantity from trade_outcomes "
