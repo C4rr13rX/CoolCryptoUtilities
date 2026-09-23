@@ -77,6 +77,37 @@ from typing import Dict, List, Sequence, Tuple
 
 DEFAULT_DB = os.getenv("TRADING_DB_PATH", "storage/trading_cache.db")
 
+
+def _plausibility_banner(rows: Sequence[Sequence]) -> List[str]:
+    """Name how many of ``rows`` the ledger would refuse, without dropping them.
+
+    ``trade_outcomes`` is a PRE-GUARD table: ``ledger._is_implausible`` refuses
+    a row at ``record()`` time and the row is written anyway, so every census
+    reading the table directly reads a dirtier book than graduation does.
+    Import failure is reported, never swallowed -- a silently absent banner is
+    indistinguishable from a clean book.
+    """
+    try:
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from services import outcome_plausibility as op
+    except Exception as exc:  # pragma: no cover - import guard
+        return ["!! UNCENSORED and UNMEASURED: services.outcome_plausibility "
+                "would not import (%s), so the contamination below is not "
+                "even sized." % exc]
+    judged = []
+    for r in rows:
+        blob = {}
+        try:
+            blob = json.loads(r[7]) if r[7] else {}
+        except Exception:
+            blob = {}
+        judged.append({"entry_price": r[2], "exit_price": r[3],
+                       "gross_profit": r[5], "net_profit": r[6],
+                       "strategy_id": blob.get("strategy_id", "")})
+    return op.banner(judged, censored=False)
+
 #: Below this a correlation is an anecdote. Buckets under it are reported as
 #: UNDERPOWERED rather than given a number somebody will quote.
 MIN_N = 8
@@ -145,14 +176,23 @@ def match_outcomes(
     unresolved cost arithmetic into a signal measurement.
     """
     rows = conn.execute(
-        "SELECT symbol, ts, entry_price, exit_price, status "
+        "SELECT symbol, ts, entry_price, exit_price, status, gross_profit, "
+        "net_profit, details "
         "FROM trade_outcomes WHERE entry_price > 0 AND exit_price > 0"
     ).fetchall()
+
+    # UNCENSORED BY DESIGN, and the banner says by how much. This report asks
+    # whether the exit_conf head SAW THE MOVE, so a row the ledger refuses for
+    # an implausible booked return is still a row the head scored -- dropping
+    # it would delete evidence about the head. Printing the count is what keeps
+    # that a choice rather than an oversight.
+    for line in _plausibility_banner(rows):
+        print(line)
 
     paired: Dict[str, List[Tuple[float, float]]] = collections.defaultdict(list)
     no_symbol = 0
     too_stale = 0
-    for symbol, ts, entry_price, exit_price, status in rows:
+    for symbol, ts, entry_price, exit_price, status, _g, _n, _d in rows:
         series = idx.get(str(symbol))
         if not series:
             no_symbol += 1
