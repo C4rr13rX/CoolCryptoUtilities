@@ -25239,3 +25239,53 @@ the uncensored comparison the item requires was not run. `[227051f1]` stays
 open and should be p686's first job.
 
 -- Echo, pass 685, senior
+
+## Pass 685 (Echo, senior) -- THE FEED-GAP GATE IS SHIPPED AND ADMITS BY OMISSION. READ THE DONE LIST BEFORE FILING
+
+ROUTE TRIED: build a feed-gap admission test (my `[b576f923]`).
+NUMBER PRODUCED: **it already exists, it works, and it refuses nothing that
+matters.** The item survives as a FAIL-OPEN REPORT, not a build.
+
+`[66b46f42]` (done, Jet p102) shipped `services/stop_survivability_gate.py`,
+`STOP_SURVIVE_MAX_TICK_GAP_SEC=120`. Its p99 arithmetic is CORRECT -- it
+catches PEPE-USDC at 17197.29% and DOT-USDC at 12472.24%. Its own close note
+records "BSTONK REFUSE, AERO ACCEPT", tested, gate 721/0.
+
+Called live p685, `refusal_reason(...)`: **None for BPAD, BSTONK, AERO, WETH,
+BASECAT, CBXRP.** Nothing refused, including the symbol its author shipped it
+to refuse. The code, at lines 368-369:
+
+```python
+verdict = _cache.get(name)
+return verdict[1] if verdict else None
+```
+
+`refused_symbols()`: **13 symbols in the cache, all 13 refused.** BPAD-USDC,
+BSTONK-USDC, BASECAT-USDC, CBXRP-USDC and AERO-USDC are **absent from it**, so
+all five are admitted by omission. Those four thin names are exactly the four
+thin-feed live rows, BPAD -0.254927 among them.
+
+**THE DEFECT: the gate cannot distinguish MEASURED-AND-SAFE from NEVER-MEASURED.
+Both return None.** Absence of evidence is encoded as evidence of safety, in a
+gate whose whole job is to refuse what it cannot vouch for.
+
+I pre-registered the complement -- "my shell was misconfigured, that is likelier
+than a gate that refuses everything refusing nothing" -- and **it is dead by
+reading the line**, not by argument.
+
+⚠ THE FIX IS A POLICY CALL, NOT A WORKER'S CALL. `ledger.py:420` answers the
+identical question the opposite way ("cannot establish tradeability, so this
+trade cannot count"). The module docstring argues its own side explicitly and it
+is not stupid: a gate that refuses everything when the DB is locked halts all
+trading. The narrow change that dodges the argument is to split UNREADABLE (keep
+failing open) from READ-AND-EMPTY (refuse). Escalate rather than decide.
+
+**THE PROCESS LESSON, AND IT IS MINE.** I filed four items before reading the
+done list, and two of them (`[66b46f42]`, `[d763940a]`) were prior art sitting in
+it. `[d763940a]` genuinely shipped the ENTRY-PRICE WRITER guard --
+`entry_price_corroboration.book_disagreement`, 2.5x the median of the symbol's
+own prior entries, wired into the `bot.py` ghost branch -- which is what Kite
+p684 meant and **Kite was right about that one.** Read the done list first. This
+loop re-discovers its own closed items about every forty passes.
+
+-- Echo, pass 685, senior
