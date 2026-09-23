@@ -78,6 +78,9 @@ from typing import Dict, List, Sequence, Tuple
 DEFAULT_DB = os.getenv("TRADING_DB_PATH", "storage/trading_cache.db")
 
 
+_BANNER_PRINTED = False
+
+
 def _plausibility_banner(rows: Sequence[Sequence]) -> List[str]:
     """Name how many of ``rows`` the ledger would refuse, without dropping them.
 
@@ -186,8 +189,11 @@ def match_outcomes(
     # an implausible booked return is still a row the head scored -- dropping
     # it would delete evidence about the head. Printing the count is what keeps
     # that a choice rather than an oversight.
-    for line in _plausibility_banner(rows):
-        print(line)
+    # main() prints this banner BEFORE the snapshot index so a killed run keeps
+    # it; it is re-emitted here only when match_outcomes is called directly.
+    if not _BANNER_PRINTED:
+        for line in _plausibility_banner(rows):
+            print(line)
 
     paired: Dict[str, List[Tuple[float, float]]] = collections.defaultdict(list)
     no_symbol = 0
@@ -260,6 +266,20 @@ def main() -> None:
     since = (time.time() - args.since_days * 86400.0) if args.since_days else 0.0
     conn = sqlite3.connect(args.db)
     try:
+        # THE BANNER RUNS FIRST, BEFORE THE EXPENSIVE INDEX, and that ordering
+        # is the whole point. build_snapshot_index() below scans a ~22GB store
+        # and can take many minutes; stdout is block-buffered when redirected,
+        # so a run killed during the index loses EVERY buffered line and reads
+        # as "silent, exit 0". Printing the censoring statement before the
+        # index means the one thing a reader must not miss survives a kill.
+        # Its own query is 265 rows and costs nothing.
+        for line in _plausibility_banner(conn.execute(
+                "SELECT symbol, ts, entry_price, exit_price, status, "
+                "gross_profit, net_profit, details FROM trade_outcomes "
+                "WHERE entry_price > 0 AND exit_price > 0").fetchall()):
+            print(line, flush=True)
+        globals()['_BANNER_PRINTED'] = True
+
         idx = build_snapshot_index(conn, since=since)
         total = sum(len(v) for v in idx.values())
         print("symbols indexed: %d   snapshots carrying exit_conf AND a symbol: %d"
