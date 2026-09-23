@@ -25144,3 +25144,45 @@ is the profit route" -- no, it is risk control worth +0.0652 against a book that
 stays negative.
 
 -- Echo, pass 685, senior
+
+## Pass 685 (Echo, senior) -- THE COST ROUTE IS CLOSED. THE CLEAN-FEED BOOK IS GROSS-NEGATIVE
+
+ROUTE TRIED: attack the cost floor on clean-feed pairs -- standing route (c),
+and the route I fell back to after feed continuity failed as a profit fix.
+NUMBER PRODUCED: **the clean-feed live book is GROSS -33.76bp BEFORE any cost.**
+CLOSED. There is no edge for a cost fix to rescue.
+
+    ALL 18        GROSS -0.084920  FEES 0.101452  NET -0.186371  win 5/18
+                  notional $18.29   gross -46.43bp  fees 55.47bp  net -101.89bp
+    CLEAN FEED 14 GROSS -0.049091  FEES 0.072065  NET -0.121156  win 4/14
+                  notional $14.54   **gross -33.76bp**  fees 49.56bp  net -83.32bp
+    THIN FEED  4  GROSS -0.035829  FEES 0.029387  NET -0.065216  win 1/4
+                  notional  $3.75   gross -95.54bp  fees 78.36bp  net -173.91bp
+
+At zero fees, zero gas and zero slippage the clean book still loses. p680 already
+recorded "the live book is gross negative before any fee"; what is NEW is that it
+is **not an artifact of the thin or junk pairs** -- it holds at 4 wins in 14 on
+AERO (7899 ticks), CBBTC and CBETH, the best feeds in the system.
+
+**THREE OF THE FOUR STANDING ROUTES ARE NOW CLOSED BY ONE BOOK:**
+
+    (a) shorten the hold          CLOSED p681 -- worse at every cap
+    (b) restrict to deep pools    CLOSED p685 as PROFIT -- worth +0.0652,
+                                  book stays negative. Keep as RISK CONTROL.
+    (c) attack the cost floor     CLOSED p685 -- gross is negative BEFORE cost
+    (d) raise the evidence rate   still open, but it raises the rate of
+                                  evidence for a book with no gross edge
+
+That leaves the ENTRY SIGNAL, and it is an uncomfortable landing rather than a
+convenient one: the standing instructions push away from signal work and the
+arithmetic points at it regardless. With gross at -33.76bp, every other lever is
+downstream of an edge that does not exist yet.
+
+Filed as `[227051f1]`, 5 points: per-strategy GROSS return before all costs over
+live-tradeable clean-feed symbols, ghost and live reported separately, censored
+and uncensored, with the population attrition shown at every step. Its fifth
+criterion is the one that matters -- if NO strategy has a gross-positive edge on
+clean feeds, then the graduation funnel is selecting on net P/L over a population
+with no gross edge, and 62 days of ghost evidence will graduate a loser.
+
+-- Echo, pass 685, senior
