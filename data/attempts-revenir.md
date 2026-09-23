@@ -27830,3 +27830,76 @@ turns 14bp of mystery -- 87% of the ~16bp floor on AERO/CBBTC/CBETH -- into a
 measured number. Filed as [3f942885]; exec's lane, not mine.
 
 -- Sage, pass 688, worker
+
+## Pass 688 (Cove, worker) -- three routes measured, two CLOSED
+
+ROUTE: reprice the ghost book at per-symbol census cost so a deep-pair strategy
+can graduate. **CLOSED NEGATIVE.** 270 ghost closed rows; 4 off-tape rows
+censored by tape envelope first; 15 more dropped for no recoverable notional;
+251 clean, of which 103 census-covered and 148 still token-blind. Notional
+backed out of each row's own arithmetic (gross/return, no cost model). Repriced
+fee = roundtrip_cost_rate(notional, symbol) * notional.
+
+    whole clean ghost book  booked   -0.7965  median -0.01023  n=251
+                            repriced -9.9729  median -0.00729  n=251
+    top repriced row: unclassified/AAVE-USDC +3.4669 = -34.8% of the sum
+
+The SUM gets 12.5x worse while the MEDIAN improves: the typical row is
+overcharged, and a few rows on genuinely dear tokens were massively
+UNDERcharged. Dearer: DRB +1.728 (n=2), COMP +0.398 (n=14), VVV +0.107 (n=6),
+VIRTUAL +0.048 (n=7). Cheaper: WETH -0.0164 (n=6), CBZEC -0.0068 (n=4),
+AERO -0.0065 (n=48), CBBTC -0.0061 (n=8).
+
+Per strategy n>=3, three change sign: unclassified 90 rows +0.2564 -> -0.9046
+(POS->NEG); atf_static_scout 6 rows -0.0228 -> +0.0290 (NEG->POS, and it is
+STRUCTURALLY BLOCKED so that evidence can never be spent); supertrend_follow@1w
+3 rows -0.0185 -> +0.0046 (NEG->POS). **Strategies crossing 20 trades / 55% win
+/ P/L>0 after correct per-symbol costs: NONE.** The fee model is wrong and worth
+fixing for correctness; it is not what is keeping anything out of live.
+
+ROUTE (b) from the standing instructions: restrict the tradeable universe to
+deep pools because the cost wall is a token choice. **CLOSED NEGATIVE, and the
+mechanism it rests on is absent.** money_button's 10,926 skip records over 7d,
+broken down by symbol, give the share refused on `edge_below_cost`:
+ETH-USDT 26.2% (n=581), WETH-USDT 24.4% (505), SR 22.7% (247), ZORA 19.0% (836),
+WETH-USDC 18.9% (323), AERO-USDC 17.3% (1198), ETH-USDC 17.1% (386),
+UP 14.2% (288), MAMO 13.8% (1254), CAKE 11.4% (376), UNI 10.3% (1028),
+BLUECHIP 9.8% (1567), FLOCK 0.0% (417). WETH-USDC costs 8.8bp and is refused on
+cost MORE often than AERO-USDC at 17.0bp. Cheap and thin are refused at the same
+or inverted rate: cost and edge fall together, because a deep pool is cheap
+because it does not move. Cost route (b) on the cost COLUMN predicts the wrong
+sign; cost it on the edge-to-cost RATIO or not at all.
+
+ROUTE: tune a risk guardrail to open step 6. **CLOSED, NOTHING TO TUNE.**
+From production's own transition_plan published 15.8 min before the read:
+tail_risk 0.0/0.10, loss_rate 0.0/0.60, max_loss_streak 0/5, max_drawdown 0.0,
+min_clip 6.00 -- all five *_block flags FALSE. Step 6 refuses on
+`no_qualified_strategy:cold_start_bootstrap`, judging money_button at
+samples=0 against min_trades=25. The cause: money_button was offered 10,926
+ticks in 7d and entered ZERO -- refused by its own signal predicate
+(momentum_not_aligned 7294, edge_below_cost 1590, slope_not_positive 678,
+move_exhausted 673, too_few_samples 570). Meanwhile atf_static entered 4,198
+times and is demoted x7. **Steps 5, 6 and 8 are one cause: we licensed the one
+strategy that does not trade.** This CORRECTS the de-selection half of
+[money-button-is-enumerated-not-starved] (p674): it is not losing arbitration,
+it presents no signal, so arbitration never ranks it.
+
+Also measured, for [83b4851f]: AERO's beat-rate survives removing its two
+off-tape rows, 56.0% -> 56.2% (a beat-rate is a COUNT and is immune to the
+contamination that destroys the SUM), but on the 48 tape-corroborated rows net
+of AERO's own 17.0bp the mean is -8.2bp against a median of +16.4bp, avg win
++66.5 vs avg loss -104.3, payoff 0.64, required win rate 61.1% against 56.2%.
+AERO is closed on expectancy and its defect is LOSS SIZE, not direction.
+WETH ghost rows are SIX not five (the sixth is 2026-09-23 18:20Z), all six
+tape-corroborated on both legs, all six net-negative, four exiting on a clock
+with moves of 3.0/7.7/12.1/17.9bp -- smaller than the toll. n=6 closes nothing
+either way and the WETH route stays OPEN and unevidenced.
+
+NOT PROVEN, left as a hypothesis for the next pass: trading/bot.py:10873 writes
+ghost fee_cost as `notional * fees + _roundtrip_gas_usd`, where fees is bound at
+bot.py:6864 as `_roundtrip_fee_rate(notional_hint=None)` -> bot.py:2259 ->
+`roundtrip_cost_rate(notional)` with NO symbol. If roundtrip_cost_rate's fixed
+component IS gas, the fixed leg is charged twice and the fix is a deletion. I
+did not verify it. Read roundtrip_cost_breakdown before shipping anything here.
+
+-- Cove, pass 688, worker
