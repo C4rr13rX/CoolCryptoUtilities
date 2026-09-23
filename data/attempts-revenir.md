@@ -20832,3 +20832,116 @@ is ALREADY a round-trip rate -- so the fee half is doubled, and it is priced
 with no symbol so WETH (2.01bp pool cost) is charged the default. The zero-fee
 run above RULES THIS OUT as the reason the lane is silent on WETH. Fixing it
 would be correct and would not make this route trade.
+
+## Pass 675 (Dune) -- [c2e8768a] the uncensored trade_outcomes readers, and one exemption that did not survive being measured
+
+MAGNITUDE FIRST, because the whole item is worthless if the censor is a rounding
+error. Full table, `storage/trading_cache.db`, `services.outcome_plausibility.partition`
+over `select * from trade_outcomes`:
+
+    ALL   n=265  net booked +5.1396
+    KEEP  n=259  net booked +1.0825
+    DROP  n=6    net booked +4.0571
+
+2.3% of the rows carry 78.9% of the booked net; censoring cuts the book 4.75x.
+Four of the six are LARGE POSITIVES (AAVE +1.7416, AERO +1.6099, UNI +1.2289,
+BASELINE +0.5794). Any uncensored reader is reading a book whose SIGN is carried
+by rows the ledger refuses. The complement -- "6 of 265 is bookkeeping, every
+script prints the same number to 2dp" -- is KILLED.
+
+THE EXEMPTION THAT FAILED. `money_button_universe.traded_clips()` reads
+uncensored and the source comment argues it is right to: the column reads
+NOTIONAL (`entry_price * quantity`), not profit, and neither arm of the rule
+says a refused row's CLIP is wrong. The argument is sound in principle and it
+was never measured. `clip_censor_banner()` (new, `scripts/money_button_universe.py`)
+recomputes the per-symbol median clip on the censored population and prints the
+delta. Pre-registered: 0 symbols move => exemption proven; any move => wrong.
+
+    censoring MOVES the median clip of 4 of 58 symbols
+      AAVE-USDC      $1.9999 -> $3.7477      (1.87x)
+      BASELINE-USDC  $0.3489 -> NO SURVIVING ROW
+      UNI-USDC       $5.2112 -> $5.3513
+      AERO-USDC      $0.8412 -> $0.8097
+
+COST INVERTS WITH CLIP in this script, and the clip column feeds the quote. So
+for those four the cost column is quoted at a clip the plausible book does not
+trade, and AAVE is quoted at HALF its plausible clip. BASELINE-USDC has NO
+plausible clip at all -- its entire clip is one refused row. SUPERSEDED: the
+comment's blanket exemption. The banner now prints the argument AND the four
+counter-examples, so the choice is auditable from the output rather than from
+the source.
+
+TRAP RE-MEASURED (pass 670 said the dollar arm silently never runs without
+digging `strategy_id` out of the `details` blob -- `trade_outcomes` has no such
+COLUMN). Extracting it changes NOTHING at today's population: refused=6 with and
+without, reasons `{'repricing_return': 6}` both ways, `strategy_id` present on
+169 of 265 rows. The extraction is still required -- the arm cannot fire without
+it -- but it buys 0 refusals today. Do not expect a number change from it.
+
+VERIFIED FIRING on today's 265-row population, all naming 6 of 265:
+`entry_basis_census` (full run), `deep_tier_oos_check` (full run, and it reports
+0 of its own 13 rows refused -- censored and uncensored are the same book there),
+`routing_arbitrage_census` (`plausibility_banner()` called directly; the full
+census is an RPC job).
+
+`exit_conf_vs_realised_margin` -- BANNER VERIFIED, FULL RUN NOT. Called directly
+on the script's own query it prints "6 of 265 ... carrying gross +5.4193 and net
++5.3566". The full script exceeded 280s twice and was killed; because stdout is
+block-buffered to a file, a killed run loses ALL its output and looks silent at
+exit 0. It is SLOW, not broken -- do not read its empty output as a defect.
+
+`loop_status` -- EXEMPT, and re-measured rather than inherited. Every one of its
+`trade_outcomes` reads is `wallet='live'`. partition on that subset: n=18,
+refused=0. Pass 670 answered this for the live book at 246 rows; it still holds
+at 265.
+
+## Pass 675 (Sage, auditor) -- the top-decile "thin tape" is ROW-WEIGHTING
+
+**Route tried.** Reconcile the two tape-density censuses item [aca39497]
+carries: its own headline "median 716 ticks/symbol in deciles 9-10 vs 1242 in
+1-8" (p486, 7d) against p674's density probe reading 34 vs 28 (30d). Pass 674
+filed the gap UNRECONCILED rather than picking a winner.
+
+**Number it produced.** `python -X utf8 scripts/tick_census_weighting_reconcile.py --days 7`
+(commit d04bfaf, read-only). 4038 enter rows, 603 symbols, market_stream:
+
+    deciles 1-8    ROW-weighted 1,940   SYMBOL-weighted  51   (>=1 tick)
+    deciles 9-10   ROW-weighted   206   SYMBOL-weighted  52
+    deciles 1-8    ROW-weighted 1,940   SYMBOL-weighted 212   (>=100 ticks)
+    deciles 9-10   ROW-weighted   209   SYMBOL-weighted 210
+
+**CLOSED.** Both censuses were right; they weight differently, and that alone
+moves the number 38x. But the DIRECTIONAL claim -- "expected_return is LARGEST
+where the tape is THINNEST" -- does not survive symbol-weighting: 51 vs 52 and
+212 vs 210, flat at both density floors. The top forecast decile is drawn from
+symbols that emit FEWER ROWS, not from thinner-taped symbols. Joined to p674's
+74.0% literal share (0.05 at 66.1%), the decile split separates "dense symbol
+emitting a CONSTANT many times" from everything else and reads that row count
+as a tape property.
+
+Do NOT re-open this as a tape-density defect. Limit: does not reproduce
+1245/1242/716 exactly -- population is 4038 enter rows with no forward-price
+requirement, so same shape, not the same digits.
+
+## Pass 675 (Sage, auditor) -- NOT ONE p673/p674 PRODUCTION FIX IS RUNNING
+
+**Route tried.** Check whether last night's shipped production code is loaded
+in the running process, rather than proven only against the tree.
+
+**Number it produced.** `Get-CimInstance Win32_Process` -- `main.py --action
+start_production`, PIDs 32880/6340, CreationDate **2026-09-21 22:57:35**.
+`git log --since="2026-09-21 22:57:35" --oneline | wc -l` = **67 commits**, of
+which **11** touch production code. Eight production files the running process
+has never imported: `services/atf_static_strategy.py`,
+`services/frozen_tape_guard.py`, `services/outcome_plausibility.py`,
+`services/providers/aerodrome.py`, `services/resource_governor.py`,
+`services/round_trip_cost.py`, `services/symbol_motion_gate.py`,
+`trading/pipeline.py`.
+
+**CLOSED as a standing caveat, not a route.** CPython imports at boot and has
+no reload, so this is decisive. Consequence for the backlog: [82662e5d]
+criterion 4 named ONE blocker (scout holds no open positions) and that is
+necessary but NOT sufficient -- a restart into 2ba187f is also required before
+a scout receipt can be written. Same for [aca39497] criterion 4 and 87c2877,
+which p674 already named correctly. No restart was performed: a boot is 13 min,
+restarts cost money_button its live approval, and it is the operator's call.
