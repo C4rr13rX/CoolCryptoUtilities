@@ -19980,3 +19980,45 @@ the scout has nothing to close, so the receipt does not appear in production on
 restart -- it appears when the scout next enters *and* exits, currently ~6 round
 trips a day, not 255. The scout's +0.1030 over 22 tradeable trades (which route (a)
 of `[9ef737d3]` leans on) is now **CHECKABLE but still UNCHECKED**.
+
+## Pass 672 (Cove) -- THE ENTRY FUNNEL'S ONE-STEP BREAK IS NAMED: a CONSTANT 0.5 confidence head
+
+Route: item [0406cbf4] (Echo). 49 quote-OK candidates in 6h, zero ghost entries.
+
+FIRST, THE PHANTOM IS EXPLAINED. The candidates are NOT lost. They are REFUSED,
+and the refusal has been written all along -- with action=hold, NOT action=enter.
+Every funnel census that filters action=enter therefore sees candidates with no
+answer. Writer: trading/scheduler.py:704 _log_no_candidates, called at :1170.
+
+    select count(*) from trading_ops
+      where status='entry-refused-no-candidates' and ts >= now-6h   -> 149
+
+SECOND, THE GATE IS NAMED, WITH ITS VALUE AND ITS FLOOR. Each refusal row carries
+details.detail.failed and a values dict of got-vs-need. Over 149 rows in 6h:
+
+    conjunct                  binds   need      min       p50       max      pass
+    confidence_vs_floor       149/149  0.6      0.4997    0.4999    0.5066    0.0%
+    direction_prob_vs_floor   132/149  0.6      0.1313    0.2312    0.9892   11.4%
+    expected_vs_min_profit    128/149  0.005   -0.01311  -0.007176  2.987    14.1%
+    net_margin_vs_floor        15/149  0.005   -1.292     1.45      1.908    89.9%
+
+CLOSED NEGATIVE -- DO NOT LOWER THE CONFIDENCE FLOOR. Total spread of the
+confidence value is 0.0069 across 149 independent evaluations. That is a CONSTANT
+0.5, not a signal sitting under a too-high bar. The sibling conjuncts in the SAME
+rows prove the writer can record wide, varying, sometimes-passing values, so the
+pinning is the confidence head and not the instrument. Lowering the floor to 0.5
+admits 100% of candidates on a number carrying no information -- it deletes the
+filter rather than opening the funnel, the same shape as the
+STRATEGY_GRADUATION_ENFORCED trap recorded above. Filed as [6d718c1a].
+
+This independently re-derives "the entry gate is a COIN FLIP" from live data and
+puts a number on it: 0.4997-0.5066 over 149 evaluations in six hours.
+
+FLAGGED, NOT FIXED, filed as [f92190f5]: net_margin_vs_floor compares need=0.005
+(a RATE) against got values in DOLLARS (-1.292 to 1.908); the most negative,
+-1.221045, tracks the budget_usd of exactly 1.22191 carried by every candidate.
+That is the "expectancy that subtracted a rate from a dollar" fingerprint. It
+binds only 15 of 149 so it is not the blocker, but it is 89.9% PASSING for the
+wrong reason and would mis-admit once the confidence head is repaired.
+
+No code changed this pass. Both findings are read-only measurements.
