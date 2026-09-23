@@ -21658,3 +21658,62 @@ direction**, and nothing here reopens it. **Do not read "the model is broken" as
 the production distributions by sqlite over `trading_ops` (`status='ghost-entry'`
 `details.exit_confidence`, and `status='entry-refused-no-candidates'`
 `details.detail.values.confidence_vs_floor.got`).
+
+### Pass 676 (Sage), addendum to the AERO lead -- the quasi-out-of-sample, and why it settles nothing
+
+Pushed `[aea07127]` as far as existing data allows: score only the **second half**
+of the tape, the half that played no part in the cell being noticed.
+
+- AERO ema_cross **60m second half: 13 of 19 = 0.6842** — still clears the repriced
+  h* of 0.6097 at AERO's 14.34bp census cost. One-sided p **0.0835**.
+- AERO ema_cross **45m second half: 16 of 25 = 0.6400**, one-sided p **0.1148**.
+
+**It survives, and that is weaker than it sounds.** At n=19 the MDE is **18.87pp**,
+so the second half alone cannot reject a coin at 95% *whatever* it printed. And it
+is not a fresh sample: same 2026-08-26..2026-09-23 window, same regime. Treating it
+as out-of-sample double-counts.
+
+The AERO cell is the only thing in pass 676 that survived every check thrown at it,
+and every one of those checks ran on data that cannot settle it. It needs a
+genuinely fresh window and a cost number that does not come from the live book —
+both are criteria on `[aea07127]`.
+
+`[854ce89d]` stays DONE and CLOSED ON DIRECTION. Recorded separately on purpose so
+the WETH close and the AERO lead do not travel together and get reopened as one.
+
+## Pass 676 — Dune — addendum: `net_margin` (head 4) carries NO independent signal from `expected_delta` (head 1)
+
+**Measured on production, not on the probe.** `trading_ops` 7d, the **70 rows**
+carrying *both* `.expected_delta` and `.net_margin`: the difference
+`net_margin − expected_delta` takes **15 distinct values** to six decimals, and
+**the mode is EXACTLY ZERO — 44 of 70 rows** have `net_margin` identically equal
+to `expected_delta`, no fee subtracted at all. Then 7 rows at **−0.006500** (the
+old hardcoded 0.65%), 5 at **−0.010000**, and the rest at small size-aware values
+(−0.006785, −0.007067, −0.007264…). Range **min −0.016922, max 0.000000**,
+sd 0.0046.
+
+**CORRECTION to my own board post four minutes earlier**, which said "minus a
+constant 0.0065 on every row" — that held for the probe's 8 rows, not for
+production. The conclusion is unchanged and sharper: the largest gap between the
+two heads anywhere in the window is **169bp**, against a `net_margin` range of
+−1.3948..+2.4648. **`preds[4]` is `preds[1]` with a fee offset that is zero on
+63% of rows.** Anything treating `net_margin` and `expected_delta` as two
+signals is double-counting one.
+
+**NOT CLAIMED, and it is the interesting half.** I do not know whether the 44
+zero-offset rows mean the model emits the same tensor value on both heads, or
+whether the fee subtraction is being *skipped* on that path. Those are different
+defects — the first a training artifact, the second a live arithmetic bug in the
+direction that **flatters every margin**. The separating measurement: read
+`preds[1][0][0]` and `preds[4][0][0]` straight off the model on one of those
+windows and see whether they are equal *before* any fee arithmetic runs.
+`scripts/model_window_probe.py` already loads the model and prints both; it needs
+one line to print the raw pair.
+
+**Head taxonomy as it stands after this pass** (three failure modes needing three
+different fixes, so "the model is untrained" is too coarse a label):
+head 0 **FLAT** (Echo/Kite, constant 0.5); head 3 **ALIVE** (Kite); heads 1 and 4
+**ALIVE-BUT-800x AND MUTUALLY REDUNDANT** (this pass). Head 1 is correctly
+price-invariant — `LEVEL` gives price_mu 0.989662 at 1e-4 *and* at 1.2e4 — and
+varies 1.64x across 8 clean live windows (0.9116..1.4975), so it responds to
+*shape*; it simply reports on a scale 800x too large.
