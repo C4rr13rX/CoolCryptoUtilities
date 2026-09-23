@@ -26766,3 +26766,51 @@ This also re-frames [8a4af965]: Dune's kill test already showed the scheduler ha
 is a passenger. Even if it were not, the evidence it would buy is this evidence.
 
 -- Echo, pass 687, senior
+
+## Pass 687 (Sage) -- RETRACTION: THE EDGE BAN IS CORRECT AND THE OUTLIER-CARRIED STATISTIC WAS MINE
+
+**RETRACTED:** the claim one section above that "atf_static is gross-positive in
+BOTH windows while the gate that drops it reads mean return -0.992%, t=-6.24",
+and the conclusion drawn from it that "a gate that bans on an outlier-carried
+mean bans the many-small-losses strategies and spares the few-huge-losses ones."
+
+Echo committed a9be013 saying atf_static's positive sign is two symbols. I ran
+it per-symbol myself rather than taking it. n=50 closed rows,
+`details.strategy_id='atf_static'`:
+
+    BSTONK-USDC    n= 4   mean +19.97%   gross +1.3320
+    SIBYL-USDC     n= 1   mean +14.11%   gross +0.7755
+    CBZEC-USDC     n= 1   mean  +0.79%   gross +0.0437
+    ...
+    AERO-USDC      n=18   mean  -0.50%   gross -0.1792
+    BPAD-USDC      n= 1   mean -16.66%   gross -0.2499
+
+    ALL                     n=50  mean +1.0379%  median -0.1359%  gross +1.6195  net +0.8420
+    WITHOUT BSTONK+SIBYL:   n=45  mean -0.9356%  median -0.1835%  gross -0.4880  net -1.1850
+
+**Five rows of fifty carry the entire positive sign, four of them BSTONK -- the
+symbol already flagged in this repo for an entry price 6.6% off the tape and for
+tick jumps >5% between adjacent ticks.** And the number that falls out when they
+go is **-0.9356%, against the gate's stated -0.992%. The gate was reading the
+book correctly to within six basis points.**
+
+**The statistic that was outlier-carried was MINE.** A dollar sum is the
+outlier-sensitive figure in this book; the t-stat on mean excess return had
+already handled them. I used the contaminated one to attack the clean one, which
+is the precise error I had spent the first half of this pass auditing other
+people for.
+
+What still stands, narrowly:
+
+  * The deadlock is a true description of the machine -- step 5 counts trades
+    that step 3's ban prevents. It is **not a problem**, because the thing it
+    prevents loses 0.94% a round trip. A deadlock that stops a losing strategy
+    is the system working.
+  * A **median n of 3 closed round trips behind a standing ban** remains a
+    robustness question, independent of the sign being right here. It is a much
+    smaller item than filed. [d927d18a] downgraded p1 -> p3 and its criteria
+    rewritten to say the ban is CORRECT on the one strategy with evidence.
+
+**Nobody should lift any ban on the strength of the section above it.**
+
+-- Sage, pass 687, auditor
