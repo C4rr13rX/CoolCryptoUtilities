@@ -27903,3 +27903,69 @@ component IS gas, the fixed leg is charged twice and the fix is a deletion. I
 did not verify it. Read roundtrip_cost_breakdown before shipping anything here.
 
 -- Cove, pass 688, worker
+
+================================================================================
+PASS 688 (Sage, worker) -- FOURTH AND FINAL APPEND. THE ENTRY-TOLL ELIMINATION
+SCORECARD. Four mechanisms killed by measurement, one survives, and it is a
+different fix from anything proposed this pass.
+================================================================================
+
+The ~14bp one-sided entry toll (see my second append) has THREE signatures that
+any mechanism must satisfy at once: it is ONE-SIDED (entry only), it is
+SIZE-INVARIANT so far as a degenerate axis can say, and it is INDEPENDENT OF
+TICK AGE. Five candidates, four dead.
+
+  LATENCY / FEED STALENESS -- DEAD, AND THIS KILLED MY OWN HYPOTHESIS.
+  I joined every live_entry to the last market_stream tick for its own symbol
+  before the fill. All 20 found a tick.
+
+      19 of 20 fired with a tick under 5 min old; 17 of 20 under 2.5 min.
+      The FOUR FRESHEST (tick age 0.04, 0.11, 0.13, 0.17 min = under 12s):
+        -40.55  -13.91  -31.35  -19.92  bp   -> median about -25bp
+      Against a median of -18bp across all 20. FRESHER IS WORSE.
+
+  A COROLLARY WORTH MORE THAN THE TEST: THE FEED-IS-DARK RECORD DOES NOT APPLY
+  TO FILL QUALITY. This loop has measured the feed dead 40% of minutes at a
+  24.3% duty cycle. The entry path evidently does not fire during dark minutes
+  -- 20 of 20 entries had a tick, 19 within five minutes. The darkness costs
+  EVIDENCE RATE, not FILL QUALITY. Do not conflate them; I did, for 20 minutes.
+
+  DEPTH IMPACT -- DEAD. A $0.75 notional moves no pool on AERO or CBBTC.
+
+  UNENFORCED LIVE_TRADE_SLIPPAGE_BPS -- DEAD. Three fills land at 77, 136 and
+  805bp against a 75bp bound, which reads as an unwired guard. It is not:
+  services/swap_service.py:845-862 states the tolerance bounds the fill against
+  the ROUTE'S OWN QUOTE and says nothing about the decision price, and a
+  min_buy_raw / quote_below_floor guard already exists. Tightening it is a
+  CLOSED ROUTE (third append).
+
+  CEX-TO-DEX BASIS -- DEAD, and it was my own suspect, retired within the pass.
+
+      select raw from market_stream where symbol=? order by ts desc limit 1
+      AERO-USDC / CBBTC-USDC / CBETH-USDC all -> {"chain": "base",
+        "rest": "dexscreener", "consensus_confidence": 1.0, ...}
+
+  There is no CEX in the path, so there is no cross-venue basis to collect.
+
+  AGGREGATE-REFERENCE vs EXECUTED-POOL / FEE TIER -- ALIVE, UNTESTED, AND IT IS
+  THE ONLY CANDIDATE THAT FITS ALL THREE SIGNATURES. dexscreener reports an
+  AGGREGATE LAST-TRADE price across a token's pools; we execute against ONE
+  pool at its MARGINAL price. That gap is spread plus fee-tier difference,
+  one-sided on the taker side BY CONSTRUCTION, constant in bp, and indifferent
+  to quote freshness. A 0.05% reference against a 0.30% execution tier is 25bp
+  by arithmetic alone; the measured toll is 14-15bp, the right order.
+
+  MEV ON THE BUY -- alive, untested.
+
+THE TEST FOR THE SURVIVOR, WHICH I COULD NOT RUN: for each live entry, compare
+the dexscreener reference price against the fee tier the router actually used.
+THE ROUTER PATH IS NOT RECORDED ON THE LIVE LEG, which is the logging gap
+already filed. If the toll tracks the tier gap, the fix is POOL/TIER SELECTION,
+not cost modelling -- and it is worth up to 14bp, which is 87% of the ~16bp
+floor on AERO/CBBTC/CBETH. That is a different fix from faster quotes, a
+tighter tolerance, a bigger clip, or a better cost model, all of which this
+pass costed and closed.
+
+SCOPE: zero of these legs are WETH. Do not quote ~16bp as a WETH number.
+
+-- Sage, pass 688, worker
