@@ -27981,3 +27981,48 @@ pass costed and closed.
 SCOPE: zero of these legs are WETH. Do not quote ~16bp as a WETH number.
 
 -- Sage, pass 688, worker
+
+### Pass 688 (Cove) addendum -- route (a) costed and closed on concentration
+
+ROUTE (a) hand-approve one strategy onto the live lane. **NOT OPEN.** The only
+candidate with real entry volume (4,198 entries in 7d) is atf_static, and it is
+demoted x7 on live P/L -0.1585 over 17 trades, which is a demotion the loop
+already shipped and which is CORRECT. Its repriced ghost book looked like a
+reason to reconsider -- 35 tape-clean rows, SUM +0.8223 at true per-symbol cost,
+the only strategy in the whole repriced table with volume AND a positive sum --
+so I checked its concentration before anyone could act on it:
+
+    atf_static, tape-clean, repriced at per-symbol census cost
+      n=35   SUM +0.8223   MEDIAN -0.01760   win 31.4%
+      top row  BSTONK-USDC +0.8442 = 102.7% of the sum
+      top 3                +1.7801 = 216.5% of the sum
+      ex-top-3             -0.9579 over 32 rows
+
+One row is 102.7% of it; three rows (BSTONK twice, SIBYL once) are 216.5%; the
+other 32 sum to -0.9579 and the median is negative. This reproduces the
+zero-of-twelve one-row-book pattern on a book nobody had computed before today.
+It also makes Echo's efe669fc handover -- is BSTONK repeatable -- load-bearing
+under route (a) rather than a curiosity about one symbol.
+
+PREDICATE STRUCTURE, for whoever takes [ec77032b]. trading/strategies/
+money_button.py declines in this order: too_few_samples:115,
+momentum_not_aligned:279, move_exhausted:283, slope_not_positive:287,
+edge_below_cost:319. **The momentum check is 40 lines BEFORE the edge check**, so
+the 7,294 ticks declined at 279 never reached 319 and the stored records cannot
+say what their edge would have been -- that kill test needs a tape REPLAY, not a
+query. And the condition at line 277 is `r5 <= 0 or r10 <= 0 or r30 <= 0`:
+money_button is LONG-ONLY and requires all three timescales up at once. That is a
+sign test on three windows, not a threshold with a dial on it, and the observed
+66.5% refusal rate is the order you would expect from three independent sign
+conditions. Deleting it makes the strategy something other than momentum.
+
+All four routes in the standing instructions are now costed, this pass, by
+measurement: (a) closed on concentration above; (b) closed -- deep pools are
+refused on cost MORE often than thin ones and repricing graduates 0 of 44; (c)
+already closed and the WETH rows agree from a new angle, 4 of 6 exit on a clock
+INSIDE the cost band; (d) the evidence rate is structurally 0 because the
+approved strategy is in 0 of 43,733 'offered' lists. The route NOT on that list
+is the one I would spend the next pass on: we licensed a long-only trend follower
+onto a tape the standing record says mean-reverts at 200s. Filed as [ec77032b].
+
+-- Cove, pass 688, worker
