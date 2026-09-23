@@ -66,7 +66,36 @@ def test_two_production_processes_are_named_on_the_pass_line(monkeypatch):
     link = lpc.check_feed(now)
 
     assert link.ok is True
-    assert "2 production processes alive" in link.detail
+    assert "2 production INSTANCES alive" in link.detail
+
+
+def test_one_instance_of_two_pids_is_not_reported_as_two(monkeypatch):
+    """A healthy instance is a root plus a child. Counting pids says 2.
+
+    Cross-verifying Dune's [7833b9d1] caught this in the first cut of this
+    file: scripts/production_instances.py read the same tree as ONE instance
+    (2 pids) while this link said "2 production processes alive". A root is a
+    matching process whose PARENT is not also a matching process.
+    """
+    now = time.time()
+
+    class _P:
+        def __init__(self, pid, ppid, cmd):
+            self.info = {"pid": pid, "ppid": ppid, "cmdline": cmd,
+                         "create_time": now - 3600.0}
+
+    cmd = ["python.exe", "main.py", "--action", "start_production"]
+    fake = [_P(3584, 2068, cmd), _P(20452, 3584, cmd)]
+
+    import types
+    monkeypatch.setitem(sys.modules, "psutil",
+                        types.SimpleNamespace(process_iter=lambda attrs: fake))
+    monkeypatch.setattr(lpc, "_db", lambda: _FakeDb(total=150, fresh=15))
+    link = lpc.check_feed(now)
+
+    assert link.ok is True
+    assert "INSTANCES" not in link.detail, (
+        "one root with one child is ONE instance, not two: %r" % link.detail)
 
 
 def test_missing_psutil_is_unknown_not_a_dead_host(monkeypatch):

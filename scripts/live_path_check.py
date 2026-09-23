@@ -79,24 +79,43 @@ _LOG_TS_RE = re.compile(rb"(20\d\d-\d\d-\d\d \d\d:\d\d:\d\d)")
 
 
 def _production_procs() -> Optional[List[float]]:
-    """Start times of every live ``main.py --action start_production``.
+    """Start times of every live production INSTANCE -- roots, not pids.
+
+    Counting pids is wrong and this function did it for one commit: a single
+    healthy instance shows as two pids (a root and its child), so a pid count
+    reported "2 production processes alive" against a tree Dune's
+    scripts/production_instances.py correctly reads as ONE. A root is a
+    matching process whose parent is not itself a matching process.
+
+    The predicate is imported from production_instances rather than restated,
+    so there is one definition of "is this production". It matters: that one
+    requires BOTH "main.py" and "start_production", where a bare
+    "start_production" substring also matches supervisors and our own probes.
 
     Returns None -- an UNKNOWN, never an empty list -- when psutil is missing.
-    A absent dependency must not be reported as a dead host: that is the exact
-    confusion this whole function exists to remove.
+    An absent dependency must not be reported as a dead host: that is the
+    exact confusion this whole function exists to remove.
     """
     try:
         import psutil  # type: ignore
     except Exception:
         return None
-    started: List[float] = []
-    for proc in psutil.process_iter(["cmdline", "create_time"]):
+    try:
+        from scripts.production_instances import _is_production  # type: ignore
+    except Exception:
+        def _is_production(cmdline) -> bool:  # type: ignore[misc]
+            joined = " ".join(cmdline or [])
+            return "main.py" in joined and "start_production" in joined
+
+    procs: Dict[int, Dict[str, Any]] = {}
+    for proc in psutil.process_iter(["pid", "ppid", "cmdline", "create_time"]):
         try:
-            if "start_production" in " ".join(proc.info.get("cmdline") or []):
-                started.append(float(proc.info.get("create_time") or 0.0))
+            if _is_production(proc.info.get("cmdline")):
+                procs[proc.info["pid"]] = proc.info
         except Exception:
             continue
-    return started
+    return [float(i.get("create_time") or 0.0)
+            for i in procs.values() if i.get("ppid") not in procs]
 
 
 def _log_silent_minutes(now: float) -> Optional[float]:
@@ -167,7 +186,7 @@ def check_feed(now: float) -> Link:
     if procs is None:
         note = " (process state unknown: psutil missing)"
     elif len(procs) > 1:
-        note = " (%d production processes alive)" % len(procs)
+        note = " (%d production INSTANCES alive -- pooled counts)" % len(procs)
     else:
         note = ""
 
