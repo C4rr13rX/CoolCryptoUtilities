@@ -21451,3 +21451,53 @@ item `6d718c1a`. Do not tune thresholds against any of them. Separately, the
 branch that *reads* `net_margin` is unreachable (item `7fa8c82f`, filed this
 pass), so this is a correctness defect in a number that is widely quoted, not
 currently a gate defect.
+
+
+### Pass 676 (Kite) ADDENDUM -- the live-lane cliff, and the inference about it that I FILED AND THEN REFUTED WITHIN THE SAME PASS
+
+**THE MEASUREMENT, WHICH STANDS.** The live lane did not decay, it fell off a
+cliff. Daily count of every `trading_ops` status matching `%live%`: 25d ago 3,
+22d 3, 20d 13, 19d 403, **18d 504**, 17d 49, then **ZERO on each of the last 17
+consecutive days**. Last live row of any kind: **2026-09-05 21:10 UTC,
+AERO-USDC, `live-exit`** -- AERO being the most expensive round trip measured
+here (0.64-4.35%). Meanwhile `trading_ops` as a whole wrote a row **1.2 minutes
+ago** and carries hold 8954 / enter 558 / strategy_publish 131 / exit 5 in 24h.
+Enumerating ALL statuses in the last 24h with no substring filter returns twelve
+and **not one concerns the live lane**. The cliff PREDATES the current
+production boot (2026-09-21 22:57), so the previous boot was silent too.
+
+**THE INFERENCE I DREW, AND WHY IT IS WRONG -- DO NOT RE-DERIVE IT.** I filed
+item `bf54ba78` arguing "the refusals stopped too, and a lane that is refused
+WRITES refusals, so the live lane is NOT BEING EVALUATED." I wrote the
+discriminator into the item's own criteria before I believed the item, then ran
+it, and it **refuted me on two independent counts**:
+
+1. `trading/bot.py:8504` gates `entry-refused-live-held` on
+   `if pos is not None and str(pos.get("mode") or "") == "live"`. It fires ONLY
+   WHEN A LIVE POSITION IS HELD. With no live position open, it and
+   `live-position-dark-feed`, `live-exit`, `live-exit-blocked` and
+   `live-position-adopted` go silent **trivially**. Five of the statuses I
+   counted as evidence of unreachability are POSITION-CONDITIONAL.
+2. Decisive, and already written down in this tree before I got here --
+   `trading/bot.py:8885-8890`: *"The caller logs decisions to trading_ops only
+   when action != 'hold', so this refusal left no row at all -- the swap guard
+   rejected every live entry for days while the ops table showed nothing but
+   ghost activity."* And the `guard-blocked-live` row at `:8898` is itself
+   gated on `if self._strategy_live_approved(directive)`.
+
+**A LIVE REFUSAL CAN HAPPEN WITHOUT WRITING A ROW, AND THIS REPO HAS WATCHED IT
+DO EXACTLY THAT FOR DAYS.** So the 17-day silence is consistent with the live
+path being reached and refusing invisibly, and that is now the LEADING
+explanation rather than the excluded one. `bf54ba78` has been re-scoped
+accordingly: the next step is INSTRUMENTATION (write a row on every live-entry
+outcome including `action=="hold"` and the not-live-approved case), **not** a
+gate change and **not** arming anything.
+
+**AN ABSENT ROW IS NOT A MEASUREMENT.** I read a zero as a result -- the exact
+failure the standing instructions name -- and what caught it was pre-registering
+the kill test as an acceptance criterion before I was attached to the answer.
+
+**PROVEN BY:** sqlite reads against `storage/trading_cache.db` (`trading_ops`
+grouped by `status`, and by `cast((now-ts)/86400 as int)`); the two quoted
+source lines by `sed -n '8500,8545p' trading/bot.py` and
+`sed -n '8885,8900p' trading/bot.py`.
