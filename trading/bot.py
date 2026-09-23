@@ -11252,6 +11252,41 @@ class TradingBot:
                     "entry_price": entry_price,
                     "exit_price": exit_price_effective,
                     "profit": economic_profit,
+                    # SAY WHAT UNIT THIS IS IN, because the reader cannot tell.
+                    #
+                    # `profit` is the column two different writers fill.
+                    # services/atf_static_strategy.py once wrote a bare
+                    # FRACTION into it -- 473 rows in trading_ops still have
+                    # details['profit'] exactly equal to their own
+                    # exit/entry - 1 -- while this writer has always written
+                    # QUOTE-CURRENCY dollars: `economic_profit` is
+                    # `gross_profit - fee_cost` at :10853, and gross_profit is
+                    # `(exit_price - entry_price) * exit_size`, a price times a
+                    # quantity. A 0.4% return and 40 cents both read as
+                    # "0.004", so size cannot separate them and the reader had
+                    # to guess from the strategy id.
+                    #
+                    # trading/metrics.py:_profit_usd honours this marker and
+                    # returns immediately on it; absent it, the row falls
+                    # through to a hardcoded id guess. Stamping the writer is
+                    # what stops that guess being needed for anything written
+                    # from here on.
+                    #
+                    # VERIFIED BEFORE STAMPING, because a wrong marker is worse
+                    # than none: of the 273 rows in trading_ops carrying this
+                    # writer's shape, ZERO match the fraction fingerprint
+                    # (|profit - (exit/entry - 1)| <= 1e-9). All 473 that do
+                    # are the other writer's, 368 under the pre-rename id
+                    # `atf_static` and 105 under `atf_static_scout`.
+                    #
+                    # "usd" and not the quote token because every booked row is
+                    # USD-quoted -- `trade_outcomes` holds 272 USDC and 3 USDT,
+                    # all with pnl_currency 'USD' -- and the two sibling
+                    # payloads below already assert `"pnl_currency": "USD"`
+                    # unconditionally. A non-stable quote leg would make all
+                    # three wrong together, which is the right coupling: they
+                    # would be fixed in one place.
+                    "profit_unit": "usd",
                     "retained_profit": retained_profit,
                     "outcome_id": outcome_id,
                     "checkpoint": checkpoint,
@@ -11289,6 +11324,9 @@ class TradingBot:
                 self.active_exposure[symbol] = remaining
             exit_metrics = {
                 "profit": economic_profit,
+                # Same value, same unit, same reason as the decision payload
+                # above -- see the note there.
+                "profit_unit": "usd",
                 "retained_profit": retained_profit,
                 "checkpoint": checkpoint,
                 "duration_sec": duration_sec,
@@ -11322,6 +11360,9 @@ class TradingBot:
                     "symbol": symbol,
                     "trade_id": trade_id,
                     "profit": economic_profit,
+                    # Same value, same unit, same reason as the decision
+                    # payload above -- see the note there.
+                    "profit_unit": "usd",
                     "retained_profit": retained_profit,
                     "outcome_id": outcome_id,
                     "duration_sec": duration_sec,
@@ -11373,6 +11414,11 @@ class TradingBot:
                             "fee_cost_usd": float(fee_cost),
                             "gross_profit": float(gross_profit),
                             "profit": economic_profit,
+                            # Redundant beside `pnl_currency` on this payload,
+                            # but the readers key on `profit_unit` and the two
+                            # must never be able to disagree -- see the note on
+                            # the decision payload above.
+                            "profit_unit": "usd",
                             "retained_profit": retained_profit,
                             "checkpoint": checkpoint,
                             "entry_price": entry_price,
@@ -11413,6 +11459,11 @@ class TradingBot:
                             "fee_cost_is_round_trip": True,
                             "gross_profit": float(gross_profit),
                             "profit": economic_profit,
+                            # Redundant beside `pnl_currency` on this payload,
+                            # but the readers key on `profit_unit` and the two
+                            # must never be able to disagree -- see the note on
+                            # the decision payload above.
+                            "profit_unit": "usd",
                             "retained_profit": retained_profit,
                             "checkpoint": checkpoint,
                             "entry_price": entry_price,
