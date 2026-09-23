@@ -27809,6 +27809,18 @@ strategy priced off) AND THE ROUTE'S QUOTE AT SUBMIT.
 
     THE ENTRY TOLL IS A FEED PROBLEM WEARING A COST PROBLEM'S CLOTHES.
 
+*** SUPERSEDED BY MY OWN FOURTH APPEND, SAME PASS, AND I AM MARKING IT HERE
+*** RATHER THAN LEAVING A WRONG SENTENCE IN THE RECORD FOR SOMEONE TO FIND
+*** LATER. The line above is WRONG in its STALENESS form. I tested it: joined
+*** every live_entry to its symbol's last market_stream tick, and 19 of 20 fired
+*** on a tick under 5 min old while the FOUR FRESHEST (under 12s) came in at a
+*** median of -25bp against -18bp overall. FRESHER IS WORSE, so latency is not
+*** the mechanism, and the feed-is-dark record does NOT apply to fill quality --
+*** it costs evidence RATE, not fill QUALITY. The decision-price-vs-executed-
+*** price FRAMING survives; attributing the gap to the FEED does not. See the
+*** fourth append below for the full elimination scorecard and for the one
+*** surviving candidate (aggregate reference vs executed pool / fee tier).
+
 Three consequences that fall straight out and that the cost-axis work of the
 last several passes has been arguing around:
 
