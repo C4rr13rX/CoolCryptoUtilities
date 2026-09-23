@@ -22474,3 +22474,45 @@ REUSABLE TRAP, the reason this is written down at all: "the day is ABSENT from a
 GROUP BY" is NOT "the rows are ZERO in a range query", and on this store's float
 ts the two can disagree by a whole day. It looked plausible because a zero IS
 reachable here -- metrics and prices genuinely read 0 over the same range.
+
+## p680 (Cove) -- BOTH LEVERS ON THE CRITICAL-PATH ITEM ARE MEASURED AND BOTH ARE 10x TOO SMALL. AND THE TWO BOOKS DISAGREE BY MORE THAN THE HOLE.
+
+ROUTE TRIED: [fdeb0316], atf_static's gross shortfall. Re-baselined it and then
+tested its own named lever.
+
+RE-BASELINE (the item's body was 8 days stale and had the TREND backwards).
+One read-only query, wallet='live':
+  OLD (p100): 18 trips, gross -0.0791 = -0.13% of notional, net -0.3420
+  NEW (p680): 15 trips, 4 wins (26.7%), gross -0.0987 = -0.5884%, net -0.1882
+The NET improved and the GROSS got much worse. Shortfall against the 0.3187%
+infinite-clip floor went 0.45pp -> 0.9071pp. IT ROUGHLY DOUBLED. The net moved
+only because the clip fell to a $1.12 mean and the fee fell with it -- which the
+item's own criterion 3 explicitly does not accept.
+Book total n=18 net=-0.186371 gross=-0.084920 fee=0.101452 notional=18.2910,
+reproducing the scoreboard to the digit. net = gross - fee holds.
+
+LEVER TESTED -- SYMBOL ADMISSION. CLOSED NEGATIVE.
+  AERO-USDC    n=8 notional 7.407 gross -0.5427%
+  CBBTC-USDC   n=3 notional 5.624 gross -0.4040%
+  BPAD-USDC    n=1 gross -16.6595%   CBXRP n=1 -1.6789%   BASECAT n=1 -3.8815%
+  BSTONK-USDC  n=1 gross +34.1023%   <- the KNOWN ARTIFACT, do not build on it
+Deep-pool restriction (AERO+CBBTC, 11 of 15 rows, 13.031 of 16.78 notional):
+gross -0.4829%, still 0.80pp short. Admission buys 0.11pp of a 0.91pp hole --
+about what the clip bought (0.14pp of 0.61pp), and the clip was already REFUTED
+for exactly that reason. BOTH NAMED LEVERS ARE NOW AN ORDER OF MAGNITUDE SHORT.
+The shortfall is NOT a symbol-mix artifact: it is negative on the two
+best-supplied symbols independently, and those are the two admission would KEEP.
+
+*** THE FINDING THAT IS BIGGER THAN THE ITEM. *** Ghost book by symbol at n>=10:
+AERO-USDC n=46 notional 106.03 gross +1.9757%. Live AERO is -0.5427% at n=8.
+SAME SYMBOL, 2.52pp APART, SIGN FLIPPED -- nearly 3x the 0.91pp hole. Whichever
+book is wrong, the measurement error is larger than the problem.
+SMALL-n IS RULED OUT: bootstrap of the 8 live rows, notional-weighted, B=20000,
+seed 20260923 -> 95% CI [-1.3220%, +0.4601%]; 0 of 20000 resamples reached
++1.98%. CAVEAT: the CI straddles zero, so live AERO is NOT shown negative with
+confidence -- only that it does not approach the ghost number.
+TWO EXPLANATIONS LEFT, kill tests filed in [a57d2cb1]: (b) the ghost book is
+contaminated (the fraction-to-USD converter gated on a renamed id, 245 of 373
+scout ghost-exits bare fractions read as dollars); (c) ghost exits are MARKS not
+FILLS and the gap IS slippage, already 78% of the toll. Hunch, labelled as one:
+(c), because it explains the sign and the size together.
