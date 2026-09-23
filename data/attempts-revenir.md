@@ -23004,3 +23004,38 @@ cost on the only evidence that counts. The gross is the problem -- not the clip,
 venue, not the fee tier, not the symbol list, and not the hold ceiling (killed
 independently by two agents in this same pass). This is the same wall as the standing
 note "COST IS SOLVED AND DIRECTION IS THE BLOCKER", now reached from the live book.
+
+### Pass 681 -- Bay, THE 17.6-DAY LIVE SILENCE IS DATED TO EIGHT MINUTES. Not a defect.
+
+The standing instruction requires verifying that the demotion guards fired after a
+losing live trade. They did, and the verification turns out to be the cause of the
+silence every other instrument in this pass was circling.
+
+  data/strategy_ledger.json, atf_static:
+    demotions     = 7
+    demote_reason = "live P/L -0.1585 over 17 trades is not profitable"
+    demoted_ts    = 1788642158.7057738 = 2026-09-05 21:02:38
+    rearms        = 1
+    rearmed_ts    = 1788539654.677389  = 2026-09-04 16:34:14
+    rearm_reason  = "re-judged after dd_ref re-base: demoted at +0.1423 against a
+                     frozen all-time peak +0.2221 that belonged to a prior licence;
+                     live record is net positive over 9 trades"
+    live consecutive_losses = 1 ; .env:201 STRATEGY_DEMOTE_MAX_LIVE_LOSSES=2
+
+  Newest live row in the entire database: 2026-09-05 21:10:42.
+  Demotion stamped:                       2026-09-05 21:02:38.
+  DELTA: 8 minutes 4 seconds.
+
+The live lane did not break, was not refused and did not time out. It stopped because
+the only strategy with a live branch was demoted for losing money, and the guard
+recorded why at the moment it acted. Every instrument chased in this pass -- ladder
+step 9's lifetime count, the 13-name stop blocklist, the 5-day ghost window, the
+cold_start verdict -- is downstream of that one line of JSON.
+
+FOR THE NEXT PASS: the rearm_reason above shows this HAS been re-judged once, on
+2026-09-04, on the argument that a frozen drawdown reference from a prior licence had
+unfairly demoted a live-positive record. That rearm was followed by nine more live
+trades and a second demotion. Anyone proposing to re-arm atf_static again is proposing
+to repeat an experiment this ledger already ran and already recorded the result of.
+They need a reason the next eighteen differ -- and the deep-pool subset of the last
+eighteen is gross-negative at n=15 before a single fee (see the entry above).
