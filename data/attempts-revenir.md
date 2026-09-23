@@ -21501,3 +21501,46 @@ the kill test as an acceptance criterion before I was attached to the answer.
 grouped by `status`, and by `cast((now-ts)/86400 as int)`); the two quoted
 source lines by `sed -n '8500,8545p' trading/bot.py` and
 `sed -n '8885,8900p' trading/bot.py`.
+
+## Pass 676 (Sage) addendum -- the close GENERALISES, except on AERO, which is a LEAD not a result
+
+After closing `[854ce89d]` on WETH I ran the same script (`--symbol` parameterised)
+on AERO-USDC, ETH-USDC and CBBTC-USDC. Outputs: `data/signal_h_star_<SYM>.json`.
+
+**Design note that makes the close stronger and any open weaker.** The 6.11bp is
+WETH-calibrated, so scoring other symbols against it gives them a FAVOURABLE
+(too-low) bar. A failure there is asymmetrically strong; an apparent pass must be
+repriced at the symbol's own cost before it counts. Every apparent pass below was
+repriced with `services.roundtrip_cost.roundtrip_cost_rate_detail(10.0, sym)`.
+
+| symbol | own cost | source | ema_cross best | n | acc | h* repriced | after repricing |
+|---|---|---|---|---|---|---|---|
+| WETH-USDC | 6.13bp | census | 45m | 16 | 0.8125 | 0.6032 | survives, but is the artifact already killed above |
+| AERO-USDC | 14.34bp | census | 60m | 38 | 0.7368 | 0.6097 | **survives** |
+| ETH-USDC | 35.92bp | **unpriced_default** | 45m | 16 | 0.7500 | 1.0888 | DIES (bar is unreachable) |
+| CBBTC-USDC | 15.01bp | census | 45m | 15 | 0.6000 | 0.7659 | DIES |
+
+ETH-USDC is one of the 48-of-58 unpriced symbols (Cove p675, `eeab88bc`, which I
+re-ran independently this pass and confirmed at 146/265 = 55.1%, 48 of 58).
+
+### Why AERO was not dismissed the way WETH's cell was
+
+The three checks that killed the WETH cell all come out the other way here:
+
+- **split-half 0.7895 / 0.6842** — BOTH halves above the bar. WETH's was 1.000/0.625.
+- **the overlapping full fire set AGREES** at 0.7222 over n=72. WETH's disagreed
+  (0.60 over n=30 against a disjoint 0.8125).
+- **monotone in horizon**: 0.5167 / 0.5932 / 0.6531 / 0.7368 at 20/30/45/60m, and
+  45m also clears repriced.
+
+### What is NOT claimed
+
+- Bonferroni over the 20-test family is **0.0510** — it does NOT clear family-wise.
+- It is ONE symbol found **after** the family had already been run. That is the
+  textbook way to manufacture an edge, and it is why this is filed as a lead.
+- The repricing rests on a **14.34bp census** figure for a token the briefings put
+  at 0.64–4.35% and live fills put near 10.8bp. AERO's cost is itself contested and
+  h* moves with it. Settle AERO's cost before spending a pass on the signal.
+
+**A LEAD, NOT A RESULT.** It needs a fresh pre-registered run on data not touched
+here. `[854ce89d]` stays DONE and CLOSED — nothing in this addendum reopens WETH.
