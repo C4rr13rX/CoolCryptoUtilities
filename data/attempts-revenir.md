@@ -21830,3 +21830,67 @@ loss). Only 4.3% of 10-min windows over 24h are empty, so the ladder's
 degradation. The DexScreener `prices` cache is unaffected (newest row 1.96 min
 old, 25 of 44 fresh inside 10 min): the quote path is alive, the TICK path is
 failing. CLOSED: "the feed is merely bursty".
+
+
+## Pass 677 (Cove) -- LADDER STEP 1: the collapse is REAL and FOUR causes are CLOSED. Backlog [11d3415c]
+
+**ROUTE TRIED:** diagnose ladder step 1 ("FEED: no ticks in 10min"), the first
+FAIL, since everything after it is unknowable. All read-only. No production code
+opened, no commits outside this file.
+
+**THE NUMBER THAT SURVIVED:** `market_stream` hourly counts over 24h put the
+CURRENT hour at the **strict minimum of all 24** -- 10 rows / 10 symbols against
+a **median of 648**, max 1017 at h-23. **64.8x below its own median**, via a
+**monotone six-hour drain** (h-7 breaks 648->215, then 82, 293, 208, 223, 52,
+10). Widening windows: 10/hr @1h, 145/hr @6h, 532/hr @24h, 328/hr @7d, 203/hr
+@30d. The diurnal-trough complement is DEAD -- a trough cannot put the newest
+hour strictly below all 23 others with a monotone ramp in. **Step 1 is HONEST.**
+
+**FOUR CAUSES RULED OUT -- CLOSED, do not re-run these:**
+
+1. **RATE LIMITING -- CLOSED.** `(429|403)` over the 19,095-line tail of
+   `logs/stream_debug.log` returns **ZERO**. This also answers criterion 3 of
+   `[9793d252]` in the negative: the 429 artifact is NOT firing, so a live
+   re-quote today is not degraded on that account.
+   *RETRACTED en route:* I first reported 134 "429" and 182 "403" hits. Both
+   WRONG -- unanchored substring matches inside timestamps and prices. Anchor it.
+2. **`url_set=false` -- CLOSED.** Present in every HEALTHY hour too: 1955/1955
+   records at 100.68h old, 1931/1931 at 59.10h, 1983/1983 at 22.67h, 1977/1977
+   at 13.10h. A flag false everywhere discriminates nothing.
+3. **The `subscribe` flag -- CLOSED.** 7 of 18 = 39% now, inside the healthy
+   34-47% band (47/35/36/37/34%). Unchanged.
+4. **LIST MEMBERSHIP / "universe shrink" -- CLOSED.** Of 12 symbols dropped from
+   the loop since a 6.82h-old sample, **eight never produced a tick in the whole
+   database**; the two that ever ticked stopped **375.65h** (ARB-USDC) and
+   **253.04h** (CAP-USDC) ago. **Ticks stopped FIRST by 10-50x the window.**
+
+**THE INVERSION:** the 6.82h sample enumerated **68 symbols, most of which had
+NEVER ticked**; the current **18** are nearly exactly the symbols that DO tick.
+**The list CONVERGED on the live symbols; it did not degrade.** Loop membership
+is NOT the tradeable universe and must not be read as one.
+
+**STILL OPEN:** the cause is **upstream of the loop**, in whatever supplies
+prices for the 7-18 symbols that genuinely tick. **NOT TRACED** -- that code was
+never opened and nothing about it is claimed here.
+
+**TWO TRAPS FOR ANY AGENT, not just this fault:**
+
+* **An agent-side HTTP probe cannot measure the chain.** Four independent Base
+  endpoints (mainnet.base.org, base.llamarpc.com, base-rpc.publicnode.com,
+  base.drpc.org) all returned **403 in 106-704ms**. Four unrelated hosts
+  refusing identically in under a second is the *agent sandbox's egress*, not an
+  upstream outage. Production has its own network. Never quote such a probe as
+  evidence about the chain.
+* **SECURITY:** the tail of `logs/stream_debug.log` carries a **live Alchemy API
+  key in cleartext** in an `env_load` record. Never paste that log into a
+  commit, a board post, or an artifact.
+
+**METHOD NOTE, the reason this entry is worth its length.** I went **0 for 3 on
+hypotheses** and each died to a complement written down *before* the test. Two
+of them -- `url_set` and the universe shrink -- were already written into a
+backlog item as findings and would have shipped as leads. Stating the complement
+is what caught both.
+
+**AFFECTS LIVE READS NOW:** WETH-USDC's newest tick was **69.9 min** old;
+AERO/MAMO/CAKE/ALIGN/BLUECHIP all 57.4 min. 7d/30d corpus queries unaffected.
+Anything reading a LIVE price should quote the tick age beside the number.
