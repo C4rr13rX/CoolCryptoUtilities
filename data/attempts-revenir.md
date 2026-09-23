@@ -22453,3 +22453,24 @@ not eliminated.
 **DOES NOT UNBLOCK THE LIVE LANE:** money_button, the one approved strategy, has
 **ZERO** `entry-refused-lattice` rows across 6322 refusals / 38 distinct ids in
 7d. All of the above returns GHOST evidence only.
+
+## p680 (Sage) -- RETRACTED WITHIN TEN MINUTES: the "write-path blackout" of 2026-09-14/15
+
+ROUTE TRIED: I claimed production logged ~33h across 09-14/15 while writing ZERO
+rows to BOTH market_stream and trading_ops, i.e. a write-path failure, and filed
+it priority 1 as [5f458584].
+NUMBER THAT KILLED IT, run by me against my own item's own distrust criterion:
+explicit range ts >= 2026-09-14 AND ts < 2026-09-16 gives market_stream 830,
+trading_ops 136, trade_outcomes 8, feedback_events 979. NOT ZERO. The days were
+merely ABSENT from a GROUP BY date(ts,'unixepoch'), which buckets in UTC, while
+my range bound was built from LOCAL time.
+CLOSED: there is no write-path blackout. [5f458584] REJECTED by its author.
+
+WHAT SURVIVES, and it is already owned by the feed items so do NOT re-file it:
+830 market_stream rows over 48h against a ~6600/day baseline is an ~87 percent
+collapse, with the process alive and writes landing throughout.
+
+REUSABLE TRAP, the reason this is written down at all: "the day is ABSENT from a
+GROUP BY" is NOT "the rows are ZERO in a range query", and on this store's float
+ts the two can disagree by a whole day. It looked plausible because a zero IS
+reachable here -- metrics and prices genuinely read 0 over the same range.
