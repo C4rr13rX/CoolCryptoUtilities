@@ -21956,3 +21956,58 @@ tests/test_an_unpriced_symbol_is_refused_by_a_stated_default.py` -> 8 passed in
 `UNPRICED_SYMBOL_ADMISSION`, `_unpriced_symbol_refused`, `_is_priceable`,
 `_address_book_tokens`. `python -X utf8 scripts/pass_gate.py --check` -> OK,
 725 passed / 0 failed, live P/L unchanged at -0.186371 over 18.
+
+## Pass 679 (Dune) -- [aea07127] AERO-USDC ema_cross: COST SETTLED, DISJOINT TEST NOT RUNNABLE, VERDICT WITHHELD
+
+ROUTE: confirm or kill the one deep-pool direction cell pass 676 left standing
+-- AERO-USDC ema_cross 60m, acc 0.7368 n=38 vs a repriced h* 0.6097.
+
+RESULT 1 -- THE COST IS SETTLED AND THE ITEM'S PHRASING IS WRONG IN ONE PLACE.
+The item calls 14.34bp "AERO's own census cost". It is reproducible but it is
+NOT a $10 reading. `data/round_trip_quote_census_20260917T190210Z.json`,
+`quoted.AERO`, fee_tier 500, 45 rows, ASKED the $10 clip and REFUSED ITS OWN
+ANSWER: `implausible {"$10": {"cost_pct": 0.0376, "floor_pct": 0.1, "why":
+"below the 2*fee floor"}}`. THERE IS NO $10 CENSUS COST FOR AERO. 14.34 is
+10.2933bp (the $6.00 clip, the LARGEST the census answered) + 4.05bp realised
+gas at a $10 clip -- the same gas term inside
+`weth_direction_census.COST_ALL_IN_BP` = 6.11 = 2.06 + 4.05. That
+decomposition is now asserted at import in `scripts/aero_signal_h_star.py`, so
+it cannot drift. Sensitivity band, all three defensible readings:
+FLOOR 14.05bp (2*fee_tier) / CENSUS 14.3433bp ($6 clip) / MEDIAN 17.08bp ($2
+clip, the census's own median). The live book was NOT used and could not be:
+its 9 AERO rows carry flat $0.00284..$0.00432 fee_cost on $0.64..$1.52
+notionals, i.e. gas, so their 39.18bp is a 1/clip curve, not a swap cost.
+
+RESULT 2 -- THE DISJOINT SAMPLE DOES NOT EXIST. CLOSED AS UNRUNNABLE TODAY,
+NOT AS A NEGATIVE. `select count(*),min(ts),max(ts) from market_stream where
+symbol='AERO-USDC' and price>0` -> 11717 ticks, 2026-08-26T17:02:38 ..
+2026-09-23T06:03:27. The same query with `ts < 2026-08-26T00:00:00Z` -> ZERO.
+The entire AERO tape IS the discovery window. Every other price-bearing table
+in the 99-table store was checked and none has earlier AERO: `prices` holds no
+AERO at all (tokens are the CEX majors ada..trx), `ohlcv_datasets` has zero
+AERO rows, `ohlcv_bars` has no symbol column, and `market_stream symbol LIKE
+'AERO%'` is 12137 rows with pre-cutoff 0, so it is not a spelling problem.
+
+RESULT 3 -- THE IN-WINDOW REPRODUCTION IS EXACT, AND IS NOT A VERDICT.
+`python -X utf8 scripts/aero_signal_h_star.py --allow-in-window` reproduces
+pass 676 to the digit at the settled cost: ema_cross 20/30/45/60m acc
+0.5167/0.5932/0.6531/0.7368 vs h* 0.7028/0.6442/0.6178/0.6097, 60m n=38
+p=0.00255, split-half 0.7895/0.6842, overlapping 0.7222 over n=72. It also
+survives multiplicity IN WINDOW: 16 tests in the family, alpha 0.00313, raw p
+0.00255, Bonferroni 0.0408. And it clears even the dearer MEDIAN cost
+(h* 0.6307). THAT IS WHY IT IS A LEAD. It is still the sample it was found in.
+
+WHEN IT CAN BE SETTLED. ema_cross produced 38 DISJOINT 60m long fires over a
+661.0h span = 0.0575/h, so the pre-registered n>=30 needs ~522h ~= 21.8 days of
+forward tape: NOT BEFORE ~2026-10-15, and only if AERO keeps streaming.
+
+THE COMMAND THE NEXT PASS RUNS, unchanged, no tuning:
+    python -X utf8 scripts/aero_signal_h_star.py --since 2026-09-23T06:03:28Z
+Pre-registered in the file itself BEFORE the data exists: signal ema_cross,
+horizon 60m, verdict metric long_accuracy on DISJOINT windows vs that sample's
+own h* at the CENSUS cost, alpha 0.05/tests-in-family, n_long>=30 or the run
+reports UNRESOLVED rather than KILLED, and the script REFUSES to print a
+verdict on any window overlapping 2026-08-26..2026-09-23T06:03:28Z.
+
+STATUS: NOT closed. NOT confirmed. Do not refile it as a new id and do not
+quote 0.7368 as an out-of-sample number -- it is in-sample.

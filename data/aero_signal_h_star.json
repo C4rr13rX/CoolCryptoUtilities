@@ -1,0 +1,552 @@
+{
+  "cost_is_not_from_the_live_book": "the 9 wallet='live' AERO rows are flat $0.00284..$0.00432 fee_cost on $0.64..$1.52 notionals -- that is gas, and its bp figure is a 1/clip curve carrying zero information about swap cost",
+  "cost_provenance": "quote census data/round_trip_quote_census_20260917T190210Z.json, quoted.AERO, fee_tier 500, $6.00 clip (LARGEST ANSWERED; the $10 clip was REFUSED by the census's own 2*fee plausibility floor) + 4.05bp realised gas at a $10 clip",
+  "cost_readings_bp": {
+    "CENSUS": 14.3433,
+    "FLOOR": 14.05,
+    "MEDIAN": 17.08
+  },
+  "cost_used_bp": 14.3433,
+  "cost_used_key": "CENSUS",
+  "discovery_window": [
+    "2026-08-26T00:00:00Z",
+    "2026-09-23T06:03:28Z"
+  ],
+  "first_tick": "2026-08-26T17:02:38Z",
+  "generated_at": 1790159911.8761368,
+  "last_tick": "2026-09-23T06:03:27Z",
+  "median_gap_sec": 29.3,
+  "multiplicity": {
+    "best_bonferroni_p": 0.0408,
+    "best_raw_p": 0.00255,
+    "family_wise_alpha_per_test": 0.00313,
+    "p_any_under_null": 0.04,
+    "tests_in_family": 16
+  },
+  "overlaps_discovery_window": true,
+  "pre_registered": {
+    "alpha": "0.05 / tests_in_family (Bonferroni)",
+    "horizon_min": 60.0,
+    "metric": "long_accuracy on DISJOINT windows vs that sample's own h*",
+    "min_n_long": 30,
+    "signal": "ema_cross"
+  },
+  "signals": {
+    "BASELINE_always_long": {
+      "20.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.475,
+        "OVERLAPPING_n_long": 8752,
+        "fires": 2201,
+        "h_star_required_accuracy": 0.7024,
+        "h_star_sensitivity": {
+          "CENSUS": 0.7024,
+          "FLOOR": 0.6983,
+          "MEDIAN": 0.741
+        },
+        "long_accuracy": 0.5069,
+        "long_clears_h_star": false,
+        "long_gross_bp": 0.49,
+        "long_mde_pp_at_95": 3.06,
+        "long_net_bp": -13.85,
+        "long_p_one_sided_vs_coin": 0.36885,
+        "mean_abs_move_bp": 35.43,
+        "n_long": 722,
+        "n_signed": 720,
+        "n_unpairable": 1479,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.5083,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.34094,
+        "split_first_half_accuracy": 0.4986,
+        "split_n": [
+          361,
+          361
+        ],
+        "split_second_half_accuracy": 0.5152
+      },
+      "30.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.489,
+        "OVERLAPPING_n_long": 8940,
+        "fires": 1836,
+        "h_star_required_accuracy": 0.6502,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6502,
+          "FLOOR": 0.6471,
+          "MEDIAN": 0.6788
+        },
+        "long_accuracy": 0.5045,
+        "long_clears_h_star": false,
+        "long_gross_bp": 0.43,
+        "long_mde_pp_at_95": 3.47,
+        "long_net_bp": -13.92,
+        "long_p_one_sided_vs_coin": 0.43296,
+        "mean_abs_move_bp": 47.75,
+        "n_long": 561,
+        "n_signed": 560,
+        "n_unpairable": 1275,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.5054,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.41634,
+        "split_first_half_accuracy": 0.5071,
+        "split_n": [
+          280,
+          281
+        ],
+        "split_second_half_accuracy": 0.5018
+      },
+      "45.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.4969,
+        "OVERLAPPING_n_long": 9894,
+        "fires": 1319,
+        "h_star_required_accuracy": 0.6232,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6232,
+          "FLOOR": 0.6207,
+          "MEDIAN": 0.6467
+        },
+        "long_accuracy": 0.5071,
+        "long_clears_h_star": false,
+        "long_gross_bp": 0.82,
+        "long_mde_pp_at_95": 3.99,
+        "long_net_bp": -13.52,
+        "long_p_one_sided_vs_coin": 0.40409,
+        "mean_abs_move_bp": 58.21,
+        "n_long": 424,
+        "n_signed": 424,
+        "n_unpairable": 895,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.5071,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.40409,
+        "split_first_half_accuracy": 0.533,
+        "split_n": [
+          212,
+          212
+        ],
+        "split_second_half_accuracy": 0.4811
+      },
+      "60.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.5111,
+        "OVERLAPPING_n_long": 10056,
+        "fires": 958,
+        "h_star_required_accuracy": 0.6144,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6144,
+          "FLOOR": 0.612,
+          "MEDIAN": 0.6362
+        },
+        "long_accuracy": 0.5238,
+        "long_clears_h_star": false,
+        "long_gross_bp": 2.99,
+        "long_mde_pp_at_95": 4.49,
+        "long_net_bp": -11.36,
+        "long_p_one_sided_vs_coin": 0.20661,
+        "mean_abs_move_bp": 62.71,
+        "n_long": 336,
+        "n_signed": 336,
+        "n_unpairable": 622,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.5238,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.20661,
+        "split_first_half_accuracy": 0.5298,
+        "split_n": [
+          168,
+          168
+        ],
+        "split_second_half_accuracy": 0.5179
+      }
+    },
+    "donchian_breakout": {
+      "20.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.569,
+        "OVERLAPPING_n_long": 1269,
+        "fires": 783,
+        "h_star_required_accuracy": 0.6946,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6946,
+          "FLOOR": 0.6906,
+          "MEDIAN": 0.7318
+        },
+        "long_accuracy": 0.5575,
+        "long_clears_h_star": false,
+        "long_gross_bp": 4.24,
+        "long_mde_pp_at_95": 5.47,
+        "long_net_bp": -10.1,
+        "long_p_one_sided_vs_coin": 0.04805,
+        "mean_abs_move_bp": 36.85,
+        "n_long": 226,
+        "n_signed": 413,
+        "n_unpairable": 369,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.6029,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 2e-05,
+        "split_first_half_accuracy": 0.5575,
+        "split_n": [
+          113,
+          113
+        ],
+        "split_second_half_accuracy": 0.5575
+      },
+      "30.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.5856,
+        "OVERLAPPING_n_long": 1279,
+        "fires": 662,
+        "h_star_required_accuracy": 0.6477,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6477,
+          "FLOOR": 0.6447,
+          "MEDIAN": 0.6759
+        },
+        "long_accuracy": 0.5769,
+        "long_clears_h_star": false,
+        "long_gross_bp": 7.47,
+        "long_mde_pp_at_95": 6.1,
+        "long_net_bp": -6.87,
+        "long_p_one_sided_vs_coin": 0.02253,
+        "mean_abs_move_bp": 48.56,
+        "n_long": 182,
+        "n_signed": 342,
+        "n_unpairable": 319,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.5789,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.00205,
+        "split_first_half_accuracy": 0.6264,
+        "split_n": [
+          91,
+          91
+        ],
+        "split_second_half_accuracy": 0.5275
+      },
+      "45.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.5542,
+        "OVERLAPPING_n_long": 1337,
+        "fires": 548,
+        "h_star_required_accuracy": 0.6199,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6199,
+          "FLOOR": 0.6175,
+          "MEDIAN": 0.6428
+        },
+        "long_accuracy": 0.5177,
+        "long_clears_h_star": false,
+        "long_gross_bp": 2.12,
+        "long_mde_pp_at_95": 6.93,
+        "long_net_bp": -12.22,
+        "long_p_one_sided_vs_coin": 0.36818,
+        "mean_abs_move_bp": 59.81,
+        "n_long": 141,
+        "n_signed": 286,
+        "n_unpairable": 262,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.5245,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.22106,
+        "split_first_half_accuracy": 0.5714,
+        "split_n": [
+          70,
+          71
+        ],
+        "split_second_half_accuracy": 0.4648
+      },
+      "60.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.5751,
+        "OVERLAPPING_n_long": 1405,
+        "fires": 426,
+        "h_star_required_accuracy": 0.6073,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6073,
+          "FLOOR": 0.6051,
+          "MEDIAN": 0.6278
+        },
+        "long_accuracy": 0.5794,
+        "long_clears_h_star": false,
+        "long_gross_bp": 10.61,
+        "long_mde_pp_at_95": 7.33,
+        "long_net_bp": -3.73,
+        "long_p_one_sided_vs_coin": 0.04506,
+        "mean_abs_move_bp": 66.84,
+        "n_long": 126,
+        "n_signed": 241,
+        "n_unpairable": 185,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.5726,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.01415,
+        "split_first_half_accuracy": 0.5873,
+        "split_n": [
+          63,
+          63
+        ],
+        "split_second_half_accuracy": 0.5714
+      }
+    },
+    "ema_cross": {
+      "20.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.5152,
+        "OVERLAPPING_n_long": 66,
+        "fires": 147,
+        "h_star_required_accuracy": 0.7028,
+        "h_star_sensitivity": {
+          "CENSUS": 0.7028,
+          "FLOOR": 0.6987,
+          "MEDIAN": 0.7415
+        },
+        "long_accuracy": 0.5167,
+        "long_clears_h_star": false,
+        "long_gross_bp": 1.18,
+        "long_mde_pp_at_95": 10.62,
+        "long_net_bp": -13.16,
+        "long_p_one_sided_vs_coin": 0.44871,
+        "mean_abs_move_bp": 35.36,
+        "n_long": 60,
+        "n_signed": 117,
+        "n_unpairable": 30,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.5385,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.22985,
+        "split_first_half_accuracy": 0.5333,
+        "split_n": [
+          30,
+          30
+        ],
+        "split_second_half_accuracy": 0.5
+      },
+      "30.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.5797,
+        "OVERLAPPING_n_long": 69,
+        "fires": 134,
+        "h_star_required_accuracy": 0.6442,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6442,
+          "FLOOR": 0.6413,
+          "MEDIAN": 0.6718
+        },
+        "long_accuracy": 0.5932,
+        "long_clears_h_star": false,
+        "long_gross_bp": 9.27,
+        "long_mde_pp_at_95": 10.71,
+        "long_net_bp": -5.07,
+        "long_p_one_sided_vs_coin": 0.09626,
+        "mean_abs_move_bp": 49.72,
+        "n_long": 59,
+        "n_signed": 106,
+        "n_unpairable": 28,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.5849,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.04912,
+        "split_first_half_accuracy": 0.5517,
+        "split_n": [
+          29,
+          30
+        ],
+        "split_second_half_accuracy": 0.6333
+      },
+      "45.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.6575,
+        "OVERLAPPING_n_long": 73,
+        "fires": 120,
+        "h_star_required_accuracy": 0.6178,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6178,
+          "FLOOR": 0.6154,
+          "MEDIAN": 0.6403
+        },
+        "long_accuracy": 0.6531,
+        "long_clears_h_star": true,
+        "long_gross_bp": 18.63,
+        "long_mde_pp_at_95": 11.75,
+        "long_net_bp": 4.29,
+        "long_p_one_sided_vs_coin": 0.02219,
+        "mean_abs_move_bp": 60.87,
+        "n_long": 49,
+        "n_signed": 101,
+        "n_unpairable": 19,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.5743,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.08164,
+        "split_first_half_accuracy": 0.6667,
+        "split_n": [
+          24,
+          25
+        ],
+        "split_second_half_accuracy": 0.64
+      },
+      "60.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.7222,
+        "OVERLAPPING_n_long": 72,
+        "fires": 106,
+        "h_star_required_accuracy": 0.6097,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6097,
+          "FLOOR": 0.6075,
+          "MEDIAN": 0.6307
+        },
+        "long_accuracy": 0.7368,
+        "long_clears_h_star": true,
+        "long_gross_bp": 30.96,
+        "long_mde_pp_at_95": 13.34,
+        "long_net_bp": 16.62,
+        "long_p_one_sided_vs_coin": 0.00255,
+        "mean_abs_move_bp": 65.36,
+        "n_long": 38,
+        "n_signed": 87,
+        "n_unpairable": 19,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.5747,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.09899,
+        "split_first_half_accuracy": 0.7895,
+        "split_n": [
+          19,
+          19
+        ],
+        "split_second_half_accuracy": 0.6842
+      }
+    },
+    "rsi_reversal": {
+      "20.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.3191,
+        "OVERLAPPING_n_long": 2814,
+        "fires": 1334,
+        "h_star_required_accuracy": 0.7074,
+        "h_star_sensitivity": {
+          "CENSUS": 0.7074,
+          "FLOOR": 0.7032,
+          "MEDIAN": 0.747
+        },
+        "long_accuracy": 0.351,
+        "long_clears_h_star": false,
+        "long_gross_bp": -10.3,
+        "long_mde_pp_at_95": 5.25,
+        "long_net_bp": -24.65,
+        "long_p_one_sided_vs_coin": 1.0,
+        "mean_abs_move_bp": 34.58,
+        "n_long": 245,
+        "n_signed": 515,
+        "n_unpairable": 817,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.3631,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 1.0,
+        "split_first_half_accuracy": 0.3689,
+        "split_n": [
+          122,
+          123
+        ],
+        "split_second_half_accuracy": 0.3333
+      },
+      "30.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.3972,
+        "OVERLAPPING_n_long": 2845,
+        "fires": 1263,
+        "h_star_required_accuracy": 0.6499,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6499,
+          "FLOOR": 0.6468,
+          "MEDIAN": 0.6785
+        },
+        "long_accuracy": 0.4335,
+        "long_clears_h_star": false,
+        "long_gross_bp": -6.36,
+        "long_mde_pp_at_95": 5.77,
+        "long_net_bp": -20.71,
+        "long_p_one_sided_vs_coin": 0.97544,
+        "mean_abs_move_bp": 47.84,
+        "n_long": 203,
+        "n_signed": 417,
+        "n_unpairable": 845,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.4197,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.99958,
+        "split_first_half_accuracy": 0.4455,
+        "split_n": [
+          101,
+          102
+        ],
+        "split_second_half_accuracy": 0.4216
+      },
+      "45.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.4001,
+        "OVERLAPPING_n_long": 3124,
+        "fires": 821,
+        "h_star_required_accuracy": 0.6283,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6283,
+          "FLOOR": 0.6257,
+          "MEDIAN": 0.6528
+        },
+        "long_accuracy": 0.4586,
+        "long_clears_h_star": false,
+        "long_gross_bp": -4.63,
+        "long_mde_pp_at_95": 6.56,
+        "long_net_bp": -18.97,
+        "long_p_one_sided_vs_coin": 0.8681,
+        "mean_abs_move_bp": 55.9,
+        "n_long": 157,
+        "n_signed": 326,
+        "n_unpairable": 495,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.4387,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.98849,
+        "split_first_half_accuracy": 0.5,
+        "split_n": [
+          78,
+          79
+        ],
+        "split_second_half_accuracy": 0.4177
+      },
+      "60.0m": {
+        "OVERLAPPING_long_accuracy_point_estimate_only": 0.4431,
+        "OVERLAPPING_n_long": 3094,
+        "fires": 699,
+        "h_star_required_accuracy": 0.6023,
+        "h_star_sensitivity": {
+          "CENSUS": 0.6023,
+          "FLOOR": 0.6002,
+          "MEDIAN": 0.6218
+        },
+        "long_accuracy": 0.4552,
+        "long_clears_h_star": false,
+        "long_gross_bp": -6.28,
+        "long_mde_pp_at_95": 7.11,
+        "long_net_bp": -20.62,
+        "long_p_one_sided_vs_coin": 0.86932,
+        "mean_abs_move_bp": 70.11,
+        "n_long": 134,
+        "n_signed": 270,
+        "n_unpairable": 429,
+        "perfect_oracle_pays": true,
+        "signed_accuracy": 0.4259,
+        "signed_clears_h_star": false,
+        "signed_p_one_sided_vs_coin": 0.99378,
+        "split_first_half_accuracy": 0.4776,
+        "split_n": [
+          67,
+          67
+        ],
+        "split_second_half_accuracy": 0.4328
+      }
+    }
+  },
+  "symbol": "AERO-USDC",
+  "tape_span_hours": 661.01,
+  "ten_dollar_clip": {
+    "cost_pct": 0.0376,
+    "floor_pct": 0.1,
+    "status": "REFUSED BY THE CENSUS -- below the 2*fee floor; there is no $10 AERO cost"
+  },
+  "ticks": 11717,
+  "ticks_dropped_mixed_denomination": 0,
+  "warmup_ticks": 100,
+  "window_since": "2026-08-26T00:00:00Z",
+  "window_until": "2026-09-23T06:03:28Z"
+}
