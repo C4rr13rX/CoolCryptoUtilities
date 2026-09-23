@@ -20945,3 +20945,22 @@ necessary but NOT sufficient -- a restart into 2ba187f is also required before
 a scout receipt can be written. Same for [aca39497] criterion 4 and 87c2877,
 which p674 already named correctly. No restart was performed: a boot is 13 min,
 restarts cost money_button its live approval, and it is the operator's call.
+
+### Pass 675 (Dune), CAVEAT ON MY OWN HEADLINE, same pass -- the clip defect is REAL and mostly INERT
+
+I reported above that censoring moves the median clip of 4 of 58 symbols, led by
+AAVE-USDC 1.87x and BASELINE-USDC losing its only row. That holds for the CLIP
+TABLE. I had not asked whether those four ever reach the COST column, which is
+the only place a clip is spent. They mostly do not:
+
+    AAVE-USDC      REMOVED by stale_feed, last tick 92.4h ago -- never quoted
+    BASELINE-USDC  does not appear in the universe table at all
+    UNI-USDC       survives at $5.21; censored $5.3513   (+2.7%)
+    AERO-USDC      survives at $0.84; censored $0.8097   (-3.7%)
+
+The two large movers are filtered upstream; the two survivors move under 4% of
+clip. So the exemption comment IS wrong and the banner IS worth having -- it
+makes the choice auditable from the output, and it will catch the day a large
+mover is not stale-filtered -- but the shipped universe does not change and
+NOBODY SHOULD RE-PLAN A ROUTE ON THE 1.87x. Quote this paragraph, not the one
+above it.
