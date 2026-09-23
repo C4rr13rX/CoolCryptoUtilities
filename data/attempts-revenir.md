@@ -27480,3 +27480,137 @@ settled rows exceed $3, and zero reach $19.66. The whole $6-$200 clip sweep this
 item argues over is a MODEL EXTRAPOLATION beyond any fill we have ever made.
 
 -- Sage, pass 688, worker
+
+================================================================================
+ROUTE: POINT THE GHOST LANE AT DEEP POOLS INSTEAD OF THIN ONES  [83b4851f]
+  -- RE-AIMED, NOT CLOSED. The universe filter is NOT where the loss is.
+  -- The mechanism is one missing argument at trading/bot.py:2259. [71cafaca]
+================================================================================
+
+HYPOTHESIS AS GIVEN: the ghost lane's symbol mix is why no strategy clears the
+cost wall -- it accumulates evidence on thin tokens whose cost is a default, so
+the book is uninformative about the only venues cheap enough to be profitable.
+COMPLEMENT: the mix is a CONSEQUENCE, not a cause -- WETH-USDC does not generate
+signals, so pointing the lane at it yields nothing and the wall is the signal.
+
+KILL TEST, PRE-REGISTERED AND RUN FIRST: count OFFERS and REFUSALS per symbol
+over 7 days in trading_ops -- not completed round trips, which is what made the
+original measurement circular.
+
+    symbol         lattice-refused  edge-ban  arbitrated  ENTERED
+    AERO-USDC             1012        3309       2927        6
+    WETH-USDC              305         253        323        2
+    WETH-USDT              340         492        493        2
+    ETH-USDC               342         507        378        4
+    ETH-USDT               419         903        575        3
+    -- WETH/ETH FAMILY:   1406        2155       1769       11
+
+THE COMPLEMENT IS DEAD. 1769 arbitrations on the deep-pool family against AERO's
+2927 in the same window = 60%. The deep pairs are OFFERED, reach arbitration,
+and are refused downstream. "WETH is barely offered at all" is false.
+
+THE ITEM'S OWN PREMISE IS A FOSSIL AND I AM RETIRING IT. It contrasts
+BASECAT-USDC's 115 ghost round trips with WETH-USDC's 5. Measured:
+    BASECAT-USDC  36 ghost rows, span 2026-08-26 .. 2026-09-04, 2 trading_ops
+                  rows in the last 7 days. DEAD 19 DAYS.
+    WETH-USDC      6 ghost rows, span 2026-09-09 .. 2026-09-23, 893 trading_ops
+                  rows in the last 7 days. CURRENTLY THE ACTIVE ONE.
+(The 36-vs-115 gap is a two-books artifact: the item counted
+ghost_trade_snapshot, this counts trade_outcomes. The DATES are the point and
+they agree either way.) The evidence budget is not being misallocated NOW. It
+was misallocated in August and the book still carries it.
+
+EXPECTED EFFECT ON THE EVIDENCE RATE, as the item requires: restricting the
+universe would have cost rate and bought nothing, because the deep pairs are
+already in the universe and already being offered. NO FILTER CHANGE WAS MADE.
+
+--------------------------------------------------------------------------------
+CRITERION 3 -- AERO'S BEAT-RATE WITH OFF-TAPE ROWS REMOVED: IT SURVIVES.
+--------------------------------------------------------------------------------
+Tape envelope [0.456316, 0.731881] over 12593 market_stream ticks.
+    ALL      n=50  beat 17.0bp = 56.0%
+    ON-TAPE  n=48  beat 17.0bp = 56.2%
+    OFF-TAPE n= 2  removed -- and they are EXACTLY the pair p682 predicted:
+        entry=0.436805 exit=1.140000  (+160.99%)
+        entry=1.140000 exit=0.513839  (-54.93%)  <- inherits the fabricated exit
+So AERO is the one census-priced symbol with a real majority beat-rate, and
+stripping the fabricated rows does not touch it.
+
+BUT THE BEAT-RATE IS NOT AN EDGE, AND THIS IS THE PART THAT MATTERS:
+    AERO on-tape n=48: gross mean +8.78bp, median +33.43bp
+    EXCESS vs 17.0bp: mean -8.22bp/trip, median +16.43bp
+    beat 56.2%, avg win +66.5bp, avg loss -104.3bp, payoff 0.64:1
+    break-even payoff at 56.2% is 0.78:1 -- it is short by 0.14.
+A POSITIVE MEDIAN WITH A NEGATIVE MEAN. The -8.22bp independently reproduces the
+standing record's -8.88bp ("a 65% signal still loses 9bp") by a different route
+and a different cost. AERO is NOT closed on beat-rate; it IS closed on
+expectancy. WIN RATE WAS THE WRONG STATISTIC AND IT IS THE ONE THE ITEM ASKED
+FOR.
+
+CAVEAT ON METHOD: this is an ENVELOPE test, which the standing record already
+warns is WEAKER than a nearest-tick test. The criterion specified the envelope.
+A nearest-tick re-run could only remove MORE rows, never fewer.
+
+--------------------------------------------------------------------------------
+CRITERION 4 -- THE WETH ROWS, INDIVIDUALLY. n=6 (a sixth landed 2026-09-23).
+--------------------------------------------------------------------------------
+Fee rate backed out of each row's OWN arithmetic (notional = gross/return), so
+no cost model is involved:
+
+    date UTC      ret_bp    gross      fee       net      notional  IMPLIED FEE
+    09-09 16:20   -80.56  -0.027690  0.015856  -0.043547   $3.44      46.1 bp
+    09-09 16:21   -73.05  -0.015034  0.012077  -0.027110   $2.06      58.7 bp
+    09-16 15:41   +7.71   +0.004237  0.025344  -0.021106   $5.49      46.1 bp
+    09-16 16:12   +3.02   +0.001657  0.025340  -0.023683   $5.49      46.1 bp
+    09-18 23:07   -17.91  -0.009837  0.025334  -0.035171   $5.49      46.1 bp
+    09-23 18:20   -12.06  -0.006284  0.024246  -0.030530   $5.21      46.5 bp
+  strategies: ema_cross x2, rsi_reversal@1w x2, donchian_breakout@12h,
+  rsi_reversal. Exit reasons: drawdown 5m x2, timed-exit x4.
+  median implied fee 46.1bp. AERO by the same method, n=50: median 65.0bp.
+
+TWO OF THE SIX ARE GROSS-POSITIVE AND NET-NEGATIVE ON FEE ALONE.
+
+THE SAMPLE CANNOT CLOSE THE ROUTE IN EITHER DIRECTION AND I WILL NOT PRETEND IT
+CAN. n=6. The item's 0.0%-beat arithmetic is CORRECT -- 0 of 6 clear 8.8bp, best
+is +7.71 and it misses by 1.1bp -- but "0 of 6" at a threshold the best row
+misses by ONE basis point is not a closed route, it is an unmeasured one.
+
+--------------------------------------------------------------------------------
+WHAT THE KILL TEST ACTUALLY FOUND -- filed as [71cafaca], assigned to Cove
+--------------------------------------------------------------------------------
+trading/bot.py:2259:   return roundtrip_cost_rate(notional)      # NO SYMBOL
+
+services/roundtrip_cost.py:435 has accepted an optional symbol argument all
+along. Lines 458-460: the census path returns the symbol's measured rate; the
+symbol-less path returns max(rate, DEFAULT_RATE) -- a FLOOR that WETH's real
+cost sits underneath. Its own docstring says so: "On a symbol somebody DID
+measure the floor is the bug: it would charge WETH 31.87bp when the pool charges
+2.01bp, which is precisely the over-charge this function was changed to stop."
+
+At the $5.49 notional the WETH rows actually used:
+    symbol         blind (what bot.py gets)   with symbol    error
+    WETH-USDC              39.24bp              9.42bp    4.17x OVER
+    AERO-USDC              39.24bp             17.64bp    2.22x OVER
+    CBBTC-USDC             39.24bp             18.33bp    2.14x OVER
+    VIRTUAL-USDC           39.24bp            173.89bp    4.4x  UNDER
+
+IT CUTS BOTH WAYS. The blind default OVERCHARGES the deep pairs ~4x and
+UNDERCHARGES the thin ones ~4x. The ghost book systematically flatters the
+tokens that cannot pay and punishes the ones that can -- which is the original
+hypothesis's conclusion reached through the cost model instead of the universe
+filter. services/atf_static_strategy.py:974 ALREADY passes the symbol, so two
+lanes on this path disagree silently, the exact failure bot.py:2253-2256 warns
+about in its own comment.
+
+UNRECONCILED, AND THE NEXT AGENT MUST CLOSE IT BEFORE SHIPPING ANYTHING: the
+booked fee is 46.1bp; roundtrip_cost_rate(5.49) returns 39.24bp. 6.9bp
+unexplained. Candidates: an env override, a per-leg charge, or my notional
+inference. I did not close it and nothing should be changed until someone does.
+Census prices only 9 tokens (AAVE AERO CBBTC CBETH COMP DRB VIRTUAL VVV WETH) --
+everything else stays blind even after a fix.
+
+VERDICT: the CLIP half of this item was already closed NEGATIVE by its own
+measurement and was not re-run. The UNIVERSE half is RE-AIMED: the filter is not
+the defect, the token-blind fee call is. NOT closed -- handed to [71cafaca].
+
+-- Echo, pass 688, senior
