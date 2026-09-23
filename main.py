@@ -7,6 +7,15 @@ import sys
 import time
 from typing import Any, Dict, Iterable, Optional
 
+# Export PYTHONUTF8 before anything spawns a child. On Windows the default
+# text encoding is cp1252, and Keras' vocabulary writer uses it -- which killed
+# every model save, which left the market-stream event loop rebuilding a
+# TensorFlow baseline on every tick, which collapsed the price feed, which
+# stopped ghost trading. See services/utf8_mode.py for the measurements.
+from services.utf8_mode import ensure_utf8_mode
+
+ensure_utf8_mode()
+
 from web3 import Web3
 from router_wallet import CHAINS, UltraSwapBridge, POA_MIDDLEWARE, ERC20_ABI
 from cache import CacheBalances, CacheTransfers
@@ -609,6 +618,126 @@ def menu():
             print("Invalid selection.")
 
 
+#: Holds the singleton lease for the lifetime of the process. Module-level on
+#: purpose: the OS releases a msvcrt/flock lock when the handle closes, so the
+#: handle has to outlive ``run_action`` or the guard would unlock immediately.
+_PRODUCTION_LEASE: Any = None
+
+
+def _production_cmdline(parts: Iterable[Any]) -> bool:
+    joined = " ".join(str(part) for part in parts)
+    return "main.py" in joined and "start_production" in joined
+
+
+def _production_ancestor_pid() -> Optional[int]:
+    """pid of the nearest ancestor that is itself a ``start_production`` process.
+
+    The live instance runs as a parent/child pair with an identical command line
+    (measured 2026-09-23: pid 3584 -> pid 20452, same second, same argv). A child
+    of a guarded instance is the SAME instance, so it must inherit the guard
+    rather than refuse against its own parent -- that would take production down.
+    """
+    try:
+        import psutil  # type: ignore
+
+        node = psutil.Process(os.getpid())
+        while True:
+            parent = node.parent()
+            if parent is None:
+                return None
+            if _production_cmdline(parent.cmdline()):
+                return parent.pid
+            node = parent
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _foreign_production_instance() -> Optional[tuple]:
+    """A live ``start_production`` process that is NOT part of our own tree.
+
+    Seven call sites launch ``main.py --action start_production`` (production
+    supervisor, main_keeper, live_watchdog, w1z4rd_watchdog, start_ghost_stack,
+    monitoring_guardian.recovery, web.opsconsole.manager). Each carries its own
+    "is it already running" cmdline scan, and a scan-then-spawn is not atomic:
+    two launchers that scan in the same second both see nothing and both spawn.
+    Measured 2026-09-23: four production PIDs in two independent parent-child
+    pairs, nine minutes apart.
+
+    The lease below is the real guard, but it cannot see an instance that
+    started before this code existed -- production serves its boot-time code, so
+    the running instance holds no lease. This scan catches that one, and returns
+    ``None`` for our own parent/child pair so an instance never refuses itself.
+    """
+    try:
+        import psutil  # type: ignore
+    except Exception:  # noqa: BLE001 - psutil absent means we fall back to the lease alone
+        return None
+
+    me = os.getpid()
+    kin = {me}
+    try:
+        # Walk up while the ancestor is itself a production process: a re-exec or
+        # respawn of this same instance is us, not a competitor. Stop at the first
+        # non-production ancestor so the launcher's own tree is not swallowed.
+        node = psutil.Process(me)
+        while True:
+            parent = node.parent()
+            if parent is None or not _production_cmdline(parent.cmdline()):
+                break
+            kin.add(parent.pid)
+            node = parent
+        for child in psutil.Process(me).children(recursive=True):
+            kin.add(child.pid)
+    except Exception:  # noqa: BLE001 - a partial kin set only makes the guard stricter
+        pass
+
+    for proc in psutil.process_iter(["pid", "ppid", "cmdline"]):
+        pid = proc.info.get("pid")
+        if pid in kin or proc.info.get("ppid") in kin:
+            continue
+        try:
+            parts = proc.info.get("cmdline") or []
+        except Exception:  # noqa: BLE001
+            continue
+        if _production_cmdline(parts):
+            return (pid, " ".join(str(part) for part in parts))
+    return None
+
+
+def _acquire_production_singleton() -> bool:
+    """True if this process may start production; False (with a printed refusal)
+    if another instance already holds it."""
+    global _PRODUCTION_LEASE
+
+    inherited = _production_ancestor_pid()
+    if inherited is not None:
+        print(f"[production] singleton inherited from pid {inherited} (same instance).")
+        return True
+
+    foreign = _foreign_production_instance()
+    if foreign:
+        pid, cmdline = foreign
+        print(f"[production] REFUSED: production is already running as pid {pid}.")
+        print(f"[production]   cmdline: {cmdline}")
+        print("[production] refusing to start a second instance; stop that one first.")
+        return False
+
+    try:
+        from services.guardian_lock import GuardianLease
+    except Exception as exc:  # noqa: BLE001 - never block a start on the guard's own import
+        print(f"[production] singleton lease unavailable ({exc}); continuing unguarded.")
+        return True
+
+    lease = GuardianLease("production_singleton", timeout=0)
+    if not lease.acquire():
+        print("[production] REFUSED: another process holds the production singleton lease")
+        print(f"[production]   lease file: {lease.lock_path}")
+        print("[production] refusing to start a second instance; stop that one first.")
+        return False
+    _PRODUCTION_LEASE = lease
+    return True
+
+
 def run_action(action: str, payload: Dict[str, Any] | None = None, *, stay_alive: bool = False) -> None:
     action = action.lower()
     action_def = WALLET_ACTIONS.get(action)
@@ -634,6 +763,10 @@ def run_action(action: str, payload: Dict[str, Any] | None = None, *, stay_alive
             _bridge_quote(payload, bridge)
         return
     if action == "start_production":
+        # Cross-process singleton, BEFORE anything heavy starts. Two concurrent
+        # instances make every zero in this repo unfalsifiable.
+        if not _acquire_production_singleton():
+            return
         # Start resource governor early — it must be running before anything heavy starts
         try:
             from services.resource_governor import governor
