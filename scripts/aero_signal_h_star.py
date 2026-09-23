@@ -83,14 +83,26 @@ decomposition cannot silently drift from the constant that killed WETH.
 h* MOVES WITH COST and the whole lead lives or dies on it, so all three
 defensible cost readings are printed on every run rather than one chosen:
 
-    FLOOR    14.05bp = 10.00 (the census's own 2*fee_tier floor) + 4.05 gas
-    CENSUS   14.34bp = 10.2933 ($6.00, largest answered clip)     + 4.05 gas
-    MEDIAN   17.08bp = 13.03  ($2.00, the census's median clip)   + 4.05 gas
+    FLOOR         14.05bp = 10.00   (the census's own 2*fee_tier floor) + gas
+    CENSUS        14.34bp = 10.2933 ($6.00, largest answered clip)      + gas
+    QUOTED_10USD  14.46bp = 10.41   ($10.00, MEASURED, Sage pass 679)   + gas
+    MEDIAN        17.08bp = 13.03   ($2.00, the census's median clip)   + gas
 
-The verdict uses CENSUS, because that is the reading the lead was repriced at
-and changing it now would be choosing the bar after seeing the number.  The
-other two are the sensitivity band, and a cell that clears CENSUS but fails
-MEDIAN is reported as MARGINAL, never as CONFIRMED.
+UPDATE, same pass.  QUOTED_10USD did not exist when this file was first
+written.  Sage measured it for [9793d252] while this item was open: USDC->AERO
+->USDC at a $10 clip with BOTH legs pinned to the same tier, 3 repeats 2s apart
+and identical to the basis point, giving a tier grid of 100 = 9934.45bp (dust),
+500 = 10.41bp, 3000 = 76.61bp, 10000 = 641.64bp.  That is the $10 reading the
+census refused to publish, it agrees with the census's $6 clip to 1.1%, and it
+is an INDEPENDENT source -- which is the only thing that makes a cost number
+here trustworthy.  It also disposes of the briefings' "AERO 0.64-4.35%": 641.64bp
+is the tier-10000 pool, so that range was a WRONG-POOL ARTIFACT, never a cost.
+
+THE VERDICT USES QUOTED_10USD, because the item asks in terms for a $10 clip
+and because it is DEARER than the CENSUS reading the lead was repriced at.
+Moving to a STRICTER bar after seeing the number is not choosing the bar to fit
+it; moving to a looser one would be.  A cell that clears the verdict cost but
+fails the dearer MEDIAN reading is reported MARGINAL, never CONFIRMED.
 
 This script places no trade, changes no gate and produces no tx hash.  If it
 ever prints CONFIRMED, the next step is the capital gate [74a12c84], which
@@ -142,10 +154,24 @@ assert abs((_WETH_QUOTED_BP + GAS_BP) - _WETH_COST_ALL_IN_BP) < 0.005, (
 AERO_QUOTE_READINGS_BP = {
     "FLOOR": 10.0000,   # census plausibility floor, 2 * fee_tier 500 / 1e4
     "CENSUS": 10.2933,  # $6.00 clip -- the LARGEST clip the census answered
+    # Sage, pass 679, [9793d252]: USDC->AERO->USDC at a $10 clip, BOTH legs
+    # PINNED to the same tier, 3 repeats 2s apart and IDENTICAL to the basis
+    # point.  Tier grid: 100 = 9934.45bp (dust pool), 500 = 10.41bp,
+    # 3000 = 76.61bp, 10000 = 641.64bp.  This is the $10 reading the census
+    # refused to publish, measured independently and agreeing with it to 1.1%.
+    # It also kills the briefings' "AERO 0.64-4.35%": 641.64bp is the tier-10000
+    # pool, so that figure is a WRONG-POOL ARTIFACT, not a cost.
+    "QUOTED_10USD": 10.4100,
     "MEDIAN": 13.0300,  # $2.00 clip -- the census's own median clip
 }
 AERO_COSTS_BP = {k: round(v + GAS_BP, 4) for k, v in AERO_QUOTE_READINGS_BP.items()}
-VERDICT_COST_KEY = "CENSUS"
+
+#: The item demands the cost come from a quote census AT THE $10 CLIP.  Until
+#: pass 679 no such reading existed (the census refused its own), so this file
+#: shipped with CENSUS.  It now uses the measured $10 reading, which is the
+#: literal criterion AND is DEARER than the census figure -- moving to a
+#: STRICTER bar after seeing the number is not choosing the bar to fit it.
+VERDICT_COST_KEY = "QUOTED_10USD"
 
 #: The census asked $10 and threw its own answer away.  Kept as data so no
 #: later pass "finds" a $10 AERO cost by reading the artifact carelessly.
@@ -224,10 +250,13 @@ def run(symbol: str, since: float, until: float, horizons_min: List[float]) -> D
         "cost_used_key": VERDICT_COST_KEY,
         "cost_used_bp": AERO_COSTS_BP[VERDICT_COST_KEY],
         "cost_provenance": (
-            "quote census data/round_trip_quote_census_20260917T190210Z.json, "
-            "quoted.AERO, fee_tier 500, $6.00 clip (LARGEST ANSWERED; the $10 "
-            "clip was REFUSED by the census's own 2*fee plausibility floor) "
-            "+ %.2fbp realised gas at a $10 clip" % GAS_BP
+            "%.4fbp quoted (%s) + %.2fbp realised gas at a $10 clip. "
+            "QUOTED_10USD = Sage pass 679 [9793d252], USDC->AERO->USDC at a $10 "
+            "clip pinned to tier 500, 3 repeats identical to the bp. CENSUS = "
+            "data/round_trip_quote_census_20260917T190210Z.json quoted.AERO at "
+            "the $6.00 clip, the largest the census ANSWERED -- it asked $10 "
+            "and REFUSED its own answer under the 2*fee plausibility floor."
+            % (AERO_QUOTE_READINGS_BP[VERDICT_COST_KEY], VERDICT_COST_KEY, GAS_BP)
         ),
         "ten_dollar_clip": AERO_TEN_DOLLAR_CLIP,
         "cost_is_not_from_the_live_book": (
@@ -379,9 +408,11 @@ def main() -> int:
     print("cost used %.4fbp (%s) = %.4fbp quoted + %.2fbp gas"
           % (res["cost_used_bp"], res["cost_used_key"],
              AERO_QUOTE_READINGS_BP[VERDICT_COST_KEY], GAS_BP))
-    print("cost band  FLOOR %.2f / CENSUS %.2f / MEDIAN %.2f bp"
-          % (AERO_COSTS_BP["FLOOR"], AERO_COSTS_BP["CENSUS"], AERO_COSTS_BP["MEDIAN"]))
-    print("$10 clip   %s" % AERO_TEN_DOLLAR_CLIP["status"])
+    print("cost band  %s bp"
+          % " / ".join("%s %.2f" % (k, v) for k, v in AERO_COSTS_BP.items()))
+    print("$10 clip   census: %s" % AERO_TEN_DOLLAR_CLIP["status"])
+    print("           measured: %.2fbp quoted, tier 500, Sage p679 [9793d252]"
+          % AERO_QUOTE_READINGS_BP["QUOTED_10USD"])
     print("")
     if "verdict" in res:
         print(res["verdict"])
