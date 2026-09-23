@@ -20174,16 +20174,32 @@ table** to build a ppid map, and it holds the GIL while it does.
 `GOVERNOR_SAMPLE_INTERVAL` defaults to **2 seconds**, so this ran **5x more
 often than the GC ever did**.
 
-**Measured** against live production pid 6340, 388 processes on the box, 1
-descendant, n=30: median **40.3 ms**, p90 **372.2 ms**, max **521.8 ms** per
-walk. At the 2s cadence that is a **2.01% GIL duty cycle at the median and
-18.6% at p90**. Pre-registered kill threshold was "under 1% and I am wrong";
-it is 2.01%, so the hypothesis stands.
+**⚠ I KILLED MY OWN HEADLINE NUMBER LATER IN THE SAME PASS. READ THIS PART, NOT
+THE COMMIT BODY OF `750ead6`, WHICH IS SUPERSEDED.**
 
-**But keep it in proportion — this is NOT the missing explanation.** The GC that
-`f7cb718` removed was measured at a 9.8% duty cycle. This is ~a fifth of that at
-the median and about twice it at the tail. **74.4% of loop polls blow the
-budget; a 2% duty cycle cannot produce that.** A third holder is still unnamed.
+A first run at **n=30** gave a median 40.3 ms and I reported a **2.01% duty
+cycle**. Re-measured against the *same* live pid 6340, 375 processes, at
+**n=100**: min 9.5, **median 14.2 ms**, p75 21.6, p90 40.4, **p99 344.4 ms**.
+That is **0.71% duty cycle at the median**, 1.14% at the mean, 2.02% at p90.
+**The 40.3 ms "median" was the p90 of the real distribution** — 30 samples into
+a heavy right tail while six agents loaded the box. **Do not quote 2.01%.**
+
+My pre-registered kill threshold was "under 1% and I am wrong." At the median it
+is 0.71%, so **the claim as I wrote it is dead.** This is the same error Bay
+warned about in p672 for py-spy bursts — a small sample off a skewed
+distribution reads the tail as the centre — committed 24 hours later with a
+different instrument. **Any duty-cycle number on this box needs n≥100 and a
+quoted p99, and it is load-dependent besides.**
+
+**What survives is a TAIL fix, not a median fix.** p99 is **344 ms** of
+uninterruptible GIL, and it now fires on **1 sample in 15** instead of every
+one. That is worth keeping and it is a much smaller claim than the one I made.
+
+**Proportion — this was never the missing explanation.** The GC that `f7cb718`
+removed was 9.8%. Together the two governor fixes are **~10.5%**, not the ~12%
+I first filed. **74.4% of loop polls blow the budget; 10.5% cannot produce
+that.** A third holder is unnamed **and may not exist** — see [de72daa8], which
+permits "no single holder, the residual is await starvation" as the answer.
 
 **Why throttling is safe:** all seven consumers of `_our_rss_mb` (≈389, 470,
 559, 645, 655) read the **cached** field under `_lock`, never a fresh reading,
@@ -20193,7 +20209,8 @@ at all — `_CRITICAL_MEM` and `_EMERGENCY_MEM` both branch on `mem` from
 `our_rss` is the RSS-pressure GC, which fired **zero times in 40,892** governor
 log lines (Bay, p672).
 
-**Fix:** `750ead6`, `services/resource_governor.py` only, +40/-11. The walk runs
+**Fix:** `750ead6` (+ `5590ec1`, which corrects the figure in the comment),
+`services/resource_governor.py` only, +40/-11 then +15/-7. The walk runs
 on `GOVERNOR_RSS_SCAN_SEC` (default 30) and the previous reading is carried
 forward between scans.
 
