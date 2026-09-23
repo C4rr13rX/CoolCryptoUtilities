@@ -24042,3 +24042,77 @@ Consistent with the cleaned ghost book at net -0.0875%, 30.8% net win.
 **Where the evidence points instead: ENTRY QUALITY.** Both books are gross-negative
 before fees; the cleaned ghost book has no usable net-positive symbol; the live book
 loses on direction with fees zeroed.
+
+## Pass 682 (Bay, worker) -- A FROZEN FEED IS BOOKED AS A FLAT ROUND TRIP, AND IT IS STILL RUNNING
+
+**Route:** cross-verified Kite's p682 `rsi_reversal@5d` finding by row id (they
+asked for the tie-out and explicitly declined to verify their own work), then
+generalised it. **Verdict: OPEN and CURRENT.** Filed **[e44d880d]**.
+
+Of **266** `trade_outcomes` rows with both prices, **15 (5.6%) have
+`entry_price == exit_price` EXACTLY**. All `wallet='ghost'`. `gross_profit` sums
+to **exactly +0.0000**; net **-0.2473**, pure cost.
+
+### The no-op complement, pre-registered and REFUTED
+
+Pre-registered: held for *seconds* = harmless no-ops, only the t-test needs
+fixing; held *long* = the feed froze. **15 of 15 held well over a minute** --
+shortest **13.4 min**, longest **1160.2 min = 19.3 hours**, median ~24 min.
+Exit reasons ordinary: `timed-exit` 10, `confidence_drop` 4, `negative_margin` 1.
+
+    09-02 LIQUIDBGT  141.9 min   09-11 PUMP      15.5 min
+    09-04 GRASS     1160.2 min   09-11 PUMP      24.7 min
+    09-04 COMP        97.6 min   09-11 PUMP      17.3 min
+    09-05 COMP        66.9 min   09-15 DRB       19.7 min
+    09-05 MOONBASE    63.2 min   09-15 DRB       14.5 min
+    09-06 JITOSOL     25.1 min   09-15 DRB       13.4 min
+    09-06 JITOSOL     63.9 min   09-22 ALIGN     16.0 min
+    09-10 PUMP        17.9 min
+
+### The price PERSISTS ACROSS ROUND TRIPS -- the load-bearing fact
+
+**PUMP-USDC prints the identical `1.022046762e-07` on FOUR round trips spanning
+09-10 16:45 -> 09-11 08:33, NEARLY SIXTEEN HOURS.** JITOSOL prints
+`100.937663393985` on two trips two hours apart; DRB prints `0.0001663` on three
+over thirty minutes. One stale value sits in the price path for hours while
+positions open and close on it. **This is NOT `market_stream` going quiet --
+that yields no price at all. Something CACHES a last-known price and serves it
+as current. The file and line were NOT found; that is criterion 2 on the item.**
+
+### Spread: SEVEN named strategies, not one
+
+symbols PUMP 4, DRB 3, COMP 2, JITOSOL 2, LIQUIDBGT/GRASS/MOONBASE/ALIGN 1 each.
+strategies `unclassified` 4, `rsi_reversal@5d` 3, `obv_accumulation@1w` 2,
+`obv_accumulation@1d` 2, `obv_accumulation@5d` 1, `donchian_breakout@12h` 1,
+`ema_cross@3d` 1, none 1.
+
+### Where it compounds, and the tie-out that proves it
+
+gross exactly 0.0 => **zero-variance sample** => the cost-aware t-test at
+`trading/scheduler.py:600` divides by it. Kite traced `rsi_reversal@5d`
+(t=-92550) to **1020 candidate-drops in 7 days across >=8 symbols including
+ETH-USDC**, the cheapest pair. **Tied out by row id (Bay, this pass):**
+
+    2:DRB-USDC:878e2d6474d64d1d83a6ef35c65d9ec4:exit:1  09-15 23:25  hold 19.7 min
+    2:DRB-USDC:7b8f7705021e4950992d383562a62764:exit:1  09-15 23:41  hold 14.5 min
+    2:DRB-USDC:8e1bae1c08d64dd1b56cad98f2e55674:exit:1  09-15 23:55  hold 13.4 min
+
+all `entry=exit=0.0001663`, gross `0.0`, net ~`-0.02534`, reason `timed-exit`.
+*One discrepancy reported rather than smoothed:* Kite said n=4 of which 3 null;
+`trade_outcomes` holds **exactly 3** rows for that strategy. Kite's 4 is most
+likely the pooled count. Conclusion untouched.
+
+**The t-test DESIGN IS GOOD** -- it compares return against that symbol's
+measured round-trip cost, not against zero. **The defect is the sample. Exclude
+zero-variance samples; do NOT weaken the gate.**
+
+### It is current, and it is NOT the other artifact
+
+**Newest frozen row 2026-09-22, and there is NO GUARD.** Do not conflate with
+[922c22af] (contaminated ENTRY prices, stops 2026-09-04, already guarded by
+`services/entry_price_corroboration.py` at `trading/bot.py:9262`). Different
+fault, different remedy.
+
+This is what the feed-dead work does when it reaches the money path: **not a
+gap -- a confident flat trade**, which becomes zero-variance evidence, which
+bans a strategy on eight symbols.
