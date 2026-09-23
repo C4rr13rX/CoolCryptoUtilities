@@ -27392,3 +27392,91 @@ their own, caught by the other. Three agents, three instruments, five moved clai
 and nobody defended a number they had already committed.
 
 -- Echo, pass 687, senior
+
+================================================================================
+PASS 688 (Sage, worker) -- [9229165a] THE CLIP IS BOXED.
+ROUTE CLOSED: (ii) MORE CAPITAL. It buys 2.06bp and the shortfall is ~9-11bp.
+ROUTE PICKED: (iii) A CHEAPER ROUTE, and the target is SLIPPAGE, not fees.
+================================================================================
+
+CRITERION 1 -- RECONCILE THE MODEL AGAINST THE CHAIN. There is nothing to
+reconcile. THEY ARE THE SAME DATA, and the item's "the chain is 13x my modelled
+floor" is an artifact of comparing two different clips.
+
+    median(fee_cost) over the 18 closed live rows   = 0.004047008
+    services/roundtrip_cost.py:117 DEFAULT_FIXED_USD = 0.004047007887550228
+    data/round_trip_quote_census_20260917T190210Z.json :: measured_gas_context
+      source: "trade_outcomes.fee_cost where details.mode == 'live'; gas only"
+      n_live_rows: 22   median_round_trip_usd: 0.004047007887550228
+
+Identical to nine decimal places. The model's fixed leg IS the chain's median
+fee. The "55.5bp chain floor" is those same rows at their own median notional of
+$0.7500, where the census's own table says gas ALONE is 53.96bp; observed
+aggregate is 55.47bp (fees 0.101452 / notional 18.2910). 55.5/4.14 = 13.4x and
+19.66/0.75 = 26.2x -- the 13x is the clip ratio flowing through FIXED/n.
+
+    WHICH SHOULD THE LOOP PLAN AGAINST: NEITHER AS STATED. Plan against
+    FIXED/n + pool(symbol,n) + SLIPPAGE, with the slippage term written down.
+
+CRITERION 5 -- THE LOAD-BEARING CONSTANT. ANSWERED, AND IT IS THE GOOD ANSWER.
+0.004047 is MEASURED, not a hardcoded guess: median of fee_cost over 22 live-mode
+rows, census stamped 2026-09-17T19:02:10Z. It is not stale gas from a different
+regime -- it is this regime, from these fills. It is therefore also NOT an
+instrument independent of them, which is why criterion 1 could not be satisfied
+as written.
+
+CRITERION 4 -- WETH GHOST ROWS PER STRATEGY. THE "SAY SO" BRANCH FIRES.
+No strategy has enough WETH rows to have a median. Total closed ghost WETH rows
+across all strategies and both quote legs: EIGHT.
+
+    WETH-USDC 6 + WETH-USDT 2 = 8 closed ghost rows, lifetime
+    ema_cross             n=2  median -76.80bp  win   0.0%
+    rsi_reversal@1w       n=2  median  +5.36bp  win 100.0%
+    donchian_breakout@12h n=2  median -26.70bp  win   0.0%
+    rsi_reversal          n=2  median +21.93bp  win  50.0%
+
+n=2 is not a median, it is two numbers. This is [ceadb8da]'s finding too: the
+evidence budget is spent where the cost is unmeasured. NOTHING can be concluded
+about a WETH strategy from this book, in either direction.
+
+CRITERION 6 -- STATE THE COMPLEMENT AND PICK ONE. I close (i) and (ii) and pick
+(iii). The new number is the one that closes (ii):
+
+    THE AMORTISATION LEVER IS 96.2% ALREADY SPENT AT THE CURRENT WALLET.
+    gas bp by clip: $0.75 -> 53.96 | $3 -> 13.49 | $6 -> 6.75 | $19.66 -> 2.06
+                    $50 -> 0.81 | $100 -> 0.40 | $200 -> 0.20 | $1000 -> 0.04
+    From $0.75 to $19.66 we have ALREADY banked 51.90bp.
+    From $19.66 to INFINITE CAPITAL there is 2.06bp LEFT. EVER.
+
+(i) A STRATEGY WHOSE MEDIAN WETH RETURN BEATS THE FLOOR -- CLOSED, no strategy
+    has more than n=2 on WETH. Cannot be evaluated, let alone cleared.
+(ii) MORE CAPITAL -- CLOSED, AND THIS CORRECTS THE ITEM I WAS GIVEN. The item
+    framed (iv) as "not reachable without funding". FUNDING DOES NOT OPEN THE
+    BOX. Infinite capital buys 2.06bp. The irreducible WETH floor at ANY wallet
+    size is pool 2.08bp + live-measured round-trip slippage 13.5bp = 15.58bp,
+    and gas is the only term capital touches. The best open WETH positive on
+    record (p686, 30-min reversion, +2.52bp net median at MODEL cost, which
+    excludes slippage) implies gross ~4.6-6.6bp -- a 9-11bp shortfall against
+    15.58. THE OPERATOR-ACTIONABLE NUMBER IS THEREFORE: THERE IS NO WALLET SIZE
+    THAT CLEARS THIS. Do not ask for funding on this argument.
+(iii) A CHEAPER ROUTE -- PICKED, AND THE TARGET IS NAMED. SLIPPAGE IS 13.5 OF
+    THE 15.58bp IRREDUCIBLE FLOOR = 86.6%. Fee tier and gas are together 13.4%.
+    Any cheaper-route work that is not aimed at slippage is aimed at a seventh
+    of the problem. The 13.5bp figure is a repo-confirmed prior (n=29, agrees
+    with the module to 10 decimal places, attempts-revenir.md:10174) -- it is
+    NOT my estimate -- but it is measured at a $0.75 clip and slippage is the
+    one term that GROWS with size, so re-measuring it at $6-20 is the first
+    step and may well close (iii) too.
+(iv) THE BOX IS REAL -- NOT CLOSED, and now stronger than the item stated it:
+    real at EVERY wallet size, not just this one.
+
+STANDING CONDITION ON ALL OF THE ABOVE, measured this pass before I read the
+item: the live lane has written ZERO rows in 432.7 hours (last live row
+2026-09-05T21:00:46Z, now 2026-09-23T21:40:40Z). Every number here is about a
+lane that is not currently trading.
+
+UNTESTED BY A FACTOR OF 6.5x: max settled live notional is $3.0000. ZERO of 18
+settled rows exceed $3, and zero reach $19.66. The whole $6-$200 clip sweep this
+item argues over is a MODEL EXTRAPOLATION beyond any fill we have ever made.
+
+-- Sage, pass 688, worker
