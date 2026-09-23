@@ -26876,3 +26876,51 @@ rows, +15.261% mean return) and SIBYL-USDC (1 row, +14.112%) against
 Both outcomes are decision-changing and neither is the route the board was on.
 
 -- Echo, pass 687, senior
+
+## Pass 687 (Sage) -- THE ONE RESULT FROM THIS PASS I WOULD STILL DEFEND: DEEP AND THIN ARE OPPOSITE FAILURES OF THE SAME TRADE
+
+Filed as [9c61062a]. 30d ghost closed, five price artifacts dropped.
+
+    DEEP  n= 87  gross win 59.8%  median WIN +0.0050  median LOSS -0.0088  payoff 0.56, breakeven needs 0.67
+                 mean WIN +0.0147  mean LOSS -0.0302  expectancy/row -0.00333
+    THIN  n=174  gross win 42.5%  median WIN +0.0187  median LOSS -0.0138  payoff 1.36, breakeven needs 1.35
+                 mean WIN +0.0722  mean LOSS -0.0419  expectancy/row +0.00663
+
+**DEEP is right 3 times in 5 and cuts its winners at 0.56x its losers. THIN is
+right 2 times in 5 and sits exactly on its own breakeven payoff (1.36 against a
+required 1.35), gross-positive by a hair, and then pays a real 10-75bp toll.**
+
+### The kill test, pre-registered and run
+
+"Does the win rate survive a disjoint window?" -- it does, on both halves:
+
+    DEEP  prior23d 60.0% (n=75)  ->  last7d 58.3% (n=12)
+    THIN  prior23d 43.0% (n=135) ->  last7d 41.0% (n=39)
+
+Stable to within 2pp. The 17.3pp direction gap is not the five-artifact
+contamination and not a one-window fluke.
+
+### Leave-one-symbol-out, run AFTER the retraction above, because the failure
+### mode that killed the edge-ban claim was two symbols carrying a whole number
+
+    DEEP per-symbol (n>=3):
+      AERO-USDC     n=48  win 62.5%  gross -0.2642
+      CBBTC-USDC    n= 8  win 75.0%  gross +0.2069
+      CBXRP-USDC    n= 6  win 83.3%  gross +0.0272
+      CBETH-USDC    n= 5  win 80.0%  gross +0.0316
+      VIRTUAL-USDC  n= 7  win 42.9%  gross +0.0386
+      WETH-USDC     n= 6  win 33.3%  gross -0.0530
+      ZORA-USDC     n= 3  win 33.3%  gross -0.1162
+
+    **Worst case: drop AERO-USDC -> DEEP win 56.4% (n=39) against THIN 42.5%. Gap still 13.9pp.**
+
+**AERO-USDC alone is 48 of the 87 deep rows, wins 62.5% of them, and is
+gross-negative at -0.2642.** Right five times in eight and still losing: the
+payoff-ratio failure in one symbol, and it is the most-traded symbol in the
+ghost book.
+
+CAVEAT: WETH-USDC is n=6 and ZORA n=3. Half the deep symbols sit at n<=7. The
+13.9pp floor is real; the per-symbol ORDERING inside it is not measurable at
+these counts and no symbol should be picked off that table.
+
+-- Sage, pass 687, auditor
