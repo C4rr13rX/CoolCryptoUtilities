@@ -22212,3 +22212,62 @@ STILL OPEN, AND IT IS THE NEXT MEASUREMENT: I have NOT established that the
 lattice CAUSED the ghost collapse (ghost-entry 19d:851 -> 1d:6, a 142x fall).
 "Refusals up" and "entries down" can both be a supply story. The test is the
 lattice's own refusal RATE against the candidate supply reaching 8777, per day.
+
+
+## Pass 679 (Cove), SECOND APPEND -- [afbbda66]: ONE LEG OF THE LATTICE REFUSES 100% OF ENTRIES, THE KILL TEST IS RUN, AND THE OBVIOUS FIX IS ALREADY CLOSED
+
+ROUTE: "the chaos leg is a contributing factor" -- CLOSED, it is 100%.
+Splitting all 1739 lattice refusals in 24h by which of the six legs objected:
+CHAOS 1739, 100.0%. Not one refusal from calculus, statistics, probability,
+game theory or algebra.
+
+THE HORIZON IT REFUSES IS THE STRATEGY ID'S LOOKBACK SUFFIX, one-to-one at
+n=1739: @3d->4320.0 min, @1w->10080.0, @5d->7200.0, @12h->720.0, @1d->1440.0,
+@5h->300.0. minutes(suffix), every time. THE PARSE, at current HEAD:
+trading/bot.py:2272-2273 in `_lattice_refusal` (def at 2237) --
+`horizon_label = str(getattr(directive, "horizon", "") or "")` then
+`horizon_sec = horizon_seconds(horizon_label)`. It reads a LABEL. Nothing
+anywhere reads a forecast field.
+
+THE GATE LANDED ON THE CLIFF DAY. `git log -S "entry-refused-lattice" --
+trading/bot.py` returns exactly ONE commit: 112977f, 2026-09-05 11:38, "The gate
+that would have refused every trade" -- 9.5h before the last live row
+(2026-09-05 21:10 UTC). entry-refused-lattice / ghost-entry by day-ago: 21d
+0/97, 20d 0/170, 19d 0/847, 18d 0/109, 17d 3/49, 16d 7/24, 14d 73/11, 12d
+679/10, 11d 2463/10, 1d 1490/6, 0d 1739/1. NOT causation until the
+counterfactual replay is run.
+CLOSED AS A DENOMINATOR: entry-arbitration is NOT a superset of what reaches
+the lattice -- on day 11 the ratio is 350.9% -- and it is ZERO before day 13.
+Quote the counts, never a rate. (I published 77.9% earlier in this pass and
+retracted it on the board.)
+
+KILL TEST RUN, COMPLEMENT DEAD. "The horizon is the intended hold, so the gate
+is right and the strategies are wrong" is CLOSED NEGATIVE. Pairing
+trade_outcomes to entry ts via trade_id (1214 entries carry one, 258 pair):
+overall realised hold median 57.2 min, p90 202.7. Per strategy, realised median
+vs claimed: donchian_breakout@5d 17.6 vs 7200 (409x), rsi_reversal@1w 16.7 vs
+10080 (604x), donchian_breakout@1w 15.6 vs 10080 (646x), rsi_reversal@3d 14.2 vs
+4320 (304x), obv_accumulation@1w 97.6 vs 10080 (103x), rsi_reversal@12h 21.2 vs
+720 (34x), rsi_reversal@5h 21.1 vs 300 (14x). They hold for MINUTES.
+
+CLOSED NEGATIVE -- DO NOT SPEND A PASS ON THE CALIBRATOR. lattice.py:31-32
+documents a self-widening (`class Calibration.horizon_scale`) and
+bot.py:2297-2304 calls `evaluate_signal` with NO `realised=` and no calibration;
+grepping trading/ and services/ for horizon_scale or Calibration returns ZERO
+hits, so it has always been 1.0. It looks like a self-locking gate and in a
+sense it is -- but MAX_CALIBRATION_DRIFT = 2.0 (lattice.py:53), so even
+saturated it doubles 2.7-6.4 min to 5.4-12.8 min, and the realised 57.2 min hold
+is STILL 4.5-10.6x past that. Wiring it up changes nothing.
+
+THE TRAP FOR WHOEVER FIXES THE PARSE: fixing it does NOT open the gate. The
+leg's decay is 2.7-6.4 min on these symbols; substituting the realised hold
+still leaves a trade 9-21x past it, so it will still refuse -- honestly instead
+of fabricated. Pre-register that prediction, and read a post-fix refusal count
+as CONFIRMATION, not failure. The leg's decay figure and the standing "the
+tradeable book is POSITIVE inside 15 minutes and negative after" are THE SAME
+CONSTRAINT measured two ways, and the 57.2 min median hold is on the wrong side
+of both. Cost the hold-policy change against the parse fix.
+
+DO NOT flip LATTICE_GATE_ENABLED (default 1, bot.py:2316). The leg fails OPEN by
+design, so turning it off reopens the path to every directive at once -- the
+-0.1864 configuration.
