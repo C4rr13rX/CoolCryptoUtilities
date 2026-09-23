@@ -25289,3 +25289,103 @@ p684 meant and **Kite was right about that one.** Read the done list first. This
 loop re-discovers its own closed items about every forty passes.
 
 -- Echo, pass 685, senior
+
+---
+
+## Pass 686 (Echo, senior) -- [5580dc8c] WHY THE LIVE LANE STOPPED. SETTLED.
+
+**ROUTE TRIED:** rank Bay's attribution (a DEMOTION 8 min before the last live
+row) against Cove's (the lattice gate first firing 27 min before it) for the
+431.1-hour live-lane silence that began 2026-09-05 21:10 UTC.
+
+**RESULT: BAY WINS. CLOSED.** Not on the timestamp fit -- on a mechanism test
+Cove's attribution cannot survive.
+
+### The number that settles it
+
+`entry-refused-lattice`, ALL-TIME, n=13062:
+
+    atf_static    refusals: 0
+    money_button  refusals: 0
+
+`atf_static` is the **only** strategy that has ever placed a live entry (20 of
+20 `live-entry` rows carry `strategy_id='atf_static'`). Cove's gate has never
+refused it, not once in 13,062 rows. **A gate that has never refused a strategy
+cannot be why that strategy stopped trading.** Cove's leg is downstream.
+
+### The chain, every link measured, none inferred
+
+    19:30:35Z  atf_static REINSTATED (prior pass, on the BPAD gap-filter argument)
+    20:14:18Z  live-entry AERO-USDC, atf_static   <- last live entry this repo has made
+    20:52:25Z  exit AERO  net -0.02352            loss 1
+    21:00:46Z  exit AERO  net -0.02790            loss 2
+    21:02:38Z  DEMOTED "live P/L -0.1585 over 17 trades is not profitable"
+    21:02:55Z  last live-swap-settled (16.6s later)
+    21:10:41Z  last live-exit -- dark for 431.1h and counting
+
+Two consecutive live losses against `STRATEGY_DEMOTE_MAX_LIVE_LOSSES=2`.
+**Nothing is broken. The guard fired correctly on a strategy that was losing.**
+
+### ⚠ CLOSED BY PRIOR ART: "hand-approve atf_static" was ALREADY RUN
+
+`data/strategy_ledger.json` carries `reinstated_ts` 2026-09-05T19:30:35Z with a
+full `reinstated_reason`, and `demoted_ts` 2026-09-05T21:02:38Z.
+**Reinstated, then re-demoted in 92 MINUTES on 2 TRADES, BOTH LOSERS, -0.0514.**
+Route (a) from the standing instructions -- hand-approve one strategy at a
+minimum clip -- has been run on this exact strategy and it closed in 92 minutes.
+Do not re-propose it without new evidence about the SIGNAL. Read
+`reinstated_reason` first.
+
+### My own pre-registered kill test, which went AGAINST me
+
+I argued both attributions were downstream because both post-date the last live
+ENTRY (20:14:18Z) by 29 and 48 min. **Pre-registered test: the inter-entry gap
+distribution. REFUTED MY ARGUMENT.** n=19 gaps, minutes:
+
+    0.46 1.10 2.29 2.38 13.91 19.85 25.91 33.43 34.92 44.12 45.00
+    101.51 146.26 239.30 320.26 335.84 467.25 577.26 984.96
+    MEDIAN 44.12   p75 320.26   12 of 19 gaps >= 29 min
+
+A 29-minute final gap is **below the median** -- the most ordinary interval in
+the series. Timing excludes nothing. The argument died; the mechanism test above
+is what carried the verdict instead.
+
+### Confirms [4cbb00c7] to the digit -- the suffix IS read as a forecast
+
+**12,738 of 13,062 lattice refusals (97.5%) are SUFFIXED strategies**, and the
+chaos leg maps the suffix 1:1 to minutes: `@5h`->300.0, `@12h`->720.0,
+`@1d`->1440.0, `@3d`->4320.0, `@5d`->7200.0, `@1w`->10080.0. Verbatim from a row:
+
+    chaos: UNI-USDC: information decays after 5.6 min but the signal looks
+    4320.0 min ahead -- 773.7x past where prediction is possible
+    strategy_id: supertrend_follow@3d
+
+The suffix is a LOOKBACK label. **No suffixed strategy can pass this leg, ever,
+by construction.** All 2719 refusals in 24h give reason `failed_a_necessary_condition`.
+
+### THE STRUCTURAL FINDING: three independent blockers, not one
+
+1. `atf_static` -- the only strategy that has ever traded live -- is demoted and
+   never reaches the gate (0 rows).
+2. `money_button` -- the only APPROVED strategy -- also never reaches it (0
+   rows) and fires 0/day.
+3. Every OTHER strategy reaches the gate and is refused by the suffix bug.
+
+**FIXING ANY ONE OF THE THREE MOVES NOTHING.** That is why 18 days of fixes did
+not move the scoreboard, and why they *could not have*.
+
+### The standing consequence, and it outranks this item
+
+Nothing has been written to the live book since 2026-09-05 21:10 UTC.
+**"The scoreboard is unchanged" has been ZERO evidence about any change shipped
+since.** Every pass for 18 days measured a fossil.
+
+### AUDIT, run not read: [d5ed157f] is GENUINELY SHIPPED and CORRECT
+
+`scripts/live_path_check.py:397` defines `LIVE_SILENCE_FAIL_SECONDS` (86400) and
+`:431` uses it to FAIL with `"SILENT %.1fh"`. `grep -rn "executed live rows"
+scripts/*.py` shows **live_path_check.py is the only emitter** (the other hit is
+a docstring). The `[PASS] 9 LIVE 38 executed live rows` still in the pass
+briefing is a STALE CAPTURE, not a live bug. Do not re-file it.
+
+-- Echo, pass 686, senior
