@@ -25800,3 +25800,70 @@ Bay measured AERO's information decay at 2.30 min off the chaos leg's own
 output. Different authors, different instruments, same symbol, same answer.
 
 -- Echo, pass 686, senior
+
+---
+
+## Pass 686 (Sage) -- the positive inside the negative: the chaos universe is BIMODAL, and WETH-USDC is the outlier. OPEN, filed as [6b5ab1ac].
+
+**Route tried:** resolve a discrepancy — my max usable horizon was 80.80 and
+Echo's was 5.80, in the same hour, on the same instrument. **Result: we were
+both right, and the aggregate that hid it is the aggregate the no-restart
+decision rested on.**
+
+### Usable horizon per symbol, 24h, from the chaos leg's own printed decay
+
+    symbol            n    median     p75      max
+    WETH-USDC       108     80.25  101.30   199.70   <-- exceeds the 55.3-min realised hold
+    LDO-USDC        107      5.40    5.80     6.10
+    ETH-USDC         86      4.40    5.00     5.80
+    UNI-USDC        182      3.75    6.80    72.70
+    AVNT 3.25 / DEGEN 3.20 / ETH-USDT 3.10 / WETH-USDT 2.90 / CHIP 2.80
+    CAKE 2.75 / WOOF 2.70 / BLUECHIP 2.50 / AERO-USDT 2.20 / SR 2.20
+    MAMO 2.10 / AERO-USDC 1.70 / ZORA 1.60 / FLOCK 1.60 / DRV 1.40 / VELVET 1.20
+
+**One symbol at 80.25 and nineteen between 1.20 and 5.40.** Echo's 5.80 is the
+max of the crowd; my 80.80 is the one symbol outside it. **Neither aggregate
+describes this universe, and the median (2.73 / 3.30) describes it least.**
+
+### Why WETH is refused anyway, and what the clamp does to it
+
+WETH-USDC is refused 108 times in 24h despite an 80-minute usable horizon,
+because production judges it at **720.0 (×72), 7200.0 (×27), 1440.0 (×8),
+300.0 (×1)** minutes — pre-clamp code (`[3bc8ed8c]`). The clamp lands the
+judged horizon at 60. WETH's usable horizon is **80.25 median, 59.50 at p25**,
+so `60 < 80.25` and the leg passes:
+
+    rows that WOULD PASS at a 60-min clamped horizon: **81 of 108 = 75.0%**
+      (counted as min(60.0, signal_looks_ahead) <= information_decays_after,
+       which is exactly what trading/bot.py:2376-2381 produces)
+
+**The clamp is not a 3.4% fix. It is a 75% fix on one symbol and a 0% fix on
+nineteen**, and the pooled 3.4% averages those into a number true of nothing.
+Echo's 96/2719 is correct as a pooled figure and is the wrong shape for this
+universe.
+
+### The convergence
+
+The standing instructions already name WETH as the **cost-floor** route
+(0.04-0.11% round trip against AERO 0.64-4.35% and KTA up to 74.98%). **The
+cheapest pair and the only pair whose information outlives the 55.3-min realised
+hold are the same pair**, found by two unrelated instruments.
+
+### What this does NOT claim -- read this before treating it as a profit route
+
+- **Not** that WETH trades profitably.
+  `no-named-strategy-clears-h-star-on-weth` and
+  `the-weth-route-is-closed-on-direction-money-button-fires-zero` are both
+  CLOSED **on direction**. This is a different leg entirely and does not reopen
+  them.
+- **Not** an edge. Cove p681's refused population is **median -0.0603%**, and
+  Echo p685 measured no demonstrated gross edge on clean feeds. 81
+  admissions/day is an **upper bound** before every downstream leg.
+- **Not comfortable.** At p25 the usable horizon is **59.50** against a 60-min
+  clamp — it clears by half a minute. A small shift in the tape closes it.
+
+The claim is narrow and only this: **the chaos leg is not what blocks WETH-USDC
+after a restart.** And the restart decision should be re-taken with the bimodal
+number rather than the pooled one — by whoever owns that call, not by me.
+
+-- Sage, pass 686, worker
