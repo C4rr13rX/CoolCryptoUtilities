@@ -21544,3 +21544,49 @@ The three checks that killed the WETH cell all come out the other way here:
 
 **A LEAD, NOT A RESULT.** It needs a fresh pre-registered run on data not touched
 here. `[854ce89d]` stays DONE and CLOSED — nothing in this addendum reopens WETH.
+
+## Pass 676 — Dune — the entry cost floor is INERT, and `expected_return` is UNBOUNDED
+
+**ROUTE TRIED (and CLOSED):** put a cost floor above `trading/bot.py:7696` so
+directive entries are charged their own measured round-trip cost.
+
+**INERT. Do not spend a pass on it.** `trading_ops` over 30d, rows where *both*
+`details.action` and `bus_plan.action` are `enter`: **GHOST 1184, LIVE 38**. Only
+89 ghost and 2 live carry `.entry_fee_rate` and are decidable. Of those 91, the
+floor `bus_plan.expected_return >= entry_fee_rate` **refuses ZERO** — 89/89 ghost
+and 2/2 live pass, 100% both lanes. The smallest `expected_return` in the 7d
+sample is **0.0165 (165bp)** against an `entry_fee_rate` of **0.00392 (39bp)**:
+every strategy forecasts **4x–28x** its own measured cost on every candidate.
+So the missing gate is not what admits bad entries — the check would pass
+everything. Item `7fa8c82f` filed and **rejected by its author the same pass**.
+The *diagnosis* (the gate is unreachable) stands; the *repair* does not.
+
+**A NUMBER I AM REFUSING TO REPORT, and why.** Joining 1222 directive-enter ops
+to `trade_outcomes` on `wallet+symbol` with the outcome inside 6h gave 593 pairs
+(593/593 ghost, `checkpoint 0.0`) at **mean realised +3.99%, 63.6% positive,
+t=10.22**. **Do not quote it.** This feed re-enters the same symbol repeatedly
+inside 6h, so "earliest outcome after the op" frequently belongs to a *different*
+position. And 63.6% contradicts the standing p674 measurement of a **38.8%**
+ghost gross win rate by 25 points — when a loose join and a measured number
+disagree that far, the join is wrong. Needs a real `trade_id` join.
+
+**HARD FINDING, no join required: `bus_plan.expected_return` IS NOT BOUNDED.**
+Same 1222 rows: **mean 22969.4468, median 0.0500, MAX 12,551,318.6481.**
+**45 rows (3.7%) exceed 5.0** — exactly the clip `trading/scheduler.py:1371`
+applies — so at least one producer bypasses it. Worst: **CLANKER-USDC
+12,551,318.6481** via `obv_accumulation@3d`, then seven **LIQUIDBGT-USDC** rows
+at 931,688..1,024,857 via `rsi_reversal`. By strategy: obv_accumulation 34 of 45,
+rsi_reversal 10, macd_momentum 1. **It survived because the median reads clean** —
+every percentile census sees nothing; only a *mean* exposes it. Filed as
+`6943a445`.
+
+**ITS OWN COMPLEMENT TEST RAN AND DID NOT SEPARATE.** Bucketing the 45 against
+the production boot (2026-09-21 22:57:35) gives **PRE-boot 45, POST-boot 0** —
+which looks like "already fixed, just restart". **It is not decidable.**
+Directive-enter rows with `expected_return` run 1216 over 28.92 pre-boot days
+(42.0/day) but 6 over 1.08 post-boot days (5.5/day) — the rate fell **7.6x**. At
+the pre-boot offender rate the **expected post-boot count is 1.68**; observing 0
+against 1.68 is Poisson p≈0.19 and excludes nothing. Four of the six post-boot
+rows are from the three offending strategies, so the producers are live.
+`6943a445` is **BLOCKED on power**, and whoever takes it should do the
+producer-enumeration criterion first — that one is decidable today.
