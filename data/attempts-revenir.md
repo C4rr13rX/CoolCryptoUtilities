@@ -26484,3 +26484,68 @@ now stronger -- the recompute is not merely unnecessary, it is actively dangerou
 Follow-up filed for the reconciliation test that knows about the population split.
 
 -- Echo, pass 687, senior
+
+## Pass 687 (Dune, worker) -- [8a4af965] the ghost halt is a PASSENGER, not a deadlock. ROUTE CLOSED.
+
+ROUTE TRIED: unlatch the step-6 halt. The item states step 6 is a self-referential
+deadlock -- `ghost_collection_ready` off because collection is "not ready", and
+only the evidence the off lane cannot collect would mark it ready -- firing 98
+times in 24h with `{"reason":"ghost_validation_block","ghost_multiplier":0.0}`.
+
+HYPOTHESIS: pipeline.py:6223 (`if not ghost_collection_ready and ghost_ready`) is
+the only override and is unreachable by construction, so the lane is self-starved
+and the halt is what is starving the graduation funnel.
+COMPLEMENT, pre-registered on the board before the test was run: the halt is a
+PASSENGER -- 98 halted against 588 cycle_tick means 83% of ticks were never
+halted, and the ghost lane wrote 15 closed rows in the preceding 6 hours, its
+fastest stretch of the week. A lane writing at 2.5 rows/hr is not deadlocked.
+
+KILL TEST, chosen because it could kill the COMPLEMENT: bucket the halts and the
+ghost closed rows into the same hourly bins. A deadlock puts ghost rows only in
+UNHALTED hours; a passenger puts them in halted hours too.
+
+NUMBER IT PRODUCED -- the complement survived and the hypothesis did not:
+
+    hour(UTC)  sched  halted  ghostrows
+    18:00         59      18          5     <- most halts AND most ghost rows
+    19:00         57      17          1
+    14:00         68      12          4
+    15:00         49      10          4
+    16:00         47      12          1
+    13:00         45       0          3
+    01-06        ~82       3          0     <- no halts, no ghost rows either
+    24h totals:  584 cycle_tick, 98 halted, 23 ghost closed rows
+
+  **19 of the 23 ghost closed rows landed in hours that ALSO carried a halt.**
+  Halts and ghost activity rise and fall together, because both track how hard
+  the scheduler is running. The overnight hours have neither.
+
+AND THE ITEM'S MECHANISM IS WRONG AT THE SOURCE. "pipeline.py:6175 is the ONLY
+override" does not hold; there is a second writer and it never reads ghost_ready:
+
+    pipeline.py:6050   collection_ready    = bool(mini_ready) or bool(ghost_ready)
+    pipeline.py:5958   collection_ready_fb = bool(mini_ready_fb) or bool(ghost_ready)
+    pipeline.py:6211   ghost_collection_ready = readiness.get("ghost_collection_ready",
+                                                readiness.get("mini_ready", False))
+
+`mini_ready` is a MODEL-ACCURACY gate (pipeline.py:5998) with three further
+escape hatches under it -- 6000 `active_accuracy >= 0.6`, 6003 a relaxed
+precision/recall/samples path, 5893 model-file-on-disk. None consults ghost_ready.
+The loop is not closed: mini_ready opens it from outside, and the hourly table is
+that opening happening.
+
+WHAT IS ACTUALLY TRUE, and is smaller than the title: all 98 halts carry identical
+details, and they are INTERMITTENT at 14.4% of scheduler ticks (98/682). That is
+mini_ready FLAPPING, not a latch. It costs roughly 14% of ghost throughput and it
+is NOT upstream of the graduation funnel.
+
+CLOSED: the deadlock reading of step 6. Do not spend another pass unlatching it.
+OPEN, and correctly sized: a flapping model-accuracy gate that zeroes the risk
+budget on one tick in seven. Worth a pass, not a project, and the fix belongs at
+mini_ready's hysteresis -- not at pipeline.py:6223.
+
+NO CODE SHIPPED, DELIBERATELY. The filed fix repairs something that is not
+happening, and the item's own criterion 4 requires a 13-minute production restart
+that did not fit the pass. An unshipped correct diagnosis beats a shipped wrong fix.
+
+-- Dune, pass 687, worker
