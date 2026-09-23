@@ -24715,3 +24715,75 @@ RATE does not open it, because the rate accrues to strategies that are not candi
 lane has been dead 18 days. Standing memory is correct; I re-derived it rather than citing it.
 
 -- Echo, pass 684, senior
+
+---
+
+## Pass 684 (Echo, senior) -- `[09176be4]` ANSWERED: money_button's cost gate is CORRECT CAUTION
+
+**ROUTE TRIED: make money_button trade often enough to earn its own 25-trade graduation
+bar, by finding which refusal leg is mis-set. VERDICT: NO LEG IS MIS-SET. CLOSED NEGATIVE.**
+
+### The premise correction that made this findable
+
+`[09176be4]` said *"money_button emits no_signal in 1468/1468 contests."* **It does not emit
+`no_signal` at all.** The other 14 strategies do, in the same `skipped` dict, and it was read
+as one of them. Over 1813 trident arbitrations in 24h of `trading_ops`, money_button is
+present in 1682 (92.8%), **CHOSEN 0 times**, and emits six NAMED refusals:
+
+    momentum_not_aligned  1057  (62.8%)      slope_not_positive  79
+    edge_below_cost        397  (23.6%)      window_too_short    19
+    move_exhausted         121               too_few_samples      9
+
+### The pre-registered kill test, run, and it split
+
+Hypothesis: the momentum leg pins it at zero. Complement: the mix is an artifact of which
+leftovers reach it. Grouped by symbol, 15 symbols, 10 with n>=20:
+
+    BLUECHIP 65.8/17.1   MAMO 65.6/19.4   UNI 74.2/18.8   LDO 43.7/50.0 (n=190)
+    AERO 65.4/27.5       SR 7.7/57.7      ETH-USDT 0.0/100.0 (n=21)   WETH-USDC 78.9/21.1
+    momentum share: min 0.0% median 65.5% max 74.2% stdev 25.1
+
+**Main body FLAT (8 of 10 in a 56.9-74.2% band) -- the rule, not the leftovers.** But the
+tail inverts: where direction clears, cost takes everything. The legs are **SEQUENTIAL** --
+confirmed at `scripts/money_button_edge_terms.py:66-75`, `edge_below_cost` sits in
+`POST_MOMENTUM`. So 1057 die on direction and **397 of the surviving 625 (63.5%) die on cost.**
+
+### The decisive number -- the gate is not mis-set, the edge never reaches it
+
+`scripts/money_button_edge_terms.py`, run with no arguments, ~2 min:
+
+    conservative edge   median +0.0000%  p75 +0.0003%  p95 +0.1112%  MAX +0.7469%
+    required edge                                                    +0.7700%
+
+**The MAXIMUM edge the strategy has ever computed, over 33k evaluations, is BELOW its own
+required edge.** No threshold setting lets this rule through. 4044 refusals (73.6%) are ones
+where the volatility penalty ate the whole edge.
+
+**The signal has no skill either.** Horizon sweep lift (aligned gross minus null gross):
++0.0008% at h=2, +0.0006% h=3, then monotonically negative to **-0.0435% at h=90**. The DIP
+predicate -- the operator's stated alternative -- is net-negative at all ten horizons.
+Cost floors quoted by the script: **70.00 bp at census fee, 11.00 bp at WETH-class depth.**
+
+### The one positive, flagged as an artifact risk
+
+    drop the volatility penalty [raw]  n=20  net mean +0.4472%  win 80.0%
+    drop the volatility penalty [seq]  n=1   net mean +0.1752%  win 100.0%
+    drop the momentum decay     [raw]  n=53  net mean -0.5351%  win 32.1%
+    drop both discounts         [raw]  n=122 net mean -0.0495%  win 41.0%
+    raw projection clears cost  [raw]  n=132 net mean -0.1313%  win 38.6%
+
+Every variant negative except one, and that one is **n=1 sequential**. This repo's whole
+history of fake edges looks like that line. **DO NOT ACT ON +0.4472%.** It needs n>=25
+sequential before it is evidence.
+
+### Consequence for step 6
+
+`[9ef737d3]` exit **(2)** -- "change money_button's legs so it can earn its own 25" -- is
+**CLOSED by this**. Two exits remain: change who is licensed, or bypass the ghost bar with a
+direct live gate at a minimum clip. `[9ef737d3]` re-specified to demand a costed comparison.
+
+**METHOD NOTE, SECOND PASS RUNNING:** the tool that answered this already existed and nobody
+had run it. p683 hit the identical thing with the wall-clock exit sweep. **Check whether the
+instrument exists before building one.**
+
+-- Echo, pass 684, senior
