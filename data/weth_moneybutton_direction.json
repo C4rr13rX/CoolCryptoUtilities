@@ -1,0 +1,344 @@
+{
+  "symbol": "WETH-USDC",
+  "ticks": 3598,
+  "span_days": 27.25,
+  "ctx_fee_rate": 0.0035917,
+  "cost_all_in_bp": 6.11,
+  "fires": 0,
+  "evaluations": 3598,
+  "volume_gate_live_on_fires": 0,
+  "declines": {
+    "momentum_not_aligned": 2605,
+    "edge_below_cost": 354,
+    "too_few_samples": 241,
+    "slope_not_positive": 188,
+    "move_exhausted": 151,
+    "window_too_short": 57,
+    "window_exceeds_lookback": 2
+  },
+  "zero_fee_fires": 16,
+  "zero_fee_declines": {
+    "momentum_not_aligned": 2605,
+    "edge_below_cost": 334,
+    "too_few_samples": 241,
+    "slope_not_positive": 188,
+    "move_exhausted": 151,
+    "window_too_short": 57,
+    "confidence_below_floor": 4,
+    "window_exceeds_lookback": 2
+  },
+  "measurable": false,
+  "conditional": {
+    "10m": {
+      "overlapping": {
+        "label": "10m overlapping",
+        "n": 0,
+        "verdict": "no returns"
+      },
+      "disjoint": {
+        "label": "10m DISJOINT",
+        "n": 0,
+        "verdict": "no returns"
+      }
+    },
+    "60m": {
+      "overlapping": {
+        "label": "60m overlapping",
+        "n": 0,
+        "verdict": "no returns"
+      },
+      "disjoint": {
+        "label": "60m DISJOINT",
+        "n": 0,
+        "verdict": "no returns"
+      }
+    }
+  },
+  "deciles": {
+    "10m": {
+      "horizon_min": 10.0,
+      "disjoint_n": 260,
+      "deciles": [
+        {
+          "label": "decile1",
+          "n": 26,
+          "mean_abs_move_bp": 9.79,
+          "h_star_required": 0.8119,
+          "accuracy_long": 0.4615,
+          "clears_h_star": false,
+          "gross_bp": -0.75,
+          "net_bp": -6.86,
+          "p_one_sided_vs_coin": 0.7214,
+          "trailing_move_bp": 0.74
+        },
+        {
+          "label": "decile2",
+          "n": 26,
+          "mean_abs_move_bp": 10.75,
+          "h_star_required": 0.7841,
+          "accuracy_long": 0.5769,
+          "clears_h_star": false,
+          "gross_bp": 1.65,
+          "net_bp": -4.46,
+          "p_one_sided_vs_coin": 0.2786,
+          "trailing_move_bp": 2.22
+        },
+        {
+          "label": "decile3",
+          "n": 26,
+          "mean_abs_move_bp": 14.44,
+          "h_star_required": 0.7115,
+          "accuracy_long": 0.4615,
+          "clears_h_star": false,
+          "gross_bp": -1.11,
+          "net_bp": -7.22,
+          "p_one_sided_vs_coin": 0.7214,
+          "trailing_move_bp": 3.6
+        },
+        {
+          "label": "decile4",
+          "n": 26,
+          "mean_abs_move_bp": 9.46,
+          "h_star_required": 0.8229,
+          "accuracy_long": 0.3077,
+          "clears_h_star": false,
+          "gross_bp": -3.64,
+          "net_bp": -9.75,
+          "p_one_sided_vs_coin": 0.98552,
+          "trailing_move_bp": 5.23
+        },
+        {
+          "label": "decile5",
+          "n": 26,
+          "mean_abs_move_bp": 8.8,
+          "h_star_required": 0.8473,
+          "accuracy_long": 0.4231,
+          "clears_h_star": false,
+          "gross_bp": -1.35,
+          "net_bp": -7.46,
+          "p_one_sided_vs_coin": 0.83653,
+          "trailing_move_bp": 6.92
+        },
+        {
+          "label": "decile6",
+          "n": 26,
+          "mean_abs_move_bp": 11.54,
+          "h_star_required": 0.7648,
+          "accuracy_long": 0.4231,
+          "clears_h_star": false,
+          "gross_bp": -1.77,
+          "net_bp": -7.88,
+          "p_one_sided_vs_coin": 0.83653,
+          "trailing_move_bp": 8.62
+        },
+        {
+          "label": "decile7",
+          "n": 26,
+          "mean_abs_move_bp": 14.48,
+          "h_star_required": 0.7109,
+          "accuracy_long": 0.6154,
+          "clears_h_star": false,
+          "gross_bp": 3.34,
+          "net_bp": -2.77,
+          "p_one_sided_vs_coin": 0.16347,
+          "trailing_move_bp": 10.96
+        },
+        {
+          "label": "decile8",
+          "n": 26,
+          "mean_abs_move_bp": 19.58,
+          "h_star_required": 0.656,
+          "accuracy_long": 0.6538,
+          "clears_h_star": false,
+          "gross_bp": 6.03,
+          "net_bp": -0.08,
+          "p_one_sided_vs_coin": 0.08432,
+          "trailing_move_bp": 15.13
+        },
+        {
+          "label": "decile9",
+          "n": 26,
+          "mean_abs_move_bp": 15.03,
+          "h_star_required": 0.7032,
+          "accuracy_long": 0.3846,
+          "clears_h_star": false,
+          "gross_bp": -3.47,
+          "net_bp": -9.58,
+          "p_one_sided_vs_coin": 0.91568,
+          "trailing_move_bp": 20.89
+        },
+        {
+          "label": "decile10",
+          "n": 26,
+          "mean_abs_move_bp": 27.19,
+          "h_star_required": 0.6123,
+          "accuracy_long": 0.4231,
+          "clears_h_star": false,
+          "gross_bp": -4.18,
+          "net_bp": -10.29,
+          "p_one_sided_vs_coin": 0.83653,
+          "trailing_move_bp": 43.12
+        }
+      ],
+      "decile10": {
+        "label": "decile10",
+        "n": 26,
+        "mean_abs_move_bp": 27.19,
+        "h_star_required": 0.6123,
+        "accuracy_long": 0.4231,
+        "clears_h_star": false,
+        "gross_bp": -4.18,
+        "net_bp": -10.29,
+        "p_one_sided_vs_coin": 0.83653,
+        "trailing_move_bp": 43.12
+      },
+      "decile10_survives_disjoint": false,
+      "any_decile_survives_disjoint": [],
+      "deciles_nominally_clearing_h_star": []
+    },
+    "60m": {
+      "horizon_min": 60.0,
+      "disjoint_n": 90,
+      "deciles": [
+        {
+          "label": "decile1",
+          "n": 9,
+          "mean_abs_move_bp": 25.28,
+          "h_star_required": 0.6208,
+          "accuracy_long": 0.2222,
+          "clears_h_star": false,
+          "gross_bp": -14.05,
+          "net_bp": -20.16,
+          "p_one_sided_vs_coin": 0.98047,
+          "trailing_move_bp": 1.13
+        },
+        {
+          "label": "decile2",
+          "n": 9,
+          "mean_abs_move_bp": 27.26,
+          "h_star_required": 0.6121,
+          "accuracy_long": 0.5556,
+          "clears_h_star": false,
+          "gross_bp": 3.03,
+          "net_bp": -3.08,
+          "p_one_sided_vs_coin": 0.5,
+          "trailing_move_bp": 4.11
+        },
+        {
+          "label": "decile3",
+          "n": 9,
+          "mean_abs_move_bp": 27.6,
+          "h_star_required": 0.6107,
+          "accuracy_long": 0.3333,
+          "clears_h_star": false,
+          "gross_bp": -9.2,
+          "net_bp": -15.31,
+          "p_one_sided_vs_coin": 0.91016,
+          "trailing_move_bp": 8.19
+        },
+        {
+          "label": "decile4",
+          "n": 9,
+          "mean_abs_move_bp": 19.91,
+          "h_star_required": 0.6534,
+          "accuracy_long": 0.7778,
+          "clears_h_star": true,
+          "gross_bp": 11.06,
+          "net_bp": 4.95,
+          "p_one_sided_vs_coin": 0.08984,
+          "trailing_move_bp": 11.94
+        },
+        {
+          "label": "decile5",
+          "n": 9,
+          "mean_abs_move_bp": 42.3,
+          "h_star_required": 0.5722,
+          "accuracy_long": 0.3333,
+          "clears_h_star": false,
+          "gross_bp": -14.1,
+          "net_bp": -20.21,
+          "p_one_sided_vs_coin": 0.91016,
+          "trailing_move_bp": 15.53
+        },
+        {
+          "label": "decile6",
+          "n": 9,
+          "mean_abs_move_bp": 23.33,
+          "h_star_required": 0.631,
+          "accuracy_long": 0.4444,
+          "clears_h_star": false,
+          "gross_bp": -2.59,
+          "net_bp": -8.7,
+          "p_one_sided_vs_coin": 0.74609,
+          "trailing_move_bp": 19.76
+        },
+        {
+          "label": "decile7",
+          "n": 9,
+          "mean_abs_move_bp": 25.96,
+          "h_star_required": 0.6177,
+          "accuracy_long": 0.4444,
+          "clears_h_star": false,
+          "gross_bp": -2.88,
+          "net_bp": -8.99,
+          "p_one_sided_vs_coin": 0.74609,
+          "trailing_move_bp": 23.44
+        },
+        {
+          "label": "decile8",
+          "n": 9,
+          "mean_abs_move_bp": 27.95,
+          "h_star_required": 0.6093,
+          "accuracy_long": 0.3333,
+          "clears_h_star": false,
+          "gross_bp": -9.32,
+          "net_bp": -15.43,
+          "p_one_sided_vs_coin": 0.91016,
+          "trailing_move_bp": 28.88
+        },
+        {
+          "label": "decile9",
+          "n": 9,
+          "mean_abs_move_bp": 21.41,
+          "h_star_required": 0.6427,
+          "accuracy_long": 0.5556,
+          "clears_h_star": false,
+          "gross_bp": 2.38,
+          "net_bp": -3.73,
+          "p_one_sided_vs_coin": 0.5,
+          "trailing_move_bp": 39.41
+        },
+        {
+          "label": "decile10",
+          "n": 9,
+          "mean_abs_move_bp": 53.18,
+          "h_star_required": 0.5574,
+          "accuracy_long": 0.4444,
+          "clears_h_star": false,
+          "gross_bp": -5.91,
+          "net_bp": -12.02,
+          "p_one_sided_vs_coin": 0.74609,
+          "trailing_move_bp": 84.2
+        }
+      ],
+      "decile10": {
+        "label": "decile10",
+        "n": 9,
+        "mean_abs_move_bp": 53.18,
+        "h_star_required": 0.5574,
+        "accuracy_long": 0.4444,
+        "clears_h_star": false,
+        "gross_bp": -5.91,
+        "net_bp": -12.02,
+        "p_one_sided_vs_coin": 0.74609,
+        "trailing_move_bp": 84.2
+      },
+      "decile10_survives_disjoint": false,
+      "any_decile_survives_disjoint": [],
+      "deciles_nominally_clearing_h_star": [
+        "decile4"
+      ]
+    }
+  },
+  "selected_rules_clearing_h_star_on_disjoint": []
+}
