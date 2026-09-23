@@ -109,6 +109,41 @@ def _bounds() -> Tuple[float, float]:
     return float(_ABSOLUTE_MAX_OUTCOME), float(_max_evidence_hold_sec())
 
 
+def _profit_in_usd(detail: Dict[str, Any], strategy_id: str) -> Optional[float]:
+    """``detail["profit"]`` in USD, or None when the row records no profit.
+
+    Delegates to ``trading.metrics._profit_usd`` rather than repeating its
+    rule. That function decides by a FACT about the row -- which writer wrote
+    it, and whether it carries the ``profit_unit`` marker -- never by the
+    magnitude, because a 0.4% return and 40 cents both read as "0.004".
+
+    A row missing ``profit`` is passed through as None so ``reconstruct`` can
+    keep counting it under ``dropped_no_profit_field`` instead of silently
+    turning it into a 0.0 that would dilute the book toward flat.
+    """
+    if detail.get("profit") is None:
+        return None
+    try:
+        entry_price = float(detail.get("entry_price") or 0.0)
+        exit_price = float(detail.get("exit_price") or 0.0)
+    except (TypeError, ValueError):
+        entry_price = exit_price = 0.0
+    return_pct = (
+        (exit_price / entry_price - 1.0)
+        if entry_price > 0 and exit_price > 0
+        else None
+    )
+    try:
+        from trading.metrics import _profit_usd
+
+        return float(_profit_usd(detail, strategy_id, return_pct))
+    except Exception:  # noqa: BLE001 - a costing failure must not empty the book
+        try:
+            return float(detail.get("profit"))
+        except (TypeError, ValueError):
+            return None
+
+
 def iter_ghost_exits(db_path: Optional[Path | str] = None) -> Iterable[Dict[str, Any]]:
     """Yield every recorded ghost round trip, oldest first.
 
@@ -117,6 +152,17 @@ def iter_ghost_exits(db_path: Optional[Path | str] = None) -> Iterable[Dict[str,
     one exit path, so the hold falls back to ``exit_ts - entry_ts``; a round trip
     with neither is yielded with ``held_sec=None``, which ``record()`` treats as
     "not known" and passes.
+
+    ``profit`` is normalised to USD on the way out, through the SAME converter
+    the metrics book uses. It was being summed raw, and the raw column is two
+    units: measured 2026-09-23 over all 806 ``action='exit'`` rows, 473 of them
+    record ``profit`` exactly equal to their own ``exit_price/entry_price - 1``
+    (a bare FRACTION) while 298 record dollars. This module produces the
+    graduation banner's tradeable P/L and win rate, so every number it printed
+    was fractions added to dollars -- and worse, a fraction is almost always
+    positive at exit and is charged no round trip, so the mixed book reported
+    an edge that the USD half does not have. The implausibility cap it applies
+    is a USD cap, which a fraction could never trip either.
     """
     path = Path(db_path or DEFAULT_DB)
     conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
@@ -142,13 +188,14 @@ def iter_ghost_exits(db_path: Optional[Path | str] = None) -> Iterable[Dict[str,
                         held = float(exit_ts) - float(entry_ts)
                     except (TypeError, ValueError):
                         held = None
+            strategy_id = (
+                detail.get("strategy_id") or detail.get("strategy") or "unclassified"
+            )
             yield {
                 "ts": float(row["ts"] or 0.0),
-                "strategy_id": (
-                    detail.get("strategy_id") or detail.get("strategy") or "unclassified"
-                ),
+                "strategy_id": strategy_id,
                 "symbol": detail.get("symbol") or row["symbol"] or "",
-                "profit": detail.get("profit"),
+                "profit": _profit_in_usd(detail, str(strategy_id)),
                 "held_sec": held,
                 "exit_reason": detail.get("exit_reason") or detail.get("reason") or "",
             }

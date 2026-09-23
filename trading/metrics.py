@@ -74,6 +74,36 @@ class TradePerformance:
 #: from their own recorded prices.
 _FRACTIONAL_PROFIT_STRATEGIES = frozenset({"atf_static_scout"})
 
+#: The fraction writer stamps its own name on every row it writes. Keying on
+#: the WRITER rather than on the strategy id is what makes the conversion
+#: exact, because the id is NOT a writer: ``atf_static`` names two of them.
+#:
+#: Measured 2026-09-23 on ``trading_ops`` (action='exit', profit compared
+#: against the row's own ``exit_price/entry_price - 1`` at 1e-9):
+#:
+#:   strategy_id        profit_unit  fraction?  n    dates
+#:   atf_static         (missing)    YES        368  08-21 .. 09-02
+#:   atf_static_scout   (missing)    YES        105  09-02 .. 09-07
+#:   atf_static_scout   usd          no          25  09-07 .. 09-23
+#:   atf_static         (missing)    NO          85  08-26 .. 09-23
+#:
+#: The first row is the one the old frozenset missed: 368 of the 473 fraction
+#: rows -- 77.8% of them -- were written BEFORE the scout was renamed, so they
+#: carry the plain ``atf_static`` id and were summed into the book as dollars.
+#: The last row is why the id alone cannot be the test: those 85 are genuine
+#: USD from ``trading/bot.py``, written under the SAME id and overlapping in
+#: time, and converting them would corrupt a correct number.
+#:
+#: The two writers are separable by a fact, not by magnitude: all 498 rows from
+#: the fraction writer carry ``source == "c0d3rv2_atf_static"`` and no
+#: ``trade_id``; all 85 bot.py rows carry a ``trade_id`` and no ``source``.
+#:
+#: So the id stays exactly as narrow as it was and the WRITER TAG is what
+#: widens the conversion. That reaches all 473 fraction rows -- the tag is on
+#: every one of them, under both names -- while leaving the 85 dollar rows and
+#: every synthetic row that merely borrows the id untouched.
+_FRACTIONAL_PROFIT_SOURCE = "c0d3rv2_atf_static"
+
 
 def _profit_usd(
     details: Dict[str, Any],
@@ -106,8 +136,16 @@ def _profit_usd(
         value = 0.0
     if str(details.get("profit_unit") or "").lower() == "usd":
         return value
-    if strategy_id not in _FRACTIONAL_PROFIT_STRATEGIES:
-        return value
+    source = str(details.get("source") or "")
+    if source != _FRACTIONAL_PROFIT_SOURCE:
+        # Not the fraction writer. The strategy id alone is not enough to
+        # convert on -- ``atf_static`` names two writers and only one of them
+        # wrote fractions -- so a row that names a suspect id but carries a
+        # ``trade_id`` (the bot.py signature) is left in the dollars it is in.
+        if strategy_id not in _FRACTIONAL_PROFIT_STRATEGIES:
+            return value
+        if details.get("trade_id") is not None:
+            return value
     # A legacy scout row. Prefer the return the row's own prices imply; fall
     # back to the stored fraction only when the prices are missing.
     fraction = return_pct if return_pct is not None else value
