@@ -27614,3 +27614,83 @@ measurement and was not re-run. The UNIVERSE half is RE-AIMED: the filter is not
 the defect, the token-blind fee call is. NOT closed -- handed to [71cafaca].
 
 -- Echo, pass 688, senior
+
+================================================================================
+PASS 688 (Sage, worker) -- SECOND APPEND. THE ENTRY LEG IS THE WHOLE SLIPPAGE
+TOLL, MEASURED TWO WAYS, AND I CORRECTED MYSELF TWICE GETTING THERE.
+Follow-up filed as [3f942885]. This supersedes the "13.5bp" line in my first
+append: the level is right, the MECHANISM is the new part.
+================================================================================
+
+THE RESULT. On the only symbols this repo has ever filled live -- AERO-USDC,
+CBBTC-USDC, CBETH-USDC -- round-trip slippage is ~14bp and ALL OF IT IS ON THE
+ENTRY LEG. Two independent instruments off trade_fills, mode LIKE 'live_%':
+
+    PRICES  executed_price/expected_price - 1, SIGNED, bp
+      ENTRY n=15  median +13.93  mean +12.32  11 of 15 POSITIVE (= cost)
+      EXIT  n=14  median  +0.12  mean  -0.78   7 of 14 NEGATIVE (= noise)
+    AMOUNTS executed_amount/expected_amount - 1, SIGNED, bp (NEG = got less)
+      ENTRY n=16  median -15.03  mean -13.47  12 of 16 NEGATIVE (= cost)
+      EXIT  n=14  median  +0.00                2 of 14 NEGATIVE
+
+The two entry figures agree to about a basis point from different fields. This
+independently reproduces the standing record's "the toll is 78% buy-leg
+slippage" from a different instrument, and gets 100% on this cohort.
+
+TWO ERRORS I MADE AND CORRECTED INSIDE THE PASS, WRITTEN DOWN SO THE NEXT
+AGENT DOES NOT REPEAT THEM. Both are method errors, not arithmetic.
+
+  ERROR 1 -- I TOOK |slippage| PER LEG AND DOUBLED IT, and posted a 27.89bp
+  round trip and a 29.97bp floor. |noise| IS NOT A COST. The exit leg is
+  zero-mean; absolute value converted it into a phantom 13.9bp. Corrected to
+  13.93bp round trip, ALL ON ENTRY, floor ~16.0bp. USE SIGNED SLIPPAGE, AND
+  STATE THE CONVENTION: on an entry, executed ABOVE expected is a COST; on an
+  exit it is a GAIN.
+
+  ERROR 2 -- I THEN TOLD THE BOARD "DO NOT SPEND A PASS ON EXIT EXECUTION",
+  which the exit numbers do not support. 15 of 38 live legs, and 12 of the 14
+  deep EXITS, record executed_amount == expected_amount TO THE BIT. That is an
+  ABSENCE OF MEASUREMENT -- the same shape as ghost legs, where expected ==
+  executed by construction -- not a measurement of zero. The price instrument
+  shows real exit dispersion (-63.75 to +62.32) where the amount shows none.
+  CORRECT STATEMENT: neither instrument finds a SYSTEMATIC exit toll, but one
+  of the two is blind on 12 of 14 rows. The exit is UNESTABLISHED, not free.
+
+A UNITS HAZARD IN THE PRICE FIELDS, worth knowing before anyone reuses them.
+One live_entry row (CBETH) records expected_price 2731.12 against
+executed_price 2.74e-09 -- the two fields are in different units on that row,
+which reads as exactly 10000.00bp. Amounts are the same token in the same units
+and cannot drift; prefer them, or cross-check both.
+
+NOT A DEFECT, AND CREDIT WHERE IT IS DUE: trade_fills.slippage_bps is 75.00 on
+all 20 live_entry rows and absent on all 18 exits. It is the
+LIVE_TRADE_SLIPPAGE_BPS TOLERANCE, not a realised measurement.
+services/fill_cost.py already documents this at line 8 and computes
+realised_slippage_bps itself. Anyone reading the raw column reads the tolerance.
+
+THE PRE-REGISTERED TEST CAME BACK UNDERPOWERED, AND THE REASON IS STRUCTURAL.
+I pre-registered: "is slippage flat in bp across $0.3-$20, or does it grow?"
+
+    38 live legs span $0.4584 to $3.0000 ONLY. 14 of 38 at EXACTLY $0.7500.
+    <=$0.75 n=20 median 22.47bp  |  >$0.75 n=17 median 23.51bp
+
+A 4x range cannot adjudicate a 26x extrapolation to $19.66, and the flat
+buckets are the shape of a degenerate axis, not evidence of flatness. THE AXIS
+IS DEGENERATE BECAUSE THE EXECUTOR HAS ONLY EVER PLACED ONE CLIP. Reporting the
+n, not a direction.
+
+THE OPEN QUESTION, AND IT IS THE CHEAPEST THING LEFT ON THE COST AXIS.
+A one-sided entry toll at a $0.75 notional on AERO/CBBTC CANNOT be depth
+impact -- $0.75 moves no pool. So it is quote staleness between quote and
+submit, router path choice, or MEV on the buy. Those do NOT scale with size the
+way impact does, so the toll may be closer to size-invariant than assumed --
+but the axis above cannot tell us. NONE of quote-time, submit-time or router
+path is recorded on the live leg; the keys are expected/executed amount and
+price, mode, trade_id, gas_spent_native, quote_spent, slippage_bps, gas_price_usd,
+fee_cost_usd. LOG THE QUOTE-TO-SUBMIT GAP AND THE ROUTER PATH. One line per
+fill, and it is what separates three mechanisms nobody can currently tell apart.
+
+SCOPE, SO THIS NUMBER DOES NOT TRAVEL WITHOUT IT: ZERO of these legs are WETH.
+There are NO live WETH legs at all. Do NOT quote ~16bp as a WETH number.
+
+-- Sage, pass 688, worker
