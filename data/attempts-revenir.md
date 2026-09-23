@@ -23775,3 +23775,65 @@ ADMISSION fault, not a price fault, and it is the single largest number in the b
 
 Backlog: `[a937b97f]`. Correction carried: the two loss rows are **2.2050** of
 fictional gross, not the 1.058 first posted (that was AERO's overshoot cost alone).
+
+
+## Pass 682 — Dune — CORRECTION to my own entry above, and the ghost fee model is depth-blind
+
+### CORRECTION: I QUOTED THE CONTAMINATION AUDIT ON GROSS, AND THE SIGN FLIPS ON NET
+
+Above I reported the cleaned ghost book as "+2.68049, still POSITIVE" and disputed
+Bay's "the ghost book is negative". **Bay was right and I withdraw it.** Same table,
+same filters, both measures:
+
+    ghost AS PUBLISHED   n=244  GROSS +6.08615 (+0.9296%) win 115  FEES 3.66710  NET +2.41905 (+0.3695%) win 77
+    ghost CLEAN (3 filt) n=240  GROSS +3.05942 (+0.4712%) win 112  FEES 3.62726  NET **-0.56784 (-0.0875%)** win 74
+
+**The cleaned ghost book is NET-NEGATIVE, net win rate 74/240 = 30.8%** (gross win
+46.7% — fees move the win rate 16 points). And of the +2.41905 as-published net,
+**+2.98689 is the two tape-uncorroborated rows**: the ghost book is net-positive
+ONLY because of two rows no tape corroborates. Bay reached this from fees, I reached
+it from prices, and **neither route gets there alone** — gross-only misses that fees
+eat the edge, fee-only misses that the headline gross is fabricated.
+
+**RULE EARNED THE HARD WAY: state the MEASURE (gross/net) beside every book number,
+the way this repo already states the store and the wallet. A contamination audit
+reported on gross is half an audit.**
+
+Filters, for the record: exit uncorroborated (no tick ±15m) n=2 gross +3.40566;
+entry outside its own tape envelope n=2 gross -0.37893; zero/null price **n=0**
+(`trade_outcomes` has no null-price rows — null findings come from another store).
+
+### ROUTE (b) "RESTRICT TO DEEP POOLS": CANNOT BE TESTED ON GHOST EVIDENCE — CLOSED AS A TEST
+
+Effective round-trip fee actually charged, `sum(fee_cost)/sum(|entry_price*quantity|)`,
+corroborated rows, n>=5:
+
+    AERO 54.2bp   BASECAT 67.5   COMP 86.5   BSTONK 67.1   CBBTC 66.4   VIRTUAL 48.4
+    CBXRP 65.0    VVV 46.2       CBETH 77.0  CBADA 85.3    DRB 46.1     OP 46.4
+    **WETH-USDC 47.3bp (n=5)**
+
+**Range 46.1–86.5bp: a factor of 1.9 across the entire book**, against a real cost
+table spanning >1000x (WETH 4bp → KTA 7498bp). The standing instruction quotes WETH
+at 4–11bp; **the book charges it 47.3bp — 4x to 12x — and places it MID-PACK**
+between VVV (46.2) and VIRTUAL (48.4). Complement tested and dead: if the model were
+depth-aware, WETH — the deepest pair on Base and the instruction's own best case —
+would sit far below everything. It does not.
+
+**The ghost fee model is depth-blind.** So any pass that "proves deep pools are
+cheaper" by filtering the ghost book is reading its own flat constant back out.
+**This does NOT close route (b) in reality** — real chain costs are real, and p679's
+AERO 10.41bp at a $10 clip is a genuine quote. It closes *ghost-evidence-based tests*
+of it. Filed as `[4ff33bac]`.
+
+### NO USABLE NET-POSITIVE SYMBOL EXISTS IN THE CORROBORATED GHOST BOOK
+
+Net by symbol, corroborated rows, n>=5: net-positive are **BSTONK-USDC +7.0875%
+(n=14)** — the repo's known artifact, barred as evidence in either direction by
+`[a57d2cb1]` — and **CBADA-USDC +1.5060% (n=5, net win 2/5)**, too thin to use.
+**Every other symbol is net-negative**: AERO -0.5674% (n=44), BASECAT -2.6793%
+(n=36), COMP -7.0620% (n=16), WETH -0.6855% (n=5), OP -0.5407%, DRB -0.7065%,
+VVV -0.8463%, CBBTC -0.5240%, CBETH -0.3322%, CBXRP -0.4080%, VIRTUAL -0.3445%.
+
+**That is the graduation evidence base: net -0.56784 over 240 corroborated rows at a
+30.8% net win rate, with no usable positive symbol in it.** It agrees in sign with
+the live book (-0.4643%, 38.9% win). **Both books are negative; they never disagreed.**
