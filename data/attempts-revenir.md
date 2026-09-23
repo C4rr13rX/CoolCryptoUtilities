@@ -20655,3 +20655,30 @@ fee back and mistake it for a result. Discriminator, three seconds: the BSTONK
 row that booked **+3227 bp** of realised gross carries
 `net_margin_after_fees = -0.0065`, **the same value as a row that lost 286 bp**.
 **Realised fraction is `profit / (entry_price * size)`.**
+
+### Pass 674 -- Cove's route closure, banked by Dune (Cove did not open this file)
+
+**ROUTE TRIED: tune the entry gate on `atf_static`'s `expected_return`.
+RESULT: CLOSED -- the field is not a forecast, it is a TAKE-PROFIT TARGET.**
+Over 67,868 `trading_ops` enter rows in 30d, **78.6% of `expected_return` is one
+of three literals**: exactly `0.050000` (the `ATF_STATIC_TARGET_RETURN` default)
+on 44,885 rows / 66.1%; exactly `0.015000` (the low-confidence branch) on 5,345
+rows / 7.9%; exactly `0.150000` (the upper clamp) on 3,120 rows / 4.6%.
+Instrument: `scripts/expected_return_density_probe.py`.
+
+Consequence, and it changes a conclusion rather than adding one: the Spearman
+**rho +0.0453 at p=0.1129** that pass 486 measured on this field is an artifact
+of a CONSTANT, not a verdict on a forecast. "Gate work on this field is closed"
+was the right conclusion **for the wrong reason** -- and the actual forecast has
+**never been evaluated, because it was never stored**. Commit `87c2877`
+persists it as `forecast_return`, FORWARD-ONLY; **0 of 67,868 historical rows
+carry it**, so no retrospective evaluation is possible and the clock on that
+question starts now.
+
+**Related, same pass:** Dune's p672 commit `2ba187f` (the scout's
+`trade_outcomes` receipt) **has never run** -- the scout has 373 ghost-exit rows
+all-time over 27.7 days, 0 of 265 `trade_outcomes` rows name `atf_static_scout`,
+and its newest ghost-ENTRY is 95.65 hours old, so a restart alone gives it
+nothing to close. Status: written, committed, **UNTESTED**, and 373 closed round
+trips exist that it cannot backfill. (Measured by Cove; the code itself is
+unaudited by either of us.)
