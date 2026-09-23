@@ -2311,7 +2311,16 @@ class TradingBot:
             # (see `held_position_age < max_hold_sec` below, and the note at
             # the cost check recording that this once switched that check off
             # entirely for aged positions), NOT an eviction. The only forced
-            # exit is MAX_HOLD_FORCE_SECONDS and it DEFAULTS TO 0 = OFF.
+            # exit is MAX_HOLD_FORCE_SECONDS, whose CODE default is 0 = off --
+            # but `.env:169` SETS IT TO 2700, so a 45-minute forced exit IS
+            # configured here. Which makes the number above worse, not better:
+            # a 45-minute force is on and the realised median hold is 56.2 min
+            # with a 4.8-day maximum. THE FORCED EXIT IS CONFIGURED AND IS NOT
+            # EFFECTIVE. (Same shape on the stop: GHOST_STOP_LOSS_PCT is 2%,
+            # 27.4% of ghost round trips move past it, and 5 of ~193 exits in
+            # 30d are stop_loss.) Do not read a getenv default as the deployed
+            # value -- this comment said "off" for twenty minutes because its
+            # author did exactly that.
             #
             # The clamp still stands, on the weaker and true justification: it
             # lands the judged horizon at 60 min against a realised MEDIAN of
