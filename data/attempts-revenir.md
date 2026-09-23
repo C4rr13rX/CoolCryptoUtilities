@@ -23627,3 +23627,90 @@ ceiling for *all* ghost rows and tradeable is a strict subset, so graduation is 
 flaky instrument**: 66 of 72 hours are zero, so a 1-hour probe fails 91.7% of the time because
 the rate really is that low. Caveat: 72h is a short window on a famously bursty series -- this is
 the right number for "is it running now", the wrong one for a lifetime average.
+
+## Pass 682 (Bay, worker) -- THE GHOST BOOK IS NEGATIVE, AND THE MECHANISM IS THE ENTRY PRICE
+
+**Route:** started on the hold axis ([b8ebf664]), found one contaminated row,
+followed the contamination out. **Verdict: the ghost book's positive sign is
+FIVE rows whose ENTRY price the tape refutes. Without them the book is
+-2.8833, not +2.2734.** Read-only, `storage/trading_cache.db`. Filed
+**[922c22af]**.
+
+### The set, and how it was cut
+
+Population `trade_outcomes` wallet='ghost', `entry_price>0 and exit_price>0`,
+**n=248**. Test: implied move = `exit_price/entry_price-1`, flag `|move|>50%`.
+Six rows flag. Sorted by |move| the 6th is **54.93%** and the 7th is **25.35%**
+-- **a 30-point gap with nothing in it**, so this is a separated population, not
+a tail cut at a convenient place. Sensitivity:
+
+    cut  20%  n=9   book -3.4617      cut  50%  n=6   book -3.0832  (published)
+    cut  25%  n=7   book -3.2625      cut  60%  n=3   book -5.1144
+    cut  30%  n=6   book -3.0832      cut 100%  n=3   book -5.1144
+
+**Identical set from 30-50%, and the book is NEGATIVE at every cut from 20% to
+100% (-3.06 to -5.11). No threshold rescues it.**
+
+### MECHANISM -- entry prices are fabricated, exit prices are real
+
+For each flagged row, `market_stream` (the real base tape,
+[[prices-is-not-the-base-tick-feed-market-stream-is]]) within +/-30 min of the
+ENTRY and of the EXIT timestamp:
+
+    AAVE-USDC  entry 129.485  -> NO TICKS        exit 354.99   -> tape 354.99   EXACT
+    AERO-USDC  entry 0.436805 -> NO TICKS        exit 1.14     -> NO TICKS
+    AERO-USDC  entry 1.14     -> NO TICKS        exit 0.513839 -> tape 0.513839 EXACT
+    COMP-USDC  entry 42.82    -> tape says 19.13 exit 19.1288  -> tape 19.1288  EXACT
+    UNI-USDC   entry (unpaired)                  exit 6.37231  -> tape 6.37231  EXACT
+    BASELINE   entry 0.000233 -> tape 0.000233   exit 0.000368 -> tape 0.000368
+
+**EXIT prices are exact tape matches. ENTRY prices are absent from the tape or
+CONTRADICTED by it.** COMP is the clincher: the row claims entry at **42.82**
+while **the tape at that same minute says 19.13** -- 2.24x, not a stale quote
+from a thin market but a price from another source entirely.
+
+**THE BAD VALUE CHAINS.** AERO row 1 exits at **1.14**; AERO row 2 enters at
+**1.14**; neither is on the tape. A number carried from one position's exit into
+the next position's entry without touching the market -- the signature of a
+**stale price cache**, and it means the defect propagates across positions.
+
+### The test exonerated one row -- the set is FIVE
+
+**BASELINE-USDC 09-03 +57.9% is corroborated at BOTH ends** and is a real
+microcap move. It must NOT be quarantined. Caught by the magnitude heuristic,
+cleared by the tape.
+
+    ghost book n=248             +2.2734
+    the FIVE tape-refuted rows   +5.1567
+    book without them, n=243     **-2.8833**
+
+Confirms [[the-ghost-book-positive-is-uncorroborated-entry-prices]] (p681) --
+which named the entry price specifically -- by an independent route and **with
+the mechanism attached**.
+
+### Localisation: 2026-08-26, the earliest day in the book
+
+Four of the five are 2026-08-26, a day with **8 ghost rows of which 4 are
+extreme (50%)**; no other day exceeds one. Consistent with a boot/backfill
+writing against a stale price cache. *Not proven -- the writer was not found.*
+
+### The graduation number appears CLEAN (reported as a negative result)
+
+I looked for an artifact propping up a graduation candidate and did not find
+one. Five of six carry **no `strategy_id`** (confirming
+[[strategy-attribution-begins-2026-09-03-older-rows-never-had-it]] -- the 08-26
+rows predate the field). The one that does is `rsi_reversal@1w`, and the
+scoreboard prints that strategy at **5 tradeable / 0% win / -0.1225**; a book
+containing a +0.7112 row cannot show 0% win, so the artifact sits in the pooled
+6, not the tradeable 5. **Inference from an arithmetic incompatibility, NOT a
+recomputation of the predicate**, and
+[[the-graduation-bar-reads-a-counter-not-the-trade-store]] offers a rival
+reading (the counter is simply wrong) that this does not exclude.
+**So: stop quoting POOLED P/L. The graduation bar is probably not contaminated.**
+The live scoreboard is untouched -- none of the five are `wallet='live'` and
+-0.1864/18 is chain-verified.
+
+### STILL OPEN
+
+Which writer produces the bad `entry_price`. Entry shown uncorroborated, exit
+shown exact; **the code path was not found.** Narrow grep, left on [922c22af].
