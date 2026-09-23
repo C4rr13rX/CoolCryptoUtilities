@@ -175,14 +175,31 @@ def check_wallet() -> Link:
     try:
         c = _db()
         rows = list(c.execute(
-            "SELECT symbol, usd_amount FROM balances WHERE wallet='guardian' AND chain='base'"))
+            "SELECT symbol, quantity FROM balances WHERE wallet='guardian' AND chain='base'"))
     except Exception as exc:
         return link.unknown("db unreadable: %s" % exc)
     stable = 0.0
-    for symbol, usd in rows:
-        if str(symbol).upper() in {"USDC", "USDT", "DAI"}:
+    # SUM `quantity`, NOT `usd_amount`. For a stable the quantity IS the dollar
+    # value, and it is the only one of the two fields that tracks the chain --
+    # `usd_amount` is a cached mark that freezes while the quantity moves
+    # underneath it. balances.py:574-594 documents the same defect measured
+    # 2026-09-04, and web/tradingagent/engine.py:134-137 already applies this
+    # exact rule for exactly this reason. This line was the last stable total
+    # in the repo still reading the stale field.
+    #
+    # Measured 2026-09-22, base block 51666177, wallet
+    # 0x291c854811e92906a658fb94aa511bf919f968ad: the USDC row carried
+    # quantity 14.662954 -- matching an on-chain balanceOf to four decimals --
+    # against usd_amount 18.18649773, an implied $1.2403 for a dollar
+    # stablecoin. USDT on the same snapshot implied exactly $1.000000. So this
+    # link printed "$23.18 deployable stable" for a wallet that could spend
+    # $19.66, overstating it by $3.52 (17.9%). At the $10 clip the cost work
+    # assumes, $23.18 reads as room for two positions and $19.66 is room for
+    # one.
+    for symbol, quantity in rows:
+        if str(symbol).upper() in {"USDC", "USDT", "DAI", "USDBC"}:
             try:
-                stable += float(usd or 0.0)
+                stable += float(quantity or 0.0)
             except (TypeError, ValueError):
                 pass
     if stable <= 0.35:
