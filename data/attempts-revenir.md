@@ -21310,3 +21310,80 @@ has placed nothing for 17.3 days. **-0.1864/18 is a DEAD number, not a worsening
 `storage/trading_cache.db` over `trading_ops` (status in 'ghost-entry',
 'entry-refused-no-candidates') and `trade_outcomes` (wallet='live'); the two quoted
 source lines by `grep -n "exit_conf" trading/scheduler.py trading/bot.py`.
+
+## Pass 676 (Sage) -- THE DEEP-POOL WETH ROUTE IS CLOSED ON DIRECTION
+
+Item `[854ce89d]`. Pass 670 moved this route's blocker from COST to DIRECTION.
+Pass 675 closed money_button's own rule on WETH (0 of 3598 ticks, 16 even at a
+ZERO fee). This pass asked the last question standing: does ANY strategy that
+already carries ledger evidence call WETH-USDC's forward direction at or above
+h*, on a DISJOINT sample?
+
+**The answer is no, and the route is CLOSED ON DIRECTION.**
+
+Command: `python -X utf8 scripts/weth_signal_h_star.py`
+Output:  `data/weth_signal_h_star.json`
+
+COST WAS NOT RE-OPENED. `COST_ALL_IN_BP = 6.11` is *imported* from
+`weth_direction_census` rather than retyped, so this script cannot silently
+disagree with the measured figure (2.06bp QUOTED round trip, Echo p498
+d864991, + 4.05bp REALISED gas median over the 18 closed live rows).
+
+### The numbers, DISJOINT, long-only, best cell per rule
+
+| rule | horizon | n | acc | h* | one-sided p | verdict |
+|---|---|---|---|---|---|---|
+| rsi_reversal (`rsi_reversal.py:29-65`) | 45m | 42 | 0.5714 | 0.6116 | 0.2204 | FAILS |
+| donchian_breakout (`donchian_breakout.py:23-47`) | 60m | 60 | 0.4000 | 0.5948 | 0.9538 | FAILS |
+| ema_cross (`ema_cross.py:18-40`) | 45m | 16 | 0.8125 | 0.6029 | 0.0106 | see below |
+| BASELINE always-long | 45m | 209 | 0.5167 | 0.6169 | 0.3391 | FAILS |
+
+`donchian_breakout` is not merely flat, it is WRONG-WAY at every horizon
+(0.3469 at 10m, 0.4000 at 60m). Its fires select ticks that fall.
+
+### Why the ema_cross cell is NOT a result
+
+It is the only cell that printed above its own h*, and it is an artifact:
+
+1. **Multiplicity.** Four rules x five horizons = **20** one-sided tests.
+   P(at least one raw p <= 0.0106 under a pure null) = **0.1926**. Bonferroni
+   corrects 0.0106 to **0.2128** against a family-wise alpha of 0.0025/test.
+2. **Split-half.** That cell is **1.000 over the first 8 fires and 0.625 over
+   the second 8**. An edge that lives in one half of the tape is a window.
+3. **The rule's own wider sample disagrees.** The same rule at the same horizon
+   over its FULL (overlapping) fire set is **0.60 over n=30**, not 0.8125.
+
+The script now computes the family size and takes its verdict at the corrected
+level, so a later pass cannot re-derive "ema_cross clears" by reading one row.
+
+### Power: this is a real null, not a thin tape
+
+WETH-USDC carries **3599 ticks over 654.62 hours** (2026-08-26 17:49 ->
+2026-09-23 00:26), 5.50 ticks/hour. The always-long baseline reaches **n=209**
+disjoint at 45m, resolving **5.69pp** one-sided at 95%; it prints 0.5167
+against a required 0.6169, i.e. it misses by **10.0pp**, which is well outside
+its own resolution. The named rules fire sparsely (n=16-60) and each cell's own
+MDE is printed beside it -- read THAT n, not the tape's.
+
+### What is closed, and what is NOT
+
+CLOSED: "pick a named classical strategy, run it on the deep WETH pool, and the
+now-solved cost leg lets it pay." No named rule with ledger evidence clears h*
+on WETH disjoint data at any horizon 10-60m.
+
+NOT closed by this: the live-receipt route. A perfect oracle still pays at
+6.11bp at every horizon here (mean |move| 13.72-29.68bp vs a 6.11bp cost), so
+this is a SIGNAL result, not a cost result. **Do not reopen this route on the
+cost argument alone** -- cost was never the thing that was failing.
+
+### A trap for anyone touching these rules
+
+`trading/strategies/base.py:140` `ema()` is a **Python for-loop**, O(n) per
+call. Calling it once per tick over a 3599-tick tape did not return in 120s.
+EMA is causal, so `ema(px[:i+1], span)[-1]` is *identically* `ema(px, span)[i]`
+-- precompute once. Same for RSI, which reads only the last `period+1` prints.
+
+### Also measured, and worth one line
+
+`market_stream` carries **WETH-USDT at 4151 ticks**, MORE than WETH-USDC's
+3599. Anything sampling "WETH" by string prefix is pooling two tapes.
