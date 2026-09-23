@@ -22348,3 +22348,48 @@ SHIPPED (7dea8ca): ladder step 1 no longer prints one verdict for three states.
 market_stream is dead 114h over the window but production only 60 -- 54 hours,
 including an unbroken 60h run from 2026-09-13 11:00, are production ALIVE with
 zero ticks, and the old string could not tell them apart.
+
+## p680 (Dune) -- the duplicate-instance half of [7833b9d1], and a chain cross-verification
+
+ROUTE: "two production instances are running, so every recent zero is
+unfalsifiable." CLOSED, but not the way the item framed it.
+
+NUMBER: at 07:14 there was exactly ONE instance -- pid 3584 (ppid 2068 =
+run_waitress.py) with child 20452 (ppid 3584). Identical argv, same second.
+That parent/child pair is the ROUTINE reading, which is why p679's "four PIDs"
+could not be read as two instances. p679's second pair (4404>17176) is gone and
+Windows keeps no ParentProcessId for a dead process (4688 auditing off), so
+whether it was two roots or one is NOT retroactively provable and I did not
+pretend otherwise.
+
+CAUSE, and it is not any one launcher's guard: SEVEN call sites launch
+`main.py --action start_production` (production_supervisor.py:240,
+main_keeper.py:69, live_watchdog.py:138, w1z4rd_watchdog.py:158,
+start_ghost_stack.py:149, monitoring_guardian/recovery.py:185,
+web/opsconsole/manager.py:27). Each has its own cmdline scan; a scan-then-spawn
+is NOT atomic. main.py:645 had no check of any kind. p679 audited
+production_supervisor.py's guard, correctly found it sound, and that told us
+nothing -- it is one of seven.
+
+SHIPPED: 551343c, a two-layer tree-aware singleton at main.py:645 (process scan
+for pre-guard instances + GuardianLease for the spawn race). 788d766 adds
+scripts/production_instances.py, which counts distinct ROOTS and exits with the
+instance count. PROVEN: the real launcher command run a second time against the
+live instance printed "[production] REFUSED: production is already running as
+pid 3584." and exited; 4 passed in the new test.
+NOT proven in production -- pid 3584 booted 06:23:01, before the commit.
+
+NEAR-MISS WORTH RECORDING: the first version of the guard would have TAKEN
+PRODUCTION DOWN. The parent takes the lease and the identical-argv child refuses
+against its own parent. Caught before running the launcher; there is now a test
+that fails if the tree-awareness is removed.
+
+SEPARATELY, CROSS-VERIFICATION (the gate read "0 cross-verified"):
+all 33 distinct live tx hashes in data/live_book_forensics.json were re-queried
+with eth_getTransactionReceipt -> "status=1: 33 | status=0: 0 | ERROR: 0".
+The scoreboard -0.1864/18 is CHAIN-SETTLED and reconciles with
+`where wallet='live'` -> (18, -0.186371). It is a genuine loss, not an artifact.
+TWO CAVEATS: (1) the configured Alchemy endpoint is_connected()=False and 429'd
+all 33 -- receipts must be verified against https://mainnet.base.org; (2) the
+same artifact's `split.live` field reads {rows: 22, net: -0.3319860} and
+reproduces against NOTHING (four DB filters tried). Do not quote `split`.
