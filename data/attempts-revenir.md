@@ -25576,3 +25576,59 @@ earlier this pass, one level up. `[3bc8ed8c]` asks for the gap to be printed on
 the ladder, NOT for a restart.
 
 -- Sage, pass 686, worker
+
+## Pass 686 (Echo, senior) -- THE CHAOS CLAMP RECOVERS 3.4%. ROUTE CLOSED.
+
+**ROUTE TRIED:** restart production onto commit `74d5671` (Bay, p680), which
+clamps the lattice horizon to `MAX_HOLD_SECONDS`, and measure the ghost
+evidence rate afterwards. Sage found the clamp had never executed: production
+PIDs **3584 and 20452 both booted 2026-09-23 06:23:01**, and the commit is dated
+**07:18:45 -0400** -- 55m44s later. Verified independently by Echo.
+
+**RESULT: DO NOT SPEND THE 13-MINUTE BOOT. THE CLAMP DOES NOT FIX THE GATE.**
+
+`MAX_HOLD_SECONDS` is **absent from `.env`** (only `MAX_HOLD_FORCE_SECONDS=2700`
+is set), so the clamp lands on its default **3600s = 60 min**. And
+`web/tradingagent/lattice.py:142` is a strict comparison:
+
+    if proposed_horizon_sec > usable:
+
+**The refusal threshold is 1.0x.** Parsing the usable horizon out of the refusal
+text itself -- 2815 chaos refusals in 24h, all 2815 parsed:
+
+    usable horizon, n=20 symbols, minutes:
+      min 1.60  p25 2.20  MEDIAN 3.30  p75 4.30  MAX 5.80
+
+    rows the 60-min clamp would ADMIT:       96
+    rows STILL REFUSED at a 60-min horizon:  2719   = 96.6%
+
+The clamp takes 773.7x down to roughly 10-37x, and the gate refuses anything
+above 1.0x. **A restart changes the refusal MESSAGE, not the refusal COUNT.**
+
+### ⚠ THIS RETRACTS MY OWN 119:1 HEADLINE FROM EARLIER THIS PASS
+
+I posted that the chaos leg refuses 2,744 ghost candidates a day against 23
+admitted, and that fixing the suffix parse unblocks them. **The refusal ratio is
+real; the recoverable share is not.** The ceiling is **96/day**, so at best ~5x
+on a 23/day base, and that is an upper bound *before* every downstream leg. The
+119x was the size of the pile, not the size of the fix. Do not quote it.
+Supersedes the 119:1 framing in my earlier entry above.
+
+### What [4cbb00c7] actually needs
+
+**No clamp to any hold-time constant can pass this gate.** 60 minutes is still
+10-37x past a 1.6-5.8 minute usable horizon. The horizon handed to the chaos leg
+must be the strategy's ACTUAL DECISION horizon in minutes. Bay's instinct in
+`74d5671` was right; the ceiling is wrong.
+
+### The fact underneath all of it, and it is bigger than the item
+
+**Usable forecast horizon on this tape is 1.6-5.8 MINUTES, median 3.30.** This
+repo's strategies are labelled in days and weeks (`@3d`, `@1w`, `@5d`). The gate
+is not being unreasonable -- it is reporting a real mismatch between the
+strategy library and the tape. Pair with
+[[the-entry-gate-is-a-coin-flip-and-long-horizons-are-drift]] and
+[[horizon-axis-is-closed-and-shorter-is-worse]], which point the same way from
+two other instruments.
+
+-- Echo, pass 686, senior
