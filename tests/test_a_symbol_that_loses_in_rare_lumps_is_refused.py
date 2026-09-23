@@ -102,15 +102,51 @@ AERO_7D = [
 ]
 
 
+#: The clip every trip above is replayed at, as a multiple of its recorded
+#: size. THE RETURNS ARE UNTOUCHED -- only the notional they were traded at.
+#:
+#: WHY IT IS NOT 1. ``_verdict`` used to subtract one flat ``round_trip_cost()``
+#: from every return; it now charges each trip ``modelled_cost(notional)`` at
+#: its own clip, which is what leg 3 below has always done (Gale, 520c42d).
+#: AERO_7D's recorded clips run as small as $0.13, where the FIXED charge alone
+#: is 3.1% of notional -- so at 1x the first leg now catches this book on the
+#: t-test (t=-2.71) and the bootstrap leg is never reached. That is the gate
+#: working BETTER, not worse: the symbol is still refused, and refused earlier.
+#: But it stops this fixture exercising the stage it exists to pin.
+#:
+#: At 8x the fixed charge stops dominating and the recorded SHAPE is what the
+#: three stages see again -- t=-1.20 (misses), sign p=0.7975 (misses), summed
+#: gross -0.6416 against 2.1156 of modelled cost (caught). 6x is the smallest
+#: multiple that restores it; 8x is chosen for margin on the t-statistic, which
+#: must stay above -1.7 for the first stage to keep missing.
+CLIP_SCALE = 8.0
+
+
 def _lumpy_loser() -> list:
     """AERO's measured shape: wins small and often, loses big and rarely.
 
     26 of the 36 round trips clear the modelled cost -- which is why the sign
     test sees a comfortable majority -- and the ten that do not are large
-    enough to take the total 0.4676 below what the book cost to trade. The
-    dispersion those ten create is what keeps the t-statistic inside -1.7.
+    enough to take the total below what the book cost to trade. The dispersion
+    those ten create is what keeps the t-statistic inside -1.7.
+
+    Replayed at ``CLIP_SCALE`` times the recorded clip; see the note there.
     """
-    return [gate.Trip(ret=g / n, gross=g, notional=n) for g, n in AERO_7D]
+    return [
+        gate.Trip(ret=g / n, gross=g * CLIP_SCALE, notional=n * CLIP_SCALE)
+        for g, n in AERO_7D
+    ]
+
+
+def _per_trip_costs(trips) -> list:
+    """What each trip cost, as a fraction of its own notional.
+
+    The pre-conditions below must be re-derived against the SAME cost
+    ``_verdict`` charges, or they assert that the first two stages miss under
+    one cost model while the verdict is reached under another -- which is
+    exactly how this test started failing.
+    """
+    return [gate.modelled_cost(t.notional) / t.notional for t in trips]
 
 
 def test_min_samples_is_derived_from_the_confidence_not_picked():
@@ -133,13 +169,12 @@ def test_a_symbol_that_loses_in_rare_lumps_is_refused():
 
     # THE OLD BEHAVIOUR, RE-DERIVED HERE so this test fails against code that
     # only has the first two stages. Both existing tests ALLOW this shape.
-    cost = gate.round_trip_cost(db_path=gate.DB_PATH)
-    excess = [t.ret - cost for t in trips]
+    excess = [t.ret - c for t, c in zip(trips, _per_trip_costs(trips))]
     assert gate._t_statistic(excess) > gate.MAX_T, (
         "the t-test is supposed to MISS this shape; if it now catches it the "
         "fixture no longer reproduces the AERO case"
     )
-    assert gate._sign_test_p([t.ret for t in trips], cost) >= gate.SIGN_MAX_P, (
+    assert gate._sign_test_p(excess, 0.0) >= gate.SIGN_MAX_P, (
         "the sign test is supposed to MISS this shape -- most trips clear cost"
     )
 
