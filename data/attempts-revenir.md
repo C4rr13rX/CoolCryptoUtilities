@@ -20442,3 +20442,61 @@ book rather than from the gross book only.
 NOT TESTED IN PRODUCTION. Production pid 6340 booted 2026-09-21 22:57:35, and
 41 commits have landed since; five of them touch code production imports, this
 one included. The gate will not read a per-symbol fee until a restart.
+
+## Pass 673 (Sage, QA) -- [82662e5d] verified; the scout/atf_static attribution cutover found
+
+ROUTE TRIED: QA of Dune's p672 commit `2ba187f`, the scout's `trade_outcomes`
+receipt -- re-running the criteria rather than reading the report.
+
+NUMBERS PRODUCED.
+  * Criterion 1 HOLDS, reproduced against a REAL `TradingDatabase` on a temp db
+    (the committed suite uses a fake): scout rows 0 -> 1, outcome_id
+    `atf_static_scout-TOAD-USDC:1790128823:exit:1`, gross 0.6000000000,
+    fee 0.0231690000, net 0.5768310000, `net-(gross-fee) = 0.000e+00`.
+    Two checks Dune did not claim also pass: a replayed cycle with the same
+    entry_ts leaves the count at 1 (ON CONFLICT DO NOTHING is real), and
+    `scripts/tradeable_book.load_rows` returns the row ATTRIBUTED
+    (`strategy_id='atf_static_scout'`, notional 6.000000), which is the item's
+    whole point.
+  * Criterion 2 HOLDS: 265 rows, 96 unattributed 2026-08-26 06:27 ..
+    2026-09-03 16:48, 169 attributed 2026-09-03 17:38 .. 2026-09-22 04:38.
+    Non-overlapping -- a closed historical tail, as claimed.
+  * Criterion 4 holds but quotes the wrong number: the scout's own outage is
+    94.61h since its last entry and 108.64h since its last exit, not the 16.94h
+    of the general ghost lane. Open scout positions: 0.
+
+CLOSED NEGATIVE -- do not re-run these:
+  * "The receipt contaminates the live scoreboard." NO. wallet='ghost',
+    details.mode='ghost'; every live reader filters (`loop_status.py:91/94/103`
+    wallet='live', `live_book_forensics.py:59` details.mode='live',
+    `micro_profit.py:151` wallet='live').
+  * "The ledger's 386 scout trips are 3.0x its 128 exit events." NO -- MY OWN
+    BAD FILTER, killed in the same pass. `details.strategy_id` is only written
+    from 2026-09-02. By `details.source='c0d3rv2_atf_static'` it is 593 entries
+    / 373 exits, and the first exit (2026-08-21 16:32) is the ledger's
+    `first_ts` to the minute. 386 vs 373 = 3.4%.
+  * "trading_ops was pruned." NO: oldest row of any kind is 2026-08-21 15:41
+    over 126,825 rows, before the ledger's first entry.
+  * "The misattribution is outside the bar's window." NO -- there is no window.
+    `scripts/graduation_status.py:204-223` reads the LIFETIME accumulator
+    (`StrategyLedger()._data` -> `entry['ghost']` -> `_tradeable_of`), with no
+    `since_ts`, no days argument and no 86400 cut on that path.
+
+STILL OPEN, filed as [c203a53a] (P1) and [80f80530] (P2):
+  * THE CUTOVER. Grouped by strategy_id over the scout's own SOURCE:
+    ghost-entry `atf_static` n=329 (08-21 15:51 .. 09-02 11:11) vs
+    `atf_static_scout` n=264 (09-02 16:04 .. 09-18 23:37); ghost-exit
+    `atf_static` n=245 (08-21 16:32 .. 09-02 04:23) vs `atf_static_scout`
+    n=128 (09-02 12:34 .. 09-18 09:36). Ranges do not overlap: a clean
+    cutover. For twelve days the scout booked under the SIGNAL id, which
+    `services/atf_static_strategy.py:76-84` documents as deliberately
+    distinct. Both board rows (atf_static 11/27%/+0.5696, atf_static_scout
+    23/65%/-0.8202) are affected, in OPPOSITE directions. Unsized.
+  * 593 entries vs 373 exits by source: 220 (37.1%) produced no exit event
+    while the position book is empty. Unexplained.
+  * The receipt has NO committed test. `tests/test_scout_evidence_is_not_the_bots.py`'s
+    `_FakeDB` (:42) has no `record_trade_outcome`; the scout's bare
+    `except Exception` swallows the AttributeError. Verified by building that
+    fake shape and running the real scout: events=['exit'], all assertions
+    pass. The "42 passed" cited on criterion 5 would print identically with
+    the receipt deleted.
