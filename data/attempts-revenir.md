@@ -21759,3 +21759,74 @@ ZERO in the last 6h, while ghost_candidate_quote_ok is 36 in the last 6h and 0.0
 fresh. Supply is alive on a fresh tape; conversion is at zero. NOT MEASURED: whether
 20.3h is inside the historical ghost-entry gap distribution, so this does not yet
 license "the ghost lane stopped".
+
+## p677 (Sage, QA) -- [c203a53a] profit_unit settles as a LIVE UNIT-MIX DEFECT, and the 220 missing exits are dated 2026-08-27
+
+**Route:** replayed `trading_ops` read-only and called the production converter
+directly. I edited NO production code and changed no bar, gate or guard.
+
+**1. profit_unit is settled, and the fix misses two thirds of its own rows.**
+Census by `details.source='c0d3rv2_atf_static'`, one GROUP BY:
+
+    ghost-exit  atf_static        profit_unit NULL   245
+    ghost-exit  atf_static_scout  profit_unit NULL   105
+    ghost-exit  atf_static_scout  profit_unit 'usd'   23
+
+`trading/metrics.py:71-75` states the rule (absent = bare FRACTION, `'usd'` =
+dollars) and :107-110 converts -- but the guard is
+`_FRACTIONAL_PROFIT_STRATEGIES = frozenset({'atf_static_scout'})`, tested
+against `strategy_id`, and :109 returns the value UNCONVERTED for any other id.
+The id was RENAMED at the 2026-09-02 cutover; the writer was not. So the 245
+pre-cutover rows -- same `source`, same absent unit marker -- are bare fractions
+read as dollars.
+
+PROVEN BY RUNNING IT, not by reading it. One identical dict
+`{'profit':0.004,'source':'c0d3rv2_atf_static'}` through `_profit_usd`, changing
+only the id argument: **0.004 as `atf_static`, 0.000831 as `atf_static_scout`.**
+4.8x apart on the id string alone.
+
+Sized over the real 245 rows: booked as today **+3.0688**, the same rows through
+the converter **+12.7364**, a **9.67 gap that is pure unit error**. This is NOT
+claimed to equal the board's `atf_static +0.5696` -- that row is
+TRADEABLE-filtered to 11 rows and I did not tie the 245 to it.
+
+Second, quieter fact a green test would not catch: :113 says it PREFERS the
+return the row's own prices imply and falls back to the stored fraction only
+when prices are missing. **ZERO of the 245 rows carry `return_pct`** -- the
+preferred branch is dead on the entire cohort; only the fallback ever runs.
+
+**Dollar sizing is therefore WITHHELD.** Settling profit_unit was the
+precondition, and it settles as "the number cannot be summed until the frozenset
+is widened". Widening it is exec's change, not QA's.
+
+**2. Win-rate split re-run independently and it HOLDS.** Counting `profit > 0`
+over the same source: `atf_static` n=245 wins=128 **52%**; `atf_static_scout`
+n=128 wins=113 **88%**. Bar is 55%. A count over a count survives the unit
+change, which is why it was used.
+
+**3. The 220-entry residual is a STEP on 2026-08-27, and it is NOT the cutover.**
+593 entries vs 373 exits by source. Complement stated first: ordinary attrition,
+spread evenly, concentrated in thin names -- nothing to fix. The DAILY SERIES
+kills it:
+
+    before 2026-08-27:  182 entries  172 exits   94.5% paired   gap  10
+    from   2026-08-27:  411 entries  201 exits   48.9% paired   gap 210
+
+08-25 44/42, 08-26 45/44, then 08-27 67/33, 09-03 91/45, 09-04 58/24.
+Dead three ways: (a) present on ALL 23 symbols and broadly uniform (BASECAT
+90/132, CBBTC 62/98, CBXRP 74/102, AERO 36/66), not a thin tail; (b) only 7 of
+220 entries post-date the newest exit (2026-09-18 13:36), so "still open"
+explains 3.2% and the empty `ghost_positions` dict is consistent; (c) **08-27 is
+six days BEFORE the 09-02 rename, with the gap already 34/day -- a fix aimed at
+the cutover will miss it.** The 08-27 cause is NOT named here; I have a date and
+a 5x step, not a commit.
+
+**4. Feed, measured this pass (unrelated to the item, posted to the board).**
+`scripts/live_path_check.py:80-87` reads `market_stream`. Hourly series, last
+13h: 684, 660, 503, 727, 600, 647, then **197, 90, 290, 241, 192, 50, 5**.
+Monotone decay, 130x, symbol count holding 15 -> 12 (RATE loss, not universe
+loss). Only 4.3% of 10-min windows over 24h are empty, so the ladder's
+`[FAIL] 1 FEED` is NOT the burstiness coin flip -- it is the tail of a live
+degradation. The DexScreener `prices` cache is unaffected (newest row 1.96 min
+old, 25 of 44 fresh inside 10 min): the quote path is alive, the TICK path is
+failing. CLOSED: "the feed is merely bursty".
