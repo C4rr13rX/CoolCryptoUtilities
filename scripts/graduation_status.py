@@ -195,15 +195,55 @@ def _tradeable_median_from_store():
         from trading.strategies.ledger import _live_tradeable
     except Exception:  # noqa: BLE001
         return None
+    # THE CENSOR IS NOT OPTIONAL ON THIS LINE, AND IT CARRIES THE SIGN.
+    #
+    # ``trade_outcomes`` is append-only and has no plausibility guard, so every
+    # row the ledger rejected on the way in is still in the money table and
+    # every all-time read of it -- including this one -- counts them as fills.
+    # Measured pass 688 over the population this function selects:
+    #
+    #     UNCENSORED   n=182  median -0.009095  total +6.1425
+    #     CENSORED     n=177  median -0.009991  total -0.3336
+    #
+    # FIVE ROWS OF 182 CARRY THE SIGN OF THE WHOLE LINE. Four are unclassified
+    # and one is rsi_reversal@1w; the AERO pair is the documented chain, where
+    # a fake +161% win exits at a price the tape never printed and the NEXT
+    # position opens at that fictional basis and books a real-looking -55%:
+    #
+    #     AERO-USDC     unclassified     +3.2066   0.436805 -> 1.14
+    #     AERO-USDC     unclassified     -1.1115   1.14     -> 0.513839
+    #     AAVE-USDC     unclassified     +3.4700   129.485  -> 354.99
+    #     BASELINE-USDC unclassified     +0.1999   0.000233 -> 0.000368
+    #     UNI-USDC      rsi_reversal@1w  +0.7112   2.859    -> 6.372307
+    #
+    # THE CONCLUSION IS ROBUST TO THE ONE ROW THE CENSOR GETS WRONG.
+    # BASELINE-USDC was flagged by the ratio arm and then EXONERATED by the
+    # tape -- ``market_stream`` corroborates BOTH ends within 30 min, a real
+    # microcap move. Keeping it would put this line at -0.1337, which is still
+    # negative. The claim "the store-derived tradeable book is negative" does
+    # not depend on that row, so this delegates the shared rule unchanged
+    # rather than hardcoding a per-symbol exemption into a report. A second
+    # copy of a predicate is a second answer to one question -- the same reason
+    # ``_live_tradeable`` above is imported and never reimplemented.
+    #
+    # WHAT THIS IS NOT: a P/L improver. It makes the headline WORSE, which is
+    # the check working. A filter that flattered the record it judges would be
+    # laundering it.
+    try:
+        from services.outcome_plausibility import IMPLAUSIBLE_RET
+    except Exception:  # noqa: BLE001
+        return None
     db = os.getenv("TRADING_DB_PATH") or str(ROOT / "storage" / "trading_cache.db")
     try:
         con = _sqlite3.connect("file:%s?mode=ro" % Path(db).as_posix(), uri=True)
     except Exception:  # noqa: BLE001
         return None
     nets = []
+    censored = 0
     try:
-        for sym, status, net, details in con.execute(
-            "SELECT symbol, status, net_profit, details FROM trade_outcomes"
+        for sym, status, net, details, entry_px, exit_px in con.execute(
+            "SELECT symbol, status, net_profit, details, entry_price, exit_price "
+            "FROM trade_outcomes"
         ):
             if str(status or "").lower() != "closed":
                 continue
@@ -221,6 +261,19 @@ def _tradeable_median_from_store():
                     continue
             except Exception:  # noqa: BLE001
                 continue
+            # The ratio arm of the shared censor, applied to the rows this
+            # line is about to take a median of. Only rows with BOTH prices
+            # can be judged; one without them is kept, because dropping a row
+            # for being unmeasurable would censor on absence rather than on
+            # evidence.
+            try:
+                e_px = float(entry_px or 0.0)
+                x_px = float(exit_px or 0.0)
+                if e_px > 0.0 and x_px > 0.0 and abs(x_px / e_px - 1.0) > IMPLAUSIBLE_RET:
+                    censored += 1
+                    continue
+            except Exception:  # noqa: BLE001
+                pass
             nets.append(float(net or 0.0))
     except Exception:  # noqa: BLE001
         return None
@@ -233,11 +286,18 @@ def _tradeable_median_from_store():
         return None
     nets.sort()
     total = sum(nets)
+    # ``top_share`` IS ONLY MEANINGFUL ON A POSITIVE SUM. It exists to answer
+    # "is this sum one row?", and that question presupposes a sum worth
+    # carrying. Divided by a negative total it returns a negative percentage --
+    # censoring takes this book to -0.3336 and the naive formula printed
+    # "top row -252% of the sum", which reads as a measurement and is not one.
+    # None means "not applicable" and the caller omits the clause.
     return {
         "n": len(nets),
+        "censored": censored,
         "median": nets[len(nets) // 2],
         "total": total,
-        "top_share": (100.0 * nets[-1] / total) if total else 0.0,
+        "top_share": (100.0 * nets[-1] / total) if total > 0.0 else None,
     }
 
 
@@ -627,8 +687,19 @@ def render(r: dict) -> str:
     # it as anything else would be the drift this report exists to expose.
     med = _tradeable_median_from_store()
     if med is not None:
-        A("    median row (store, read-time predicate): %+.6f over %d rows; "
-          "top row %.0f%% of the sum" % (med["median"], med["n"], med["top_share"]))
+        line = ("    median row (store, read-time predicate): %+.6f over %d rows"
+                % (med["median"], med["n"]))
+        if med.get("top_share") is not None:
+            line += "; top row %.0f%% of the sum" % med["top_share"]
+        A(line)
+        # THE CENSOR'S COST IS PRINTED, NOT HIDDEN. A report that silently
+        # dropped rows would be quoted as a count of the whole book. Pass 688
+        # measured these five rows carrying the SIGN of this line: +6.1425
+        # uncensored over 182 rows, -0.3336 censored over 177.
+        if med.get("censored"):
+            A("      (%d implausible row(s) censored via "
+              "services.outcome_plausibility; sum here %+.4f)"
+              % (med["censored"], med["total"]))
         if med["median"] <= 0.0 and med["total"] > 0.0:
             A("      ^ POSITIVE SUM, NON-POSITIVE MEDIAN: the sign is carried by "
               "the tail, not by the typical trade. Do not read it as an edge.")
