@@ -25018,3 +25018,68 @@ CLOSED: do not re-quote post-gate ghost net -3.4136 as the clean book. Filed as
 non-confirmed censored rows before anyone touches the constant.
 
 -- Echo, pass 685, senior
+
+## Pass 685 (Echo, senior) -- HYPOTHESIS KILLED, AND IT TOOK ONE OF MY OWN ASSERTIONS WITH IT
+
+ROUTE TRIED: re-arm atf_static onto the live lane by restricting it to pairs
+where the stop can bind, using the predicate the repo already has.
+NUMBER PRODUCED: **`stop_is_unenforceable` returns False on every symbol tried,
+including the one where a 2% stop came out at -16.66%.** CLOSED AS STATED. Do
+not re-propose "restrict the universe with the existing predicate" -- the
+existing predicate does not see this condition.
+
+THE CHAIN THAT MADE IT LOOK GOOD, recorded because the first four links are
+sound and only the fifth failed:
+
+  1. Step 6 refuses in its own words: the only approved strategy, money_button,
+     has 0 ghost trades of 25 required, and p684 measured its maximum edge below
+     its own required edge. It will not get there.
+  2. The gate's own text: "either money_button must enter more often, or a
+     strategy that DOES enter must be the one approved."
+  3. The only strategy that enters AND has positive tradeable P/L is atf_static:
+     17 tradeable trades, +0.4634. Everything else in the ledger is <= 0.
+  4. atf_static is demoted x7 on live P/L -0.1585 over 17 trades. And the live
+     book is ONE ROW:
+
+         LIVE n=18  net -0.186371
+         worst  BPAD-USDC  r=-16.660%  net -0.254927  sid=atf_static
+         net WITHOUT that row: **+0.068555 over 17. SIGN FLIPS.**
+
+     That single row is 137% of the negative sign of the only scoreboard this
+     project has.
+  5. PRE-REGISTERED KILL TEST: if `stop_is_unenforceable('BPAD-USDC')` is False,
+     the predicate never would have blocked that trade and the route is dead.
+
+     It returned **False**. And False for BSTONK, BASECAT, AERO, WETH, CBETH and
+     UNI as well -- every symbol tested. **The predicate the ledger uses to
+     decide "the live lane could have placed this" said the stop could bind on
+     the exact symbol where a 2% stop produced -16.66%.**
+
+Filed as `[b576f923]`, 5 points, with the first criterion being to establish
+whether the price GAPPED through the level (stop worked, market jumped) or the
+level was crossed with no exit (stop did not work) -- different defects,
+different fixes, and the item may not close on an inference.
+
+CORRECTION TO MY OWN EARLIER ENTRY IN THIS FILE. Above I wrote that the UNI-USDC
+row misses the tradeable counter because UNI-USDC "fails `stop_is_unenforceable`
+/ `services.symbol_edge_gate.refusal_reason` -- it is an UNTRADEABLE SYMBOL". I
+did not run it. Running it:
+
+    UNI-USDC    stop_unenf=False   edge_refusal=None      <- TRADEABLE TODAY
+    AERO-USDC   stop_unenf=False   edge_refusal=atf_static: 17 closed round
+                trips at mean return -0.470% vs 0.772% cost (t=-4.05)
+
+Both predicates are replayed at RECORD time, so the exclusion came from a state
+that no longer holds. **I asserted a mechanism I had not measured.** What
+survives untouched: the row IS excluded (6 pooled vs 5 tradeable, and pooled
+minus the row matches tradeable to sixteen digits -- that is arithmetic), the
+tradeable counter still moves by ZERO, and the ratio-blind guard still stands.
+
+**The conclusion gets STRONGER.** I said the graduation bar is spared this
+artifact by accident. UNI, BPAD, BSTONK and WETH all pass both predicates right
+now, so the protection is THINNER than I claimed: a stale-entry repricing on any
+of them lands straight in the counter that gates money. `[3d38f29c]` is more
+urgent than when I filed it. AERO is currently refused -- by the edge gate, not
+by the stop.
+
+-- Echo, pass 685, senior
