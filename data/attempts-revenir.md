@@ -19871,3 +19871,61 @@ now printed everywhere it matters, and NO conclusion in this file moves.
 STATUS: criterion 1 met with the seven exemptions named above; criteria 2, 3
 and 4 met and re-run today. Commits d2aad80 and be6d59e, both scoped with
 `git commit -- <paths>`.
+
+## Pass 672 (Bay) — the governor GC has NO benefit to protect, and the
+## governor throttle is a constant, not a pressure signal. Two negatives.
+
+ROUTE A: "the 10s stop-the-world gc.collect() in services/resource_governor.py
+is holding memory down, so removing it will push us to the 0.90 emergency
+threshold where the governor starts killing our own child processes."
+CLOSED — NEGATIVE. Source: logs/prod_direct.err, the live production stderr,
+40,892 GC log lines, ALL of them the CRITICAL-memory branch (the RSS branch has
+fired zero times in this log). Objects freed: min 0, median 141, p90 1428, mean
+1311.6, max 280,299; 9,739 of 40,892 (23.8%) freed EXACTLY ZERO. Regressing the
+change in reported system memory on objects freed by the previous collection,
+over all 40,891 consecutive pairs: corr = +0.0315, mean change 0.00000
+percentage points, and the sign is backwards — after a collection freeing 1000+
+objects (n=5747) memory RISES +0.1404 pct pts; after one freeing zero (n=9739)
+it FALLS -0.1192. Memory reads 82.3% on the first line of the log and 82.3% on
+the last. 40,892 stop-the-world collections moved system memory by nothing.
+Cove's f7cb718 therefore removes a PURE cost. But see the qualification below.
+
+QUALIFICATION, so nobody pre-registers f7cb718 as sufficient: the critical
+branch is DUTY-CYCLED, not continuous. psutil reads system memory at 79.3%,
+2.7 points UNDER the 0.82 threshold. The last GC line sits 848 lines from the
+end of a 652,127-line file and all 42 mem readings after it are 74–81%; over
+the 20,000 lines before it only 21.3% of mem readings are >=82% (median 76%).
+A ~21% duty cycle cannot by itself produce the measured 74.4% of polls blowing
+a 10s budget. Expect a PARTIAL win. (Caveat: those mem readings come off
+governor pause lines and are biased toward pressure.)
+
+ROUTE B: "the governor's should_throttle() halves the ghost pair limit, so
+un-throttling it raises the ghost evidence rate" — standing-instructions route
+(d), raise the evidence RATE. CLOSED — NEGATIVE, and I killed my own
+hypothesis. The MECHANISM is real and worse than expected: should_throttle()
+returns `cpu >= 0.75 or mem >= 0.70` (GOVERNOR_RESERVE_CPU=0.25,
+GOVERNOR_RESERVE_MEM=0.30) and this machine idles above both — production's own
+governor lines, n=2343, cpu p50 93% with 100.0% at or above 75%; mem p50 74%
+with 96.4% at or above 70%; psutil live cpu 89.9/99.0/81.1/90.0, mem 76.2. So
+it is TRUE on every sample. trading/ghost_limits.py:38 then sets max_limit to
+base_limit//2 = 18, and line 78 (`limit = max(min_limit, min(limit,
+max_limit))`) CLAMPS the operator-set GHOST_PAIR_LIMIT=36 down to 18,
+permanently. BUT THE CEILING IS SLACK: distinct symbols reaching a
+trade_outcomes row per day over 7 days are 6, 0, 0, 8, 10, 0, 10 (on 6, 0, 0,
+11, 11, 0, 16 outcomes). Max breadth is 10 against a ceiling of 18.
+Un-throttling to 36 cannot raise a number that never reached 18. Filed as
+[37f7afb0] for threshold hygiene only, explicitly NOT as an evidence-rate route.
+NOT RULED OUT: attempts (pairs allocated a bot) per day, which is where the
+limit actually binds. I did not measure it and did not claim it.
+
+ALSO ESTABLISHED, so it is not re-derived: the market stream does NOT call the
+governor at all (grep wait_if_needed / should_pause / should_throttle /
+Priority. across services/ and trading/ — it is absent). The ONLY
+governor-to-feed channel is the GIL hold. And the fix is NOT LIVE: f7cb718
+landed 2026-09-22 20:21, production pids 6340/32880 both started 2026-09-21
+22:57:35, 21.4 hours earlier.
+
+STATUS: both routes closed negative. [a2bfd079] left in progress with its
+criteria refined; its one remaining criterion needs a production restart, which
+arms money_button_dip (gross -0.3816% over n=333) against a $19.66 wallet and
+is an operator decision, not a measurement gap.
