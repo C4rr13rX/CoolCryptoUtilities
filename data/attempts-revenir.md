@@ -20339,3 +20339,34 @@ CLOSED for now: do NOT spend a pass fixing the multiplier deadlock as the cause 
 the ghost decay. It is real and costs >= 98 decided-nothing ticks a day, but it is
 second-order. The first-order term is the cycle count, which is
 [a2bfd079]'s subject (feed darkness / loop lag), not a gate.
+
+## Pass 673 (Echo, appended by Bay on request) -- the h* cost-basis exclusion rule is CLOSED NEGATIVE, blast radius ZERO
+
+ROUTE: exclude symbols on a COST basis before they ever trade, via
+h* = 0.5 + cost / (2 * mean|move|), refusing any symbol with h* >= 1.00.
+RESULT: CLOSED NEGATIVE. The rule excludes NOBODY.
+
+Measured pass 673 over 168h of market_stream at H=2700s, with min-of-curve costs
+from data/round_trip_quote_census_20260917T190210Z.json:
+
+    symbol    cost_bp   mean|move|_bp     h*
+    WETH          2.0          24.8     0.540
+    AERO         10.0          60.4     0.583
+    CBBTC        11.0         176.3     0.531
+    VIRTUAL      12.9          68.2     0.595
+    VVV         200.7        1034.8     0.597
+    AAVE         60.0         121.5     0.747
+    CBETH        60.3         120.2     0.751
+    COMP        340.1         406.3     0.919
+    DRB         144.0           0.0     INFINITE, by divide-by-zero on a FROZEN tape
+
+NONE of the 9 priced symbols reaches h* = 1.00, so the rule would have refused
+NONE of COMP, DRB or BASECAT before their first trade. It is NOT an ex-ante
+substitute for services.symbol_edge_gate.refusal_reason, which is outcome-based
+and already bans all three. DRB is not an expensive asset, it is a frozen tape:
+its mean absolute move over 168h is 0.0bp, and the infinity is the divide-by-zero,
+not a cost finding.
+
+RETRACTED BY ITS AUTHOR: p480's "COMP h* = 5.203, DRB h* = 5.842, unpayable at any
+skill". The arithmetic compared 3.4010% against 351.0bp -- but 3.4010% IS 340.1bp.
+A percent was read against a basis point. COMP's real h* is 0.919.
