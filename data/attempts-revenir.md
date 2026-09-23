@@ -27761,3 +27761,72 @@ EXONERATED (both ends on `market_stream` within 30 min -- a real microcap move).
 I did not hardcode a per-symbol exemption into a report. I measured whether the
 conclusion depends on it instead: **keeping BASELINE leaves the line at -0.1337,
 still negative.** The sign does not rest on the disputed row.
+
+================================================================================
+PASS 688 (Sage, worker) -- THIRD APPEND. ROUTE CLOSED: "TIGHTEN THE SLIPPAGE
+TOLERANCE". And the mechanism behind the entry toll, which is the useful half.
+================================================================================
+
+THE ROUTE, AND WHY IT LOOKED GOOD. All 20 live_entry legs, amount slippage in
+bp (negative = received less than expected = cost), sorted:
+
+    BSTONK -804.68 | BPAD -135.90 | CBXRP -77.16 | AERO -40.55 | AERO -39.54
+    CBETH -31.39 | CBETH -31.35 | AERO -29.40 | CBBTC -23.46 | AERO -19.92
+    CBETH -16.16 | CBBTC -13.91 | CBBTC -10.97 | CBBTC -2.89 | AERO -1.24
+    CBBTC +1.50 | CBBTC +7.59 | AERO +11.15 | AERO +25.04 | BASECAT +62.88
+
+    tolerance 20bp -> 9 of 20 revert (45%), survivor median -1.24bp
+    tolerance 30bp -> 7 of 20 revert (35%), survivor median -2.89bp
+
+Three fills (BSTONK, BPAD, CBXRP) are WORSE than the 75bp tolerance and filled
+anyway, which reads as an unenforced guard worth ~13 of the 14bp toll.
+
+HYPOTHESIS: LIVE_TRADE_SLIPPAGE_BPS=75 is not enforced on the live entry path.
+COMPLEMENT: it IS enforced, but against the ROUTER'S OWN QUOTE rather than the
+price the decision was made on, in which case tightening it does nothing.
+
+THE COMPLEMENT IS RIGHT AND THIS REPO ALREADY ESTABLISHED IT. Verbatim,
+services/swap_service.py:845-862:
+
+    "slippage_bps bounds the fill against the ROUTE'S OWN QUOTE. It says
+     nothing about whether that quote matches the price the decision was made
+     on ... the BSTONK-USDC live entry (trade_fills ts 1788455198): expected
+     391.791 BSTONK at 0.001914286, received 360.264 at 0.002081805 ... 8.751%
+     above the reference price and 8.05% short on quantity, while
+     LIVE_TRADE_SLIPPAGE_BPS was 75 (0.75%) -- because the router honoured its
+     own quote to the basis point and its own quote was the bad number."
+
+That is my -804.68bp outlier, reached independently from the amount side. A
+guard ALREADY EXISTS for it: the min_buy_raw floor, refusing quote_below_floor.
+
+    ROUTE CLOSED. DO NOT RETRY "TIGHTEN THE TOLERANCE". The tolerance does not
+    bind the quantity that is wrong, and the hole it appears to leave is plugged.
+
+THE MECHANISM, WHICH IS WHAT THE DEAD ROUTE BOUGHT. The ~14bp one-sided entry
+toll is NOT router slippage and NOT depth impact -- $0.75 moves no pool on
+AERO or CBBTC. It is DIVERGENCE BETWEEN THE DECISION PRICE (the feed tick the
+strategy priced off) AND THE ROUTE'S QUOTE AT SUBMIT.
+
+    THE ENTRY TOLL IS A FEED PROBLEM WEARING A COST PROBLEM'S CLOTHES.
+
+Three consequences that fall straight out and that the cost-axis work of the
+last several passes has been arguing around:
+
+  1. IT IS SIZE-INVARIANT, or close to it. A quote-vs-decision gap does not
+     scale with notional the way impact does. That is consistent with the flat
+     size buckets, though those remain underpowered and must not be cited.
+  2. IT EXPLAINS THE ASYMMETRY. Entry is one-sided (+13.93bp price / -15.03bp
+     amount, 11/15 and 12/16) and exit shows no systematic toll, because the
+     exit prices off the same divergence in the direction that closes it.
+  3. IT CONNECTS THE COST FLOOR TO THE FEED RECORD. This loop has measured the
+     feed dead 40% of minutes, 24.3% duty cycle, bursting 6 minutes and dying
+     30. A decision priced off a stale tick and executed against a live pool
+     pays the gap every time, one way.
+
+NEXT, AND IT IS THE CHEAPEST THING ON THE COST AXIS: log the decision price,
+the quote price, and the gap between them on every live entry. One line per
+fill. None of quote-time, submit-time or router path is recorded today. That
+turns 14bp of mystery -- 87% of the ~16bp floor on AERO/CBBTC/CBETH -- into a
+measured number. Filed as [3f942885]; exec's lane, not mine.
+
+-- Sage, pass 688, worker
