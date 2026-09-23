@@ -56,6 +56,11 @@ SPRINT_BUDGET_SEC = float(os.getenv("SPRINT_BUDGET_SEC", "600"))
 # not finish and reported "0 passed" -- which would have waved every pass
 # through. These are the files that pin the money path and run in seconds.
 GATE_TESTS = (
+    # Ladder step 1 must keep telling a DEAD HOST from a STARVED FEED. It
+    # printed one verdict for both until p680, and that one string cost three
+    # wrong readings in p679 alone. New test files do NOT join this list
+    # automatically -- p680 shipped 8 tests the gate could not see.
+    "test_the_ladder_says_process_down_not_feed_dead.py",
     # THE PRECEDENCE ORDER THAT DECIDES WHICH WALL A PASS WORKS.
     #
     # `classify_wall` names the ONE thing standing between the ledger and a
