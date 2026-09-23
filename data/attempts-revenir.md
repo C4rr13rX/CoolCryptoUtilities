@@ -26549,3 +26549,64 @@ happening, and the item's own criterion 4 requires a 13-minute production restar
 that did not fit the pass. An unshipped correct diagnosis beats a shipped wrong fix.
 
 -- Dune, pass 687, worker
+
+## Pass 687 (Echo, senior) -- THE TRADEABLE BOOK IS RE-JUDGED AT READ TIME, SO THE LEDGER AND THE STORE CAN NEVER CONVERGE
+
+**This is the named mechanism pass 681 said criterion 1's complement did not
+have.** Found while AUDITING Dune's reconciliation test (b1924b5), not while
+defending my own number. Read-only.
+
+### The disagreement that exposed it
+
+Dune measured the store side at 17:07 and got **182 / 60 / +6.1425**. I measured
+the same thing two minutes later and got **177 / 58 / +6.1535**. No rows were
+written between the two runs that account for it, and the aggregation is stable
+within a single process (ran it twice, identical to the last digit).
+
+### Why
+
+`trading.strategies.ledger._live_tradeable` delegates to
+`services.symbol_edge_gate.refusal_reason`, and **every refusal that gate returns
+is computed from the very rows being counted.** The reasons are self-describing:
+
+    BASECAT-USDC  (no sid)             35 closed round trips at mean return -0.x
+    AERO-USDC     atf_static           atf_static: 17 closed round trips at mean
+                                       return -0.470% vs 0.772% cost
+    COMP-USDC     obv_accumulation@1w  16 closed round trips at mean return -3.x
+    CBXRP-USDC    (no sid)              6 closed round trips at mean return -0.0x
+
+**So tradeability is not a property of a trade. It is a verdict re-derived at READ
+time from the cumulative record, and when a symbol crosses the gate's threshold
+its ENTIRE history stops being tradeable in one step.** That is the five-row jump
+between Dune's run and mine, and it is why the series across passes reads
+94 -> 99 -> 116 -> 177 -> 182 with nobody making an error.
+
+### The size of it
+
+    ALL closed ghost rows :  266 trades   86 wins   32.3%   +2.0887
+      KEPT by the gate    :  177 trades   58 wins   32.8%   +6.1535
+      EXCLUDED by the gate:   89 trades   28 wins   31.5%   -4.0649
+
+The gate removes **33.5% of rows and -4.0649 of P/L**, and the book moves
++2.0887 -> +6.1535. **The "tradeable book" is the real book with four points of
+known losers removed by a filter that learned they were losers from those same
+rows.**
+
+### THE CAVEAT, STATED BY ME AND NOT LEFT FOR SOMEBODY ELSE TO FIND
+
+**The win rates barely move: 32.8% kept against 31.5% excluded, a 1.3pp gap.**
+This is NOT a manufactured hit rate. The selection is on LOSS MAGNITUDE, and a
+cost gate excluding expensive symbols is its correct FORWARD behaviour -- that is
+what it is for. **The defect is only in reading the filtered book as a HISTORICAL
+score**, which is exactly what every ledger-vs-store comparison in this backlog
+has done, including the one I ran an hour ago.
+
+### What this closes
+
+The ledger records the gate's verdict **as of the trade** and freezes it. The
+store recomputation applies **today's** verdict to **all** history. They disagree
+by construction and **will never converge, no matter how often anyone recomputes**.
+Any test asserting a fixed store-side number will go red on its own the next time
+a symbol crosses, with nothing broken. Pin a tolerance or assert the SHAPE.
+
+-- Echo, pass 687, senior
