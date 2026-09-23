@@ -118,8 +118,44 @@ TOKEN_ROUND_TRIP = {
     # assumptions. WETH 0 of 11 fills non-ghost, ETH 0 of 8, USDC 0 of 0,
     # KTA 0 of 0. The only positive result in this repo (donchian_breakout on
     # the deep names) rests on the WETH row, and the WETH row is UNEVIDENCED.
-    "WETH": 0.0011,   # n=0 non-ghost -- ASSUMED
-    "ETH": 0.0011,    # n=0 non-ghost -- ASSUMED
+    #
+    # PASS 674 -- STILL n=0 LIVE, AND THE QUESTION THIS ROW WAS BLOCKING TURNS
+    # OUT NOT TO DEPEND ON IT. No live WETH or ETH round trip has been executed
+    # (operator go-ahead requested pass 495 and again pass 674, unanswered), so
+    # this row is unchanged and is NOT a measurement. But the reason it was
+    # urgent has been measured and it has changed shape. The claim was: the
+    # donchian deep cohort is positive iff the WETH round trip is under
+    # 24.60bp. Against the executor's own six deep rows in ``trade_outcomes``
+    # (strategy_id and mode live in the details JSON -- there are no such
+    # COLUMNS), each row's gross_profit and fee_cost taken in bp of that row's
+    # own notional = entry_price * quantity:
+    #
+    #     WETH-USDT @12h  notional 0.300  gross  -35.50bp  fee 176.26bp
+    #     WETH-USDC @12h  notional 5.491  gross  -17.91bp  fee  46.13bp
+    #     ETH-USDT  @1w   notional 0.300  gross   -1.65bp  fee 176.26bp
+    #     ETH-USDC  @1w   notional 5.491  gross  -14.48bp  fee  46.13bp
+    #     ETH-USDC  @5d   notional 5.217  gross  +19.76bp  fee  46.53bp
+    #     ETH-USDT  @5d   notional 0.300  gross  +14.14bp  fee 176.26bp
+    #
+    # MEAN GROSS -5.94bp, gross-NEGATIVE in four of six. A negative gross is
+    # not rescued by any cost row, so 24.60bp is moot on these rows.
+    #
+    # And the 11bp below is not what the executor charged them. 46.13bp and
+    # 176.26bp are the SIZE-DEPENDENT model in ``services/roundtrip_cost.py``
+    # -- a different module, also imported by trading/bot.py, pipeline.py and
+    # scheduler.py -- where rate = FIXED_USD/notional + pool_cost with FIXED
+    # 0.004047 of gas. At a $0.300 clip the gas leg ALONE is 135bp. What
+    # decides a deep-cohort round trip at these sizes is the CLIP, not this
+    # row. See also: the replay harness reports deep mean gross +246bp against
+    # the executor's -5.94bp -- a disagreement in SIGN, 41x in magnitude, and
+    # under the replay's own 65.9% win rate P(0 wins in 6) = 0.0016.
+    #
+    # WHAT WOULD STILL CHANGE THIS ROW: MIN_SAMPLES (8) live non-ghost WETH
+    # legs at a clip where gas is not the whole cost -- $10, where the fixed
+    # leg is 4.0bp, never $1 where it is 40.5bp. Today that count is ZERO, so
+    # eight are needed, not one.
+    "WETH": 0.0011,   # n=0 non-ghost -- ASSUMED (see pass-674 note above)
+    "ETH": 0.0011,    # n=0 non-ghost -- ASSUMED (see pass-674 note above)
     "USDC": 0.0011,   # n=0 non-ghost -- ASSUMED
     "KTA": 0.7498,    # n=0 non-ghost -- ASSUMED
     # REMOVED 2026-09-19: CBETH was 0.0030. Five non-ghost fills exist; one is
