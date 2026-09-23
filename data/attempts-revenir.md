@@ -21045,3 +21045,38 @@ Consequences:
     pass.
 
 [7e854084] criteria rewritten to lead with the call-graph fix.
+
+## Pass 675 (Cove) -- cost-table COVERAGE, not the cost table itself
+
+Not a route, a measurement of the denominator every route is judged against.
+Found while cross-verifying Sage's p674 donchian-deep claim [ca99df1].
+
+Command: loop `services.roundtrip_cost.roundtrip_cost_rate_detail(10.0, sym)`
+over every distinct `trade_outcomes.symbol` and bucket on the returned
+`source`.
+
+    window     rows  unpriced_default   symbols unpriced
+    all-time    265   146  (55.1%)       48 of 58
+    last 14d     65    41  (63.1%)       21 of 29
+    last  7d     36    30  (83.3%)       15 of 19
+
+Only ten symbols are census-priced (the 2026-09-17 set). ETH is NOT one --
+ETH and WETH are the same asset, the census never quoted the ETH ticker.
+Everything else is charged `0.3187% + $0.004047`, which the module's own log
+line calls "a DEFAULT, not a price ... wrong by an unknown factor in an
+unknown direction" across a 2.01bp-to-3301bp census, a factor of 1,642.
+
+NOT CLOSED, and deliberately not claimed as a scandal: the default may sit
+near the true cost for most of the 48. Nobody has run the quoter over them,
+so nobody knows. The discriminating test is the same quoter that already ran
+for nine symbols. Filed as `eeab88bc`.
+
+The deflating hypothesis WAS tested and failed: the unpriced share is not an
+ancient tail, it RISES to 83.3% in the last 7 days. So a one-shot pass that
+prices 48 symbols is unpriced again a fortnight later; the durable fix is that
+`source='unpriced_default'` becomes loud where a book statistic is COMPUTED.
+
+Secondary correction to this pass's own opening measurement: the deep-pool
+share of the evidence budget is **8.3%** pooled (22 of 265), not the 7.2% first
+posted -- the narrower deep set omitted the ETH-ticker pairs, the same
+omission that bit the donchian cohort. By mode: **7.4% ghost, 18.2% live**.
