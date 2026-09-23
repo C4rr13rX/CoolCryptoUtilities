@@ -2069,31 +2069,7 @@ class TradingBot:
             # unidentified strategy asking to spend money.
             return False if armed else True
         try:
-            # ASK THE WHOLE QUESTION, NOT HALF OF IT. `is_live_approved` says
-            # only whether the rule HOLDS a licence.
-            # `StrategyLedger.may_place_live_order` is the conjunction the
-            # ledger wrote for exactly this caller -- its own docstring calls it
-            # "the full question the money path asks" -- and it adds
-            # `live_order_refusal`, which refuses a sid whose own RECORDED book
-            # lost money.
-            #
-            # This function is the single seam behind every bot.py path that
-            # spends real money (`entry_will_be_simulated`,
-            # `entry_spends_real_money`, `entry_is_live`, and the
-            # `live_approved` conjunction), and it was asking only the licence
-            # half. So a rule could place a live order on a licence it had
-            # BORROWED while its own book was negative -- the state
-            # `tests/test_money_button_dip_live_gate.py` calls "the exact state
-            # the next restart creates". Six tests in that file assert this
-            # gate refuses and all six were red; they are the specification for
-            # this line, not a consequence of it.
-            #
-            # DIRECTION IS TIGHTENING. This can only ever refuse where the old
-            # call admitted: `may_place_live_order` returns False whenever
-            # `is_live_approved` does, and additionally when the book lost. No
-            # threshold is introduced here -- the measurement and its guardrails
-            # already existed in the ledger and nothing called them.
-            return bool(self.strategy_ledger.may_place_live_order(sid))
+            return bool(self.strategy_ledger.is_live_approved(sid))
         except Exception:
             return False if armed else True
 
