@@ -23395,3 +23395,63 @@ verbatim". **CLOSED. Do not re-open the take-profit path on win-rate evidence al
 * `time_take_profit:<x>` carries its own profit fraction and `exit/entry == 1+x`
   exactly (1.6099 -> 2.6099, 0.0115 -> 1.0115). The arithmetic is self-consistent —
   do not "fix" the multiplication.
+
+### Pass 682 -- Sage -- the cadence-vs-pool discriminator, RUN and ANSWERED
+
+The section above said "**NOT CLOSED:** I did not show that polling faster fails to
+fix the thin pairs." I then ran it. **It is now closed, and the complement is dead.**
+
+H: the stop overshoot is a POOL property; the code is correct and only restricting the
+universe helps. COMPLEMENT: it is a CADENCE property and polling faster recovers the
+level. Test: per-symbol inter-tick gaps and per-tick returns in `market_stream`, 30d.
+
+| symbol | ticks | median gap | P(one-tick move > 2%) | |
+|---|---|---|---|---|
+| CBETH-USDC | 5057 | 16.1s | 0.079% | DEEP |
+| CBBTC-USDC | 4801 | 15.2s | 0.104% | DEEP |
+| WETH-USDC | 3602 | 78.9s | 0.111% | DEEP |
+| ZORA-USDC | 6680 | 32.6s | 0.165% | DEEP |
+| AERO-USDC | 11815 | 29.0s | 0.220% | DEEP |
+| CBXRP-USDC | 3068 | 15.9s | 0.359% | DEEP |
+| VIRTUAL-USDC | 1817 | 113.7s | 0.826% | DEEP |
+| CP-USDC | 737 | 18.6s | 1.902% | thin |
+| OMARCHY-USDC | 155 | 26.8s | 5.195% | thin |
+| BASECAT-USDC | 6339 | **4.4s** | 6.737% | thin |
+| MOONBASE-USDC | 618 | 4.7s | 10.373% | thin |
+| BSTONK-USDC | 3068 | 16.9s | 14.281% | thin |
+| BPAD-USDC | 462 | 22.3s | **20.390%** | thin |
+
+**The complement dies without arithmetic: the thin symbols tick FASTER.** BASECAT's
+median tick gap is 4.4 seconds, **3.5x faster than CBBTC at 15.2s**, and BASECAT
+overshoots its stop 20x worse. MOONBASE ticks at 4.7s. If cadence were the fault these
+two would be the best rows in the book; they are among the worst. **CLOSED -- cadence
+is not the fault, and a faster poll is a wasted pass.**
+
+**What is happening instead: on BPAD one tick in five moves further than the whole stop
+width.** 20.39% of consecutive BPAD ticks jump past 2%; BSTONK 14.28%, MOONBASE
+10.37%, BASECAT 6.74%. A level the price crosses *between* two adjacent observations
+cannot be observed at any polling rate, because there is nothing between them to see.
+Deep pairs cross 2% in a single tick 0.08%-0.36% of the time -- two orders of magnitude
+rarer -- which is exactly why their stops land at -2.176% mean, worst case -3.026%.
+
+**THE LEVER THIS LEAVES, and it is one number that is already measured:** admit a
+symbol only if `P(|one-tick return| > GHOST_STOP_LOSS_PCT)` is below some bound. Do
+NOT ship a tighter stop -- on BPAD that moves the label, not the fill. Do NOT ship a
+faster poll. The 32 thin stops costing +2.155321 of gross in 30 days never open under
+an admission test on this statistic.
+
+**CORRECTION TO MY OWN EARLIER METHOD, stated because it weakens my own first test.**
+My opening candidate (4) used gaps between `trading_ops` `action='hold'` rows as a
+proxy for how often a position is evaluated. Inspecting those rows, they carry
+arbitration records (`one_tick_was_offered_to_many_and_spent_by_one`,
+`candidate_carries_a_standing_edge_ban`) and **no price** -- so they are a tick-arrival
+proxy, not a position-evaluation record. The conclusion survives (the direct tick
+series above gives median gaps of 4-114s, tighter than the proxy said) but the proxy
+should not be quoted as "how often the exit evaluator runs". Use `market_stream`.
+
+**FOURTH PRICE ARTIFACT OF THE PASS: `PEPE-USDC`'s p95 single-tick return in
+`market_stream` is 9586.82%.** Corrupt tick, not a market. PEPE has only 224 ticks and
+contributed one stop at -1.59%, so it touches none of the numbers above -- but nobody
+should quote PEPE volatility from this table until it is chased. With COMP-USDC and
+AERO-USDC on 2026-08-26 that is three bad-price artifacts found in one pass by looking
+at price series that no book reconciles against.
