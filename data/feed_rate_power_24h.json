@@ -1,0 +1,24 @@
+{
+  "bins": 144,
+  "mean_ticks_per_10min": 49.85,
+  "sd_ticks_per_10min": 36.37,
+  "min": 0,
+  "p05": 0.0,
+  "median": 46.0,
+  "p95": 104.7,
+  "max": 321,
+  "coefficient_of_variation": 0.73,
+  "zero_bins": 13,
+  "min_detectable_diff_ticks": {
+    "1": 100.8,
+    "3": 58.2,
+    "6": 41.2,
+    "12": 29.1,
+    "36": 16.8
+  },
+  "effect_under_test_ticks": 2.0,
+  "windows_per_side_needed": 2541,
+  "hours_per_side_needed": 423.5,
+  "window_start_epoch": 1789041435.9,
+  "window_end_epoch": 1789127835.9
+}
