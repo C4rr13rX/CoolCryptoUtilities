@@ -23979,3 +23979,66 @@ wrong and the scoreboard is overstated by 0.2420. **COMPLEMENT:** the fill is re
 exceptional in a thin pool, and the fault is `market_stream`'s BSTONK coverage -- in
 which case our tape cannot audit thin-pool fills at all, which lands on the same
 universe lever as `[581378c4]`. Backlog `[47ec99de]`.
+
+
+## Pass 682 — Dune — the cost floor measured on SETTLED FILLS, and the scoreboard verified
+
+### THE REAL ROUND-TRIP COST IS 55.5bp, NOT 4-11bp
+
+Effective round trip = `sum(fee_cost)/sum(|entry_price*quantity|)` on `trade_outcomes`.
+The live rows are chain-settled (p680: 33 of 33 tx hashes settle `status=1`), so this
+is **fills — not quotes, not a model**.
+
+    LIVE  BOOK TOTAL  n= 18  fees 0.10145  notional  18.291  ->  **55.5 bp**
+    GHOST BOOK TOTAL  n=244  fees 3.66710  notional 654.682  ->    56.0 bp
+
+    per symbol, LIVE (settled) vs GHOST (modelled):
+      AERO-USDC  n=9 **39.2** vs 54.6    CBBTC n=3  57.7 vs 66.3    CBETH n=2 100.5 vs 77.0
+      CBXRP      n=1  86.5   vs 65.0    BASECAT n=1 55.1 vs 67.5    BSTONK n=1 183.2 (IGNORE, barred)
+
+**The standing instruction costs every route against "WETH 0.04–0.11%" = 4–11bp and
+nothing in the settled book is near it.** Cheapest symbol actually paid for is AERO at
+39.2bp — 4x the top of that range. **Three AERO cost figures exist here and the chain
+agrees with none:** p679's 10.41bp is a QUOTE (3.8x optimistic), the briefings'
+64–435bp is 1.6–11x pessimistic, the chain says **39.2bp over 9 settled fills**.
+Filed as `[97610801]`. **Plan against 55.5bp.**
+
+**This also QUALIFIES my own depth-blind finding from earlier in this pass, and I am
+recording the walk-back rather than leaving the stronger claim standing.** The ghost
+fee model's LEVEL is right — 56.0 modelled against 55.5 actually paid, 0.9% apart.
+It is wrong only PER SYMBOL (AERO 54.6 vs 39.2 actual). So "the number is fabricated"
+was too strong; the accurate claim is that it **cannot RANK symbols by cost**, which
+is the only thing route (b) needs from it. `[4ff33bac]` carries the narrower version.
+
+### THE SCOREBOARD -0.1864 IS SOUND, AND ITS DECOMPOSITION CLOSES THE COST ROUTE
+
+Verified against the store rather than against another report:
+
+    sum(gross_profit) = -0.08492
+    sum(fee_cost)     = +0.10145
+    gross - fees      = **-0.18637**   sum(net_profit) = **-0.18637**  (identity exact to 1e-8)
+    scoreboard claim  = -0.1864        (delta +0.000029, rounding)
+
+**The one number this loop is scored on is internally consistent to the eighth decimal
+and reconciles to the published figure.** Given how much of this repo's book turned out
+to be fiction this pass, that is worth stating: the scoreboard is not one of them.
+
+    fees       -0.10145  =  **54.4%** of the loss
+    direction  -0.08492  =  **45.6%** of the loss
+    **WITH ZERO FEES THE LIVE BOOK IS STILL -0.08492. STILL NEGATIVE.**
+
+**ROUTE CALL, with complement.** Hypothesis: "the cost floor is the blocker — drive fees
+to zero and the book turns positive." **Complement: cost is half of it and the entries
+lose on direction alone.** Discriminator is the gross column, measured before any fee.
+**Gross is -0.08492 — the complement wins.** A perfect, free, zero-slippage venue leaves
+this book losing money. Halving the cost floor recovers ~27% of the loss and leaves it
+negative.
+
+**ROUTE (b) "attack the cost floor" IS AT BEST HALF A FIX AND CANNOT GET THERE ALONE —
+closed as a sufficient route, still open as a necessary one.** Cross-verifies p680 "the
+live book is gross-negative before any fee" from the fee side rather than the price side.
+Consistent with the cleaned ghost book at net -0.0875%, 30.8% net win.
+
+**Where the evidence points instead: ENTRY QUALITY.** Both books are gross-negative
+before fees; the cleaned ghost book has no usable net-positive symbol; the live book
+loses on direction with fees zeroed.
