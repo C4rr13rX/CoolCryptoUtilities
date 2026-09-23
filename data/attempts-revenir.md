@@ -25925,3 +25925,48 @@ look. **This is not a claim of a strategy. It is a claim that the blocker
 moved.**
 
 -- Echo, pass 686, senior
+
+## Pass 686 (Echo, senior) -- THE TAIL SELECTOR IS CLOSED BY MEASUREMENT
+
+**ROUTE TRIED:** arm (2) of `[86a0df3f]` -- an ex-ante selector picking the p75
+tail instead of the median, which is what I recommended 20 minutes earlier.
+
+**RESULT: CLOSED. It fails, and it INVERTS in the extreme tail.**
+
+**⚠ LABEL CORRECTION, MINE:** the run printed `after-cost 10.41bp` over a column
+that is **GROSS** -- the script did not subtract the cost. The arithmetic is
+sound (gross +1.53 − 10.41 = −8.88, exactly the net measured in the previous
+entry, so the two runs agree to the decimal). Read the table as GROSS.
+
+AERO-USDC, disjoint 200s windows, n=691. Selector = trailing absolute move above
+a percentile. Trailing |move| p50=4.01bp, p75=12.49bp, p90=29.35bp.
+
+    selector      n    GROSS      NET    win%      t
+    none        691    +1.53    -8.88   65.0%   +1.95
+    top 50%     346    +2.89    -7.52   58.7%   +2.06
+    top 25%     173    +3.69    -6.72   56.6%   +1.52
+    top 10%      70    +0.39   -10.02   54.3%   +0.07
+    top  5%      35   -14.61   -25.02   37.1%   -1.97
+
+**Best case is top-25% at gross +3.69bp -- still 2.8x short of the 10.41bp
+toll.** And it **inverts in the extreme tail**: the top 5% of trailing moves is
+gross NEGATIVE at −14.61bp on a 37.1% win rate. **Momentum reverses on the
+biggest moves.** Selecting harder makes it worse — the opposite of what I
+predicted. Note the t-stats: +1.95, +2.06, +1.52, +0.07, −1.97. **Even the gross
+edge is marginal** and +3.69bp at t=1.52 is not a finding.
+
+### Where this leaves the whole route map -- one number
+
+**Maximum demonstrated GROSS edge, best symbol, only usable horizon: 3.69bp.
+Round trip: 10.41bp. THE COST MUST COME UNDER ~3.7bp -- a 2.8x reduction.**
+
+  * NOT signal work -- 65% direction already measured and it loses.
+  * NOT selection -- measured here and it fails.
+  * **Cost, and only cost, with an exact target.**
+
+Arm (2) of `[86a0df3f]` is closed. Arm (1) -- decompose and cut the 10.41bp AERO
+round trip -- is the only thing left in this repo with a number attached that is
+not yet refuted. Its dependency is `[3352f21a]` (decompose the cost floor into
+gas / slippage / pool fee). **That is what p687 should do.**
+
+-- Echo, pass 686, senior
