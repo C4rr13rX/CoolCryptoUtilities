@@ -22879,3 +22879,60 @@ MetricsCollector.ghost_trade_snapshot. Use that call, not SQL. return_pct is the
 figure price_book_at_live_clip leaves untouched (verified bit-identical); the dollar
 profit it returns is not -- repricing flips the sign of 33 of 304 rows and the per-row
 ratio ranges from -8123.684 to +155.754.
+
+## Pass 681 (Cove) -- two routes closed, and the live silence is DATED and ATTRIBUTED
+
+**ROUTE: rescue atf_static by symbol admission. CLOSED.** Item `[fdeb0316]`
+rejected. Its premise ("the only strategy whose loss is COST-shaped") is
+refuted by its own population. On `wallet='live'`,
+`json_extract(details,'$.strategy_id')='atf_static'`, **n=15**, grouped by exit
+reason: stop_loss n=4 gross **-7.9719%** of its own notional, take_profit n=6
++4.7413%, timed-exit n=2 -0.7514%, max_hold_force n=2 -0.9343%, confidence_drop
+n=1 -0.1367%. **Four stop rows carry 313% of the book's entire gross loss and
+the other eleven are gross-POSITIVE (+1.6282%).** At the row level, one AERO
+stop lost -2.3280% gross against AERO's own measured 10.41bp round trip -- 22x
+-- so no admission change can move gross. Correction to p680's own number:
+stripping the two n=1 tails leaves 13 rows at **-0.7200%** of notional, not the
+-0.4548% reported (subtraction error, re-queried directly).
+
+**ROUTE: loosen the atf_static stop. CLOSED, and it killed the hypothesis that
+proposed it.** Pre-registered: *hypothesis, the stop realises losses the book
+would not otherwise book; complement, the stop is correct and the loss is
+direction.* Test: `max(price)` from `market_stream` after each stop, vs the
+ENTRY price. BASECAT -1.946/-1.285/-1.285% at 15/45/120 min; CBBTC
+-1.049/-1.049/-1.049%; AERO -1.961/-1.707/-1.707%; tick counts 8-48 per window
+so none is a dark-feed artifact. **The tape never returns to entry.** Holding
+recovers nothing. (The fourth stop, BPAD +36.937% at 45 min, is the same n=1
+micro-cap that carries the -16.66% gross -- an artifact, not a policy.)
+
+**ROUTE: unblock lane A's price<=0 refusal. REJECTED, not attempted.** Item
+`[ee17681e]`. The gate is inside `_run_ghost_quote_scout`
+(`services/atf_static_strategy.py:1231`, `wallet='ghost'`, `lane='scout'`), and
+**none of the five live consumers of `latest_signals()` reads `price_usd`** --
+`trading/strategies/atf_static.py:40-72`, `trading/scheduler.py:753` (gated on
+`not live_trading`), `trading/selector.py:1292` and `:1540` (symbol names only),
+`trading/swap_validator.py:346` (`volume_h1` only). The one indirect path,
+`target_price = price_usd*(1+target_return)` at `:1981`, is repaired by
+`ctx.last_price` at `atf_static.py:52-53`. `price_usd=0.0` is **inert on the
+live path**, not merely unspendable.
+
+**THE LIVE SILENCE IS DATED AND ATTRIBUTED -- NOT a route, a finding, filed as
+`[5580dc8c]`.** All sixteen `%live%` statuses in `trading_ops` stop together at
+**2026-09-05 21:10**; `trade_outcomes` `wallet='live'` has 0 rows in 7d while
+`wallet='ghost'` is 1.1h fresh in the same table. Cause: `entry-refused-lattice`
+FIRST ROW **2026-09-05 20:43** (27 min before the last live execution) and
+`entry-predropped-edge-ban` FIRST ROW **2026-09-07 07:22** (22 min before the
+last `entry_downgraded_to_ghost`). `git log -S` puts both in commits dated the
+same days -- 112977f "The gate that would have refused every trade" (09-05) and
+322702f (09-07). In between, `feedback_events` `label='entry_downgraded_to_ghost'`
+n=136 carries **`reason='strategy_not_graduated'` on 136 of 136**.
+
+**⚠ DO NOT TREAT THIS AS A ROUTE TO REOPEN.** The complement is probably right:
+the gates may be CORRECT and the trades they refuse were losers -- the 18 rows
+they stopped are -0.1864 net on a gross that is negative before any fee. The
+discriminator, NOT yet run: price the round trip each lattice-refused candidate
+WOULD have taken against `market_stream`. Nobody should revert or loosen either
+gate before that number exists. Two nulls measured in passing:
+`entry-predropped-edge-ban` is **100% `wallet='ghost'`**, and
+`live-entry-unfunded` is **n=0 ALL TIME** -- funding has never once stopped a
+live entry.
