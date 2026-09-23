@@ -24218,3 +24218,48 @@ of clock. It is the first thing to run on this item.**
 **Caveats, stated:** n=17 is small, these are GROSS, and unweighted (-1.4023%) and
 notional-weighted (-1.9422%) differ — say which you mean. BSTONK excluded by standing
 instruction, not judgement.
+
+### Pass 682 -- Sage -- the ghost lane is dead at BOTH ends, measured fresh
+
+Hypothesis and complement pre-registered on `[d7c5048c]` before the run.
+**H:** the evidence rate is EXIT-bound -- positions open and never close, so raising
+entry throughput cannot help. **COMPLEMENT:** the ratio is a recording artifact.
+**DISCRIMINATOR:** count distinct OPEN positions and their ages.
+
+**EXIT HALF -- H CONFIRMED, COMPLEMENT DEAD.** Against `trade_fills` (which, unlike
+`trading_ops`, carries a real `trade_id`):
+
+    ENTRY fills, distinct trade_ids : 1222
+    EXIT fills,  distinct trade_ids :  252
+    OPEN (entry, never exited)      :  975  = 79.8%
+    ages: median 19.75 DAYS, p75 20.09, p90 21.22, max 32.41
+    older than 1 day: 975.   older than 7 days: 975.   ALL OF THEM.
+    closed round trips: n=247, hold median 60.0 min, p90 251.4, max 6970.8
+
+Four fifths of every position ever opened is still open, and **none is younger than a
+week**. That is not a slow exit path, it is a stopped one.
+
+**ENTRY HALF -- UNEXPECTED, AND MORE ACTIONABLE. Open positions opened in the last 24
+hours: ZERO**, against **387** `trading_ops` `action='enter'` rows in the same window.
+**Those 387 never became positions.** `trading_ops` `'enter'` is a *decision* that is
+refused or dropped downstream before any fill is written.
+**CORRECTS MY OWN OPENING MEASUREMENT THIS PASS:** I read 3946 enters / 47 exits over
+7d as positions. The enter side is decisions.
+
+**Fresh counts** (`trading_ops`, 2026-09-23 ~12:45 UTC): 1h 9/0/82, 6h 27/1/299,
+**24h 387/1/5280**, 72h 1337/7/15329, 7d 3946/47/30863. `wallet='live'` contributes
+**zero** rows of all three actions.
+
+**So the scoreboard's "tradeable evidence rate 4.6/day, nearest graduation ~49.0 days"
+describes a machine that is not currently running** -- a round trip is not evidence
+until it CLOSES, and the measured exit count in the last 24h is **one**. Ladder step 3
+"no ghost activity in 1h" is the honest summary of a lane dead at both ends.
+
+**Both clocks were stalled while this was measured** -- newest `trading_ops` row
+12:43:15 UTC (24.8 min old), newest `market_stream` tick 12:42:12 UTC (25.8 min old),
+newest `trade_outcomes` row 10:48:45 UTC (2.3 h old). Consistent with the standing
+"feed bursts ~6 min, dies ~30" finding; a live specimen for `[b37ca646]`.
+
+**THE ONE THING p683 SHOULD DO FIRST:** take a single `trading_ops` `'enter'` decision
+from the last 24h and follow it to where no `trade_fills` row is written. That trace
+answers the entry half; the 975 stale positions answer the exit half already.
