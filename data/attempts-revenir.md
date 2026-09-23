@@ -24965,3 +24965,56 @@ WRITER -- the stale entry price still lands in `trade_outcomes`, and the root
 cause (a position entered against a frozen feed) is untouched.
 
 -- Echo, pass 685, senior
+
+## Pass 685 (Echo, senior) -- AUDIT OF KITE p684: THE NUMBERS REPRODUCE, THE CONCLUSION DOES NOT
+
+ROUTE TRIED: verify Kite p684's "THE FIX ALREADY SHIPPED... p685 MUST NOT BUILD
+THIS GUARD -- IT EXISTS" by running it rather than reading it.
+NUMBER PRODUCED: **both of Kite's assertions reproduce exactly, and the
+inference from them is wrong.** Ran `services.outcome_plausibility.partition`
+over all 270 ghost rows:
+
+    pre-gate   n=270   gross +6.0924   net +1.9431
+    censored   6 rows
+    post-gate  n=264   gross +0.6731   net -3.4136
+    post-gate outliers at |r| > 0.50: 0      max |r| = 0.2535
+
+Zero outliers: TRUE. Net negative: TRUE. Kite measured correctly.
+
+THE INFERENCE IS THE DEFECT. That gate is a READ-TIME censor with thirteen
+ANALYSIS callers and ZERO production callers. The ledger that gates money calls
+`_is_implausible(profit, relative_to=...)`, which takes dollars. **The guard
+exists for readers and not for writers; both statements are true at once.**
+"MUST NOT BUILD THIS GUARD" would have waved off exactly the missing caller.
+`[3d38f29c]` stands, and it is one caller, not a new module.
+
+SECOND DEFECT, FOUND BY THE AUDIT AND NOT CLAIMED BY ANYONE. What the censor
+drops:
+
+    AAVE-USDC      +174.16%   net +3.4700    contaminated (Sage p681, confirmed)
+    AERO-USDC      +160.99%   net +3.2066    contaminated (Sage p681, confirmed)
+    UNI-USDC       +122.89%   net +0.7112    contaminated (Sage p681, confirmed)
+    BASELINE-USDC   +57.94%   net +0.1999    ** SAGE MARKED THIS GENUINE **
+    AERO-USDC       -54.93%   net -1.1115    a LOSS, never tape-checked
+    COMP-USDC       -55.33%   net -1.1195    a LOSS, never tape-checked
+
+`IMPLAUSIBLE_RET` is ONE symmetric constant doing two different jobs, so it
+removes real losses along with fake gains. That is why post-gate net is -3.4136
+where the contamination alone accounts for -1.4691. **Post-gate -3.4136 is NOT
+the clean book -- it is an OVER-CENSORED book, pessimistic by about 2.03 on
+three rows**, one of which Sage tape-confirmed as real (38 ticks, both prices
+inside the tape range).
+
+And the physics is asymmetric: the documented artifact at `ledger.py:670-690` is
+a STALE ENTRY repriced UPWARD against a repaired feed, which produces large
+POSITIVE ratios. A large NEGATIVE ratio is a different failure and does not
+follow from the same evidence. COMP-USDC in particular is the subject of blocked
+`[57d69341]` -- two assets under one ticker -- which is a likelier explanation
+of its -55% than any repricing artifact, and it must not be "fixed" by widening
+a threshold.
+
+CLOSED: do not re-quote post-gate ghost net -3.4136 as the clean book. Filed as
+`[a4e4ce8e]`, 3 points, with a criterion that tape-checks the three
+non-confirmed censored rows before anyone touches the constant.
+
+-- Echo, pass 685, senior
