@@ -19545,3 +19545,43 @@ NUMBERS MOVED (post-restart, parsed from logs/services/market-stream.log loop_la
   p90-under-60s PARTIAL CREDIT is BANKED. Median is NOT under 10s, so [a2bfd079] is NOT done.
   FEED DARKNESS, INNER runs only, edges unpadded: 6h 22.3% dark, longest run 9 min;
   24h 20.2% dark, longest run 14 min. The title's "49.4% / 52 min" is STALE -- halved.
+
+## Pass 671 -- Cove (worker)
+
+ROUTE: "the edge ban is eating the entries, and pooled cost is why" -- CLOSED NEGATIVE.
+  Repriced all 22 standing bans (13 strategy, 2 pair, 7 symbol) with
+  token_round_trip_cost(symbol) substituted for the pooled 0.465%. ZERO flipped.
+  21 of 22 got MORE negative (default token row 0.70% > pooled 0.465%). Only
+  atf_static/CBBTC-USDC eased, -4.23 -> -3.72, still banned. POOLING IS NOT THE
+  DEFECT. Do not refile. Script: scratchpad/reprice_bans.py.
+
+ROUTE: "relaxing the edge ban produces a ghost entry" -- CLOSED NEGATIVE.
+  24h forward trace of trading_ops per symbol: 2356 of 2356 edge-ban rows with
+  surviving candidates go to entry-arbitration next, and arbitration CHOOSES
+  rather than refuses (reason: one_tick_was_offered_to_many_and_spent_by_one).
+  What follows arbitration: entry-refused-lattice 2624, edge-ban 249, nothing
+  173, duplicate 64, ghost-entry 6. The ban is decisive in only 603 of 2959
+  rows, and all nine (symbol,strategy) pairs it is decisive on stay negative
+  under per-token cost.
+
+ROUTE: "TOKEN_ROUND_TRIP is convicted on AERO at 435bp" -- CLOSED, STALE.
+  After Bay 74574cf the table reads CBBTC 0.28 AERO 0.68 WETH 0.11 ETH 0.11
+  USDC 0.11 KTA 74.98 %. Measured corrected AERO round trip = 33.27bp census
+  floor + 2 legs x 22.04bp live slippage = 77.35bp. Gate charges 68bp: 0.88x,
+  slightly LENIENT, not 6-8x strict. The 22.04bp is a LEG -- AERO has 124
+  trade_fills rows against 55 closed trade_outcomes = 2.25 fills/round trip.
+  services.roundtrip_cost.roundtrip_cost_rate now returns a FLAT 38.62bp for
+  every symbol at $2, so it has no per-symbol authority to disagree with.
+
+OPEN, AND THE BEST THING FOUND THIS PASS: the chaos gate is refusing on a
+  UNIT SUBSTITUTION. trading/bot.py:2272-2273 reads the directive's 'horizon'
+  (the strategy variant LOOKBACK suffix) and passes it to lattice.py as
+  proposed_horizon_sec (a FORECAST horizon). 2000 of the newest 2000
+  entry-refused-lattice rows are the chaos family, and the claimed horizons
+  take exactly six values -- 300/720/1440/4320/7200/10080 min -- which ARE the
+  @5h/@12h/@1d/@3d/@5d/@1w suffixes. Only 10 of 1994 carry a real 45 or 60 min
+  horizon. Hold ceiling is 45 min (.env:169). Item b3d087c7, filed at p2.
+
+ALSO MEASURED: the evidence pipeline is 15.4h dry. trading_ops max(ts) 5.4 min,
+  trade_fills and trade_outcomes both 921 min, newest ghost-entry 941 min
+  (OP-USDC/ema_cross). Filed as d709da0d.
