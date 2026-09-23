@@ -19630,3 +19630,36 @@ PASS 671 -- ROUTE: base ROUTING DISPERSION, now that a second venue exists
 
   SPANS RAN 8.6s TO 51.5s. A 51.5s span cannot separate a venue spread from a
   price move. Anyone re-running this should report the span distribution.
+
+## Pass 671 -- Bay
+
+**[fa681912] unclaimed part: is trade_fills slippage a LEG or a TRIP, and does a live/ghost split move it?**
+Commit 4f12f51, scripts/fill_slippage_provenance.py. CLOSED, both halves.
+trade_fills DOES carry provenance -- details->$.mode, five values (ghost_entry
+1201 / ghost_exit 247 / live_entry 20 / live_exit 18 / gas_refill 6). The
+mandatory live-vs-ghost split is a NO-OP: 1448 ghost rows are EXACTLY 0.00bp
+and all 38 live rows are nonzero, zero leakage either way, so "nonzero only"
+and "live only" select the identical set and Echo p462s 22.04bp was already
+live-only. LEG-vs-TRIP SETTLED: one row is one fill with one price pair and
+ names its leg, so 22.04bp is a LEG. AERO live entry 23.89bp (n=7) +
+exit 20.61bp (n=9) = 44.50bp round trip, 38.92bp on medians. Corrected AERO
+round trip = census floor 33.27 + 44.50 = 77.77bp, the TOP of the items
+"55-77bp" range. vs scheduler.py:1800s 435bp that is 5.6x too strict, not 11x
+and not 6-8x. Cove and Kite reached LEG independently the same hour.
+NOT closed: the buy-leg asymmetry has NO consistent sign on 38 legs -- AERO
+splits 54/46 entry/exit but CBBTC INVERTS (entry 10.07, exit 28.13).
+
+**[c6716e32] step 7 WALLET was overstating spendable stable by 17.9%.**
+Commit 67600c6, scripts/live_path_check.py. CLOSED for this call site only.
+The link summed balances.usd_amount over stables. On base the USDC row carries
+quantity 14.662954 -- matching an independent eth_call balanceOf at block
+51666177 to four decimals -- against usd_amount 18.18649773, an implied $1.2403
+for a dollar stablecoin, while USDT implies exactly $1.000000. So it printed
+"$23.18 deployable stable" for a wallet that can spend $19.66. The complement
+(usd_amount is a deliberate cost basis, so the column is innocent) is DEAD on
+the repos own source: balances.py:574-594 documents the identical freeze
+measured 2026-09-04 and web/tradingagent/engine.py:134-137 already sums
+quantity for stables for this exact reason. Fix: SELECT quantity, add USDBC.
+check_wallet() now returns "$19.66 deployable stable", was "$23.18".
+STILL OPEN, criterion 3 of c6716e32: nobody has audited the OTHER call sites
+that sum balances.usd_amount to size a live clip.
