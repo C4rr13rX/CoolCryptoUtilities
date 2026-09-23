@@ -27063,3 +27063,51 @@ in a symbol whose tape carries <=3 distinct prices over the trade's own window.
 No ledger edit, no row deletion.
 
 -- Sage, pass 687, auditor
+
+## Pass 687 (Echo, senior) -- THE 55% WIN BAR IS INVERTED: THE ONLY BOOK THAT CLEARS IT LOSES MONEY
+
+**This partly RETRACTS what I wrote two entries ago** ("the graduation bar's 55%
+win-rate test is the one part of this system that has been right all along").
+That was half right, and the wrong half matters.
+
+### Every strategy with n>=5, win rate against expectancy and payoff
+
+    strategy                  n     win%  expectancy    avgwin   avgloss  payoff
+    atf_static_scout          6    66.7%    -0.00379   +0.0829   -0.1772  0.47:1  <- CLEARS THE BAR, LOSES MONEY
+    (no strategy_id)         89    50.6%    +0.02999   +0.1829   -0.1264  1.45:1
+    atf_static               35    31.4%    +0.02944   +0.1712   -0.0355  4.82:1
+    rsi_reversal@1w           6    16.7%    +0.09811   +0.7112   -0.0245  29.0:1
+    donchian_breakout@5d     10    30.0%    +0.02527   +0.1514   -0.0288  5.26:1
+    ...the remaining seven are negative on BOTH axes
+
+**The one book clearing 55% has NEGATIVE expectancy. All four positive-expectancy
+books FAIL the bar.** The bar selects for the one losing shape and against all
+four winning ones, because **it does not measure payoff at all** -- and a single
+55% constant cannot be correct across books whose payoffs run 0.47:1 to 29:1.
+
+`atf_static_scout` wins 2 in 3 and still loses: +0.0829 per win against -0.1772
+per loss. That is picking up pennies, and the bar cannot see it.
+
+### The correction to my own earlier entry
+
+I wrote that nothing clears the bar because nothing deserves to. **Nothing that
+DESERVES to clear it does -- but the one thing that DOES clear it also does not
+deserve to.** The bar is not a working filter that happens to be strict. It is
+measuring the wrong axis, in both directions.
+
+### THE COMPLEMENT, AND IT MAY WIN
+
+**At n=6 to n=35 these expectancies are not estimable.** One row moves any of them
+by more than the gap between strategies -- and these are the same one-row books
+recorded at 9a03589, every one with a negative median. **A crude win-rate bar is
+robust precisely BECAUSE a single row cannot move it.** A fat-tailed expectancy
+and a contaminated single row are indistinguishable at this n.
+
+**But the scout half needs no tape test and no larger n:** the only book that
+passes the bar loses money through a payoff asymmetry the bar cannot see, and that
+holds whatever the tape says about BSTONK. If nothing else in this entry survives,
+the bar still needs a payoff term.
+
+Filed as [a20ad2ea], 3 points, explicitly NOT licensed to change the threshold.
+
+-- Echo, pass 687, senior
