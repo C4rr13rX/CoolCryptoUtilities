@@ -19790,3 +19790,84 @@ written at pass 478; at pass 672 every line number is still exact: 676, 4715,
 fast_track conjunction), ledger.py 76 / 539 / 550 / 836 / 1376. approved_ids()
 == ['money_button']. Scout graduation_blocked=True, demotions=0. No refinement
 needed.
+
+## Pass 672 (Kite, worker) -- [a9bbe626] the census censor sweep, re-run today
+
+ROUTE TRIED: finish criterion 1 of [a9bbe626] -- every script reading
+`trade_outcomes` for ANALYSIS must either censor via
+`services.outcome_plausibility.partition` or PRINT how many rows it did not
+censor -- and re-verify criteria 2-4 by re-running the commands rather than
+reading pass 670's report.
+
+THE SWEEP. 28 files under `scripts/` reference `trade_outcomes`. Nine had
+neither a censor nor a banner. SEVEN are out of scope and here is why, stated
+rather than assumed: `pass_gate.py` and `_live_data_isolation.py` have no SQL
+against the table at all (comments and a CREATE TABLE for an isolated test db);
+`destroyed_evidence.py` and `fill_slippage_provenance.py` mention it only in
+prose; `loop_status.py`, `tx_hash_provenance_audit.py` and
+`live_book_forensics.scoreboard_rows` read `wallet='live'` / `mode='live'` ONLY,
+and live rows are the chain-tied ones the ghost censor is not about;
+`graduation_status.py` reads the ledger accumulator, which is guarded at
+record() time -- the item says do not "fix" it and it was not touched.
+
+TWO WERE REAL, and both now print `outcome_plausibility.banner(censored=False)`
+above their numbers. Both stay UNCENSORED deliberately -- one measures symbol
+COVERAGE and the other the table's COMPOSITION, and dropping rows would
+understate exactly what they exist to describe:
+    !! UNCENSORED -- 6 of 265 rows (2.3%) below are rows the ledger REFUSES
+       carrying gross +5.4193 and net +5.3566; 259 rows survive the rule.
+       reasons: {'repricing_return': 6}   (bar: |booked return| > 50%)
+  commands: `python scripts/live_book_forensics.py`
+            `python -c "import scripts.routing_arbitrage_census as m; print(m.plausibility_banner('storage/trading_cache.db'))"`
+
+THE TWO PRIVATE CENSORS NOW PRINT THEIR GAP INSTEAD OF STATING IT.
+`deep_tier_oos_check.py` and `stop_width_replay.py` censor with a PRIVATE copy
+of the ratio arm. Pass 671 made each NAME that provenance in a comment, with
+the gap measured once. A gap stated in a comment goes stale in silence, which
+is the failure mode this item is about, so both now recompute it at runtime
+over exactly the rows the report carries:
+    deep_tier_oos_check  private rule (|move| <= 20%) refused 1 of 14 ghost
+                         rows on CBBTC/CBXRP; the SHARED rule refuses 0 of the
+                         13 survivors -- GAP EMPTY.
+    stop_width_replay    private rule (|gross| > 0.5 x notional) refused 0 of
+                         32 attributed tradeable ghost rows; shared rule
+                         refuses 0 -- GAP EMPTY.
+  Both gaps are empty TODAY. That is a measurement, not a guarantee, and it is
+  printed rather than asserted for that reason.
+  commands: `python scripts/deep_tier_oos_check.py`, `python scripts/stop_width_replay.py`
+
+CRITERIA 2 AND 3 RE-RUN TODAY, NOT INHERITED. Both evidence-base scripts print
+UNCENSORED, CENSORED and GAP columns. The numbers have MOVED since pass 446 --
+the book is now 265 rows, not 237 -- so quoting 446's figures would have been
+wrong:
+  `python scripts/roundtrip_cost_coverage.py`
+      rows 265 -> 259 (-6); book net  +2.1174 -> -3.2392  (gap -5.3566) SIGN FLIPS
+      MEASURED-cost net +1.2356 -> -0.8596; ASSUMED-default net +0.8818 -> -2.3797
+      share of |net| on an assumed cost: 41.6% uncensored -> 73.5% censored
+  `python scripts/deep_pool_reprice.py`
+      measured net BEFORE  +2.8782 -> -1.5674  SIGN FLIPS
+      DEEP gross           +2.1974 -> +0.0763
+      DEEP net AFTER       +2.0241 -> -0.0918  SIGN FLIPS
+      THIN gross           +2.2270 -> -0.1495  SIGN FLIPS
+      the 6 refused rows, named: AAVE +3.4830 (+174.16% booked return),
+      AERO +3.2196 (+160.99%), COMP -1.1065, AERO -1.0985, UNI +0.7196,
+      BASELINE +0.2021.
+
+CRITERION 4 -- DOES ANY CONCLUSION IN THIS FILE CHANGE SIGN ONCE CENSORED?
+**NO. None changed, and that is the honest answer rather than an absent one.**
+Censoring flips three lines INSIDE `deep_pool_reprice`'s own table, including
+DEEP net AFTER from +2.0241 to -0.0918. But the standing verdict in this file
+on that route is ALREADY negative and was reached independently: pass 427
+("deep pools cut the bleed 6x but do NOT create an edge"), pass 439 (closed on
+realised live per-token cost, n=21) and the CLOSED NEGATIVE at "restrict the
+universe to deep pools does not rescue the momentum rule either -- all 18 fires
+are COBEE and DRB at 0.70%". Censoring makes an existing negative MORE negative;
+it does not turn a published positive into a negative, because the positive was
+already retracted here -- see the "NEAR MISS WORTH RECORDING" entry, where the
+first uncensored run said deep pools win on two fake rows and the author caught
+it. So: contamination is REAL and worth 5.36 dollars of ghost net, the GAP is
+now printed everywhere it matters, and NO conclusion in this file moves.
+
+STATUS: criterion 1 met with the seven exemptions named above; criteria 2, 3
+and 4 met and re-run today. Commits d2aad80 and be6d59e, both scoped with
+`git commit -- <paths>`.
