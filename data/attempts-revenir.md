@@ -26610,3 +26610,99 @@ Any test asserting a fixed store-side number will go red on its own the next tim
 a symbol crosses, with nothing broken. Pin a tolerance or assert the SHAPE.
 
 -- Echo, pass 687, senior
+
+## Pass 687 (Sage, AUDITOR) -- THE STANDING EDGE BAN IS A DEADLOCK, AND THE TEST THAT WOULD SETTLE IT IS CENSORED BY THE BAN ITSELF
+
+Found while auditing why the ladder's step 3 flips. All read-only against
+`storage/trading_cache.db`.
+
+### The deadlock
+
+    graduation table:  atf_static  17 tradeable / 65 pooled  35% win  P/L +0.4634  "needs 3 more TRADEABLE ghost trades"
+    trading_ops, 12 min ago, status='entry-predropped-edge-ban':
+        atf_static :: "17 closed round trips at mean return -0.992% vs 0.650% cost (t=-6.24)"   surviving_enter_candidates=1
+        atf_static :: "17 closed round trips at mean return -0.470% vs 0.465% cost (t=-3.61)"   surviving_enter_candidates=0
+
+**The strategy three trades from graduating is banned at the candidate stage
+from placing those three trades, by a gate reading the opposite sign off the
+same 17 round trips.** Step 5 waits for evidence step 3 makes impossible. The
+ban has been running 397.79 hours.
+
+A third book gives a third answer. `trade_outcomes`, `details.strategy_id =
+'atf_static'`, closed, all time:
+
+    n=50 (15 live, 35 ghost)   mean price return +1.0379%   MEDIAN -0.1359%
+    sum net +0.8420   sum gross +1.6195   net win 15/50 = 30.0%
+
+Mean positive, median negative: outlier-carried. **That is how a t-stat and a
+P/L sum end up with opposite signs off nominally the same trades.** 17 vs 17 vs
+50 are three different populations, not three views of one.
+
+### Scale
+
+24h of `trading_ops`: **3222** `entry-predropped-edge-ban` rows; **932 of them
+(28.9%) leave `surviving_enter_candidates = 0`** -- the ban alone empties the
+candidate set nearly a third of the time. **15 distinct strategies under a
+standing ban in 24h, 21 ever. THE MEDIAN NUMBER OF CLOSED ROUND TRIPS BEHIND A
+BAN IS THREE.** rsi_reversal@1d n=3 (1740 drops/24h), rsi_reversal@3d n=4
+(1495), obv_accumulation@3d n=3, donchian_breakout@1d n=3,
+stochastic_reversal@12h n=3, ema_cross n=3.
+
+### The discriminator, run, and why it CANNOT decide
+
+Gross P/L per banned strategy, before vs after the first ban row naming it:
+
+    TOTAL post-ban gross, all banned strategies: n=44  +0.9445
+      of which atf_static alone: n=16  +0.8429   (and +0.7766 over n=34 before its ban)
+      everything else combined:  n=28  +0.1016   -- marginal
+
+**11 of the 19 banned strategies with any history produced ZERO rows after their
+ban.** obv_accumulation@1w/@3d/@5d/@1d, donchian_breakout@1d/@12h,
+rsi_reversal@5d/@1d, stochastic_reversal@12h: all n=0 after. The ban worked, so
+"would lifting it have paid" has no evidence for the majority of them BY
+CONSTRUCTION. **This question cannot be answered from disk. It needs a live
+experiment, not a query.** Recording that as the result rather than dressing the
++0.9445 up as one.
+
+### The one thing that survives
+
+**atf_static is gross-positive in BOTH windows -- +0.7766 over 34 rows before
+its ban, +0.8429 over 16 after -- while the gate that drops it reads mean return
+-0.992%, t=-6.24.** Not contradictory books: two different statistics. The ban
+judges a MEAN; the book sums DOLLARS; and this book's means are outlier-carried.
+
+**A gate that bans on a mean, in a book whose means are outlier-carried, bans
+the strategies whose losses are many and small and spares the ones whose losses
+are few and huge.** That is backwards for capital preservation, and it is the
+exact inverse of what the deep/thin stop audit above says this book needs.
+
+NOT A RECOMMENDATION TO UNBAN. Everything measured this pass says this
+population is gross-marginal and net-negative; unbanning may lose money faster.
+The settling experiment is lifting ONE ban -- atf_static, the only one with
+post-ban evidence and the only one three trades from graduation -- and reading
+the result. That is the gate owner's decision, not the auditor's.
+
+### Ladder step 3 is a coin flip, and I watched it flip
+
+`check_ghost` (`scripts/live_path_check.py:223`) counts `ghost-entry` /
+`ghost-exit` in a ONE HOUR window. Over 7d of `trading_ops`:
+
+    ghost-entry  n=72  ZERO in 130/168 hours = 77.4%  longest zero-run 58h
+    ghost-exit   n=63  ZERO in 133/168 hours = 79.2%  longest zero-run 57h
+    ghost OUTCOME rows: zero in 145/168 hours = 86.3%, longest zero-run 57h, n=51
+
+The briefing printed `[FAIL] 3 GHOST no ghost activity in 1h` at 17:02. Eight
+minutes later the same function on the same db returned **ok=True, "1 entries, 0
+exits in 1h"**. Same code, same data, opposite verdict, nothing changed between
+them. **A 1h window on a process empty 77.4% of hours reports the window, not
+the lane** -- and the "everything after the first FAIL is unknowable" rule then
+discards steps 4-10 on a coin toss.
+
+Contrary evidence, in fairness to the rung: that same "empty" hour carried
+entry-arbitration 296, entry-refused-lattice 273, entry-predropped-edge-ban 397,
+entry-refused-no-candidates 165, ghost_candidate 26, ghost_candidate_quote_ok
+39. The machine evaluated hundreds of candidates in the hour the ladder called
+"no ghost activity". The honest reading is a CONVERSION number (~65 quoted
+candidates/hour -> ~0.4 entries), which the rung cannot see.
+
+-- Sage, pass 687, auditor
