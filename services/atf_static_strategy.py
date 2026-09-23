@@ -878,7 +878,19 @@ def _run_ghost_quote_scout(
         # the census never priced still gets the constant, and says so.
         clip_usd = _ghost_clip_usd()
         cost_rate = _roundtrip_cost_rate(clip_usd, symbol)
-        target_return = _float(pos.get("target_return"), _float((sig or {}).get("expected_return"), 0.0))
+        # Ask for the TARGET by its own name, then fall back. The third rung is
+        # `expected_return` only because every row written before this change
+        # carried the take-profit target under that key; on a signal written
+        # after it, rung two answers and rung three is never reached. Reading
+        # the target by name here means the pending `expected_return` ->
+        # forecast swap cannot silently reprice an exit.
+        target_return = _float(
+            pos.get("target_return"),
+            _float(
+                (sig or {}).get("target_return"),
+                _float((sig or {}).get("expected_return"), 0.0),
+            ),
+        )
         reason = ""
         # ``cost_rate`` joins the floor so a mis-set ATF_STATIC_GHOST_MIN_EXIT_PROFIT
         # cannot book a "target_hit" that loses money. At the defaults
@@ -1220,7 +1232,14 @@ def _run_ghost_quote_scout(
                 },
             )
             continue
-        target_return = max(min_profit, _float(sig.get("expected_return"), 0.0))
+        # Same ordering as the exit rule above, for the same reason: the entry
+        # is setting a TAKE-PROFIT, not recording a forecast. `expected_return`
+        # is the pre-change spelling of the same number and stays as a fallback
+        # for signals already on disk.
+        target_return = max(
+            min_profit,
+            _float(sig.get("target_return"), _float(sig.get("expected_return"), 0.0)),
+        )
         position = {
             "source": SOURCE,
             "strategy_id": SCOUT_STRATEGY_ID,
@@ -1823,6 +1842,43 @@ def build_static_strategy_signals(
         target_floor = max(0.005, min(0.10, _float(os.getenv("ATF_STATIC_TARGET_RETURN", "0.05"), 0.05)))
         target_return = max(0.015, min(0.15, max(expected_return, target_floor if confidence >= 0.35 else 0.015)))
         target_price = _float(candidate.price_usd) * (1.0 + target_return)
+        # THE FORECAST AND THE TAKE-PROFIT TARGET ARE TWO DIFFERENT NUMBERS AND
+        # ONLY ONE OF THEM WAS EVER WRITTEN DOWN.
+        #
+        # `expected_return` below has always carried `target_return` -- the
+        # take-profit, computed at the line above as
+        # `max(0.015, min(0.15, max(forecast, ATF_STATIC_TARGET_RETURN)))`.
+        # Its contract, stated in trading/strategies/base.py:376, is "the net
+        # edge the strategy expects to capture by taking `action` NOW". Those
+        # do not agree, and the disagreement is not cosmetic:
+        #
+        #   * For every row whose forecast falls below the floor -- the
+        #     majority -- the persisted value is a LITERAL: 0.015, or the
+        #     ATF_STATIC_TARGET_RETURN default of 0.05. A literal carries no
+        #     rank information, which is the measured Spearman rho +0.0453 at
+        #     a permutation p of 0.1129 (pass 486, n=1245 priced enter rows).
+        #     Nothing was tuned on noise there; it was tuned on a constant.
+        #   * Only rows CLEARING the floor carry the forecast from the line
+        #     above, and those are exactly the thin-tape rows: deciles 9-10 of
+        #     the persisted field have an exactly-unchanged 15-minute forward
+        #     price on 49 of 253 rows (19.4%) against 3 of 992 (0.3%) in
+        #     deciles 1-8, median 716 ticks per symbol against 1242.
+        #
+        # So the forecast is NOT recorded anywhere in this repo -- not in
+        # trading_ops, not in trade_outcomes, not in kv_store -- and the 214.4x
+        # calibration ratio pass 486 measured is a ratio on a take-profit
+        # target, not on a forecast. You cannot decide which of the two the
+        # entry gate should admit on until both are on the record.
+        #
+        # This writes both, and changes NO consumer's behaviour: `target_return`
+        # is byte-identical to what `expected_return` already carried, and
+        # `expected_return` keeps carrying it. `forecast_return` is new and is
+        # the raw, uncapped-by-the-floor value from `expected_return` above --
+        # the number the calibration must actually be measured against once
+        # forward rows exist. The swap at `expected_return` is a SEPARATE
+        # change and must not ride along with this one: flipping it today would
+        # refuse every row whose forecast is 0, and there is no measurement in
+        # the repo that says how many rows that is.
         signal = {
             "source": SOURCE,
             "ts": _now(),
@@ -1835,6 +1891,9 @@ def build_static_strategy_signals(
             "action": "enter",
             "strategy_id": "atf_static",
             "expected_return": round(target_return, 6),
+            "forecast_return": round(expected_return, 6),
+            "target_return": round(target_return, 6),
+            "forecast_is_floored": bool(expected_return < target_return),
             "target_price": target_price,
             "confidence": round(confidence, 6),
             "score": candidate.score,
