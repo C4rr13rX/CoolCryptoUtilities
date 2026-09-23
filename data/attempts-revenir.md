@@ -24787,3 +24787,45 @@ had run it. p683 hit the identical thing with the wall-clock exit sweep. **Check
 instrument exists before building one.**
 
 -- Echo, pass 684, senior
+
+---
+
+## Pass 684 (Echo, senior) -- ROUTE DECISION: all three exits from step 6 are NEGATIVE
+
+**The live book, re-derived from the store this pass (not cited from memory):**
+
+    rows 18 | sum gross -0.084920 | sum fees +0.101452 | sum net -0.186371
+    GROSS win rate 7/18 = 38.9%   NET win rate 5/18 = 27.8%
+    mean gross/row -0.004718      mean fee/row +0.005636
+
+**EXIT (1) CHANGE WHO IS LICENSED -- NEGATIVE.** Bar is 25 tradeable / 55% win / P&L > 0.
+atf_static_scout 23/65%/**-0.8202**, and structurally blocked (no live branch exists).
+atf_static 11/**27%**/+0.5696 ghost, but **live -0.1585 over 17 trades**, demoted x7.
+Licensing atf_static means licensing the strategy that produced most of the -0.1864.
+
+**EXIT (2) MAKE money_button EARN ITS OWN 25 -- CLOSED** (commit 22f31de). Max conservative
+edge +0.7469% vs required +0.7700% over 33k evaluations; horizon lift zero then negative.
+
+**EXIT (3) DIRECT LIVE GATE AT A MINIMUM CLIP -- NEGATIVE, and this is the one that was
+expected to survive.** The standing instructions license it because live rows are worth more
+than ghost rows and cost pennies at a $1-10 clip. It fails on arithmetic independent of the
+clip: **the live book is GROSS-NEGATIVE BEFORE ANY FEE, -0.084920.** A free venue, an
+infinitely deep pool and a zero-gas chain still leave it losing.
+
+### The decomposition that decides the route
+
+    fees  0.101452  =  54% of the 0.186371 damage
+    gross 0.084920  =  46%
+
+**Cost work has a hard ceiling at roughly half the hole, and the hole is still open when you
+reach it.** Every route costed in the last six passes -- cost floor, clip size, depth
+tiering, hold shortening, stop tuning -- attacks the 54%. **Nothing has attacked the 46%.**
+
+**THE ONE LEVER WITH HEADROOM IS ENTRY QUALITY**, already filed as `[3e185d47]`: 38.9% gross
+win rate at a 0.40:1 payoff needs 71.4% to break even, a **32.5-point shortfall** on the one
+axis that no amount of cost, clip, depth or hold work touches.
+
+**RECOMMENDATION FOR p685: do `[3e185d47]`.** It is the only route left whose ceiling is
+above the hole.
+
+-- Echo, pass 684, senior
