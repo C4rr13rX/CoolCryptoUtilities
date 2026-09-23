@@ -20022,3 +20022,60 @@ binds only 15 of 149 so it is not the blocker, but it is 89.9% PASSING for the
 wrong reason and would mis-admit once the confidence head is repaired.
 
 No code changed this pass. Both findings are read-only measurements.
+
+## Pass 672 (Kite, worker) -- the scoreboard is SOUND, and the quote_ok denominator is NOT
+
+Two read-only measurements on `trading_ops` / `trade_outcomes`, no file claimed
+for either, both taken after [a9bbe626] closed.
+
+**THE SCOREBOARD -0.1864 OVER 18 IS CONFIRMED INDEPENDENTLY, AND THE 22-ROW
+VERSION IS A SIMULATED EXIT.** `wallet='live' AND status='closed'` gives 18
+rows at net -0.186371. `json_extract(details,'$.mode')='live' AND
+status='closed'` gives the same 18 rows at the same -0.186371. Two different
+column paths, six decimal places, identical. But `mode='live'` has TWENTY-TWO
+rows: the other four are `status='annulled'` at -0.1456, and they carry
+`wallet='ghost'` while carrying `mode='live'` -- the two live-ness markers
+disagree on exactly those four. That is why `scripts/live_book_forensics.py`
+prints "live 22 rows net -0.33199" in its mode split: -0.1864 + -0.1456 =
+-0.3320. I flagged -0.3320 as possibly the true book and then killed my own
+suggestion. All four annulments carry the same audited reason: *"no settling
+ERC-20 Transfer on base for this quantity; the position was marked out against
+the feed price while live execution was disarmed (bot.py:
+live_position_cannot_exit_in_simulation)"*, evidence *"eth_getLogs, base,
+2026-09-03"*, with `was_net_profit` preserved at -0.0000050, -0.1429,
++0.0002673 and -0.0030114. **So -0.1456 is a feed mark-out, not a realised
+on-chain loss, and excluding it is CORRECT. Never quote -0.3320 over 22 as the
+live book.**
+
+**CLOSED, but one finding travels with it.** The EXITS never settled; the
+ENTRIES did. All four carry a `live-entry` and a `live-swap-settled` row with a
+real hash -- `0xee36a71d...` (both CBETH rows), `0xcd6fb05c...` (BSTONK),
+`0x0dfedf3a...` (CBBTC). Real on-chain buys whose sells were never placed. That
+is FOUR outcome rows across THREE settled entry hashes, not the two stranded
+positions the standing note describes. **If those balances are still in the
+wallet it is real capital the scoreboard cannot see; if they are gone, the sale
+is unbooked.** Not resolved here -- no clock -- and it is a wallet question.
+
+**THE quote_ok DENOMINATOR IS WRONG, AND MY FIRST EXPLANATION OF IT WAS TOO.**
+`ghost_candidate_quote_ok` runs flat at 12-16 rows/hour across all 24h (276
+rows, 49 in the last 6h) with a stable symbol mix (MAMO 26 then 25, UNI 21 then
+21, across two windows 17h apart). `ghost-entry` produced SIX rows in one
+five-hour window 17-22h ago, ZERO in the 17h since, ZERO in the 58h before.
+Five of the six had no preceding quote_ok row on their own symbol, and four
+(CAKE, ALIGN, LDO, OP) have **none in the table's entire history**. All-time,
+quote_ok 49469 outnumbers ghost_candidate 18742 by **2.6 to 1** -- an upstream
+cannot outnumber what it feeds. I read the disjoint `strategy_id` sets
+(atf_static on every candidate; rsi_reversal@12h / obv_accumulation@5h /
+ema_cross on every entry) as TWO LANES. **That was wrong and Cove corrected it
+from the code the same pass:** exactly ONE call site writes `ghost-entry`
+(`services/atf_static_strategy.py:1247`) and the quote_ok writer (`:1859`) is
+the SAME FILE. One lane with an EMISSION GAP; the strategy_ids on the entry
+rows are the SIGNALLING strategies, not the writer. **What survives: any report
+dividing entries by quote_ok rows is dividing by the wrong denominator, and the
+5-hour burst still needs explaining, not just the gap.** Filed as
+[c78afa6f] with the corrected criteria; the title is wrong and says so.
+
+**NOT CLOSED, NOT OPENED: 124 `quarantined-ghost-entry` rows.** I flagged these
+as unexamined. They are all atf_static, all between 26.6 and 32.2 days old,
+newest 638 hours ago. A dead historical status. Nobody should spend a pass on
+it -- recorded so the next agent does not re-flag it.
