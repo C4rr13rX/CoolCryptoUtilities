@@ -64,6 +64,69 @@ except Exception:  # noqa: BLE001 - a missing gate must not narrow the funnel
 #: the two drift apart.
 MONEY_BUTTON_DIP_STRATEGY_ID = "money_button_dip"
 
+#: Half-width of the band in which a sigmoid head is emitting NO INFORMATION
+#: rather than a low reading. Same 0.02 ``trading/bot.py:8088`` already uses
+#: for ``model_neutral``; named here so the two cannot drift.
+MODEL_NEUTRAL_BAND = 0.02
+
+
+def _confidence_abstains(confidence: float, direction_prob: float) -> bool:
+    """Is the confidence conjunct reading nothing while the others read something?
+
+    ``0.5`` IS THE CODE'S OWN "NO READING" SENTINEL, NOT A COIN FLIP. The entry
+    test's ``confidence`` is ``pred_summary["exit_conf"]`` (:778), and 0.5 is
+    what ``trading/bot.py`` writes into that key when the head cannot be read
+    (:6038, :6073) and what ``_neutral_pred_summary`` returns when TensorFlow
+    is absent entirely. ``bot.py:8088`` already classifies
+    ``abs(exit_conf - 0.5) < 0.02`` as ``model_neutral``. So a 0.5 arriving
+    here is indistinguishable BY CONSTRUCTION from "there was no reading", and
+    the gate was treating it as a measured 0.5 and refusing against a 0.6
+    floor.
+
+    Measured 2026-09-23 over the 1805 ``entry-refused-no-candidates`` rows in
+    14 days, reading the ``values`` this function's caller already stores --
+    the confidence histogram to 2dp is::
+
+        0.49:    3
+        0.50: 1778
+        0.51:   23
+        0.62:    1
+
+    1804 of 1805 sit inside the neutral band. On the SAME rows the other three
+    conjuncts have real range: direction_prob 0.0097..0.9892 over 1668 distinct
+    values, net_margin -1.7401..+2.9515, expected -0.0625..+5.4669. Three live
+    signals and one stuck switch. ``confidence_vs_floor`` was the binding
+    refusal on 1799 of 1800 and the ONLY failing conjunct on 134 of them -- and
+    134 of those 134 are inside the band, with ZERO "informative but below
+    0.6". This head's training label is ``sigmoid(|net_margin| * 10)`` with
+    median 0.9932 (``trading/data_loader.py:1087``), so a fitted head sits near
+    1.0; 0.5 is ``sigmoid(0)``, no logit at all.
+
+    THE DIRECTION HEAD MUST STILL BE SAYING SOMETHING. When BOTH are neutral
+    the whole summary is the no-model one -- that is exactly ``bot.py:8088``'s
+    ``model_neutral``, it means the model declined to speak, and the gate must
+    keep refusing. This abstains only for the narrower case the measurement
+    actually found: one conjunct reading nothing while its siblings read
+    normally.
+
+    NO THRESHOLD MOVES. ``SCHEDULER_MIN_CONFIDENCE`` is untouched, and a
+    genuinely informative confidence below the floor still refuses -- that path
+    had no rows in 14 days, but a head that starts emitting again lands on it
+    rather than on this one.
+    """
+    try:
+        conf = float(confidence)
+        direction = float(direction_prob)
+    except (TypeError, ValueError):
+        return False
+    if conf != conf or direction != direction:      # NaN is not a reading
+        return False
+    return (
+        abs(conf - 0.5) < MODEL_NEUTRAL_BAND
+        and abs(direction - 0.5) >= MODEL_NEUTRAL_BAND
+    )
+
+
 HORIZON_DEFAULTS: List[Tuple[str, int]] = [
     ("5m", 5 * 60),
     ("15m", 15 * 60),
@@ -995,20 +1058,29 @@ class BusScheduler:
                 "confidence_vs_floor": (float(confidence), float(min_confidence)),
                 "net_margin_vs_floor": (float(net_margin), float(min_net_margin)),
             }
+            # A conjunct whose input carries no information cannot veto the
+            # three that do -- see ``_confidence_abstains``. Computed once and
+            # both reported and acted on, so the row in ``trading_ops`` can
+            # never disagree with the decision it describes.
+            confidence_abstains = _confidence_abstains(confidence, direction_prob)
             entry_block = {
                 "failed": [
                     name for name, (got, need) in entry_conjuncts.items()
                     if (got <= need if name == "expected_vs_min_profit" else got < need)
+                    and not (name == "confidence_vs_floor" and confidence_abstains)
                 ],
                 "values": {k: {"got": round(v[0], 6), "need": round(v[1], 6)}
                            for k, v in entry_conjuncts.items()},
+                # Recorded whether or not it fired, so a census can tell a
+                # conjunct that abstained from one that was never reached.
+                "confidence_abstains": bool(confidence_abstains),
                 "horizon": str(best_long.label),
                 "fee_rate": round(float(fee_rate), 6),
             }
             if (
                 expected > min_profit_floor
                 and direction_prob >= min_dir_prob
-                and confidence >= min_confidence
+                and (confidence_abstains or confidence >= min_confidence)
                 and (net_margin >= min_net_margin)
             ):
                 size_quote = available_quote * min(0.35, max(0.08, risk_factor * 0.25))
