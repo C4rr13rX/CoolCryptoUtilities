@@ -122,5 +122,56 @@ class TheTwoStagesReadOneBarTest(unittest.TestCase):
             self.assertGreaterEqual(_step_six_min_trades(), _step_five_min_trades())
 
 
+class TheBarIsReadFromTheSharedHelperTest(unittest.TestCase):
+    """Close the weakness in the tests above: they REPRODUCE the expression.
+
+    ``_step_six_min_trades`` rebuilds ``TrainingPipeline.__init__``'s getenv
+    chain rather than calling it, because constructing a pipeline needs a
+    database, a feed and a model on disk. That makes every assertion above
+    true of the copy and silent about the original: revert pipeline.py's
+    fallback to a hardcoded "25" and they all still pass.
+
+    So read the real ``__init__`` and assert on what it does. Comment lines
+    are stripped first -- a source scan that cannot tell a call from a
+    sentence is worth less than no scan at all, and this repo spent a gate
+    rejection on exactly that in the same pass this file was written.
+    """
+
+    def _init_source(self) -> str:
+        import inspect
+
+        from trading.pipeline import TrainingPipeline
+
+        body = inspect.getsource(TrainingPipeline.__init__)
+        return "\n".join(
+            line for line in body.splitlines()
+            if not line.lstrip().startswith("#")
+        )
+
+    def test_step_six_reads_the_shared_helper(self):
+        src = self._init_source()
+        self.assertIn(
+            "_graduation_min_trades()", src,
+            "min_ghost_trades must derive step 5's bar, not carry its own")
+
+    def test_step_six_carries_no_hardcoded_fallback(self):
+        """A literal here is a second answer to step 5's question.
+
+        Matched against the whole statement rather than the file, so an
+        unrelated numeric default elsewhere in __init__ cannot mask it.
+        """
+        import re
+
+        src = self._init_source()
+        match = re.search(
+            r"self\.min_ghost_trades\s*=\s*(.*?)(?=\n\s*self\.)", src, re.S)
+        self.assertIsNotNone(match, "min_ghost_trades is no longer assigned in __init__")
+        statement = match.group(1)
+        self.assertNotRegex(
+            statement, r"[\"']\d+[\"']",
+            "a hardcoded trade-count default here is step 5's question answered "
+            "twice -- the 20..24 window this file exists to close: %r" % statement)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
