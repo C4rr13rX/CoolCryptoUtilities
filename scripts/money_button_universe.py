@@ -232,6 +232,94 @@ def traded_clips(db: str) -> Dict[str, float]:
         con.close()
 
 
+def clip_censor_banner(db: str) -> List[str]:
+    """What this report did NOT censor, and what that choice is WORTH.
+
+    ``traded_clips`` above reads every ``trade_outcomes`` row uncensored and
+    the comment there argues the exemption. An argument in a comment is
+    invisible to whoever reads the OUTPUT, so this measures it instead: the
+    per-symbol median clip is recomputed on the censored population and the
+    two are compared. If a symbol's median moves, the exemption is wrong and
+    this banner says so in the output rather than in a source file.
+    """
+    try:
+        from services import outcome_plausibility as op  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        return ["!! UNCENSORED and UNMEASURED: services.outcome_plausibility "
+                "did not import (%s). Treat every clip below as unaudited."
+                % exc]
+
+    con = sqlite3.connect("file:%s?mode=ro" % db, uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        rows = [dict(r) for r in con.execute("SELECT * FROM trade_outcomes")]
+    finally:
+        con.close()
+    if not rows:
+        return ["!! UNCENSORED: trade_outcomes is EMPTY; no clip is measured."]
+
+    # TRAP, pass 670: trade_outcomes has NO strategy_id COLUMN -- it lives in
+    # the details JSON. Without digging it out, strategy_scales() sees no
+    # strategy on any row and the DOLLAR arm of the plausibility test silently
+    # never runs, so the banner under-reports its own refusals.
+    for row in rows:
+        try:
+            details = json.loads(row.get("details") or "{}")
+        except Exception:  # noqa: BLE001
+            details = {}
+        row["strategy_id"] = (details.get("strategy_id")
+                              or details.get("strategy") or "")
+
+    kept, refused = op.partition(rows)
+    if not refused:
+        return ["  PLAUSIBILITY: %d rows read, 0 refused by "
+                "services.outcome_plausibility -- censored and uncensored are "
+                "the SAME book here." % len(rows)]
+
+    def _medians(subset: Sequence[Dict[str, Any]]) -> Dict[str, float]:
+        acc: Dict[str, List[float]] = {}
+        for row in subset:
+            try:
+                notional = float(row.get("entry_price") or 0.0) * float(
+                    row.get("quantity") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if notional > 0:
+                acc.setdefault(str(row.get("symbol")), []).append(notional)
+        return {k: statistics.median(v) for k, v in acc.items() if v}
+
+    before = _medians(rows)
+    after = _medians(kept)
+    moved = [(sym, before[sym], after.get(sym))
+             for sym in sorted(before)
+             if after.get(sym) is None
+             or abs(after[sym] - before[sym]) > 1e-9]
+
+    out = ["  UNCENSORED BY DESIGN -- %d of %d rows (%.1f%%) are rows "
+           "services.outcome_plausibility" % (
+               len(refused), len(rows), 100.0 * len(refused) / len(rows)),
+           "  REFUSES, and they are KEPT here. The reason: this column reads "
+           "NOTIONAL",
+           "  (entry_price * quantity), not profit. The rule refuses a row for "
+           "an implausible",
+           "  booked RETURN or an out-of-scale PROFIT; neither arm says the "
+           "row's CLIP is wrong,",
+           "  and a refused row was still placed at a real size."]
+    if not moved:
+        out.append("  MEASURED, not asserted: censoring moves the median clip "
+                   "of 0 of %d symbols." % len(before))
+    else:
+        out.append("  MEASURED: censoring MOVES the median clip of %d of %d "
+                   "symbols -- the exemption" % (len(moved), len(before)))
+        out.append("  above is WRONG for these and their cost column is "
+                   "quoted at a clip we do not trade:")
+        for sym, was, now in moved[:8]:
+            out.append("    %-14s $%.4f -> %s" % (
+                sym, was, "(no surviving row)" if now is None
+                else "$%.4f" % now))
+    return out
+
+
 def address_book(chain: str) -> Dict[str, str]:
     """SYMBOL -> address, flattening the {address, source, ts} record form."""
     try:
@@ -388,6 +476,10 @@ def main() -> int:
           "market_stream" % (args.lo_min, args.hi_min, args.hours))
     print("store: %s" % db)
     print("=" * 86)
+
+    print("\n--- WHAT THIS REPORT DID NOT CENSOR ---")
+    for _line in clip_censor_banner(db):
+        print(_line)
 
     series = load_series(db, args.hours)
     print("\nsymbols with any tick in the window: %d" % len(series))
