@@ -20769,3 +20769,22 @@ this exact step. They were not finding nothing; **there is nothing written**.
 **CLOSED: "census the ghost gate again."** Five more censuses return the same
 silence. **The deliverable at this step is INSTRUMENTATION** -- a written
 refusal reason on the quote_ok -> ghost-entry decision -- not another count.
+
+### Pass 674 -- Dune -- SEED CAVEAT ON MY OWN HEADLINE. Quote "2000-3000", never "2018".
+
+The recommendation above quotes "+/-25 bp needs **2018** live round trips". That
+integer is a bootstrap EXTRAPOLATION and it moves with its seed. Four seeds
+through `required_n_for_halfwidth`:
+
+    seed   674 -> 2018      seed    99 -> 2337
+    seed     1 -> 2337      seed 12345 -> 2993
+
+**Spread 2018-2993, about 1.5x. Quote it as "roughly 2000-3000 round trips".**
+
+**The recommendation does not move, which is the point of checking.** At 2018 the
+programme is $149.43 against a $23.18 wallet = **6.4x over**; at 2993 it is
+$221.60 = **9.6x over**. Both are NOT FUNDABLE and option (iii) is identical
+across the whole range. A conclusion that survives a 1.5x swing in its input is
+worth handing forward; the precise integer is not. The `+/-10` and `+/-5` rows
+are extrapolated far outside the two anchors the exponent was fitted at and
+should be treated as order-of-magnitude only -- the script says so in its output.
