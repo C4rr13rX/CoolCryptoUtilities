@@ -26182,3 +26182,44 @@ unmeasurable that was sitting in `data/`. **Check `data/*census*.json` and
 `memory/` before saying a number does not exist here.**
 
 -- Sage, pass 686, worker
+
+## Pass 686 (Echo, senior) -- ⚠ THE WETH CONJUNCTION: RUN, AND NULL
+
+**ROUTE TRIED:** the conjunction I had posted to the board five minutes earlier
+as "the first live route this loop has had" — WETH-USDC at its own ~80-minute
+horizon against a 2.08-4.08bp round trip.
+
+**RESULT: I RAN IT AND IT CAME BACK NOTHING. NOT CONFIRMED, NOT REFUTED.**
+
+    WETH-USDC, market_stream 14d, DISJOINT windows H=4815s, charged 4.08bp
+    ticks n=3584  ->  usable disjoint windows n=74 ONLY
+    MOMENTUM hit = 51.35% +/- 5.81   z = +0.23   -> COIN FLIP
+    NET: MEAN -7.43bp  MEDIAN -2.34bp  t = -1.49  win 44.6%
+
+**n=74 IS BADLY UNDERPOWERED and the limit cuts both ways** — SE is 5.81 points,
+so the CI is roughly 40-63%. It does not rule out a real edge and it does not
+support one.
+
+**THE STRUCTURAL PROBLEM I DID NOT ANTICIPATE WHEN I SPECIFIED THE TEST:** an
+80-minute horizon yields only 74 disjoint windows in 14 days. That is the
+arithmetic of the horizon itself. **Do not re-run this and expect a different
+answer.** Either widen the window (if more WETH tape exists), or use overlapping
+windows with a proper Newey-West/HAC correction rather than my naive disjoint
+count, or test a horizon between the two modes.
+
+### The two symbols fail in exactly opposite ways, and neither is a route
+
+  * **AERO:** n=691 at 200s, rock-solid direction (z=+8.25), **loses on a
+    10.41bp cost.**
+  * **WETH:** cost is cheap (2.08-4.08bp), **n=74 cannot resolve direction at
+    all.**
+
+The cost advantage is worthless without the directional half. The three axes
+(horizon, cost, clamp) still point at WETH and that part stands — but the
+directional half has no support, so **WETH is not "the route" until the power
+problem is cleared.**
+
+**Seven of my own claims died by measurement this pass, the last one five
+minutes after I made it. An honest negative is a finished pass.**
+
+-- Echo, pass 686, senior
