@@ -558,6 +558,33 @@ def _feed_is_dense_enough(db: Any, symbol: str, chain: str) -> bool:
     return True
 
 
+def _log_corroboration_refusal(reason: str, **fields: Any) -> None:
+    """Name which corroboration branch refused, with its numbers.
+
+    Instrumentation only. `print()` is void in this process (stdout capture is
+    dead), so `system.log` is the one channel a line survives on, and a failure
+    to log must never stall the entry loop.
+    """
+    try:
+        from services.logging_utils import log_message
+
+        parts = []
+        for key, val in fields.items():
+            if val is None:
+                parts.append("%s=none" % key)
+            elif isinstance(val, float):
+                parts.append("%s=%.8g" % (key, val))
+            else:
+                parts.append("%s=%s" % (key, val))
+        log_message(
+            "atf-static",
+            "corroboration refused: %s %s" % (reason, " ".join(parts)),
+            severity="warning",
+        )
+    except Exception:  # noqa: BLE001 - a probe must never stall the loop
+        pass
+
+
 def _corroborated_price(
     db: Any,
     symbol: str,
@@ -584,14 +611,53 @@ def _corroborated_price(
         return None
     if not _bool_env("ATF_STATIC_REQUIRE_FEED_PRICE", "1"):
         return quoted
+    # WHICH OF THE TWO REFUSALS FIRED, NAMED.
+    #
+    # Both branches below return None, both land in the caller's
+    # `skipped_unpriced` list, and that list is logged in AGGREGATE at the end
+    # of the entry loop as "refused N uncorroborated candidate(s)". So the one
+    # trace this refusal leaves cannot say WHY, and the quoted price is never
+    # persisted on a refusal -- it is not recoverable from the database after
+    # the fact. Measured 2026-09-23: the atf scout converts 15 quote-OK
+    # candidates to ZERO entries in 24h and this is the gate that stops them,
+    # 6716 such log lines all-time, dominated by MAMO-USDC and UNI-USDC.
+    #
+    # The obvious reading -- a freshness window tighter than the feed's own
+    # gaps -- was MEASURED AND IS WRONG: over 24h the 900s window is
+    # satisfiable 94.0% of the time on MAMO-USDC and 90.4% on UNI-USDC (p95
+    # inter-tick gap 5.3 and 9.7 min), and both are top-3 streamed symbols at
+    # 1192 and 641 ticks. A 94%-available window cannot produce a near-total
+    # refusal rate. That leaves the deviation branch, which would mean the
+    # quote disagrees with our own tape by >35% on our best-supplied symbols.
+    #
+    # That is a serious claim and it is UNPROVEN, because the log cannot tell
+    # the two apart. This records which branch fired and the two numbers, and
+    # changes NO behaviour: same returns, same signature, same thresholds.
     max_age = _float_env("ATF_STATIC_FEED_MAX_AGE_SEC", 900.0)
     feed = _feed_price(db, symbol, chain, max_age)
     if feed is None:
+        _log_corroboration_refusal(
+            "no_tick_within_max_age",
+            symbol=symbol,
+            chain=chain,
+            quoted=quoted,
+            feed=None,
+            max_age=max_age,
+        )
         return None
     max_dev = _float_env("ATF_STATIC_MAX_FEED_DEV", 0.35)
     if max_dev > 0.0:
         deviation = abs(quoted - feed) / feed
         if deviation > max_dev:
+            _log_corroboration_refusal(
+                "quote_deviates_from_feed",
+                symbol=symbol,
+                chain=chain,
+                quoted=quoted,
+                feed=feed,
+                deviation=deviation,
+                max_dev=max_dev,
+            )
             return None
     # Prefer the feed: it is the corroborated number, and marking against it
     # keeps entry and exit on the same price basis.
