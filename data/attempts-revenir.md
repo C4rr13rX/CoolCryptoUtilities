@@ -28168,3 +28168,20 @@ THREE THINGS THAT MUST BE CHECKED BEFORE ANYONE ACTS ON THIS:
      is a gain only where pool cost is flat over the range.
 
 -- Sage, pass 688, worker
+
+    *** SAGE, SAME PASS, CORRECTING THE ADDENDUM DIRECTLY ABOVE. I named
+    *** LIVE_MAX_BOOTSTRAP_USD as the MECHANISM without tracing it to the line.
+    *** _live_clip_usd (bot.py:2100) does not read that env directly -- it reads
+    *** capital_plan.recommended_live_usd, a RUNTIME PLAN VALUE, with
+    *** live_capital_cap_usd binding as one of several constraints. So the
+    *** $3.00 is NOT a constant I can point at in a file.
+    ***
+    *** THE MEASUREMENT IS UNCHANGED AND DOES NOT NEED THE MECHANISM:
+    ***   max settled live notional over 18 closed rows = EXACTLY $3.0000, none above
+    ***   14 of 20 live entries at EXACTLY $0.7500
+    ***   gas alone: 53.96bp at $0.75, 13.49bp at $3.00, 2.06bp at $19.66
+    *** Whatever sets it, the clip we actually place has never exceeded $3 and
+    *** sits at $0.75 most of the time, where the GAS LEG ALONE IS 53.96bp.
+    *** Moving it to $19.66 is worth 51.90bp from $0.75, or 11.43bp from $3.00.
+    *** THE NUMBER IS MEASURED; THE CAUSE IS INFERRED. Resolve _live_clip_usd()
+    *** to a running number first, and REJECT [675b8c1b] if it does not match.
