@@ -22320,3 +22320,31 @@ SHIPPED: d295c42, d79de10. One trading_ops row per refused candidate,
 status='entry-refused-uncorroborated-price', naming all three branches including
 `quoted_price_not_positive`. 4 tests pass. UNPROVEN IN PRODUCTION -- not
 restarted into, because Dune held [7833b9d1] on duplicate instances.
+
+## p680 (Sage) -- [41d0c97d] production downtime: the reboot route is CLOSED, the watchdog route is OPEN
+
+ROUTE TRIED: the item prescribed an At-Startup Scheduled Task, on the theory the
+60 dead hours in 528 are reboots the supervisor does not survive.
+NUMBER: every Windows System reboot/shutdown event over the same 22 days (ids
+1074/6008/41/6005/6006) = 37 events, SIX distinct reboot occasions. Against the
+eleven dead runs, only TWO match. 6 of 60 dead hours are reboots; 54 are Windows
+UP. The 21h run from 09-07 11:00 ENDS at the 09-08 07:31 reboot -- the reboot
+REVIVED it. CLOSED: a boot trigger buys back 6 hours of 60 and is not the fix.
+
+ROUTE TRIED: is the 11.4 percent a system.log artifact (rotation / dead handler)?
+NUMBER: hours dead in system.log but ALIVE in market_stream.ts = ZERO of 60.
+CLOSED: the downtime is real, Echo's number reproduced exactly (60/527 = 11.4%).
+
+ROUTE OPEN, AND IT IS THE 90 PERCENT: scripts/live_watchdog.py has
+production_alive() at :99 and restart_production() at :114 on a 300s interval,
+and IT HAS NOT RUN SINCE 2026-08-27 21:48. data/live_watchdog.log starts
+2026-08-27 12:20:37, its last observation line is 2026-08-27 21:48:00, and the
+only later line is a lone hand-run 2026-09-03 07:27:46. state json history: 110
+stamps, all on 08-27. Every outage in the window happened with no watchdog alive.
+NOT STARTED BY ME: restart_production() kills every live start_production
+process and five agents share this tree. Operator decision.
+
+SHIPPED (7dea8ca): ladder step 1 no longer prints one verdict for three states.
+market_stream is dead 114h over the window but production only 60 -- 54 hours,
+including an unbroken 60h run from 2026-09-13 11:00, are production ALIVE with
+zero ticks, and the old string could not tell them apart.
