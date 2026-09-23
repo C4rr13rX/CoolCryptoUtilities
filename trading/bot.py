@@ -2275,6 +2275,54 @@ class TradingBot:
                 self._lattice_last_exit = f"unreadable_horizon:{horizon_label[:24]}"
                 return None                # no stated horizon to check
 
+            # `directive.horizon` IS NOT A FORECAST HORIZON. IT IS A LABEL, AND
+            # ON THE IDS THAT CARRY THESE REFUSALS IT IS A *LOOKBACK* SPAN.
+            #
+            # Measured pass 680 over 6335 `entry-refused-lattice` rows in 7d:
+            # 100% of lattice refusals are this leg, and the horizon it judged
+            # came from one of exactly two places, both labels, neither a
+            # forward prediction:
+            #
+            #   * suffixed ids (donchian_breakout@5d ...): the multi-horizon
+            #     wrapper OVERWRITES the base strategy's horizon with its own
+            #     tier label at trading/strategies/horizons.py:212, and that
+            #     label is the span of history the rule LOOKS BACK over --
+            #     HORIZON_SPECS:37-44 says so in its own comments, "5d" being
+            #     "5.5d of 2h bars". The leg then reads 7200 minutes FORWARD.
+            #   * suffix-less ids: trading/strategies/base.py:475 falls back to
+            #     the class constant `default_horizon`. Confirmed one-to-one on
+            #     all five that appear -- rsi_reversal 45.0 min ("45m"),
+            #     ema_cross 60.0 ("1h"), stochastic_reversal 20.0 ("20m"),
+            #     mean_reversion 45.0, bollinger_squeeze 45.0. These are
+            #     READABLE and they DO refuse; they do not take the
+            #     unreadable-horizon exit.
+            #
+            # Nothing on the directive states how long the position will be
+            # held. But the executor does: a position is evicted at
+            # MAX_HOLD_SECONDS (bot.py:6620, default 3600), so a hold longer
+            # than that is not something this bot can produce. Judging a
+            # 10080-minute horizon it can never hold is a fabricated number.
+            # Clamping to the ceiling is the honest upper bound -- it never
+            # LOOSENS the leg for a short label (a 10m directive stays 10m),
+            # it only stops the leg inventing a week-long forecast.
+            #
+            # PRE-REGISTERED, BEFORE SHIPPING: THIS DOES NOT OPEN THE GATE, AND
+            # A ZERO IS NOT A FAILED FIX. Censused from the leg's own printed
+            # decay over those 6335 rows (22 symbols, pooled median 5.25 min),
+            # a 60-minute hold clears the leg on only 2.0% of them. Expect the
+            # refusal count to stay high; what changes is that the number in
+            # the reason string becomes true. The decay is NOT uniform --
+            # AERO-USDC 2.30 min vs WETH-USDC 29.55 -- and the pass rate is
+            # 53.8% at a 5-minute cap, 23.9% at 10, 18.6% at 15. The leg is
+            # refusing the HOLD POLICY, which is why that spread matters more
+            # than this parse does.
+            hold_ceiling_sec = float(os.getenv("MAX_HOLD_SECONDS", "3600") or 0.0)
+            if hold_ceiling_sec > 0 and horizon_sec > hold_ceiling_sec:
+                horizon_sec = hold_ceiling_sec
+                self._lattice_horizon_clamped = True
+            else:
+                self._lattice_horizon_clamped = False
+
             history = list(self._buffer)[-400:]
             prices = [float(row.get("price") or 0.0) for row in history]
             prices = [p for p in prices if p > 0]
@@ -2303,10 +2351,16 @@ class TradingBot:
                 round_trip_cost=self._roundtrip_fee_rate(notional_hint=notional),
                 notional_usd=notional,
             )
+            # A CLAMPED JUDGEMENT AND AN UNCLAMPED ONE ARE NOT THE SAME
+            # MEASUREMENT, so the exit says which it was. Without this the next
+            # census cannot tell "the leg refused a 60-minute hold" from "the
+            # leg refused a week", and those have different fixes.
+            clamped = "_clamped" if getattr(
+                self, "_lattice_horizon_clamped", False) else ""
             if result.get("passed"):
-                self._lattice_last_exit = "answered_pass"
+                self._lattice_last_exit = f"answered_pass{clamped}"
                 return None
-            self._lattice_last_exit = "answered_refuse"
+            self._lattice_last_exit = f"answered_refuse{clamped}"
             return f"{result.get('stopped_at')}: {result.get('reason')}"[:220]
         except Exception as exc:  # noqa: BLE001 - never block a trade on this
             self._lattice_last_exit = f"exception:{type(exc).__name__}"
