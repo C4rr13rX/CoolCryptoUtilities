@@ -23543,3 +23543,87 @@ This independently CLOSES standing route (b), "restrict the tradeable universe t
 from the GHOST book -- Bay closed it from the LIVE book at 7dab324 the previous pass. Deep pools
 do not reveal an edge here; they remove the only part of the book that was positive, and that part
 was positive because its cost is unmeasured and its symbols are already refused.
+
+## Pass 682 (Cove) -- the feed stall is an in-process RLock, not sqlite on the event loop
+
+Item `[b37ca646]`. Read-only throughout; **no production code changed**. Production pid 3584 up
+since 06:23:01, sibling 20452, one instance / two pids per `scripts/production_instances.py` for
+the whole pass.
+
+### The correction, from source and not from sampling
+
+The item diagnosed "synchronous sqlite work on the asyncio loop that carries the tick feed,
+against a 22GB database". That is the wrong mechanism.
+
+    db.py:42    self._lock = threading.RLock()
+    db.py:686   with self._lock:          <- THE line py-spy reports as the top frame
+    db.py:1678  with self._lock:
+    db.py:2418  self._lock.acquire()
+
+A top frame of `db.py:686` means the thread is **waiting to acquire a process-wide mutex**. It is
+not executing sqlite at all. Every thread caught inside `db.py` across the pass was a *waiter*;
+the holder rotates and was caught exactly once in 54 samples, at `executemany (db.py:2437)`.
+
+The decisive number is a **duration, not a rate**: the supervisor thread sat at `db.py:686` in
+**54 of 54 consecutive samples spanning 4.4 minutes** (12:50:39-12:55:04 UTC, py-spy out of
+process at 5s), every sample from the same caller,
+`latest_signals (services/atf_static_strategy.py:2057) -> get_json (db.py:725)`. That is one
+`get_json` against `kv_store` -- a tiny table -- blocked for over four minutes. A four-minute
+`kv_store` read is not slow I/O. It is lock starvation.
+
+### The contention set, and who is on the money path
+
+    Thread-20 (_run_supervisor_loop)  db.py:686  WAIT   latest_signals, atf_static   ** TRADING **
+    wallet-reconciliation             db.py:2418 WAIT   upsert_balances              ** TRADING **
+    dl-dynamic                        db.py:686  WAIT   services/news_lab.py
+    dl-static:base                    db.py:748  WAIT   services/news_lab.py
+    Thread-21 (_cycle_loop)           db.py:1678 WAIT   pipeline._prime_confusion_windows_blocking
+    seq-dataset_warmup                db.py:1678 WAIT   pipeline.warm_dataset_cache
+
+The feed's supervisor loop and the atf_static signal reader are queued behind **news enrichment
+and ML dataset warmup**. Neither is on the money path.
+
+### Why this changes the prescribed fix
+
+The prior criteria said the reads "need `run_in_executor`, caching, or removal from the hot path".
+**`run_in_executor` cannot help.** The RLock is process-wide and serialises by *lock*, not by
+*thread*; handing the read to an executor puts it in the same queue. That is the item's own
+retracted warning -- "the difference between fixing it and moving it" -- applying to its current
+text. sqlite in WAL mode already permits concurrent readers, so this RLock serialises readers
+against each other for no benefit. The structural fix is per-thread read connections or a
+narrower lock. The cheapest lever needs no `db.py` surgery at all: keep `news_lab` and dataset
+warmup off the trading db lock.
+
+### Route NOT closed, and NOT supported either -- outcome (c)
+
+The pre-registered conditional test **returned untestable and is recorded as such**. Three
+outcomes were posted to the board *before* the data landed: (a) park rate lower in alive minutes,
+root cause survives; (b) park rate ~100% in alive minutes too, root cause dead because a constant
+cannot explain a variable; (c) window all-dead, conditional untestable. The result was (c) -- 3
+observed minutes, **all dead, zero alive minutes** -- so `P(dead | parked)` is undefined and the
+54-of-54 park rate is **not** evidence of causation.
+
+**Do not quote 54-of-54 as confirmation.** The several-hour run spanning both dead and alive
+minutes, reporting lift against `P(dead)=0.4001` plus the ceiling, is still outstanding. The trap
+that makes that test sharp is worth restating: if the thread is parked ~100% of the time during
+*alive* minutes too, lift is 1.0 and this root cause closes exactly as the lock-ERROR route closed
+at 7.30%.
+
+### One near-miss reopened as a distinction, not as a route
+
+The `database is locked` ERROR storm was closed on a 7.30% ceiling and stays closed. But note what
+it measured: **between-process sqlite lock ERRORS**. The fault here is an **in-process
+`threading.RLock` WAIT that never raises an error at all**. Same word, different lock -- which is
+why the error-count instrument could never have seen this.
+
+### Side measurement (opening pick, unrelated to the item)
+
+Ghost evidence rate, `trade_outcomes`, `ts` treated as a **unix float** (`strftime()` on it
+silently returns zero rows): **7 ghost rows in the last 72h = 2.33/day, across 6 nonzero hours of
+72**, with a 26.0-hour gap before the newest. The briefing's "tradeable evidence rate 4.6/day,
+nearest graduation ~49.0 days" is an overstatement against the trade store -- 2.33/day is the
+ceiling for *all* ghost rows and tradeable is a strict subset, so graduation is **further** than
+49 days, not nearer. Ladder step 3 ("no ghost activity in 1h") is therefore **honest, not a
+flaky instrument**: 66 of 72 hours are zero, so a 1-hour probe fails 91.7% of the time because
+the rate really is that low. Caveat: 72h is a short window on a famously bursty series -- this is
+the right number for "is it running now", the wrong one for a lifetime average.
