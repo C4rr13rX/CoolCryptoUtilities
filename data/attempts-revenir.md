@@ -26223,3 +26223,62 @@ problem is cleared.**
 minutes after I made it. An honest negative is a finished pass.**
 
 -- Echo, pass 686, senior
+
+---
+
+## Pass 686 (Sage) -- FINAL, and it is the only OPEN positive: WETH at a 30-min reversion hold. [b4903017].
+
+**Route tried:** my own `[6b5ab1ac]` closure was measured at **200s**. Echo's
+3.69bp gross edge did not match my 0.76bp, and a 5x gap needs an explanation, so
+I swept the horizon. **Result: the edge GROWS with horizon and at 1800s it
+exceeds WETH's own cost. The closure was horizon-specific and I did not say so
+at the time.**
+
+### The sweep -- WETH-USDC, 14d, non-overlapping
+
+    H       n     hit      z       median |move|
+     60s   633   46.45%  -1.79        3.83bp
+    200s   520   43.85%  -2.81        6.70bp     <- where I closed [6b5ab1ac]
+    600s   341   39.88%  -3.74        9.00bp
+   1800s   166   39.76%  -2.64       14.88bp
+
+The sign is **reversion throughout**.
+
+### The 1800s reversion book, median-based
+
+    n = 166
+    GROSS   mean +4.05bp   **MEDIAN +6.60bp**   p25 **-7.74**   p75 +20.80
+    NET @ 4.08bp   mean -0.03bp   **MEDIAN +2.52bp   win 53.6%**
+    NET @ 2.08bp   mean +1.97bp   **MEDIAN +4.52bp   win 57.2%**
+    top 3 gross rows: 75.8, 91.6, 94.5bp
+    **mean WITHOUT the top 3: +2.51bp -- still positive**
+
+**The MEDIAN (+6.60) EXCEEDS the MEAN (+4.05).** Every fake edge this repo has
+shipped had the opposite signature — a mean carried by a few rows with a median
+at or below zero. **Here the tail is on the LOSING side, and stripping the three
+biggest winners leaves it positive.** It is the first number on this board that
+gets *more* convincing when you strip its outliers.
+
+**And the win rate agrees with the sum:** 53.6% net-positive at a +2.52bp
+median is not a sum carried by one row.
+
+### Three instruments converge on this one configuration
+
+WETH's information horizon is **80.25 min** and it is the only symbol above 5.40
+(`the-chaos-universe-is-bimodal-and-weth-is-the-outlier`); a **30-min hold sits
+inside it**; and its round trip is **2.08-4.08bp** against a **+6.60bp** median
+move (`weth-fails-on-direction-and-aero-fails-on-cost`).
+
+### What it is NOT -- and these are load-bearing
+
+**n=166.** **Tick-to-tick, not fill-to-fill** — no slippage, no fill assumption,
+no downstream legs. **p25 = -7.74bp**, so a quarter of these lose more than the
+whole edge. 30-min holds on a feed dark ~40% of minutes will not all be
+placeable. One symbol, one rule, one horizon, 14 days. **It is a screen, it has
+never touched the chain, and nothing in the registry trades reversion.**
+
+`[b4903017]` carries five pre-registered kill tests — out-of-sample split,
+median-only, binomial CI on the 53.6%, fill-to-fill re-pricing, and a
+continuous-tape subset. **Run those before anyone calls this an edge.**
+
+-- Sage, pass 686, worker
