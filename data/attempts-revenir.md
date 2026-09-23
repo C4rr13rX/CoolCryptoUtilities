@@ -23714,3 +23714,64 @@ The live scoreboard is untouched -- none of the five are `wallet='live'` and
 
 Which writer produces the bad `entry_price`. Entry shown uncorroborated, exit
 shown exact; **the code path was not found.** Narrow grep, left on [922c22af].
+
+### Pass 682 -- Sage -- the artifact rows, and the ENTRY price is the fiction
+
+Found while measuring the stop census; extended past it because it decides the sign of
+the ghost book.
+
+**A price-sanity cut on the WHOLE store** -- `exit_price` outside 60%-200% of
+`entry_price`, every wallet, no date window. `trade_outcomes` holds **266 exited rows
+(248 ghost, 18 live)**. Five fall outside the band and **all five are ghost**:
+
+    2026-08-26 10:27  AERO-USDC  +160.99%  notional 1.9999  gross +3.21962
+    2026-08-26 16:40  COMP-USDC   -55.33%  notional 1.9999  gross -1.10652
+    2026-08-26 20:58  AERO-USDC   -54.93%  notional 1.9999  gross -1.09849
+    2026-08-26 21:19  AAVE-USDC  +174.16%  notional 1.9999  gross +3.48300
+    2026-09-04 10:07  UNI-USDC   +122.89%  notional 0.5856  gross +0.71957
+                                                       sum  **+5.2172**
+
+**Whole-store gross is +5.8682 with them and +0.6510 without -- five rows of 266 are
+88.9% of every dollar of gross this system has booked.** Independently cross-verifies
+Bay's p682 "six rows carry 235.6% of the ghost book", reached by a different method.
+
+**THE LIVE SCOREBOARD IS CLEAN: 18 live exited rows, ZERO outside the band, gross
+-0.084920 with and without.** The number the goal is scored on is untouched by the
+fault carrying 88.9% of the ghost book. Small, clean and honestly negative beats large
+and dirty. This also reframes every ghost-vs-live comparison on the backlog: it is not
+two books disagreeing about the market, it is one book that is 88.9% artifact.
+
+**THE DISCRIMINATOR, RUN -- AND IT INVERTED MY OWN DIAGNOSIS.** I called these bad
+EXIT ticks. `market_stream` around each row, +/-30min and +/-6h:
+
+| row | entry | exit | +/-6h tape range | entry on tape | exit on tape |
+|---|---|---|---|---|---|
+| AERO 08-26 10:27 | 0.436805 | 1.14 | **zero ticks** | -- | -- |
+| COMP 08-26 16:40 | 42.82 | 19.128762 | 19.13 .. 55.34 | yes | yes |
+| AERO 08-26 20:58 | **1.14** | 0.5138393 | 0.4997 .. 0.5437 | **NO** | yes |
+| AAVE 08-26 21:19 | **129.485** | 354.99 | 354.99 only | **NO** | yes |
+| UNI 09-04 10:07 | **2.859** | 6.372307 | 6.372307 only | **NO** | yes |
+
+**The exit price is corroborated in 4 of 5. The entry price is corroborated in 1 of 5.
+I had it backwards, and the "bad first tick" framing in the entry above is WRONG.**
+
+**The AERO pair shows the mechanism and it is worse than a bad tick: the fiction
+propagates.** The 10:27 row EXITS at 1.14; the 20:58 row ENTERS at **the identical
+1.14** while the tape reads 0.4997-0.5437. One unsupported number written as an exit,
+then re-used as the next entry -- booking +3.21962 on the way in and -1.09849 on the
+way out. This independently reaches
+[[the-ghost-book-positive-is-uncorroborated-entry-prices]] from the LOSS rows by a
+different cut. **Every reconciliation that validates exits is checking the half that
+is already right.**
+
+**Cheaper fix than the one I first proposed:** not a discovery test, a TAPE test --
+refuse to open a position whose entry price falls outside the range of ticks observed
+for that symbol in the surrounding window. Four of the five die on it. COMP survives
+and is a genuine two-regime case, `[57d69341]`.
+
+**AERO 2026-08-26 10:27 has ZERO ticks within six hours either side and booked
++3.21962** -- 55% of the clean ghost book, on a symbol with no tape at all. That is an
+ADMISSION fault, not a price fault, and it is the single largest number in the book.
+
+Backlog: `[a937b97f]`. Correction carried: the two loss rows are **2.2050** of
+fictional gross, not the 1.058 first posted (that was AERO's overshoot cost alone).
