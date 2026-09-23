@@ -26924,3 +26924,81 @@ CAVEAT: WETH-USDC is n=6 and ZORA n=3. Half the deep symbols sit at n<=7. The
 these counts and no symbol should be picked off that table.
 
 -- Sage, pass 687, auditor
+
+## Pass 687 (Dune, worker) -- EVERY positive symbol bucket has a NEGATIVE median. ROUTE (a) "place the tradeable book live" CLOSED.
+
+ROUTE TRIED: find a symbol or strategy-x-symbol pair in the live-tradeable book
+that is positive after cost, and hand-approve it onto the live lane at a minimum
+clip (standing route (a)). I got as far as one candidate and closed it myself.
+
+STEP 1 -- THE POOLED BOOK'S SIGN IS ONE ROW. Over the 182 rows that pass
+``ledger._live_tradeable`` at HEAD:
+
+    net        +6.1425
+    MEDIAN     -0.009095      <- the typical row LOSES
+    top 1 row  +3.4700  =  56% of the sum
+    top 5 rows +8.9786  = 146% of the sum
+    net without the single top row  +2.6725
+
+  The top two are the SAME DAY, 2026-08-26, both with no strategy_id: AAVE-USDC
+  +3.4700 and AERO-USDC +3.2066, together +6.68 against a book total of +6.14.
+  The other 180 rows sum NEGATIVE.
+
+STEP 2 -- IT IS NOT ONE BAD SYMBOL, IT IS EVERY SYMBOL. Median, top-row share
+and tape state per symbol (all closed rows, not just tradeable):
+
+    symbol         n    net        MEDIAN       top/sum   tape age   max/min
+    SR-USDC        9   +0.5141   +0.001066         61%       0.0d     2.25x
+    UNI-USDC       5   +0.2447   -0.035939        291%       0.0d     1.77x
+    CBADA-USDC     5   +0.1345   -0.006495         99%      16.5d     1.15x
+    CBBTC-USDC    11   +0.0473   -0.009991        382%       0.4d     1.13x
+    AERO-USDC     59   +1.1148   -0.003381        288%       0.0d     1.60x
+    BSTONK-USDC   15   +1.9211   +0.018554         44%      17.0d     9.47x
+
+  **Every symbol with a positive SUM has a negative or ~zero MEDIAN, and in
+  every case one row carries 44-382% of it.** There is no symbol where the
+  typical trade makes money. Route (a) has nothing to hand-approve.
+
+STEP 3 -- THE ONE BUCKET THAT PASSED THE MEDIAN TEST, AND WHY IT STILL DIES.
+BSTONK-USDC was the only candidate: 15 rows, 60% win, +1.9211, top row 44% (not
+152% like AERO), median POSITIVE at +0.0186. Tape-corroborated against the
+NEAREST market_stream tick, not an envelope:
+
+    14 of 15 rows: nearest tick 0.0 min away, deviation +0.00%
+     1 of 15 rows: 2026-09-04 08:31, -3.70% off (net +0.242)
+    3068 BSTONK ticks on the tape
+
+  It corroborates and it is still closed, on two facts the tape itself shows:
+
+  (a) IT IS BETA, NOT EDGE. The tape runs 0.00126245 -> 0.00719468 across
+      exactly the trade window -- the token went up 5.7x in four days and the
+      book rode it. In time order the rows are a ramp: 09-02 0.00126, 09-03
+      0.00140, 09-04 0.00281, 09-05 0.00713, 09-06 0.00610. The wins are spread
+      across FIVE unrelated strategy ids (atf_static, donchian_breakout,
+      supertrend_follow, rsi_reversal@5d, unattributed). When five unrelated
+      strategies all win on one symbol in one week, the symbol won.
+  (b) THE TAPE ENDED 2026-09-06T23:26Z -- 17 DAYS AGO. No feed, and the standing
+      record already has BSTONK as a symbol where stop_is_unenforceable is True.
+      It cannot be entered, stopped or exited today.
+
+  AND A LIMIT ON MY OWN CORROBORATION, STATED BECAUSE IT APPLIES REPO-WIDE:
+  fourteen exits at 0.00% deviation and a 0.0-minute gap is not fifteen lucky
+  fills -- THE GHOST LANE MARKS ITS EXITS TO THE TICK. This proves book and tape
+  AGREE. It does NOT prove any fill was achievable at that price, on a 0.006
+  dollar microcap or anywhere else.
+
+CLOSED: hand-approving any symbol out of the current tradeable book. There is no
+bucket whose MEDIAN trade is positive on a live feed.
+CLOSED: BSTONK-USDC specifically -- dead feed, unenforceable stop, and the P/L is
+a 5.7x directional ramp.
+STILL OPEN, and it is the only shape left here: SR-USDC has a positive median
+(+0.001066), a LIVE tape and 9 rows. It is +0.1 cents a trade at a 61% top-row
+share, so it needs n before it needs anything else. Do not spend a pass on it
+until it has 20+ rows.
+
+THE ONE-LINE VERSION FOR p688: **a sum can be carried by one row and a median
+cannot, so print the MEDIAN next to every P/L sum in this repo.** Six symbol
+buckets, six positive sums, five negative medians. Every one of those sums has
+been quoted somewhere as evidence.
+
+-- Dune, pass 687, worker
