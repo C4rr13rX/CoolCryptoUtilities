@@ -22516,3 +22516,58 @@ contaminated (the fraction-to-USD converter gated on a renamed id, 245 of 373
 scout ghost-exits bare fractions read as dollars); (c) ghost exits are MARKS not
 FILLS and the gap IS slippage, already 78% of the toll. Hunch, labelled as one:
 (c), because it explains the sign and the size together.
+
+
+## Pass 681 (Kite) -- ROUTE (c) "SHORTEN THE HOLD" IS CLOSED BY MEASUREMENT
+
+ROUTE TRIED: (c) from the standing instructions -- "shorten the hold; the tradeable
+book is POSITIVE inside 15 minutes and negative after". Concretely: turn the forced
+eviction MAX_HOLD_FORCE_SECONDS (trading/bot.py:10395, defaults to 0 = OFF) on at
+~900s, which is the only time-based exit the executor has.
+
+PRE-REGISTERED KILL TEST (acceptance criterion 3 of [275298c6], posted to the board
+before it was run): replay the paired round trips and compute realised P/L under a
+counterfactual forced exit at 15/30/60 min against the actual outturn. If forcing is
+worse at every cap, the route is closed.
+
+METHOD: n=256 paired closed round trips over 30d. Entry time from feedback_events
+label='entry' (its details carries trade_id, its ts is the entry time); exit and
+prices from trade_outcomes joined on trade_id. Same entries, same clip, ONE round
+trip each, fee held constant -- so the entry signal cancels and only the exit rule
+differs. Counterfactual exit priced off the nearest market_stream tick to entry+C
+within +/-15 min; trips with no tick in range are DROPPED and COUNTED, never filled
+forward. Reported as % of each trip's own notional.
+
+THE NUMBER (zombie-excluded, i.e. the version least favourable to the conclusion):
+    CAP 15 min  n=229  ACTUAL +0.225% win 31.4%  FORCED +0.023% win 14.0%  -0.202pp, win -17.5pp
+    CAP 30 min  n=213  ACTUAL +0.030% win 32.4%  FORCED -0.269% win 22.1%  -0.299pp, win -10.3pp
+    CAP 60 min  n=217  ACTUAL -0.024% win 30.4%  FORCED -0.113% win 27.6%  -0.088pp, win  -2.8pp
+
+VERDICT: **CLOSED.** Forcing is worse at every cap on mean gross AND on win rate, and
+the damage GROWS as the cap SHORTENS -- the exact opposite of the standing
+instruction. At 15 minutes it more than halves the win rate, 31.4% -> 14.0%. The test
+is conservative IN FAVOUR of forcing (it holds round trips fixed at one; a real
+forced-exit policy would re-enter and pay the cost floor again), and forcing still
+loses. Recommendation: do NOT turn MAX_HOLD_FORCE_SECONDS on.
+
+CAVEATS THAT TRAVEL WITH THIS RESULT:
+  - The net column is unusable and was NOT used: mean net computes to -237% of
+    notional because ghost fee_cost is enormous relative to notional. That is a
+    separate open defect. It does not touch this result -- fee is held constant, so
+    net delta equals gross delta exactly.
+  - The MEDIAN trip barely moves (-0.012pp to +0.004pp). The effect lives in the mean
+    and the win rate. Honest statement: "forcing does not help and reliably hurts the
+    win rate", NOT "forcing is catastrophic".
+  - Ghost book. Does not unblock the live lane.
+
+ARTIFACT CAUGHT EN ROUTE, recorded because it nearly shipped a fake positive: the
+FIRST run of this replay said forcing was BETTER by +2,085,592 on a book of tens of
+dollars. The entire sum was ONE row -- LIQUIDBGT-USDC, entry_price 9.5285818e-11
+against a market_stream tick of 9.943e-05, a 1.04e6 ratio, i.e. the two-regime
+ticker defect of [57d69341] in a fifth symbol. The tell: gross rose two million while
+the WIN RATE FELL, 31.8% -> 13.9%. A sum can be carried by one row; a win rate
+cannot. General detector, recommended to every pass: print the win rate next to any
+P/L sum, and when they disagree in sign, believe the win rate and go find the row.
+
+REPRODUCE: scratchpad/replay2.py (read-only; run with and without the argument
+'nozombie'). No repo file was edited to produce this.
