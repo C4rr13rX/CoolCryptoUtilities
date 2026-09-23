@@ -29,17 +29,29 @@ of 1805 refusals (7.4%) -- only ticks where all three informative conjuncts
 had ALREADY passed. NO THRESHOLD MOVED: ``SCHEDULER_MIN_CONFIDENCE`` is
 untouched at 0.6 and an informative confidence below it still refuses.
 
-These tests exercise ``_confidence_abstains`` directly rather than driving
-``evaluate()``, which needs a live db, a quote asset, a price history and a
-horizon forecast to reach. The predicate IS the decision -- its caller passes
-the result straight into both the conjunction and the logged row.
+TWO HALVES. The unittest classes exercise ``_confidence_abstains`` directly and
+pin its three call sites; the pytest functions at the bottom drive
+``BusScheduler.evaluate()`` end to end through the real four-way conjunction,
+on the fixture ``tests/test_a_quote_ok_candidate_leaves_a_reason.py`` already
+uses to reach it. The second half exists because a red on a missing SYMBOL is
+not the same as a red on a refused TICK, and the tick is what a reviewer is
+entitled to ask for.
 """
 
 from __future__ import annotations
 
 import unittest
 
-from trading.scheduler import MODEL_NEUTRAL_BAND, _confidence_abstains
+# Imported through the MODULE, not by name. A `from ... import` of a symbol
+# this commit adds turns every assertion below into one collection-time
+# ImportError, which is a red on a missing NAME rather than on the behaviour
+# each test is about -- and it takes the behavioural half at the bottom down
+# with it before any tick is evaluated.
+import trading.scheduler as _sched
+
+
+def _confidence_abstains(*args):
+    return _sched._confidence_abstains(*args)
 
 
 class AStuckHeadAbstains(unittest.TestCase):
@@ -91,7 +103,7 @@ class TheBandMatchesTheOneTheBotAlreadyUses(unittest.TestCase):
     had four times. bot.py:8088 inlines 0.02; this must equal it."""
 
     def test_the_band_is_the_bots_band(self):
-        self.assertEqual(MODEL_NEUTRAL_BAND, 0.02)
+        self.assertEqual(_sched.MODEL_NEUTRAL_BAND, 0.02)
 
     def test_the_bot_still_uses_that_number(self):
         import pathlib
@@ -132,5 +144,134 @@ class TheDecisionAndTheLoggedRowCannotDisagree(unittest.TestCase):
         self.assertIn('"confidence_abstains": bool(confidence_abstains),', src)
 
 
-if __name__ == "__main__":
-    unittest.main()
+# ---------------------------------------------------------------------------
+# The behavioural half: drive BusScheduler.evaluate() end to end.
+#
+# The class assertions above exercise the predicate and pin its three call
+# sites. That is a real red at HEAD but it is a red on a missing SYMBOL, not on
+# a refused TICK, and a reviewer is entitled to ask for the tick. This fixture
+# is the one tests/test_a_quote_ok_candidate_leaves_a_reason.py already uses to
+# reach the entry conjunction -- a pumped price history, both edge gates
+# stubbed open, no forecast and no registry candidate, and a single quote-
+# probed atf_static signal. It reaches the same four-way conjunction production
+# evaluates, so the refusal and the entry here are the real ones.
+# ---------------------------------------------------------------------------
+
+import time as _time
+
+import pytest
+
+from trading.scheduler import BusScheduler
+
+_scheduler_module = _sched
+
+_SYMBOL = "DRB-USDC"
+
+
+class _StubPortfolio:
+    def get_quantity(self, symbol: str, chain: str = "base") -> float:
+        return 1_000.0 if symbol.upper() == "USDC" else 0.0
+
+    def get_native_balance(self, chain: str = "base") -> float:
+        return 1.0
+
+
+class _RecordingDb:
+    def __init__(self, inner):
+        self._inner = inner
+        self.rows = []
+
+    def log_trade(self, **kwargs):
+        self.rows.append(dict(kwargs))
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _drive(monkeypatch, *, exit_conf: float, direction_prob: float = 0.82,
+           expected_return: float = 0.05):
+    """Run one tick through the real entry conjunction. Returns (directive, rows)."""
+    import services.atf_static_strategy as atf
+
+    sched = BusScheduler(horizons=[("5m", 300)], min_profit=0.01, prefill=False)
+    start = _time.time() - 32 * 60.0
+    for i in range(32):
+        sched._update_state({"symbol": _SYMBOL, "ts": start + i * 60.0,
+                             "price": 1.0, "volume": 1_000.0, "chain": "base"})
+
+    # Both edge gates open, so the candidate reaches the entry test rather than
+    # the pre-drop -- otherwise this would be re-proving the edge ban.
+    monkeypatch.setattr(_scheduler_module, "_strategy_edge_refusal", lambda sid: None)
+    monkeypatch.setattr(_scheduler_module, "_symbol_edge_refusal",
+                        lambda sym, sid=None: None)
+    monkeypatch.setattr(sched, "_forecast", lambda state: [])
+    if sched.strategy_registry is not None:
+        monkeypatch.setattr(sched.strategy_registry, "evaluate_all",
+                            lambda state, ctx: [])
+    monkeypatch.setattr(
+        atf, "latest_signals",
+        lambda max_age_sec=1800.0: [
+            {"symbol": _SYMBOL, "quote_probe": {"ok": True},
+             "expected_return": expected_return}
+        ],
+    )
+    monkeypatch.setenv("ATF_STATIC_GHOST_SCOUT_ENABLED", "1")
+
+    recorder = _RecordingDb(sched.db)
+    monkeypatch.setattr(sched, "db", recorder)
+    directive = sched.evaluate(
+        {"symbol": _SYMBOL, "ts": _time.time(), "price": 1.0,
+         "volume": 1_000.0, "chain": "base"},
+        {"direction_prob": direction_prob, "exit_conf": exit_conf,
+         "net_margin": 0.02},
+        _StubPortfolio(),
+    )
+    return directive, recorder.rows
+
+
+def test_a_tick_the_stuck_head_was_vetoing_now_enters(monkeypatch):
+    """exit_conf 0.5 -- the value 1778 of 1805 production rows carry.
+
+    Everything else on this tick passes: direction 0.82 against a 0.6 floor,
+    net_margin 0.02 against 0.005, expected above min_profit. At HEAD the tick
+    is refused and the row names `confidence_vs_floor`; nothing about the tick
+    changed except that a conjunct which read nothing stopped voting.
+    """
+    directive, rows = _drive(monkeypatch, exit_conf=0.5)
+    assert directive is not None, (
+        "a tick whose three informative conjuncts all passed was refused by a "
+        "head emitting sigmoid(0); rows written were "
+        f"{sorted({r.get('status') for r in rows})!r}"
+    )
+    assert not [r for r in rows if r.get("status") == "entry-refused-no-candidates"]
+
+
+def test_an_informative_confidence_below_the_floor_still_refuses(monkeypatch):
+    """0.55 IS a reading. The floor is untouched and must still bind."""
+    directive, rows = _drive(monkeypatch, exit_conf=0.55)
+    assert directive is None, "SCHEDULER_MIN_CONFIDENCE must still refuse a real 0.55"
+    refusals = [r for r in rows if r.get("status") == "entry-refused-no-candidates"]
+    assert refusals, sorted({r.get("status") for r in rows})
+    detail = (refusals[-1].get("details") or {}).get("detail") or {}
+    assert "confidence_vs_floor" in (detail.get("failed") or [])
+    assert detail.get("confidence_abstains") is False
+
+
+def test_a_silent_model_still_refuses(monkeypatch):
+    """Both heads neutral is bot.py:8088's model_neutral -- refuse."""
+    directive, rows = _drive(monkeypatch, exit_conf=0.5, direction_prob=0.5)
+    assert directive is None, "nothing may be entered on a model that said nothing"
+
+
+def test_the_refusal_row_records_the_abstention_either_way(monkeypatch):
+    """A census must be able to tell an abstaining conjunct from an absent one."""
+    _, rows = _drive(monkeypatch, exit_conf=0.5, expected_return=0.001)
+    refusals = [r for r in rows if r.get("status") == "entry-refused-no-candidates"]
+    assert refusals
+    detail = (refusals[-1].get("details") or {}).get("detail") or {}
+    assert detail.get("confidence_abstains") is True
+    assert "confidence_vs_floor" not in (detail.get("failed") or []), (
+        "a conjunct that abstained must not be reported as the binding refusal "
+        "-- that misattribution is what sent four passes hunting a threshold"
+    )
+    assert detail.get("failed") == ["expected_vs_min_profit"]
