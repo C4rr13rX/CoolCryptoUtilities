@@ -316,3 +316,44 @@ def summarise(rows: Iterable[Any]) -> Dict[str, Any]:
         "net_dropped": sum(_f(r, "net", "net_profit") for r in drop),
         "implausible_ret": IMPLAUSIBLE_RET,
     }
+
+
+def banner(rows: Iterable[Any], *, censored: bool) -> List[str]:
+    """Lines naming what a report did NOT censor, for printing above its numbers.
+
+    ``trade_outcomes`` is a PRE-GUARD source: ``ledger._is_implausible``
+    refuses a row at ``record()`` time, but the refused rows are still written
+    to the table, so a census that reads the table directly is reading a
+    dirtier book than graduation reads. Measured pass 446, SIX of 215 non-live
+    ghost rows carried +5.36 and set the SIGN of every pool-depth bucket.
+
+    Pass ``censored=False`` when the report's numbers are drawn from the raw
+    table -- the banner then names the count and dollar weight of the rows the
+    report is carrying anyway, so a reader can size the contamination without
+    re-deriving it. Pass ``censored=True`` when the numbers below are already
+    partitioned, and the banner states the gap it removed.
+
+    Returns lines rather than printing them so a caller can route them to a log
+    or a JSON blob; this repo has probes whose stdout is discarded.
+    """
+    materialised = list(rows)
+    info = summarise(materialised)
+    dropped, kept = info["dropped"], info["kept"]
+    if not dropped:
+        return ["PLAUSIBILITY: %d rows read, 0 refused by "
+                "services.outcome_plausibility -- censored and uncensored are "
+                "the SAME book here." % len(materialised)]
+    share = 100.0 * dropped / max(1, len(materialised))
+    if censored:
+        head = ("CENSORED -- services.outcome_plausibility.partition removed "
+                "%d of %d rows (%.1f%%)" % (dropped, len(materialised), share))
+    else:
+        head = ("!! UNCENSORED -- %d of %d rows (%.1f%%) below are rows the "
+                "ledger REFUSES" % (dropped, len(materialised), share))
+    return [
+        head,
+        "   carrying gross %+.4f and net %+.4f; %d rows survive the rule."
+        % (info["gross_dropped"], info["net_dropped"], kept),
+        "   reasons: %s   (bar: |booked return| > %.0f%%)"
+        % (info["reasons"] or "{}", 100.0 * info["implausible_ret"]),
+    ]

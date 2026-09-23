@@ -61,6 +61,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "storage" / "trading_cache.db"
 
+import sys  # noqa: E402
+sys.path.insert(0, str(ROOT))
+from services import outcome_plausibility as op  # noqa: E402
+
 # ``stale_exit_secs`` in trading/bot.py, in minutes. The line this whole report
 # is drawn either side of.
 STALE_EXIT_MINS = 15.0
@@ -329,6 +333,16 @@ def hold_time_edge(
             r["cgross"] = g
             rows.append(r)
 
+        # The line above (`abs(g) > 0.5 * notional`) is a PRIVATE FOURTH COPY of
+        # the ledger's plausibility rule: it reproduces the RATIO arm at 50% and
+        # has no DOLLAR arm at all, so a row whose booked profit dwarfs its own
+        # strategy's scale survives here and is refused everywhere else. Rather
+        # than swap the filter silently -- which would move every number in this
+        # report with nothing to compare against -- run the shared rule as well
+        # and PUBLISH THE GAP. The gap is the finding; the numbers below are
+        # still the inline rule's.
+        _plaus_gap = op.summarise(rows)
+
         con = sqlite3.connect(str(db))
         try:
             placed = []
@@ -349,6 +363,7 @@ def hold_time_edge(
         rows = placed
     else:
         unplaceable = 0
+        _plaus_gap = op.summarise(rows)
 
     buckets = []
     total_loss = sum(r["cgross"] for r in rows if r["cgross"] < 0)
@@ -384,7 +399,54 @@ def hold_time_edge(
                      "ticks": longest["ticks"]} if longest else None),
         "abandoned": abandoned_positions(db, now - days * 86400.0, now=now),
         "replay": wall_clock_replay(rows),
+        "plausibility_gap": _plaus_gap,
+        "censored_buckets": _bucket_split(
+            op.partition(rows)[0], STALE_EXIT_MINS),
+        "uncensored_buckets": _bucket_split(rows, STALE_EXIT_MINS),
     }
+
+
+def _bucket_split(rows: Sequence[Dict[str, Any]],
+                  cut: float) -> Dict[str, Any]:
+    """The inside/outside-horizon split over ``rows``, for the censored gap.
+
+    The whole route-(c) argument -- "the book is positive inside 15 minutes"
+    -- is this one comparison, so it is the one that has to be shown on both
+    books rather than only on the one the script happens to filter with.
+    """
+    timed = [r for r in rows if float(r.get("held_mins", 0.0)) > 0]
+    return {
+        "within": _acc([r for r in timed if r["held_mins"] <= cut]),
+        "outlived": _acc([r for r in timed if r["held_mins"] > cut]),
+    }
+
+
+def _render_gap(rep: Dict[str, Any], gap: Dict[str, Any]) -> List[str]:
+    """The censored-vs-uncensored horizon split, printed side by side."""
+    lines = ["", "PLAUSIBILITY GAP -- this report's own filter is a private copy",
+             "of the ratio arm only; these are the rows the SHARED rule "
+             "(services.outcome_plausibility) refuses on top of it:"]
+    lines.append("  extra refusals %d of %d rows   gross %+.4f   net %+.4f   "
+                 "reasons %s"
+                 % (gap["dropped"], gap["dropped"] + gap["kept"],
+                    gap["gross_dropped"], gap["net_dropped"],
+                    gap["reasons"] or "{}"))
+    cen, unc = rep.get("censored_buckets"), rep.get("uncensored_buckets")
+    if cen and unc:
+        cut = rep["stale_exit_mins"]
+        for key, label in (("within", "HELD <= %.0f min" % cut),
+                           ("outlived", "HELD >  %.0f min" % cut)):
+            u, c = unc[key], cen[key]
+            flip = ("  <- SIGN FLIPS" if (u["gross"] > 0) != (c["gross"] > 0)
+                    else "")
+            lines.append("  %-16s uncensored %3d trips %+8.4f   censored "
+                         "%3d trips %+8.4f%s"
+                         % (label, u["trips"], u["gross"], c["trips"],
+                            c["gross"], flip))
+    if gap["dropped"] == 0:
+        lines.append("  NO GAP: the inline filter and the shared rule agree on "
+                     "this window. Stated, not assumed.")
+    return lines
 
 
 def render(rep: Dict[str, Any]) -> str:
@@ -398,6 +460,9 @@ def render(rep: Dict[str, Any]) -> str:
            "",
            f"  {'hold time':16s} {'n':>3s} {'gross$':>9s} {'loss share':>11s} "
            f"{'win%':>6s} {'ticks/min':>10s}"]
+    gap = rep.get("plausibility_gap")
+    if gap is not None:
+        out[4:4] = _render_gap(rep, gap) + [""]
     for b in rep["buckets"]:
         out.append(f"  {b['label']:16s} {b['trips']:3d} {b['gross']:+9.4f} "
                    f"{b['loss_share']:10.1f}% {b['win_rate']:6.1f} "
