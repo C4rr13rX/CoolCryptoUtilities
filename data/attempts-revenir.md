@@ -24649,3 +24649,69 @@ and then stated a consequence I had not checked the date, denominator or instrum
 **Measure the thing; then check what window the thing belongs to.**
 
 -- Echo, pass 683, senior
+
+---
+
+## Pass 684 (Echo, senior) -- `[ceadb8da]` CLOSED, and the step-6 deadlock priced
+
+**ROUTE TRIED: concentrate the ghost evidence budget on >$1M pools by depth-weighting the
+candidate sort. VERDICT: SHIPPED AND INEFFECTIVE. CLOSED.**
+
+**THE NUMBER.** Measured through the live module (not the file) on 2026-09-23:
+
+    symbols ticked in 24h : 47
+    RESOLVED depth        : 0
+    UNRESOLVED            : 47   (100.0%)
+    weight spread, all 47 : {0.4: 47}
+
+`rank_score = clear_rate * depth_weight` (`services/streamed_symbol_candidates.py:236`).
+With `depth_weight` the constant 0.40 across the entire universe, the sort at line 516 is
+**bit-for-bit the old clear_rate-only sort**. This is cause **(a)** of the three the item
+listed; (b) and (c) cannot be reached.
+
+**TWO COMPLEMENTS KILLED BEFORE POSTING.**
+1. *Key-format mismatch.* I first measured all 47 absent from the snapshot and nearly filed
+   it. Wrong -- `_depth_for()` splits the pair on the first dash and retries the base token,
+   so `AERO-USDC` -> `AERO`. Re-run through the module's own lookup: **still 0 of 47.** The
+   defect is the snapshot's CONTENTS, not its key format -- 70 resolved keys, none of which
+   currently tick.
+2. *Stale snapshot refused wholesale.* `depth_state()` returns `(True, '')` -- trusted, age
+   160.7h, inside the 7-day window. **Not a freshness bug.** A re-sweep on the current
+   predicate will not fix it.
+
+**THE p448 WETH INVERSION IS UNFIXED.** `_depths.get('WETH')` -> `None`, confirmed directly.
+`scripts/pool_depth_sweep.py:64` still filters on `baseToken.symbol` only and WETH is the
+QUOTE token on Base. **Every depth-tier assignment in this file stays PROVISIONAL** until
+`[205092e7]` lands.
+
+**OPTION TAKEN: (b)**, per the item's own criteria. The windowed post-boot test was NOT run
+and is not yet measurable: 5 `trade_outcomes` rows exist in the 3.43h since the 06:23:01
+local boot, against the 20 the criterion requires.
+
+### The step-6 deadlock, priced -- this is the finding that outranks the item
+
+`[FAIL] 6 RISK` is now the first failing link (step 5 GRADUATION passes). Production prints
+its own arithmetic: `_ghost_validation_for_live`, `trading/pipeline.py:4749-4752`,
+`judging: money_button -- 0 ghost trades of 25 required`.
+
+**money_button has ONE `trade_outcomes` row, all wallets, all time.** Counted over 270 rows
+(`strategy_id` lives in the `details` JSON, not a column). The gate's own docstring
+independently records the same: `money_button 1 trade 1W/0L net +0.0053`.
+
+The gate reads `StrategyLedger().approved_ids()`. So:
+
+* the ONLY licensed strategy has produced 1 round trip in 20.6 days -- 25 is ~480 days away;
+* the strategies that DO produce evidence (atf_static 30 ghost, rsi_reversal 11,
+  donchian_breakout@5d 10) are not licensed;
+* and **no strategy clears the bar even if licensed** -- 25 trades / 55% win / P/L>0 against
+  a best-of atf_static_scout 23/65%/**-0.8202** (also structurally blocked, no live branch)
+  and atf_static 11/**27%**/+0.5696.
+
+**Step 6 is not a slow gate. It is an empty room with a locked door.** Raising the evidence
+RATE does not open it, because the rate accrues to strategies that are not candidates.
+
+**LIVE BOOK RE-RECONCILED FROM THE STORE THIS PASS:** 18 rows, `sum(net) = -0.18637145913731237`,
+**all 18 dated 2026-09-05**, newest 17:00:46 local. The scoreboard is unmoved and the live
+lane has been dead 18 days. Standing memory is correct; I re-derived it rather than citing it.
+
+-- Echo, pass 684, senior
