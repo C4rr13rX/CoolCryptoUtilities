@@ -19585,3 +19585,48 @@ OPEN, AND THE BEST THING FOUND THIS PASS: the chaos gate is refusing on a
 ALSO MEASURED: the evidence pipeline is 15.4h dry. trading_ops max(ts) 5.4 min,
   trade_fills and trade_outcomes both 921 min, newest ghost-entry 941 min
   (OP-USDC/ema_cross). Filed as d709da0d.
+
+
+PASS 671 -- ROUTE: base ROUTING DISPERSION, now that a second venue exists
+  (Dune, item [b43300b1]). STATUS: MEASURED, AND THE ROUTE IS CLOSED AS A
+  SOURCE OF MONEY.
+
+  WHAT CHANGED. services/providers/aerodrome.py (added p670, commit 4a9400d)
+  is registered in routing_arbitrage_census.VENUES, and the census now prints
+  "venues: uniswap, aerodrome   chain: base". Before it, dispersion() returned
+  None on every base row because it needs two live quotes -- every base
+  routing number in this repo's history was structurally n=0, NOT measured-
+  small. That era is over.
+
+  THE COMMAND:
+    python scripts/routing_arbitrage_census.py --chain base --notional-usd 10       --rounds 4 --sleep 0 --pairs       "<USDC>/<WETH>,<USDC>/<AERO>,<USDC>/<CBBTC>"
+
+  THE NUMBERS, 2 venues ANSWERING on every row, best-vs-worst spread, pct:
+    0.0173 0.0182 0.0206 0.0910 0.1838 0.2336 0.2484 0.2740 0.3288 0.3288
+    0.3712 2.6120
+  MEDIAN 0.2484pct = 24.84bp at n=12. The script prints it as "picking the
+  best venue is worth 106.8% of one leg's cost".
+  ONE LEG of round_trip_cost() = 23.27bp, measured 20:02 BEFORE Cove's
+  [fa681912] reconciliation touched that module -- re-measure the denominator
+  before quoting the ratio.
+
+  HYPOTHESIS KILLED, MINE. Pre-registered: "dispersion lands materially BELOW
+  one leg, so venue choice is not where the money is." It did not. Median dispersion is 1.068 legs. The COMPLEMENT won on the number.
+
+  AND YET THE ROUTE IS STILL CLOSED, for a different reason than I expected:
+  0 OF 12 CLOSED LOOPS PAY (the script's own verdict line), gross NEGATIVE on 11 of 12 (best gross
+  +0.0106pct), NET -0.4948pct to -0.9414pct after 0.4654pct cost + 0.0400pct
+  gas. A gap you cannot close in both legs is not an edge. So: dispersion is
+  real, it is about one leg wide, and it is NOT collectable here.
+
+  DO NOT QUOTE THE 2.6120pct ROW. A 261bp venue gap on AERO is far more likely
+  a DEGRADED uniswap quote -- fee tiers lost to 429 under the census's own
+  2.0s pacing, the p498 artifact -- than a real gap. The MEAN over these rows is 39.4bp and it is a lie; the median is the only honest statistic here.
+
+  VENUE TALLY 12 rows: uniswap 9, aerodrome 3. 4 of 12 loops were cross-venue. Static-routing base to uniswap
+  (Cove p670) is a ~73pct heuristic, not a law, and it gives up the rows where
+  aerodrome is ahead. At a $10 clip that is worth nothing, because every loop
+  is gross-negative anyway.
+
+  SPANS RAN 8.6s TO 51.5s. A 51.5s span cannot separate a venue spread from a
+  price move. Anyone re-running this should report the span distribution.

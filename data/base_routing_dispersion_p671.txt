@@ -1,0 +1,45 @@
+venues: uniswap, aerodrome   chain: base   notional: $10.00   leg cost: 0.2327%
+
+  0x833589/0x420000       2 venues  best=uniswap  spread best/worst +0.1838%  (8.6s)
+      loop uniswap->aerodrome  gross -0.1338%  cost 0.4654%  gas 0.0400%  NET -0.6392%  does not pay
+  0x833589/0x940181       2 venues  best=uniswap  spread best/worst +0.0910%  (51.5s)
+      loop uniswap->uniswap  gross -0.0379%  cost 0.4654%  gas 0.0400%  NET -0.5432%  does not pay
+  0x833589/0xcbb7c0       2 venues  best=uniswap  spread best/worst +0.3288%  (15.9s)
+      loop uniswap->uniswap  gross -0.4360%  cost 0.4654%  gas 0.0400%  NET -0.9414%  does not pay
+  0x833589/0x420000       2 venues  best=uniswap  spread best/worst +0.2484%  (19.8s)
+      loop aerodrome->uniswap  gross -0.2568%  cost 0.4654%  gas 0.0400%  NET -0.7622%  does not pay
+  0x833589/0x940181       2 venues  best=uniswap  spread best/worst +0.3712%  (14.1s)
+      loop uniswap->aerodrome  gross -0.2303%  cost 0.4654%  gas 0.0400%  NET -0.7357%  does not pay
+  0x833589/0xcbb7c0       2 venues  best=uniswap  spread best/worst +0.3288%  (19.8s)
+      loop uniswap->uniswap  gross -0.1019%  cost 0.4654%  gas 0.0400%  NET -0.6072%  does not pay
+  0x833589/0x420000       2 venues  best=aerodrome spread best/worst +0.2740%  (10.3s)
+      loop uniswap->uniswap  gross +0.0106%  cost 0.4654%  gas 0.0400%  NET -0.4948%  does not pay
+  0x833589/0x940181       2 venues  best=aerodrome spread best/worst +2.6120%  (10.3s)
+      loop uniswap->uniswap  gross -0.0673%  cost 0.4654%  gas 0.0400%  NET -0.5726%  does not pay
+  0x833589/0xcbb7c0       2 venues  best=uniswap  spread best/worst +0.2336%  (35.5s)
+      loop uniswap->uniswap  gross -0.0987%  cost 0.4654%  gas 0.0400%  NET -0.6041%  does not pay
+  0x833589/0x420000       2 venues  best=aerodrome spread best/worst +0.0182%  (19.3s)
+      loop aerodrome->uniswap  gross -0.0789%  cost 0.4654%  gas 0.0400%  NET -0.5843%  does not pay
+  0x833589/0x940181       2 venues  best=uniswap  spread best/worst +0.0206%  (17.0s)
+      loop uniswap->uniswap  gross -0.1053%  cost 0.4654%  gas 0.0400%  NET -0.6106%  does not pay
+  0x833589/0xcbb7c0       2 venues  best=uniswap  spread best/worst +0.0173%  (29.1s)
+      loop uniswap->uniswap  gross -0.2764%  cost 0.4654%  gas 0.0400%  NET -0.7818%  does not pay
+
+==============================================================================
+ROUTING DISPERSION over 12 observations
+  median best-vs-worst spread : +0.2484% of notional
+  cost of ONE leg             :  0.2327% of notional
+  picking the best venue is worth 106.8% of one leg's cost
+  NOTE: this is a saving only if the router is NOT already
+  picking the best venue. Compare against default_route_order().
+
+ARBITRAGE over 12 closed loops
+  loops that pay after BOTH legs and gas : 0 of 12
+  cross-venue loops                      : 4
+  VERDICT: no loop closes. A price gap is not arbitrage;
+  what matters is what survives both legs, and nothing did.
+
+  Quotes, not fills: slippage and MEV are NOT modelled, and a quote
+  assumes your size does not move the pool. Treat a paying loop as a
+  lead to verify on a small real clip, never as realised profit.
+==============================================================================
