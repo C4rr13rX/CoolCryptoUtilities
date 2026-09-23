@@ -21387,3 +21387,67 @@ EMA is causal, so `ema(px[:i+1], span)[-1]` is *identically* `ema(px, span)[i]`
 
 `market_stream` carries **WETH-USDT at 4151 ticks**, MORE than WETH-USDC's
 3599. Anything sampling "WETH" by string prefix is pooling two tapes.
+
+## Pass 676 — Dune — audit of item cdfbf97e, reopened, and the kill test that followed
+
+**ROUTE TRIED:** re-measure the pass-105 claim that
+`trading.data_loader.sanitize_model_price_window` fixed the saturated
+`net_margin`. Criterion 3 of `cdfbf97e` was "net_margin observed on live ticks
+moves inside (−1.0, 1.0)".
+
+**VERDICT: criterion 3 is FALSE, the guard is fine, and the model is not.**
+
+**The guard is wired and is in the running process.** `trading/bot.py:6545-6547`
+calls it inside `_prepare_inputs`; `git log -S sanitize_model_price_window --
+trading/bot.py` returns exactly one commit, `8c1e906`, 2026-09-10 09:53:07.
+Production (`main.py --action start`, pids 32880/6340) booted 2026-09-21
+22:57:35 — eleven days later, so the stale-code excuse is unavailable.
+
+**It still saturates.** Of the 35 `trading_ops` ghost-entry rows in the 7d window
+carrying `.entry_fee_rate`, **14 have |net_margin| > 1.0**, newest UNI-USDC
+**+1.1848 at 2026-09-22 00:44 — 1h47m after the boot.** And the *signature
+changed*: the original item describes a stuck NEGATIVE constant near −1.15 with
+max 0.0000; today the range is **−1.3948..+2.4648 and 11 of the 14 are POSITIVE**.
+Any detector phrased "is it pinned at −1.15" returns nothing. A positive
+saturation is worse than the negative one it replaced: +2.0087 on OP-USDC
+(against its own `bus_plan.expected_return` of 0.0172) clears every margin floor
+in the codebase by two orders of magnitude.
+
+**KILL TEST, pre-registered then run.** Hypothesis: the model itself is broken.
+Complement: the guard misses some other contamination path. Command —
+`D:/Projects/CoolCryptoUtilities/.venv/Scripts/python.exe -X utf8
+scripts/model_window_probe.py --symbols 8` (Gale's own script, read-only).
+**The complement is dead.**
+
+- **LIVE** (real last-60 ticks, clean, straight out of `market_stream`):
+  price_mu **1.4692** WOOF, **1.4975** LDO, **1.3005** AERO, **1.4771** MAMO,
+  **1.4686** ALIGN, **0.9116** BLUECHIP, **1.4734** ETH-USDT, **1.2642** UNI.
+  Gale measured this same section at **−0.1655..−0.2428** on 2026-09-10.
+  *Clean windows now saturate.*
+- **REPAIRED**: a ×100-contaminated WOOF window through the guard returns
+  price_mu **1.469242** against the clean control **1.469243** — six decimals.
+  The guard is perfect and irrelevant. **DIRTY** barely moves it any more
+  (1.4692 → 1.4122 on a ×100 row, where in September that gave −1.51).
+  Contamination is no longer the mechanism.
+- **TRAIN**, 40 windows *from the corpus the head was fitted on*:
+  TRUE label median |mu| **0.001987**; PRED median |mu| **1.592529**;
+  **RATIO 801.3x**. Direction agreement **50.0% of 40** — chance, on its own
+  training data. LOGVAR healthy (0.0% at the +8.0 clip), so not a variance
+  blow-up.
+- **LEVEL**: price_mu **0.989662** at price level 1e-4 *and* at 1.2e4, identical
+  to six decimals; `PriceVolScaleNorm` PRESENT in the served graph. The
+  scale-free transform is live and **the units are NOT the bug** — that half of
+  Gale's pass-105 finding still holds exactly.
+
+**CONCLUSION.** `models/active_model.keras` emits ~800x its own training label
+and calls direction at chance on the data it was fitted to. No serving guard can
+reach that. **CAVEAT:** n=40 training windows, 8 live symbols. The 801x ratio is
+robust to that n; "50.0% of 40" excludes skill, it does not measure it.
+
+**CONSEQUENCE.** Every quantity derived from this head — `price_mu`,
+`expected_delta`, `net_margin`, `net_margin_after_fees` — is uninformative, and
+`direction_prob` comes off the same object as the constant-0.5 confidence head in
+item `6d718c1a`. Do not tune thresholds against any of them. Separately, the
+branch that *reads* `net_margin` is unreachable (item `7fa8c82f`, filed this
+pass), so this is a correctness defect in a number that is widely quoted, not
+currently a gate defect.
