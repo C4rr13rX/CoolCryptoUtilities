@@ -19,19 +19,57 @@ not gating the approved strategy at all.
 
 That read is WRONG, and this script exists to show why with counts. The pooled
 ``ghost_validation_block`` never touches ``_strategy_live_approved``; it binds
-one layer higher, through ``halt_live``:
+one layer higher, through the scheduler's risk budget.
 
-    pipeline.py   "halt_live": ... or not ghost_ready or ...
+THE CHAIN DESCRIBED HERE UNTIL 2026-09-22 NO LONGER EXISTS. It read:
+
     bot.py        if self.live_trading_enabled:
                       if plan_flags.get("halt_live"): risk_budget = 0.0
-    bot.py        if risk_budget <= 0:  -> scheduler.evaluate() is NEVER CALLED
-                      metrics.feedback("scheduler", label="halted", ...)
 
-Note where the ``halt_live`` line sits: INSIDE ``if self.live_trading_enabled``.
-On a ghost-only bot the same pooled verdict is inert. ARMING THE LIVE LANE IS
-WHAT SWITCHES THE DECISION PATH OFF. That branch writes no ``trading_ops`` row
-at all -- only a feedback event -- which is why a census of ``trading_ops``
-alone shows "nothing was refused" rather than "everything was refused".
+and commit 821daa1 DELETED those two lines -- ``bot.py`` now carries a comment
+at the same site saying so ("`halt_live` is NOT applied here any more"), because
+arming the live lane was what switched the bot off. So the old reading, "ARMING
+THE LIVE LANE IS WHAT SWITCHES THE DECISION PATH OFF", is dead and must not be
+quoted. ``halt_live`` now travels through ``live_trading_enabled`` and DEMOTES
+the bot to ghost.
+
+THE LIVE CHAIN, measured 2026-09-22, is a GHOST-side zero and it has nothing to
+do with live arming:
+
+    pipeline.py:6244   ghost_risk_multiplier = 0.0      # when not ghost_collection_ready
+    bot.py:6383        risk_budget *= ghost_multiplier
+    bot.py:6389        if risk_budget <= 0:  -> scheduler.evaluate() is NEVER CALLED
+    bot.py:6391-6400       self.metrics.feedback("scheduler", label="halted", ...)
+
+THAT FEEDBACK CALL IS REACHABLE AND FIRING. Pass 483 recorded "no metrics row
+since boot" and concluded it was dead code; 483 read the wrong table. It is
+``feedback_events``, not ``metrics``:
+
+    source='scheduler' label='halted'   n=1524 all-time
+                                        98 in the last 24h, newest 1.69h old
+    every one of those 98:  details {"reason": "ghost_validation_block",
+                                     "ghost_multiplier": 0.0}
+
+against 1286 ``scheduler``/``cycle_tick`` rows in the same 24 hours. So the
+scheduler is being halted outright roughly a hundred times a day, and a halted
+tick decides nothing at all -- no candidates, no ghost entries, no evidence.
+
+AND IT IS A DEADLOCK, in two lines of one function. ``ghost_collection_ready``
+comes from the model-bootstrap readiness flag, and pipeline.py:6175 is its only
+override::
+
+    if not ghost_collection_ready and ghost_ready:
+        ghost_collection_ready = True
+
+``ghost_ready`` is False -- that is what ``ghost_validation_block`` MEANS -- so
+the override never fires. Ghost collection is off because collection is "not
+ready", and the only thing that would mark it ready is the evidence the
+switched-off lane cannot collect. This is the same shape 821daa1 removed at the
+live layer, still alive at the ghost layer.
+
+That branch writes no ``trading_ops`` row at all -- only a feedback event --
+which is why a census of ``trading_ops`` alone shows "nothing was refused"
+rather than "everything was refused".
 
 WHAT IT READS
 -------------
