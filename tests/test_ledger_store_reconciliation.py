@@ -366,6 +366,74 @@ class LedgerStoreReconciliation(unittest.TestCase):
             "assumed it did" % (edge_refused, stop_refused),
         )
 
+    def test_the_store_books_positive_sign_is_one_row(self) -> None:
+        """Its SUM is positive and its MEDIAN ROW LOSES MONEY. Quote the median.
+
+        Measured at HEAD 2026-09-23 over the 182 tradeable closed rows:
+
+            net        +6.1425
+            MEDIAN     -0.009095      <- the typical row loses
+            top 1 row  +3.4700  =  56% of the entire sum
+            top 5 rows +8.9786  = 146% of the entire sum
+            net without the single top row  +2.6725
+
+        The top two are the SAME DAY, 2026-08-26, both carrying no strategy_id:
+        AAVE-USDC +3.4700 and AERO-USDC +3.2066, together +6.68 against a book
+        total of +6.14. The other 180 rows sum negative.
+
+        This is the shape this repo has shipped three times -- "98% of gross was
+        7 rows", "six rows carry 236% of the ghost book and four are one day",
+        "the ghost AERO positive is one tape-uncorroborated row". A sum can be
+        carried by one row; a median cannot, which is why this asserts on the
+        median and not the sum.
+
+        It fails the day the median turns positive -- which is GOOD NEWS and
+        still worth stopping for, because it would mean the book's central
+        tendency changed rather than its tail.
+        """
+        con = sqlite3.connect("file:%s?mode=ro" % DB_PATH.as_posix(), uri=True)
+        con.row_factory = sqlite3.Row
+        nets = []
+        try:
+            for r in con.execute(
+                "SELECT symbol, status, net_profit, details FROM trade_outcomes"
+            ):
+                if str(r["status"] or "").lower() != "closed":
+                    continue
+                try:
+                    det = json.loads(r["details"] or "{}")
+                except Exception:  # noqa: BLE001
+                    det = {}
+                if not isinstance(det, dict):
+                    det = {}
+                sid = str(det.get("strategy_id") or "") or COLLIDED_BUCKET
+                if not _tradeable_predicate()(str(r["symbol"] or ""), sid):
+                    continue
+                nets.append(float(r["net_profit"] or 0.0))
+        finally:
+            con.close()
+        self.assertGreater(len(nets), 50, "too few rows to judge concentration")
+        nets.sort()
+        median = nets[len(nets) // 2]
+        total = sum(nets)
+        top = nets[-1]
+        self.assertLess(
+            median,
+            0.0,
+            "the tradeable book's median row is now POSITIVE (%.6f over %d "
+            "rows, sum %+.4f) -- re-derive before quoting, the central "
+            "tendency has moved" % (median, len(nets), total),
+        )
+        if total > 0:
+            self.assertGreater(
+                top / total,
+                0.25,
+                "the book's positive sum is no longer carried by its top row "
+                "(top %+.4f of %+.4f) -- the concentration this file warns "
+                "about has changed and the warning needs re-measuring"
+                % (top, total),
+            )
+
     def test_the_scout_is_in_the_store_now(self) -> None:
         """Pass 681's census -- "any id containing 'scout': NONE" -- is stale.
 
