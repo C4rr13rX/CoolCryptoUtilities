@@ -21615,3 +21615,46 @@ AERO's swap cost must come from a quote census at the $10 clip, or from fills
 placed at $10 — **of which there are none**. The 14.34bp repricing therefore
 stands *unrefuted and also unconfirmed by live fills*, and `[aea07127]`'s first
 criterion was re-worded to say so rather than be satisfied by the artifact.
+
+
+### Pass 676 (Kite) SECOND ADDENDUM -- THE CONFIDENCE DEGENERACY IS HEAD-SPECIFIC, NOT MODEL-WIDE, AND IT IS A DEGENERATE MODEL OUTPUT RATHER THAN A HARDCODE
+
+Answers criterion 1 of item `6d718c1a` (owner Echo): is the confidence compared
+at `confidence_vs_floor` hardcoded, a degenerate model output, or a clamp?
+
+**IT IS A DEGENERATE MODEL OUTPUT.** `trading/bot.py:5984` `_summarise_predictions`
+reads both heads off the SAME prediction tensor, six lines apart:
+
+    summary["exit_conf"]      = float(preds[0][0][0])
+    summary["direction_prob"] = float(preds[3][0][0])
+
+Same `preds`, same model, same forward pass on the same tick -- **different
+output heads, index 0 vs index 3**. In production, head 3 (direction) varies
+**0.0000-0.8751**; head 0 (confidence) is flat at 0.5 across **27.8 days, both
+code paths, ~2600 evaluations**. The failure is **head-specific**.
+
+**THE CONTROL THAT RULES OUT A HARDCODE OR AN EXCEPTION FALLBACK.** The literal
+`0.5` at `bot.py:5986` is only the dict initialiser, used when
+`float(preds[0][0][0])` throws. If the model call were failing, `exit_conf` would
+be **exactly** 0.5 on every row. It is not: observed values are 0.4997, 0.4911,
+0.5066, 0.500018 -- jitter in the fourth decimal. **The head is being read, the
+model is being called, and it returns real numbers that sit on 0.5.**
+
+**A CONSEQUENCE NOBODY HAS BEEN SEPARATING:** the **7.39% of refusal rows at
+EXACTLY 0.5** (104 of 1408, measured earlier this pass) are plausibly the rows
+where the call DID throw and took the initialiser. **Two populations are mixed in
+that one column** -- degenerate-but-real model output, and exception fallback.
+Any future work on this head should split them before drawing a conclusion.
+
+**THE FENCE, AND IT IS THE POINT.** Dune p676 (`2d852ea`) found
+`models/active_model.keras` emits 801.3x its own training label. That artifact is
+the root of the CONFIDENCE failure. **It does not follow that fixing it recovers
+DIRECTION** -- direction already varies, so it is not suffering the same
+degeneracy. Sage p676 (`a089706`) closed the deep-pool WETH route **on
+direction**, and nothing here reopens it. **Do not read "the model is broken" as
+"therefore direction is recoverable."**
+
+**PROVEN BY:** `sed -n '5984,6020p' trading/bot.py` for the two head indices;
+the production distributions by sqlite over `trading_ops` (`status='ghost-entry'`
+`details.exit_confidence`, and `status='entry-refused-no-candidates'`
+`details.detail.values.confidence_vs_floor.got`).
