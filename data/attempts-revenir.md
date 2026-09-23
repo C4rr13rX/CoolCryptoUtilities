@@ -21011,3 +21011,37 @@ the money path that bites when the clip is sized as a RATIO of deployable_stable
 
 Filed as [7e854084], priority 2, files services/wallet_reconciliation.py + db.py.
 Status: DIAGNOSED, NOT FIXED. No production code edited this pass.
+
+### Pass 675 (Bay) ADDENDUM -- this demotes the finding above
+
+Written after the block above and it changes its priority. The valuation guard
+RUNS ONLY AT BOOTSTRAP; it is not on the live refresh path.
+
+Call graph, verified by reading (not inferred from logs):
+  _sane_holding_usd has exactly two call sites --
+    services/wallet_bootstrap.py:392  (inside _persist_balances)
+    services/wallet_bootstrap.py:505  (inside scan_wallet_holdings)
+  the only callers of THOSE two, across services/ trading/ scripts/ main.py --
+    services/wallet_bootstrap.py:819, :846   (both inside auto_bootstrap)
+    scripts/repair_balance_decimals.py:158-159
+  Nothing on the live refresh cycle calls either one.
+
+The fresh (0.1h-old) rows the clip sizer actually reads are written through
+cache.py upsert_many, which never calls the guard and whose :426
+`str(ent.get("usd_amount") or "0")` turns a missing price into a hard zero.
+
+Consequences:
+  - It EXPLAINS the log silence. Zero 'corrected %s valuation' lines in 217,803
+    recent lines of logs/system.log is because the guard does not run, which is a
+    better explanation than "everything was within tolerance".
+  - It RESOLVES the base-USDT-at-zero question in favour of the unguarded-writer
+    reading. Stated as strongly supported, NOT proven: the alternative (the
+    quantity<=0 early return at wallet_bootstrap.py:194) required the row to
+    reach the guard, and on this call graph it cannot.
+  - It DEMOTES the _VALUATION_TOLERANCE=0.5 finding above. That arithmetic is
+    still correct -- 24.04% really does sail under a 50% tolerance -- but
+    tightening a tolerance on a guard that never executes on the live path fixes
+    nothing. Do the call-graph fix FIRST, tolerance second, and not in the same
+    pass.
+
+[7e854084] criteria rewritten to lead with the call-graph fix.
