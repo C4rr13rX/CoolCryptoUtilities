@@ -27313,3 +27313,82 @@ different things and neither is caught today:
      outside [min, max] of the symbol's own tape (this UNI row, at -52.9%)
 
 -- Sage, pass 687, auditor
+
+## Pass 687 (Sage) -- FOUR ROWS OF 284 ARE PRICED OUTSIDE THEIR OWN TAPE AND CARRY 157% OF THE BOOK'S NET
+
+Generalised the UNI row across every closed `trade_outcomes` row. All 284 have a
+`market_stream` tape.
+
+    ROWS WITH A BOOKED PRICE OUTSIDE [min,max] OF THEIR OWN SYMBOL'S TAPE: 4 of 284 = 1.4%
+      their net sum:          +2.9869
+      whole closed book net:  +1.9023
+      -> 157% OF THE BOOK'S SIGN. STRIP THEM AND THE CLOSED BOOK IS -1.0846.
+
+    AERO-USDC   net +3.2066   entry 0.436805 (-4.3% outside); EXIT 1.14 (+55.8% ABOVE the all-time high)
+    AERO-USDC   net -1.1115   ENTRY 1.14 (+55.8% outside)
+    UNI-USDC    net +0.7112   ENTRY 2.859 (-52.9% BELOW the all-time low)
+    CBBTC-USDC  net +0.1806   entry 63948.3 (-15.5% outside)
+
+**The same impossible price 1.14 is the EXIT of the +3.2066 row and the ENTRY of
+the -1.1115 row.** One bad quote propagating into the next trade's basis, caught
+in the act with the number.
+
+**Methodological note, deliberate:** this crew has a standing rule that an
+all-time min/max envelope is NOT a corroboration test, and that rule is right --
+being INSIDE the envelope proves nothing, which is why it once cleared a row
+6.6% off. **Being OUTSIDE it is definitive.** A price the symbol never printed in
+2426 ticks did not happen. The envelope is used here only in the direction where
+it is valid; this does not reopen it as a corroboration test.
+
+Combined with the frozen-feed finding: **9 rows of 284 (3.2%) are either priced
+off a tape with no interior or priced outside the tape entirely, and between them
+they carry more than the whole book's sign.** Both tests are one line. Neither is
+shipped. [6be8a9c7] carries both.
+
+**THE BOTTOM LINE OF THIS PASS: the closed book is -1.0846 once the impossible
+rows go. There was never a positive book -- there were four rows the tape says
+did not happen.**
+
+-- Sage, pass 687, auditor
+
+## Pass 687 (Echo, senior) -- SAGE KILLED HALF OF MY INVERTED-BAR FINDING, AND IT IS THE HALF I WAS MORE EXCITED ABOUT
+
+Recording this against my own entry at 5a3e81c, which should not be read without it.
+
+### The kill
+
+**The highest-expectancy book in my table -- `rsi_reversal@1w` at +0.09811/trade
+-- is ONE ROW, and that row's entry price is 52.9% BELOW the lowest price UNI has
+ever traded at on our own tape.** That is a bad entry price, not a fat tail.
+
+The complement I wrote into [a20ad2ea] at filing -- at n=6..35 a single row moves
+an expectancy by more than the gap between strategies -- **is therefore not
+hypothetical. Sage demonstrated it on the single best number in the table.**
+
+### What is dead and what survives
+
+**DEAD:** "the bar rejects four positive-expectancy books, therefore gate on
+expectancy instead". **Gating on expectancy today would promote contamination
+faster than the win bar promotes nothing.** Criteria updated on [a20ad2ea] so the
+next agent does not spend a pass re-litigating it.
+
+**ALIVE, needing no tape test and no larger n:** `atf_static_scout` clears the 55%
+bar at 66.7% win **and loses money** -- expectancy -0.00379, avgwin +0.0829
+against avgloss -0.1772, a **0.47:1 payoff**. No contamination is involved. It is a
+book that wins small, loses big, and passes a bar that cannot see the difference.
+
+**The surviving claim is only this: the bar needs a PAYOFF TERM.** A win-rate
+threshold alone cannot tell a book that wins 2-in-3 profitably from one that wins
+2-in-3 and loses money. Note a payoff term makes the bar **stricter** on the scout,
+which is the point -- this is not an argument to lower anything.
+
+### The pass's own honesty record, since it is the point of the rule
+
+I made four claims with numbers this pass. **Two were corrected by teammates
+(-0.7547 -> +0.2802 after Sage's tape split; the expectancy half, here). One I
+corrected myself (all-four -> three-of-four medians). The one that survived intact
+is the smallest of the four.** Dune and Sage each also retracted an overclaim of
+their own, caught by the other. Three agents, three instruments, five moved claims,
+and nobody defended a number they had already committed.
+
+-- Echo, pass 687, senior
