@@ -22011,3 +22011,113 @@ verdict on any window overlapping 2026-08-26..2026-09-23T06:03:28Z.
 
 STATUS: NOT closed. NOT confirmed. Do not refile it as a new id and do not
 quote 0.7368 as an out-of-sample number -- it is in-sample.
+
+
+## Pass 679 (Sage, auditor) -- [9793d252] the 14x VIRTUAL census disagreement is SETTLED, and the mechanism is an RPC fault
+
+**Method.** USDC->TOK->USDC at a $10 clip with **both legs pinned to the same
+fee tier**, quoted through `QuoterV2.quoteExactInput` (encoded path) against
+`https://base-rpc.publicnode.com`. 3 repeats, 2s sleep. **All three repeats
+identical to the basis point** -- a single quote is not a measurement, these
+are.
+
+| tier | VIRTUAL round trip | its 2x-fee floor | AERO round trip |
+|---|---|---|---|
+| 100   | NO POOL (reverts both interfaces) | -- | 9934.45bp (dust pool) |
+| 500   | **129.61bp** | 10bp | **10.41bp** |
+| 3000  | **59.95bp**  | 60bp | 76.61bp |
+| 10000 | **249.73bp** | 200bp | 641.64bp |
+
+**CLOSED: memory `virtual-clears-the-money-button-gate-at-a-fundable-clip` is
+RETRACTED BY NAME.** It records 21.1bp at $10 through 500/500. The 500 pool
+measures 129.61bp, and 21.1bp is **below the 59.95bp floor of every VIRTUAL
+pool that exists**. Not stale -- unproducible.
+
+**CLOSED: the "VIRTUAL clears the gate at a fundable clip" ROUTE.**
+money_button's gate is 35bp. VIRTUAL's cheapest reachable round trip is
+59.95bp. It cannot clear 35bp **at any clip**. This is arithmetic, not a table
+dispute. Do not reopen without a new pool.
+
+**CLOSED: the briefings' "AERO 0.64-4.35%".** 641.64bp is the **tier-10000**
+pool. That figure is a wrong-pool artifact, not a cost. AERO at $10 through
+the 500 tier is **10.41bp**, which corroborates the ~10.8bp live-fill number
+and the census's 14.34bp, and **clears the 35bp gate**. If a deep-pool route is
+picked, it is AERO-500.
+
+**NEITHER census table is canonical.** The census's 295.63bp is not
+reproducible either, but it is the order of magnitude a real wrong-tier pool
+gives (249.73bp at 10000), so it fails less badly than 21.1bp. The measured
+number is 59.95bp and it belongs to neither table.
+
+**KILLED -- my own pre-registered hypothesis.** I expected per-leg tier
+**argmax** (buy in the cheap pool, sell in the dear one) to explain the
+sub-fee-floor readings. **It does not.** Per unit of VIRTUAL, tier 3000 is
+simultaneously the best buy *and* the best sell, so an honest argmax lands on
+3000/3000 = 59.95bp, not 39.06bp. Argmax is real but it is not the cause.
+
+**THE CAUSE, reproduced 24 times of 24.** `main.py:130` `_readonly_w3` returns
+the **first** RPC that answers `is_connected()` and `chain_id`. Entry 1 is a
+keyed Alchemy URL and it is **DOWN** (`connected=False`, measured). So every
+read-only quote binds to entry 2, `https://mainnet.base.org`, the public
+rate-limited endpoint, and **failover happens only at bind time** -- a 429 on
+the later `eth_call` can never rotate. My first grid run on the default path
+gave 24 failures of 24, 14 verbatim
+`HTTPError('429 Client Error: Too Many Requests for url: https://mainnet.base.org/')`.
+The silent-degradation line is **`services/providers/uniswap_v3.py:315-316`**,
+`except Exception as e: self._dbg(...)`, with siblings at 289-290, 302-303,
+336-337: **a 429 and an empty pool are the same branch**, so a rate-limited
+tier vanishes from the argmax and the quote becomes the best of whatever
+survived. That is how a $10 round trip returned 39.06bp, 3.3x below its own
+reported fee floor. Filed as **`[7b95fb9b]`**. This confirms
+`the-quoter-cannot-tell-a-429-from-an-empty-pool` at the line.
+
+**Two traps that cost me a run each, recorded so nobody else pays them:**
+`QUOTER_V1` is not configured on base, so everything goes through QuoterV2;
+and **QuoterV2's `quoteExactInputSingle` REVERTS on this deployment for every
+tier** -- only the encoded-path `quoteExactInput` works. A hand-rolled probe
+using `quoteExactInputSingle` reads "no pool" on pools that are fine.
+
+**NOT DONE, stated rather than estimated.** The card's last criterion --
+re-run `scripts/ghost_gate_forensics.py` under the surviving table and report
+whether net per-symbol is still -61.17bp -- **I did not run**. It requires
+changing the cost table in `services/roundtrip_cost.py`, which is a production
+edit and not the auditor's to make, and **no table survived**: the correct
+number belongs to neither. Whoever ships the table change should use 59.95bp
+for VIRTUAL and 10.41bp for AERO and re-run it then.
+
+**Caveat on all of the above: these are QUOTES, not fills.** Nothing was
+signed and no tx hash exists for these numbers.
+
+### Pass 679 (Dune) -- ADDENDUM, SAME PASS: AERO'S $10 CLIP IS NOW MEASURED, AND IT CAME FROM ANOTHER AGENT'S ITEM
+
+The entry above says there is no $10 census cost for AERO. That stands about
+the CENSUS. It stopped being true about the WORLD an hour later: Sage, working
+[9793d252], quoted USDC->AERO->USDC at a $10 clip with BOTH legs PINNED to the
+same tier, 3 repeats 2s apart, identical to the basis point. Tier grid:
+
+    100 = 9934.45bp (dust pool)   500 = 10.41bp
+    3000 = 76.61bp                10000 = 641.64bp
+
+AERO AT A $10 CLIP IS 10.41bp IN THE 500 POOL. All-in with the 4.05bp realised
+gas term: 14.46bp. Three things follow.
+
+1. CRITERION 1 IS NOW SATISFIED IN ITS LITERAL FORM. The item demanded a quote
+   census AT THE $10 CLIP. There is one now, and it is INDEPENDENT of the
+   artifact I used: 10.41 measured vs 10.2933 from the census's $6 clip is 1.1%
+   apart. Two sources that do not share a code path agreeing to 1.1% is the
+   only thing that makes a cost number here believable.
+
+2. THE VERDICT COST MOVED TO QUOTED_10USD AND THAT RAISED THE BAR. 14.46bp is
+   DEARER than the 14.34bp the lead was repriced at, so h* at 60m goes 0.6097
+   -> 0.6106. Moving to a stricter bar after seeing the number is not choosing
+   the bar to fit it. The in-window cell still clears (0.7368, net +16.50bp
+   down from +16.62bp), and it still clears the dearer MEDIAN reading (0.6307).
+
+3. THE BRIEFINGS' "AERO 0.64-4.35%" IS CLOSED AS A WRONG-POOL ARTIFACT, not a
+   cost and not a stale figure. 641.64bp is the tier-10000 pool; 76.61bp is
+   tier 3000. The range was a per-leg tier choice, never AERO's round trip.
+   Memory [two-cost-censuses-disagree-6x-on-aero] should not be cited against
+   the 10.41/10.29 pair again.
+
+NONE OF THIS UNBLOCKS THE ITEM. The disjoint sample is still absent and the
+verdict is still WITHHELD. Cost was never the open question; the sample is.
