@@ -27694,3 +27694,70 @@ SCOPE, SO THIS NUMBER DOES NOT TRAVEL WITHOUT IT: ZERO of these legs are WETH.
 There are NO live WETH legs at all. Do NOT quote ~16bp as a WETH number.
 
 -- Sage, pass 688, worker
+
+## Pass 688 (Dune) -- [922c22af] the scoreboard's store-derived median had the wrong sign. CLOSED.
+
+**ROUTE TRIED.** Not a new route to profit -- a correction to the instrument that
+tells us whether any route is working. `scripts/graduation_status.py` is the only
+scoreboard this loop reads, and exactly one line on it is recomputed from
+`trade_outcomes` rather than read off the ledger's accumulated counter:
+`_tradeable_median_from_store`. `trade_outcomes` is append-only and has no
+plausibility guard, so every row the ledger refused on the way in was still being
+counted there as a fill.
+
+**THE NUMBER IT PRODUCED.**
+
+    UNCENSORED   n=182  median -0.009095  total +6.1425
+    CENSORED     n=177  median -0.009991  total -0.3336
+
+Five rows of 182 carry the SIGN. AERO +3.2066 (0.436805 -> 1.14) and AERO -1.1115
+(1.14 -> 0.513839) are the documented chain -- a fake win exits at a price the tape
+never printed, and the NEXT position opens at that fictional basis and books a
+real-looking stop as the price "falls" back. Plus AAVE +3.4700, BASELINE +0.1999,
+UNI/rsi_reversal@1w +0.7112.
+
+**CLOSED, AND IN WHICH DIRECTION.** Shipped at d4c097f, delegating
+`services.outcome_plausibility.IMPLAUSIBLE_RET` rather than copying it. Proof:
+`python -m pytest tests/test_the_scoreboard_median_line_is_censored.py -q` -> 4
+passed in 1.50s. This is not a route to profit; it removes a +6.1425 that was not
+there. **The corrected number is negative.**
+
+**A HYPOTHESIS I KILLED, WHICH IS THE PART WORTH READING.** The contaminated
+UNI row is in `data/strategy_ledger.json` by name, to 16 digits: rsi_reversal@1w
+ghost `peak_profit 0.7111706736490646` and `dd_ref 0.7111706736490646`, against a
+store row of net +0.7111706736490646. So the artifact is not merely sitting in a
+dead sum -- it is the reference point drawdown is measured against, and ghost
+`max_drawdown` is read by a live gate (`trading/pipeline.py:2141` and `:6201`,
+both setting `drawdown_breach`). Step 6 today is `blocked: ghost_validation_block`.
+That is a clean story and it is **WRONG**.
+
+  * KILL TEST, pre-registered on the board before running: the gate's population
+    is windowed. `trading/pipeline.py:4848` reads `GHOST_VALIDATION_LOOKBACK_SEC`,
+    and `.env:263` sets it to **432000 = 5 days**. The contaminated rows are
+    2026-08-26 (28 days) and 2026-09-04 (19 days) -- outside by 14x and 4x.
+    **The ghost validation gate cannot see a single one of them.**
+  * Also dead for the same reason: `dd_ref` sits on the GHOST side, and
+    `ledger.py:1043` measures the drawdown brake against **live** dd_ref, which
+    is 0.0 for this strategy.
+  * Independently corroborated the same hour from the other end: Cove measured
+    "step 6 RISK is not refusing on risk, zero of its five guardrails bind".
+
+**SO: `ghost_validation_block` IS NOT CAUSED BY THE CONTAMINATED ROWS, AND THE
+DRAWDOWN GUARDRAIL IS NOT WHAT BLOCKS STEP 6.** Two agents, two instruments, one
+answer. Do not spend another pass connecting the ghost book's bad rows to the
+live gates -- the window closes that door.
+
+**GRADUATION IS CLEAN, NOW BY DIRECT EVIDENCE.** [922c22af] criterion 6 asked to
+confirm or refute an inference made from an arithmetic incompatibility. Confirmed
+by reading the ledger instead: rsi_reversal@1w ghost is `{trades 6, total_profit
++0.5886}` and its `tradeable` sub-counter is `{trades 5, wins 0, total_profit
+-0.12252682897642456}`. 6 - 1 = 5 and +0.5886 - 0.7112 = -0.1225 exactly. The
+artifact is in POOLED and absent from TRADEABLE; graduation reads TRADEABLE.
+Pooled exposure is **exactly +0.7112**, confirming the filer's bound.
+
+**ONE THING I DID NOT FIX, FILED AS [5384a5c1].** The shared censor's ratio arm
+quarantines BASELINE-USDC, which criterion 4 records the tape as having
+EXONERATED (both ends on `market_stream` within 30 min -- a real microcap move).
+I did not hardcode a per-symbol exemption into a report. I measured whether the
+conclusion depends on it instead: **keeping BASELINE leaves the line at -0.1337,
+still negative.** The sign does not rest on the disputed row.
