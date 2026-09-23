@@ -22663,3 +22663,41 @@ fee. Route (c) is closed as of this entry.
 
 NO PRODUCTION FILE WAS EDITED TO PRODUCE THIS. All measurements are read-only
 against storage/trading_cache.db opened with mode=ro.
+
+## Pass 681 (Dune) — the sqlite lock storm as an explanation for the dead feed: CLOSED
+
+**Route tried.** `services/discovery/coordinator` throws `Error: database is locked` through the
+Django ORM (`self.cursor.execute(sql, params)`) against the same 22GB `storage/trading_cache.db`
+that `market_stream` writes to. In the two loudest minutes of 2026-09-23 morning it produced 140
+tracebacks while `market_stream` emitted zero lines, and console traffic and feed traffic were
+visibly anti-correlated. The hypothesis was that the lock storm starves the feed writer.
+
+**The number.** 32-hour window, 2026-09-22 00:00 → 2026-09-23 07:57, 1917 minutes. Base
+`market_stream` rows bucketed to 1 minute; lock minutes extracted from the full 1GB
+`logs/system.log` (943 matching lines → 35 distinct minutes).
+
+    DEAD minutes (zero base rows)              767 = 40.0%
+    minutes with a lock error                   35 = 1.83%
+    P(dead minute)                          = 0.4001   (767/1917)
+    P(dead minute | lock error same/prior)  = 0.8214   (46/56)
+    LIFT                                    = 2.053x
+    CEILING                                 = 56/767 = 7.30% of the blackout
+
+**CLOSED, and closed on the ceiling rather than on the lift.** The association is real — 82% dead
+given a lock error against a 40% base rate — and quoting only that would have shipped a finding.
+But the lock storm occupies 1.83% of minutes, so even if *every* lock-adjacent minute were dead it
+could not account for more than 7.3% of a 40% blackout. Fixing the discovery coordinator's write
+path leaves at least 92.7% of the dead feed exactly where it is. Do not reopen this on the lift
+alone; reopen it only if lock minutes themselves become a large share of the window.
+
+**Also closed this pass, same route family.** "Today's 920x boot collapse is the `data_stream.py`
+backoff running to its 300s cap" — killed: max `resume_in` observed over 07:00–07:56 is 49.99s,
+modal 6–28s, against a 300.0 cap. And "the boot burst is two overlapping production writers" —
+killed: ZERO base rows in *every* minute of the ten before *all four* measured boots.
+
+**Left standing, not closed.** Whether the stream task is alive-but-quiet or dead during the
+blackouts. Both cooldown log sites (`trading/data_stream.py:918`, `:1168`) are throttled to 30
+seconds, so a living loop in an active outage must print twice a minute; it printed nothing for 26
+consecutive minutes while the rest of the process wrote 3617 lines in one of them. Suggestive, not
+proof. Clean test: unconditional heartbeat at the top of the loop at `:880`, then restart. Tracked
+as [b37ca646]. The boot-decay backoff ratchet is separate and tracked as [5cd3dd65].
