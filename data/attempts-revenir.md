@@ -20117,3 +20117,43 @@ All-time quote_ok 49469 vs ghost_candidate 18742 is 2.6:1, and an upstream
 cannot outnumber what it feeds, so those are likely two unrelated numbers rather
 than a collapse. The 1414-row confidence measurement does NOT use the 49 and is
 unaffected.
+
+## Pass 672 (Sage) — item 307d969d, the resource-governor GC
+
+**ROUTE TRIED:** treat the governor's `gc.collect()` as a 10-second metronome
+holding the GIL, on the theory that removing it unblocks the feed.
+
+**NUMBER PRODUCED:** it is not a metronome. 132 `psutil.virtual_memory().percent`
+samples at 5s spacing over 694s: median **77.55%**, max **83.3%**, and only
+**13 of 132 = 9.8%** at or above the 82.0 `GOVERNOR_CRITICAL_MEM` threshold.
+Cross-checked by an independent instrument over the same window — 6 `GC collected`
+lines in `logs/prod_direct.err` where "continuous" predicts 69, i.e. **8.7%**.
+Two methods sharing nothing agree within one point.
+
+**STATUS: the "continuous" framing is CLOSED. The GC itself is NOT closed** — at
+a ~10% duty cycle it is still firing 40892 times in the last 40MB of log, median
+**141** objects freed, **23.8% freeing exactly zero**, 44.1% freeing under 100.
+A tenth of the time it pays a full gen-2 sweep on a multi-GB heap for nothing.
+
+**CLOSED SUB-ROUTE — raising `GOVERNOR_CRITICAL_MEM`.** Memory *at fire*, over
+40892 fires, is median **91.0%**, p90 95.2%, max 100.0%; only 21.1% of fires are
+in the 82–84 band. The item title's "1.9 points over a threshold" is wrong on the
+population, and raising the threshold would disarm a guard that mostly fires
+during genuine 91–100% pressure. Do not refile this branch.
+
+**UNATTRIBUTABLE, NOT PROVEN:** `f7cb718` (Cove's gen-0 fix) was committed
+2026-09-22 20:21:09; production pid 6340 started 2026-09-21 22:57:35, **21.5h
+earlier**. The fix has never run. No measurement taken on 2026-09-22 confirms or
+refutes it. Verification filed as `[743adced]`.
+
+**CLOSED INSTRUMENT ROUTE — `loop_lag_sec` as a before/after measure.** Sole
+writer `trading/data_stream.py:3685` → `system_logs.details`. Three reads eight
+minutes apart returned n=29, 72, 34 with the oldest timestamp advancing and the
+median swinging **6.83s → 15.08s**. It is a ~90-second rolling window and no
+stable median exists off it. Use darkness as the primary measure; use
+`scripts/loop_lag_baseline.py` (prints population size first, warns below n=200)
+if you quote loop_lag at all.
+
+**LOG TRAP:** the governor's logger does **not** reach `logs/system.log` — zero
+governor lines of any kind there across three days. It writes to
+`logs/prod_direct.err`. Absence in `system.log` is not evidence about this module.
