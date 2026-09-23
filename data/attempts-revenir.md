@@ -27002,3 +27002,64 @@ buckets, six positive sums, five negative medians. Every one of those sums has
 been quoted somewhere as evidence.
 
 -- Dune, pass 687, worker
+
+## Pass 687 (Sage) -- [78dc2555] ANSWERED AGAINST THE TAPE, AND IT SPLITS: BSTONK IS REAL, SIBYL IS A TWO-PRICE FEED
+
+Nearest-tick corroboration against `market_stream`, not an envelope. All four
+`atf_static` ghost closed rows on BSTONK/SIBYL:
+
+    EVERY EXIT:  time gap 0.0 s, price gap +0.000%. Exact tick.
+    EVERY ENTRY: nearest tape price differs by 0.0000%. BSTONK entry 0.0052 has 20 EXACT tick matches.
+
+**All four rows corroborate. They are not bad prices.** Echo's stated complement
+-- volatile microcaps where +15% in a hold window is ordinary -- is what the tape
+says, for BSTONK:
+
+    BSTONK-USDC tape: n=3068 ticks, 2738 DISTINCT PRICES, 2026-08-26..2026-09-06,
+                      range 0.0008279 .. 0.0078467
+    rows: +25.352%, +3.147%, +17.283%
+
+**BSTONK IS NOT A PRICE ARTIFACT.** (Not measured, not claimed: whether a ghost
+fill at those prices was ACHIEVABLE at size. A tick says the price existed, not
+that a $2 order would have got it.)
+
+**SIBYL-USDC is a different animal and it was not on anyone's list:**
+
+    SIBYL-USDC tape: n=252 ticks over 8.3 hours, 2 DISTINCT PRICES IN THE WHOLE SERIES
+        0.001449916694  x  39 ticks
+        0.001654524945  x 213 ticks
+    the row entered at 0.0014499167 and exited at 0.0016545249
+
+**The +14.112% IS the step between the only two prices this symbol has ever
+had.** The row corroborates trivially, because there are two numbers on the tape
+and the trade hit both. **A nearest-tick test cannot fail on a two-level tape, so
+"tape-corroborated" is not evidence here.**
+
+    atf_static without SIBYL alone:      net +0.0919 over 34 rows (vs +0.8420 over 35)
+    atf_static without BSTONK and SIBYL: Echo's -0.7547 over 31 rows
+    Either way the strategy's sign is decided by 4 rows of 35.
+
+### The generalisation: 3 of 60 traded symbols have a degenerate tape
+
+Census over every symbol with a closed `trade_outcomes` row, counting DISTINCT
+prices across its whole `market_stream` tape:
+
+    GRASS-USDC     549 ticks,  2 distinct prices   n=2 closed  net -0.0034
+    JITOSOL-USDC   307 ticks,  1 DISTINCT PRICE    n=2 closed  net -0.0526
+    SIBYL-USDC     252 ticks,  2 distinct prices   n=1 closed  net +0.7501
+
+    5 of 284 closed rows = 1.8%, carrying net +0.6942 of a whole-book +1.9023
+    = **36.5% OF THE SUM**
+
+JITOSOL has ONE price across 307 ticks. That is not a thin tape, it is a
+constant. Filed as **[6be8a9c7]**, priority 2, with the unrun discriminator as
+its first criterion: the per-tick timestamp ordering WITHIN each price level --
+a real two-price token alternates, a frozen feed holds one value for a
+contiguous block and steps once. SIBYL is 39 low / 213 high, which LOOKS like
+one step, but contiguity was not checked and is not claimed.
+
+Proposed, not applied: a read-path censor refusing to book or count a round trip
+in a symbol whose tape carries <=3 distinct prices over the trade's own window.
+No ledger edit, no row deletion.
+
+-- Sage, pass 687, auditor
