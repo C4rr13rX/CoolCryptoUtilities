@@ -20964,3 +20964,50 @@ makes the choice auditable from the output, and it will catch the day a large
 mover is not stale-filtered -- but the shipped universe does not change and
 NOBODY SHOULD RE-PLAN A ROUTE ON THE 1.87x. Quote this paragraph, not the one
 above it.
+
+## Pass 675 (Bay) -- wallet USD valuation guard: NOT CLOSED, diagnosed to a file:line
+
+Route: chase the discrepancy between the two published wallet figures ($19.66 on
+the ladder, $23.18 in the standing instructions) to see whether either reaches
+the live clip sizer.
+
+Numbers produced, all chain-derived:
+  base USDC  balance_hex=0xdfbd2a dec=6 -> qty 14.662954   usd_amount 18.18649773  implied px $1.2403
+  base USDT  balance_hex=0x4c40f7 dec=6 -> qty  4.997367   usd_amount  0.0         implied px $0.00
+  14.662954 + 4.997367 = 19.660321  = the ladder's $19.66 (both at par, CORRECT)
+  18.18649773 + 4.997367 = 23.183865 = the briefing's $23.18 (USDC at 1.2403)
+  -> the two figures are ONE balance priced two ways. The wallet did not gain $3.52.
+
+Killed along the way (do not re-run these):
+  - "quantity is wrong, it is a decimals bug": KILLED. hex/decimals reproduces
+    14.662954 exactly. The quantity column is right; the PRICE is wrong.
+  - "the duplicate rows in `balances` are double-counted": KILLED.
+    reconciled_wallet_snapshot('guardian') returns 10 deduped rows
+    (ON CONFLICT(wallet,chain,token), db.py:1139). No double-count.
+  - "the valuation guard fails because the reference price is unavailable":
+    KILLED. _reference_price_usd returns USDC 0.999903605648783,
+    USDT 0.999743482383621, ETH 2776.27, AERO 0.7233. All present and correct.
+
+What it IS: _VALUATION_TOLERANCE = 0.5 in services/wallet_bootstrap.py. base USDC
+deviates 24.04% from a reference the guard fetches successfully, 0.2404 < 0.5, so
+the guard inspects the row and passes it. A 50% tolerance on a dollar stablecoin
+catches nothing short of a 2x error. The 2026-09-04 case the guard was written
+against (18.19 carried at 3.69) was 79.7% off and did clear 50% -- it catches the
+case it was built for and nothing milder.
+
+Reaches the money path: trading/pipeline.py:5501 reads usd_amount (not quantity);
+:5509 sums into stable_usd; :6298 deployable_stable; :6309/:6575
+recommended_live_usd = recommended_ratio * deployable_stable.
+
+STILL OPEN, and it is a SEPARATE defect: base USDT reported 0.0 should already
+trip the guard's `reported <= 0` branch and did not. Unmeasured. cache.py:426
+writes str(ent.get("usd_amount") or "0"), turning None into zero -- check first.
+
+HONEST SCOPE -- this is NOT a blocker and must not be sold as one.
+.env:446 LIVE_MIN_CAPITAL_USD=3.00, :447 LIVE_MICRO_MIN_CAPITAL_USD=2.00. The
+sizer sees $18.19 of base stable; both that and the true $19.66 clear the floors
+by 6-9x. No gate decision changes at the current clip. It is a wrong number on
+the money path that bites when the clip is sized as a RATIO of deployable_stable.
+
+Filed as [7e854084], priority 2, files services/wallet_reconciliation.py + db.py.
+Status: DIAGNOSED, NOT FIXED. No production code edited this pass.
