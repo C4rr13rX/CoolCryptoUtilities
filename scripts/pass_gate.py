@@ -699,6 +699,31 @@ GATE_TESTS = (
     # unstamped writer is one rename away from poisoning the graduation book
     # again. Gale, pass 1.
     "test_the_bot_stamps_the_unit_it_writes.py",
+    # THE TRADEABLE CENSUS MUST ASK THE PAIR BAN, NOT JUST THE POOLED ONE.
+    #
+    # `services/tradeable_evidence.reconstruct` is the module
+    # `services/live_gate_map.py:94` calls "THE POPULATION GRADUATION USES",
+    # and it asked `_live_tradeable(symbol)` with no strategy -- the POOLED
+    # half of the question `record()` asks. A symbol that is clean pooled but
+    # condemned for THIS executor came back tradeable, so round trips the live
+    # lane refuses outright were counted as proof real money could have been
+    # placed on them. Measured 2026-09-23: 81 of atf_static's 154 reconstructed
+    # round trips (52.6%) were on pairs it is refused, AERO-USDC and CBBTC-USDC
+    # among them -- both allowed pooled, which is why the pooled-only question
+    # missed them.
+    #
+    # The error only ever runs one way. `refusal_reason` documents that a call
+    # site omitting the id "can only ever be more permissive, never less", so
+    # every count this produced was inflated toward "this strategy has earned a
+    # licence". That is the direction that spends money.
+    #
+    # Gated because the defect was invisible to the suite for a reason that
+    # will recur: every older test STUBS `_live_tradeable` out, and a stub
+    # cannot notice which arguments reach it. The file here drives the real
+    # predicate and patches below it. It also pins the memo key -- (strategy,
+    # symbol), never the symbol alone, or whichever strategy reaches AERO-USDC
+    # first decides it for every other strategy in the file. Jet, pass 2.
+    "test_reconstruct_applies_the_pair_ban.py",
 )
 
 
