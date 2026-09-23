@@ -22973,3 +22973,34 @@ record is trades 0 / last_ts 0.0 -- it has never been tried. atf_static, which p
 demotions. The approved strategy has no evidence and the evidenced strategy cannot trade.
 Re-arming atf_static is a DECISION, not a measurement -- and the nine AERO rows above are
 the argument against taking it on the current evidence.
+
+### Pass 681 -- Bay, FINAL. Route (b) is closed on LIVE evidence, not just ghost.
+
+The standing instruction offers route (b) as "attack the COST FLOOR first -- restricting
+the tradeable universe to deep pools may beat any amount of signal work." Decomposing the
+18 settled live rows by pool depth closes it without using a single ghost number, any
+repricing, or any gate's opinion:
+
+  live GROSS, DEEP POOLS ONLY (AERO+CBBTC+CBETH+CBXRP, n=15):
+    -0.038958 -0.022720 +0.012587 -0.012592 = -0.061683   NEGATIVE
+  live GROSS, the two thin names (BSTONK+BPAD, n=2):
+    +0.255767 -0.249893 = +0.005874          a coin flip on two rows
+  live GROSS, BASECAT (n=1): -0.029111
+  live GROSS, all 18: -0.084920 ; net -0.186371 ; so fees = 0.101451
+
+The deep-pool subset is gross-negative ON ITS OWN at n=15, before any cost is charged.
+Restricting to deep pools does not rescue the book; the book is already negative there.
+No clip size, venue, fee tier or symbol list fixes a negative gross.
+
+CROSS-VERIFICATION, worth recording because it was reached independently: the -0.084920
+gross and 0.101451 fees were summed from a per-symbol group-by written without reading the
+prior finding that states "the 18 live rows are gross -0.084920 + fees 0.101452". Two
+different queries, five decimal places, same answer. Treat that decomposition as settled:
+the live book is gross-negative BEFORE a single fee, and fees are 1.19x the gross loss on
+top of it.
+
+WHAT IS LEFT: every cost-side and universe-side lever measurable today is negative before
+cost on the only evidence that counts. The gross is the problem -- not the clip, not the
+venue, not the fee tier, not the symbol list, and not the hold ceiling (killed
+independently by two agents in this same pass). This is the same wall as the standing
+note "COST IS SOLVED AND DIRECTION IS THE BLOCKER", now reached from the live book.
