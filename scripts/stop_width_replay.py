@@ -194,6 +194,16 @@ def replay(
             # row cannot be credited to a strategy the bar reads, and a row
             # whose |gross| exceeds half its notional is a repricing artifact
             # (see aero-profit-is-one-implausible-row).
+            #
+            # CENSOR PROVENANCE: the |gross| > 0.5 * notional line below is a
+            # PRIVATE COPY of the ratio arm of services.outcome_plausibility
+            # and carries no dollar arm. Measured 2026-09-22 over the 243 ghost
+            # rows in trade_outcomes, the shared rule refuses 6, all six for
+            # repricing_return, carrying gross +5.4193 -- the same six this
+            # line is aimed at. Prefer the shared rule if this is ever
+            # rewritten; it is left in place here because swapping a filter
+            # silently moves every number in the report with nothing to
+            # compare against.
             if r.get("strategy_id") in ("", "unclassified"):
                 continue
             g = tb.clamped_gross(r)["gross"]
