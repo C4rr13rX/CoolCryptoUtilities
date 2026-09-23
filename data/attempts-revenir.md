@@ -23316,3 +23316,82 @@ reported both books dead when ghost had written 2 hours earlier. Compare `ts` to
 1.99h, 1 row in 24h, 35 in 168h = 5.0/day); live n=18 newest 2026-09-05T21:00:46Z,
 **age 423.79h = 17.66 days**, which reproduces pass 681's 17.6-day silence from a
 different query and a different agent.
+
+
+## Pass 682 — Dune — [a57d2cb1] the ghost/live AERO 2.52pp gap: ANSWERED, and one hypothesis of my own REFUTED
+
+**ROUTE: does the 2.52pp ghost-vs-live AERO gap survive tape corroboration? CLOSED — it does not.**
+
+The item left (c) marks-not-fills as the last open explanation, mechanism confirmed
+but magnitude unsized, and pre-registered that a gap of only ~0.2pp would exhaust
+all three explanations. It never got there: the gap is **one row**.
+
+    ghost AERO-USDC, 46 closed rows, ranked by gross
+      rank 1  2026-08-26 10:27Z  entry 0.436805  exit 1.140000  gross +3.21962
+                                                 = 153.7% OF THE ENTIRE GHOST AERO GROSS
+      rank 2                                     gross +0.05794 = 2.8%
+
+    The row is not corroborated by any tape, three ways:
+      AERO-USDC tape: n=11,815 ticks, all-time range [0.456316, 0.731881]
+      ticks that ever reached the 1.140000 exit: 0 of 11,815
+      the AERO tape's FIRST tick is 2026-08-26 17:02:38Z — the row is 6.6 h EARLY
+      ticks within +/-15 min of the exit ts: 0
+    And it PROPAGATES: the next ghost AERO row has entry = 1.140000, gross -1.09849.
+
+    GHOST AERO as published    n=46 gross +2.09479 = +1.9757%   win 28/46 = 60.9%
+    GHOST AERO minus off-tape  n=44 gross -0.02634 = -0.0258%   win 27/44 = 61.4%
+    LIVE AERO (all strategies) n= 9 gross -0.03896 = -0.4776%   win  5/ 9 = 55.6%
+
+**Gap 2.52pp -> 0.45pp; the sign flip is gone. WHICH BOOK MOVED: the GHOST book,
+downward. The live book is untouched — 0 of 18 live rows are tape-uncorroborated.**
+0.45pp is a gap a round-trip cost can plausibly reach (p679: AERO 10.41bp at a $10
+clip); 2.52pp never was. (c) is no longer load-bearing and does not need sizing.
+
+**Scope, measured across the whole book, not just AERO:** exactly **2 of 244** ghost
+closed rows have no market_stream tick within 15 min of their exit — AERO-USDC above
+(+3.21962) and CBBTC-USDC 2026-08-26 17:51Z (+0.18604). Together **+3.40566 = 56.0%
+of the ghost book's +6.08615**. Ghost book minus them: **+2.68049, n=242, +0.4112%
+of notional, win 113/242 = 46.7% — still POSITIVE.**
+
+### ROUTE TRIED AND CLOSED NEGATIVE (a): "the two books are not the same market"
+
+My own, pre-registered before running. The live book's last row is 2026-09-05
+21:00Z and the ghost book's is 2026-09-23 10:48Z, so I proposed the gap was regime,
+not slippage. Window-matching APPEARED to confirm it (ghost AERO +1.9757% ->
++0.2058% restricted to the live rows' own dates). **It is wrong.** Window-matching
+only worked because the live window happens to exclude the 2026-08-26 bad row.
+**CLOSED — a pre-registered test that looks confirmed is not confirmed; check what
+the split actually quarantined.**
+
+### ROUTE TRIED AND CLOSED NEGATIVE (b): "the take-profit exit marks at a tape extremum"
+
+Mine, filed as [b20479cb] and **REJECTED BY ME THE SAME PASS** using the test I
+wrote into its own acceptance criteria. Ghost take-profit rows win **30 of 30 =
+100.0%** and carry +11.00226 against -4.91611 for the other 214 rows, which looked
+like fabrication. The discriminating test — exit_price / the tick NEAREST THE EXIT
+TIMESTAMP rather than against an envelope:
+
+    take-profit rows      n=28 matched  median 1.0000 mean 1.0000 p10 1.0000 p90 1.0000  >1.02: 0.0%
+    every other reason    n=214         median 1.0000 — identical
+
+**The exits are contemporaneous and tape-verbatim. No look-ahead.** The 30/30 win
+rate is TAUTOLOGICAL — a take-profit fires on a winner by definition — not a defect.
+Independently reproduces Cove's p680 "ghost exit price IS the feed tick copied
+verbatim". **CLOSED. Do not re-open the take-profit path on win-rate evidence alone.**
+
+### METHOD NOTES THAT COST ME TIME OR WOULD HAVE
+
+* **An all-time min/max ENVELOPE test is not a corroboration test and gives FALSE
+  NEGATIVES.** Mine flagged 4 rows and CLEARED AAVE-USDC +3.48300, the single
+  largest row in the book. AAVE's exit (354.990000) sits exactly ON its tape max, so
+  an envelope clears it — and it turned out to be genuinely corroborated by a real
+  tick. **Test against the tick nearest the exit TIMESTAMP.** Envelope tests both
+  miss real contamination and smear innocent rows.
+* **`trade_outcomes.ts` IS A UNIX FLOAT.** `datetime('now','-7 day')` returns 0
+  SILENTLY — my first query reported "ghost rows in last 7d: 0" when the true
+  answer is 35. Compare against a float epoch.
+* **Print the win rate next to every P/L sum.** Ghost AERO's win rate moves 60.9% ->
+  61.4% while its P/L moves 70x. The win rate is what exposed the single row.
+* `time_take_profit:<x>` carries its own profit fraction and `exit/entry == 1+x`
+  exactly (1.6099 -> 2.6099, 0.0115 -> 1.0115). The arithmetic is self-consistent —
+  do not "fix" the multiplication.
