@@ -353,6 +353,28 @@ def modelled_cost(notional: float) -> float:
         return COST_FIXED
 
 
+def _trip_cost_fraction(trip: Trip, flat: float) -> float:
+    """What THIS round trip cost, as a fraction of its own notional.
+
+    ``modelled_cost`` answers in dollars at a notional; the verdict tests
+    RETURNS, so it needs the same charge expressed against the same
+    denominator the return was divided by.
+
+    Falls back to the flat receipts-derived rate when the notional is not
+    usable. ``_load_book`` already refuses anything under ``MIN_NOTIONAL``, so
+    this branch is unreachable from the production path -- it is here because
+    a caller that hands in a hand-built ``Trip`` must not get a ZeroDivision
+    where the old code silently used the flat rate.
+    """
+    try:
+        notional = float(trip.notional)
+    except (TypeError, ValueError):
+        return flat
+    if not (notional > 0.0):             # also rejects NaN
+        return flat
+    return modelled_cost(notional) / notional
+
+
 def _total_test_p(trips: List[Trip]) -> float:
     """P(total gross clears total modelled cost) by bootstrap over the trips.
 
@@ -473,37 +495,63 @@ def _verdict(trips: List[Trip]) -> Optional[Tuple[float, str]]:
     # against one cost and the sign test against another -- two answers to
     # one question, and the ordering argument above only holds if both
     # stages are asked at the same bar.
-    cost = round_trip_cost(db_path=DB_PATH)
+    #
+    # EACH TRIP IS CHARGED AT ITS OWN CLIP, not at one flat rate. This
+    # function used to subtract a single ``round_trip_cost()`` fraction from
+    # every return, which is exactly what ``modelled_cost``'s own docstring
+    # calls out: "collapsing the two into one rate prices a $0.50 trip and a
+    # $20 trip identically and is how a book that 'clears the variable floor'
+    # still loses money." The third leg below already costed trip by trip
+    # (``modelled_cost(x.notional)``); the mean screen, the t-test and the
+    # sign test did not, so two of the three legs disagreed with the one that
+    # reaches the P/L.
+    #
+    # It is not a threshold move and it is NOT the permissive direction.
+    # Measured 2026-09-23 over the 263 trips the live book yields, median
+    # notional $2.00: the flat rate is 0.465% while the per-trip cost is
+    # 0.521% at the median, and 61.2% of trips are charged MORE than before.
+    # Only one verdict in the whole book flips, and it flips open
+    # (VIRTUAL-USDC, n=6, +0.058% mean, t -1.71 -> -1.11). The change that
+    # matters is the other way: at a $0.20 clip the FIXED charge alone is
+    # 2.02% of notional, and a symbol returning +1.0% there was reading as
+    # "clears its cost" against a 0.465% flat rate while losing on every trip.
+    flat_cost = round_trip_cost(db_path=DB_PATH)
+    costs = [_trip_cost_fraction(x, flat_cost) for x in trips]
+    cost = statistics.mean(costs)
     mean = statistics.mean(values)
-    if mean >= cost:
+    # Test the EXCESS return over what THAT round trip costs, so the null
+    # hypothesis is "this symbol pays for its own trading" rather than
+    # "this symbol is above zero".
+    excess = [value - charge for value, charge in zip(values, costs)]
+    if statistics.mean(excess) >= 0.0:
         # Clears its own costs -- not a candidate, and NEITHER test below
         # runs. This is what keeps the sign test off AERO-USDC (3 of 38
         # round trips clear cost, p=0.0000, +2.350% per trade) and off
         # CBBTC-USDC (1 of 10). A payoff carried by rare large wins is a
         # shape, not a defect; see the module docstring.
         return None
-    # Test the EXCESS return over what the round trip costs, so the null
-    # hypothesis is "this symbol pays for its own trading" rather than
-    # "this symbol is above zero".
-    excess = [value - cost for value in values]
     t = _t_statistic(excess)
     if t < MAX_T:
         return (
             t,
             f"{len(values)} closed round trips at mean return "
-            f"{mean * 100:+.3f}% vs {cost * 100:.3f}% cost "
+            f"{mean * 100:+.3f}% vs {cost * 100:.3f}% cost at their own clips "
             f"(t={t:+.2f} on excess return)",
         )
     # The mean is below cost but the dispersion swallowed the t. Ask the
     # same question without a denominator: how many round trips actually
     # cleared the cost? COMP-USDC is 1 of 16 at t=-1.44.
-    sign_p = _sign_test_p(values, cost)
+    #
+    # Asked on the excess against a zero threshold, which is the same
+    # question as ``value > cost`` was, one cost per trip instead of one for
+    # the book.
+    sign_p = _sign_test_p(excess, 0.0)
     if sign_p < SIGN_MAX_P:
-        wins = sum(1 for value in values if value > cost)
+        wins = sum(1 for value in excess if value > 0.0)
         return (
             t,
             f"{len(values)} closed round trips at mean return "
-            f"{mean * 100:+.3f}% vs {cost * 100:.3f}% cost "
+            f"{mean * 100:+.3f}% vs {cost * 100:.3f}% cost at their own clips "
             f"-- only {wins} cleared it (sign test p={sign_p:.4f}, "
             f"t={t:+.2f} did not fire)",
         )
@@ -524,7 +572,8 @@ def _verdict(trips: List[Trip]) -> Optional[Tuple[float, str]]:
         return (
             t,
             f"{len(trips)} closed round trips at mean return "
-            f"{mean * 100:+.3f}% vs {cost * 100:.3f}% cost -- total gross "
+            f"{mean * 100:+.3f}% vs {cost * 100:.3f}% cost at their own clips "
+            f"-- total gross "
             f"{gross_total:+.4f} against {cost_total:.4f} of modelled cost "
             f"(bootstrap P(pays)={total_p:.4f}; t={t:+.2f} and sign "
             f"p={sign_p:.4f} did not fire)",
