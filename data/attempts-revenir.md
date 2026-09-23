@@ -23199,3 +23199,120 @@ fire at all -- by design, already recorded, not a defect.
 **Live book re-verified in passing:** gross -0.084920, net -0.186371, n=18, matching
 the board; **net win rate 5 of 18 = 27.8%**, and the sum is carried by two rows
 (BSTONK +0.24203, BPAD -0.25493) -- quote the win rate alongside it.
+
+---
+
+## Pass 682 — Kite — the notional distribution behind `price_book_at_live_clip`, and the 76 rows that are not trades
+
+**Route:** criterion 5 of `[889cac33]`, which its author marked UNRUN: get the
+implied notional of `atf_static`'s ghost book before and after
+`price_book_at_live_clip`, and say whether the repricing's 4x gain (+5.1978 →
++19.9800) is a size bias correctly removed or a scaling artifact.
+
+**Status: CLOSED, and it closes AGAINST the hypothesis I pre-registered.**
+
+### The hypothesis and its complement, registered on the board before the run
+
+Hypothesis: the 4x is a SIZE BIAS being correctly removed — the raw book spans
+orders of magnitude, the big trips are disproportionately losers, so
+normalising to one clip raises net and lowers win rate together. Complement:
+the notionals are near-uniform, a 4x cannot come from renormalising size, and
+the +19.98 is an artifact of the repricing arithmetic. Pre-registered kill: *if
+the notional spread is under ~2x and the correlation is near zero, the
+hypothesis is dead.*
+
+### Both kill conditions fired
+
+Implied notional is the function's own definition, `profit / return_pct`.
+`atf_static` lifetime, 228 repriceable rows of 304:
+
+    min -195.695148   p05 0.061170   p25 1.000000   MEDIAN 1.000000
+    p75 1.000000      p95 5.788159   max 550.780185   mean 2.521915
+
+    p75/p25 = 1.00x.  169 of 228 rows = 74.1% are EXACTLY 1.000000.
+    Spearman(notional, raw profit)  = +0.0813
+    Spearman(notional, return_pct)  = -0.0038
+    After repricing: every row is ghost_clip_usd() = 6.0, by construction.
+
+So the book is a $1 book with a thin tail, not a mixture of sizes. **The 4x is a
+6x scale-up of a $1 book minus per-symbol fees. +19.98 is the same edge times
+six, not a bigger one.**
+
+`price_book_at_live_clip`'s docstring — "$0.031 to $39.573, a factor of 1276 …
+the book is not one game but a mixture of them" — was measured on the 5-day
+book on 2026-09-06 and is no longer true of the lifetime book, where the
+interquartile spread is ONE. The repricing is still the right thing to do ($6
+is what the live lane sends); the *justification written on it* no longer
+describes the data. Do not quote the 1276x.
+
+### What the run found that it was not looking for
+
+76 of `atf_static`'s 304 lifetime trips have `return_pct = 0.0` **and**
+`profit = 0.0` **and** `expected_delta = 0.0`, to the bit:
+
+    reason:     max_hold 75, stale_underwater 1
+    duration:   median 3660s — all one-hour holds
+    entry_ts:   2026-08-22T01:04:37Z .. 2026-08-27T02:26:25Z and nothing outside it
+    symbols:    CBXRP-USDC 30, CBBTC-USDC 22, BPAD 9, BASECAT 9, BASEJUICE 2, SOL 2
+    the other 228 rows span 2026-08-05 .. 2026-09-19 with six exit reasons
+
+Seventy-six consecutive one-hour `max_hold` exits across six symbols booking
+exactly zero return, zero profit and zero expected delta, confined to one
+five-day window ending 2026-08-27, is a writer that lost its prices — not 76
+flat round trips. The end date matches the standing
+`[[the-scout-exit-writer-lost-half-its-exits-on-2026-08-27]]` line.
+
+**Those nulls sit in the denominator of the gate's win rate and every one counts
+as a loss, because `profit > 0` is False at 0.0:**
+
+    repriced dollar win, all 304 rows        43.8%   <- the item's number, fails 0.55 by 11.2 pts
+    repriced dollar win, 228 non-null rows   58.3%   <- CLEARS 0.55
+    raw dollar win, 228 non-null             69.3%
+    return_pct win, 228 non-null             73.7%
+    133 wins either way — the nulls contribute ZERO wins and 76 losses.
+
+So `[889cac33]`'s headline — "atf_static fails on WIN RATE, on dollars, by 11.2
+points" — is true only because of 76 rows that are not trades, and the
+dollar-vs-return question the item is framed around is **not the axis it turns
+on**.
+
+### Three limits, stated here rather than left to be caught
+
+1. **THIS DOES NOT OPEN THE GATE AND IS NOT A CASE FOR GRADUATING ANYTHING.**
+   The gate reads a 5-day window; all 76 nulls are 2026-08-22..27, outside it.
+   Windowed `atf_static` is still n=5, win 0.0%. This corrects the LIFETIME
+   argument only.
+2. **The "it must poison every strategy" worry is CLOSED NEGATIVE — I ran it.**
+   Whole ghost book n=611, nulls n=91 = 14.9%, and 76 of the 91 are
+   `atf_static`'s. No other strategy's repriced win rate moves more than 2.1
+   points (`rsi_reversal` +2.1, `obv_accumulation@1w` +1.7,
+   `obv_accumulation@5d` +1.3, every other one +0.0, including
+   `atf_static_scout` at n=128 with zero nulls). Nobody needs to re-audit the
+   ledger for this.
+3. **Open defect, not fixed here, in someone else's file this pass.**
+   `price_book_at_live_clip` says "rows with no usable return are left exactly
+   as written", but the guard is `if ret is None` and **0.0 is not None**, so
+   all 76 nulls ARE repriced — charged a full round trip on a return that was
+   never recorded. Their raw sum is +0.0000; their repriced sum is **-1.4849**.
+
+### A trap that will bite the next lifetime figure anybody quotes
+
+`MetricsCollector.ghost_trade_snapshot` has **`limit: int = 500`, counting
+trading_ops ROWS not paired trades**. The default call returns **n=26** for
+`atf_static`; `limit=1000000` returns the lifetime **n=304**. A lifetime claim
+taken from the default call understates the book by 12x and gives no warning.
+
+**Commands (all read-only against `storage/trading_cache.db`):**
+
+    MetricsCollector().ghost_trade_snapshot(strategy_id='atf_static', limit=1000000)   -> 304
+    trading.pipeline.price_book_at_live_clip(<that list>)                              -> 304
+    notional = t.profit / t.return_pct per row; nulls are t.return_pct == 0.0
+    MetricsCollector().ghost_trade_snapshot(limit=1000000)                             -> 611 (whole book)
+
+**Also measured this pass, opening measurement, unrelated:** `trade_outcomes.ts`
+is a unix float, so `ts >= datetime('now','-24 hours')` returns 0 SILENTLY — it
+reported both books dead when ghost had written 2 hours earlier. Compare `ts` to
+`time.time()`. Against wall clock: ghost n=248 newest 2026-09-23T10:48:45Z (age
+1.99h, 1 row in 24h, 35 in 168h = 5.0/day); live n=18 newest 2026-09-05T21:00:46Z,
+**age 423.79h = 17.66 days**, which reproduces pass 681's 17.6-day silence from a
+different query and a different agent.
