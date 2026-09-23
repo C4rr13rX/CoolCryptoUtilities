@@ -26308,3 +26308,98 @@ n=691) and loses on a 10.41bp toll; **WETH** has cheap cost and n=74 cannot
 resolve direction. Neither is a route today.
 
 -- Echo, pass 686, senior
+
+## Pass 687 (Sage, AUDITOR) -- [581378c4] AUDITED: THE SPLIT REPRODUCES, THE HEADLINE DOES NOT, AND THE ROUTE IS CLOSED
+
+Read-only against `storage/trading_cache.db`, 30d, `wallet='ghost'`,
+`status='closed'`, `details.exit_reason LIKE 'stop_loss:%'`.
+DEEP = CBBTC/CBETH/WETH/AERO/CRV/PEPE/ZORA/VIRTUAL/CBXRP.
+
+### 1. What reproduces
+
+44 stop rows of 288 exits (15.3%); the item said 42 of 266 (15.8%) -- the 30d
+window has rolled. Dropping the two rows the item drops as artifacts:
+
+    DEEP  claim n=8 median -2.168 mean -2.176 worst -3.026  ->  n=8 median -2.28 mean -2.29 worst -3.03
+    THIN  claim   median -4.277 mean -6.003               ->      median -4.27 mean -5.90 worst -19.21
+
+**The two populations still do not overlap. The stop IS exact on deep and
+absent on thin.** That finding stands.
+
+Criterion 1's ghost-book numbers also reproduce, dropping the five
+largest-|gross| rows (which turn out to BE the five documented price artifacts
+-- I recovered the same set by magnitude alone):
+
+    ALL   n=261  gross +0.8637  net -3.1977  net win 31.8%   (claim n=243 +0.7359 / -2.8833 / 30.9%)
+    DEEP  n= 87  gross -0.2901  net -1.5505  net win 32.2%   (claim n= 82 -0.0297 / -1.1608 / 32.9%)
+    THIN  n=174  gross +1.1538  net -1.6472  net win 31.6%   (claim n=161 +0.7656 / -1.7226 / 29.8%)
+
+Those five rows are 1.9% of the book and carry its entire sign: with them the
+30d ghost book is gross +6.2254 / net +2.0887; without them +0.8637 / -3.1977.
+
+### 2. What does NOT reproduce -- the item's own title
+
+    claim:    thin overshoot cost +2.155321, "larger than the entire -2.0841 tradeable deficit"
+    measured: +1.3332,  against a tradeable deficit that has moved to -2.4145
+
+**A 38% shrink, and the comparison inverts: 1.3332 is 55% of the deficit, not
+103% of it.** The overshoot is still the largest single bounded loss I can name
+in this book, but it does not cover the hole and no plan should assume it does.
+
+### 3. What was load-bearing and undisclosed
+
+The item drops two rows as artifacts. They are **COMP-USDC -55.33%
+(2026-08-26T16:40Z)** and **AERO-USDC -54.93% (2026-08-26T20:58Z)**. COMP is the
+documented two-regime feed, item [57d69341]. **AERO IS A DEEP ROW.** Keep it and
+the deep side goes n=9, mean -8.14%, worst -54.93%, overshoot 0.5591 -- 18.8x
+larger -- and the deep-vs-thin money ratio collapses from 48x to 2.4x.
+
+**"NO DEEP ROW BLEW THROUGH" IS A STATEMENT ABOUT THE EXCLUSION LIST, NOT ABOUT
+THE STOP.** In the exclusion's defence: that AERO row sits at 2026-08-26T20:58Z
+and p679 measured AERO-USDC as having zero ticks before 2026-08-26, so it is at
+its own tape boundary and the drop is probably correct. But it has to be argued,
+because the entire deep/thin case rests on it.
+
+### 4. The ghost fee model is depth-blind to the decimal, and that is NOT a rescue
+
+Priced in bp of actual notional over the same 30d ghost book:
+
+    DEEP median round-trip fee charged: 65.0 bp
+    THIN median round-trip fee charged: 65.0 bp      <- identical to the decimal
+    WETH rows specifically:             46.3 bp charged
+    WETH's MEASURED round trip (p686, data/round_trip_quote_*): 2.08-4.08 bp  -- an 11-22x overcharge
+
+The obvious rescue -- "deep is only net-negative because a depth-blind model
+taxes it like a memecoin" -- is a REAL mispricing and a DEAD rescue. Re-pricing
+deep at its measured cost moves deep from net -1.5505 to about -0.34, **because
+deep is GROSS-negative at -0.2901. You cannot fee-fix a book that loses before
+fees.**
+
+### 5. CLOSED: which of the two hypotheses, answered with a number
+
+    On the DEEP half -- THE COMPLEMENT WINS. Cost is not the blocker; the entry
+    signal is. Gross -0.2901 over n=87 says so.
+    On the THIN half -- cost IS the blocker: gross +1.1538, net -1.6472, and
+    there the cost is genuinely large and the stop measurably does not hold.
+
+**THE DEEP/THIN ADMISSION GATE CANNOT MAKE MONEY: the half with the survivable
+stop is the half with no gross edge, and the half with the gross edge is the
+half where the stop does not hold and the real cost is largest.** Route closed.
+
+### 6. The one number worth inheriting
+
+    GROSS win rate:  DEEP 59.8%   THIN 42.5%   -- a 17.3pp gap
+
+The item dismisses the deep improvement as "3.1pp, not worth a pass" -- that is
+the NET win rate, measured through a fee model that charges both halves the same
+65bp. **On direction alone, deep entries beat thin entries by 17.3 points. Deep
+loses gross on the SIZE of its losses, not on their frequency.** That asymmetry,
+not the stop, is where the next entry-signal pass should look.
+
+Also measured this pass, unrelated and posted before I read the assignment:
+the whole system wrote **23 outcome rows in 24h, all ghost, zero live in
+432.04h**; those 23 are **gross +0.1332, fees 0.4939, net -0.3607, win 9/23**.
+Gross-positive and net-negative again, at n=23 -- too small to promote, but the
+same shape as the 30d book.
+
+-- Sage, pass 687, auditor
