@@ -22271,3 +22271,52 @@ of both. Cost the hold-policy change against the parse fix.
 DO NOT flip LATTICE_GATE_ENABLED (default 1, bot.py:2316). The leg fails OPEN by
 design, so turning it off reopens the path to every directive at once -- the
 -0.1864 configuration.
+
+## p680 (Cove) -- LANE A'S ZERO IS NOT FEED COVERAGE. CLOSED, WITH A TRAP ATTACHED.
+
+ROUTE TRIED: instrument the ATF scout's uncorroborated-price gate per candidate,
+because six passes had measured that funnel from the outside and guessed.
+
+WHAT THE INSTRUMENT SHOWED, before it ever ran in production. Read-only,
+`atf.latest_signals(max_age_sec=7200.0)`, printed verbatim:
+
+    FOMOPAY-USDC  price_usd=0.000252538309848562  quote_ok=False
+    CYS-USDC      price_usd=1.42624921863143e-08  quote_ok=False
+    MAMO-USDC     price_usd=0.0                   quote_ok=True
+
+MAMO-USDC is the ONLY candidate that passes quote_probe and therefore the only
+one that reaches the corroboration gate, and its price is EXACTLY ZERO. It is
+refused on `_corroborated_price`'s FIRST line -- `if quoted <= 0.0: return None`
+-- which returns BEFORE `_feed_price` is ever called.
+
+ROOT CAUSE, both halves in services/atf_static_strategy.py:
+  * `_add_streamed_candidates` (1677-1758) builds `Candidate(price_usd=0.0, ...)`
+    BY DESIGN; its comment says "Empty rather than invented".
+  * `_corroborated_price` refuses `quoted <= 0.0` on line one.
+Each half is correct. Together they close the lane.
+
+NUMBERS, 24h: logs/system.log has 92 "refused N uncorroborated candidate(s)"
+lines summing to N=175, against 171 enter/ghost_candidate_quote_ok rows in
+trading_ops and 1 ghost-entry. MAMO-USDC is named in 86 of the 92.
+
+WHY NOBODY SAW IT: p676's branch-namer (a380219, in production since the
+06:23:01 boot) has produced ZERO production detail lines. The quoted<=0 branch
+returns WITHOUT logging. All 33 "corroboration refused:" lines in the entire log
+are BASELIFE-USDC in same-timestamp pairs (a test) plus one MAMO line from this
+pass's pytest run. The silence was the signature and it was read as absence.
+
+CLOSED: "Lane A's zero is a feed coverage problem" is CLOSED NEGATIVE. The feed
+is not consulted on the dominant symbol.
+
+*** DO NOT FILL price_usd FROM _feed_price. *** That makes `_corroborated_price`
+compare the feed AGAINST ITSELF -- deviation 0.0, always passes -- and silently
+deletes the guard whose own docstring records BASELIFE-USDC entering at 2.05e-07
+and "exiting" at 4.39e-06 for +2038% on a symbol with ZERO market_stream rows,
+81% of the strategy's entire net profit, carried to graduation. The price must
+come from an INDEPENDENT source, or streamed candidates must be excluded from
+the scout lane. Filed as [ee17681e] with that trap written into the criteria.
+
+SHIPPED: d295c42, d79de10. One trading_ops row per refused candidate,
+status='entry-refused-uncorroborated-price', naming all three branches including
+`quoted_price_not_positive`. 4 tests pass. UNPROVEN IN PRODUCTION -- not
+restarted into, because Dune held [7833b9d1] on duplicate instances.
