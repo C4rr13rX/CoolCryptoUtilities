@@ -28185,3 +28185,235 @@ THREE THINGS THAT MUST BE CHECKED BEFORE ANYONE ACTS ON THIS:
     *** Moving it to $19.66 is worth 51.90bp from $0.75, or 11.43bp from $3.00.
     *** THE NUMBER IS MEASURED; THE CAUSE IS INFERRED. Resolve _live_clip_usd()
     *** to a running number first, and REJECT [675b8c1b] if it does not match.
+
+## Pass 689 (Dune) -- ROUTE: the standing edge ban is judging FEE RECEIPTS as strategy evidence. CLOSED (fixed).
+
+Item [9d4d29c7], cross-verification of Kite's p682 claim. I did not author it.
+
+**Kite's diagnosis is HALF WRONG and the surviving half is worse than stated.**
+The three rows tie by outcome_id and the t reproduces exactly:
+
+    2:DRB-USDC:8e1bae1c08d64dd1b56cad98f2e55674:exit:1  entry=0.0001663 exit=0.0001663 net=-0.025334
+    2:DRB-USDC:7b8f7705021e4950992d383562a62764:exit:1  entry=0.0001663 exit=0.0001663 net=-0.025339
+    2:DRB-USDC:878e2d6474d64d1d83a6ef35c65d9ec4:exit:1  entry=0.0001663 exit=0.0001663 net=-0.025344
+    n=3  mean=-0.4613%  stdev=1.734e-07  cost=0.4654%  t=-92,555
+
+  * "return_pct exactly 0.0" -- FALSE. It is ABSENT. `trading/bot.py` writes the
+    string `return_pct` ZERO times; the key exists in 7 of 285 closed rows and all
+    7 come from `details.source == 'c0d3rv2_atf_static'`. Any reader doing
+    `.get('return_pct', 0.0)` manufactures a zero on 278 rows. THE DEFECT IS IN
+    THE READER, NOT IN A WRITER EMITTING ZEROS. There is no zero-emitting writer
+    to find.
+  * "zero-variance sample" -- FALSE. stdev is 1.734e-07, finite and positive, so
+    `_t_statistic`'s `stdev <= 0` branch never runs. No guard hole there.
+  * The real cause: ENTRY PRICE == EXIT PRICE to the last digit. The price did not
+    move, so net_profit IS the fee. DRB-USDC has 2097 distinct prices over 2388
+    ticks all-time but ONE distinct price across the six ticks spanning these
+    exits -- a feed stall, the p682 frozen-feed finding arriving inside a GATE.
+
+**KILL TEST for "the degenerate bans are cosmetic", run in full and the complement
+LOST ON ITS OWN TERMS.** Criterion: "if the bans with n>=10 already cover the
+symbols we care about, the degenerate ones are cosmetic."
+
+    THERE ARE ZERO BANS WITH n>=10. The largest banned sample is n=9.
+    rsi_reversal@5d t=-92,555 is the ONLY |t|>1000; every other ban is -1.74..-19.94.
+
+**FIX SHIPPED: `_load_book` discards round trips where entry_price == exit_price.**
+Derived, not picked: no n-floor and no |t| ceiling was added, because the defect is
+not sample SIZE, it is that a flat round trip is not a draw of the random variable
+the t-test assumes. MAX_T, MIN_SAMPLES, NEVER_BAN and the ordering are untouched.
+A NULL exit price KEEPS the row (fails open, like the rest of the module).
+
+    flat rows in the gate window: 14 of 192 attributed (7.3%), concentrated --
+    rsi_reversal@5d 3/3, ema_cross@3d 1/1, unclassified 4/5, obv_accumulation@1d 2/3
+
+    bans BEFORE 16 -> AFTER 12.  NEWLY BANNED: none.
+    LIFTED TO UNJUDGED (not cleared, not endorsed):
+        rsi_reversal@5d, unclassified, obv_accumulation@1d, donchian_breakout@12h
+    AND ONE BAN GOT STRONGER, which is the honest direction:
+        obv_accumulation@1w  n=9 t=-7.73  ->  n=7 t=-22.12
+        obv_accumulation@5d  n=8 t=-2.55  ->  n=7 t=-2.13
+    The flat rows were ADDING spurious dispersion that masked how bad @1w is.
+
+**THIS IS NOT A ROUTE TO PROFIT AND MUST NOT BE QUOTED AS ONE.** rsi_reversal@5d's
+real evidence is ZERO non-flat round trips. Lifting its ban buys one thing only:
+the chance to LEARN whether it has an edge, on trips where the price moved. It
+still faces every downstream gate and the 20-trade graduation bar.
+
+**SIDE FINDING, unrelated and pre-existing:** `tests/test_a_strategy_must_pay_its_own_round_trip.py:286`
+set `module.DB_PATH` by bare assignment to a tmp_path that is deleted after the
+test, so every LATER test in the session found the gate pointed at a missing
+database, `_cost()` threw, fell back to the 0.0065 constant, and
+`test_both_edge_gates_charge_the_same_cost` failed with 0.0065 != 0.004654 in a
+file it had nothing to do with. Now monkeypatched. Proven pre-existing: the bare
+assignment is in HEAD.
+
+**A MEASUREMENT THAT IS A TRAP, posted so nobody else walks into it:** all 18,880
+`entry-predropped-edge-ban` rows are `wallet='ghost'`. That is NOT evidence the ban
+is ghost-only -- `trading/scheduler.py:654` passes the literal `wallet="ghost"`, and
+`_drop_banned_enters` has no arm branch at all. The column is constant by
+construction. I formed that hypothesis, pre-registered the test, and it killed it.
+
+--------------------------------------------------------------------------
+PASS 689 (Sage, QA) -- ROUTE (b) "RESTRICT TO DEEP POOLS": THE GHOST FEE
+MODEL IS TOKEN-BLIND AND CLIP-BLIND, AND THE TWO ERRORS HAVE OPPOSITE SIGNS.
+ROUTE (b) IS **NOT** CLOSED -- IT IS MEASURABLE AND IT ARGUES **FOR** ITSELF
+ONCE THE FEE IS HONEST. Item [4ff33bac].
+--------------------------------------------------------------------------
+
+READ-ONLY THROUGHOUT. I wrote nothing to storage/trading_cache.db and I
+changed no production code. See "WHY I DID NOT SHIP THE FIX" at the end.
+
+THE ITEM'S HYPOTHESIS IS CONFIRMED; ITS IMPLIED DIAGNOSIS IS OVERTURNED.
+
+  CONFIRMED -- the per-symbol table, re-run before changing anything, on the
+  FULL closed ghost set (no tick-corroboration filter), n>=5:
+
+    fee_bp = 10000 * sum(fee_cost) / sum(|entry_price*quantity|)
+    SR 44.53 | DRB 46.13 | VVV 46.20 | OP 46.39 | WETH-USDC 47.16 (n=6)
+    ETH 47.97 | VIRTUAL 48.41 | UNI 49.06 | AERO 51.62 (n=50) | CBXRP 65.00
+    CBBTC 66.31 | BSTONK 67.11 | BASECAT 67.54 | CBETH 76.98 | CBADA 85.32
+    COMP 86.45        ALL n=266, 54.47bp
+
+  WETH-USDC 47.16bp, 5th of 16, MID-PACK. p682's 47.3bp CONFIRMED on a
+  larger row set. The complement -- "it IS depth-aware and p682 merely
+  lacked deep pairs" -- is DEAD: WETH is the deepest pair on Base, it is in
+  the book, and it prices between VVV and ETH.
+
+  IT IS NOT A SPREAD, IT IS FOUR LITERALS. Per-ROW bp over the same 266
+  rows: 65.00bp x108, 46.13bp x41, 122.59bp x18, 46.54bp x13, 38.62bp x6.
+  Invert each against the unpriced formula 0.004047/N + 0.003187:
+
+    46.13bp -> N=$2.84 | 65.00bp -> N=$1.22 | 46.54bp -> N=$2.76
+    38.62bp -> N=$6.00     <-- LIVE_MAX_BOOTSTRAP_USD to the cent
+
+  THE ONLY INPUT THAT MOVES THE GHOST FEE IS THE CLIP. The token never
+  enters.
+
+THE LINE (criterion 2).
+
+    trading/bot.py:10873   ghost fee_cost = max(notional*fees,0) + gas
+    trading/bot.py:6864    fees = self._roundtrip_fee_rate(notional_hint=None)
+                           (bound ONCE, inside _interpret_predictions, def :6713)
+    trading/bot.py:2229    def _roundtrip_fee_rate(self, *, notional_hint=None)
+                           <-- NO symbol parameter
+    trading/bot.py:2259    return roundtrip_cost_rate(notional)
+                           <-- positional, ONE argument
+    services/roundtrip_cost.py:435
+                           def roundtrip_cost_rate(notional_usd=None, symbol=None)
+                           <-- TAKES A SYMBOL
+
+  IT IS NOT A FLAT CONSTANT BY DESIGN AND IT IS NOT A DEGRADED DEFAULT. A
+  depth-aware quoter EXISTS, IS ENABLED, AND IS ALREADY IMPORTED BY THE
+  FUNCTION THAT WRITES THE GHOST FEE (the import is at bot.py:2257). The
+  symbol argument is dropped at the bridge. Criterion 3's escape hatch --
+  "if a real quoter cannot be called on the ghost path, mark the ghost book
+  structurally unable to answer cost questions" -- DOES NOT APPLY.
+
+    data/round_trip_quote_census_20260917T190210Z.json, enabled=True,
+    9 symbols: AAVE AERO CBBTC CBETH COMP DRB VIRTUAL VVV WETH
+
+    symbol          bp@$0.75   bp@$3.00   source@$3
+    WETH-USDC          55.97      15.51   census
+    AERO-USDC          78.25      25.10   census
+    VIRTUAL-USDC       85.65     109.58   census   <- RISES with size
+    COMP-USDC        1453.87    4587.42   census
+    (no symbol)        85.83      45.36   unpriced_default
+
+ERROR 1 -- TOKEN-BLIND, AND WRONG IN OPPOSITE DIRECTIONS. Booked bp vs real
+quoted bp, same 266 closed ghost rows:
+
+    symbol        n   bp_book   bp_real
+    WETH-USDC     6      47.2      11.0    4.3x OVER-charged
+    AERO-USDC    50      51.6      26.5    1.9x OVER-charged
+    CBBTC-USDC    8      66.3      35.1    1.9x OVER-charged
+    BASECAT      36      67.5      52.6
+    DRB-USDC      5      46.1    3190.6     69x UNDER-charged
+    COMP-USDC    16      86.5    3545.9     41x UNDER-charged
+
+  THE GHOST FEE MODEL IS NOT MERELY FLAT. IT OVER-CHARGES THE DEEPEST PAIRS
+  2-4x AND UNDER-CHARGES THE THINNEST 41-69x. Deep pools are made to look
+  expensive and thin pools cheap -- the exact direction that HIDES route (b).
+  "Actively inverted", not "un-testable".
+
+  I TRIED TO KILL THE COMP NUMBER AND IT SURVIVED. 4587bp at $3 is not an
+  interpolation running off the end of its grid: the census quotes COMP on a
+  MEASURED grid with both endpoints probed directly against uniswap,
+  [$2.0 -> 33.015%] and [$4.0 -> 58.463%], and $3 lies INSIDE it. COMP's
+  only pool is the 1% tier (100/500/3000 all report "no pool"). A $2 COMP
+  round trip really does cost 33%. My own doubt was wrong; the number stands.
+
+ERROR 2 -- CLIP-BLIND ON GAS, FOUND BY CHASING A DISAGREEMENT I COULD NOT
+EXPLAIN. On the deep three the re-priced net P/L RISES (+1.107 -> +1.581)
+while the net WIN RATE FALLS (40.6% -> 32.8%). Cause: the real quoter's fee
+ROSE on 16 of 64 rows and every one is a sub-dollar clip. 10 marginal
+winners flip to losers.
+
+    AERO-USDC  N=$0.131  gross +0.00111  fee_book 0.00085  fee_real 0.00424
+    AERO-USDC  N=$0.197  gross +0.00171  fee_book 0.00128  fee_real 0.00424
+    AERO-USDC  N=$0.451  gross +0.00441  fee_book 0.00293  fee_real 0.00450  x6
+    AERO-USDC  N=$0.461  gross +0.00310  fee_book 0.00299  fee_real 0.00451  x3
+
+  A $0.131 AERO round trip pays $0.004047 of FIXED gas = 324bp. The book
+  charged it 65bp. AND NOTE fee_book = $0.00085 on $0.131 IS EXACTLY
+  notional*0.0065 WITH ZERO GAS: bot.py:10873's
+  _roundtrip_gas_usd(chain)*gas_share term came out ~0 on these rows.
+  RELEVANT TO THE p688/p689 DOUBLE-GAS QUESTION AND IT POINTS THE OTHER WAY
+  ON THIS COHORT -- here the gas term is MISSING, not doubled. Does not
+  generalise; must be reconciled by whoever settles that.
+
+  ERRORS 1 AND 2 HAVE OPPOSITE SIGNS AND PARTIALLY CANCEL IN AGGREGATE.
+  That is why 46-87bp looked plausible for 688 passes.
+
+CRITERION 4 -- n, gross, fees, net, gross win AND net win, side by side.
+
+    ALL n=266            booked  gross +6.22543  fees  4.13675  net  +2.08868  gw 48.5%  nw 32.3%
+    ALL n=266            census  gross +6.22543  fees 18.92903  net -12.70360  gw 48.5%  nw 26.7%
+    ex DRB,COMP n=245    booked  gross +7.37817  fees  3.85864  net  +3.51953  gw 50.6%  nw 33.5%
+    ex DRB,COMP n=245    census  gross +7.37817  fees  3.95576  net  +3.42241  gw 50.6%  nw 29.0%
+    WETH+AERO+CBBTC n=64 booked  gross +2.01088  fees  0.90378  net  +1.10710  gw 60.9%  nw 40.6%
+    WETH+AERO+CBBTC n=64 census  gross +2.01088  fees  0.42964  net  +1.58124  gw 60.9%  nw 32.8%
+
+  DO NOT QUOTE "-12.70" AS THE RE-PRICED BOOK. 21 of 266 rows (DRB+COMP)
+  carry 14.70 of the 14.79 fee increase = 99.3%. Strip them and the whole
+  re-pricing moves 245 rows by 0.097. THE FLAT MODEL IS APPROXIMATELY RIGHT
+  ON THE MIDDLE OF THE BOOK AND CATASTROPHICALLY WRONG ON BOTH TAILS.
+
+  ROWS ALREADY WRITTEN KEEP THEIR OLD fee_cost. Nothing above changes the
+  stored book; every "census" line is a read-time re-pricing.
+
+  COVERAGE LIMIT, and it bounds everything here: 108 of 266 rows have census
+  coverage, 158 fall through to unpriced_default. WETH's own coverage is n=6.
+
+VERDICT ON ROUTE (b) -- NOT CLOSED, AND THE SIGN IS POSITIVE. On
+honestly-quoted deep pairs the ghost book is net +1.581 against +1.107 as
+booked, with the fee bill CUT 52% (0.904 -> 0.430). This is the first number
+in this file that argues route (b) FOR rather than declaring it
+unmeasurable. IT IS NOT A LIVE EDGE AND I AM NOT CLAIMING ONE: 32.8% net win
+on n=64, 10 of those rows sub-dollar clips that cannot clear gas at any
+signal, and a 6-row WETH sample. WHAT IT IS: a measured reason to widen the
+census and re-run, instead of writing route (b) off.
+
+WHY I DID NOT SHIP THE FIX, AND IT IS A REASON NOT AN EXCUSE. The fix is two
+lines -- give bot.py:2229 _roundtrip_fee_rate a symbol parameter, pass it at
+bot.py:6864. But bot.py:10873 is the line that CONSUMES fees, and it is the
+same line Dune and Cove were mid-way through settling for double-counted gas
+this pass. A symbol fix and a gas fix landing together on one line makes both
+unmeasurable, which is the "ONE CHANGE PER PASS" failure exactly. The gas
+half goes first. Filed as its own item with the files declared.
+
+CLOSED BY THIS PASS:
+  * "the ghost path has no real quoter, so the ghost book cannot answer cost
+    questions" -- CLOSED, FALSE. The quoter exists, is enabled, is imported
+    at bot.py:2257, and is called with the symbol dropped.
+  * "the ghost fee is a flat percentage" -- CLOSED, TOO WEAK. It is four
+    clip-derived literals, and its ERROR is signed by depth.
+  * "restrict to deep pools cannot be validated on ghost evidence" (the
+    item's own consequence clause) -- CLOSED, FALSE once the symbol is
+    passed. 41% of rows price from a real quote today.
+
+STILL OPEN:
+  * The census covers 9 symbols. Widening it is the prerequisite for any
+    route (b) decision, and is a bigger job than this item.
+  * Whether the sub-dollar ghost rows carrying ~zero gas are a bug in
+    _roundtrip_gas_usd or in gas_share. Not measured.
