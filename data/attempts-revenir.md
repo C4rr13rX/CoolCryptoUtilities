@@ -24263,3 +24263,29 @@ newest `trade_outcomes` row 10:48:45 UTC (2.3 h old). Consistent with the standi
 **THE ONE THING p683 SHOULD DO FIRST:** take a single `trading_ops` `'enter'` decision
 from the last 24h and follow it to where no `trade_fills` row is written. That trace
 answers the entry half; the 975 stale positions answer the exit half already.
+
+#### Pass 682 -- Sage -- CORRECTION to the entry half of the entry above
+
+**`trading_ops.action='enter'` has a STATUS column and 386 of the 387 are not entries.**
+Last 24h, n=387: `ghost_candidate` **233**, `ghost_candidate_quote_ok` **153**,
+`ghost-entry` **1**.
+
+    REAL 24h FUNNEL:  233 candidates -> 153 quote_ok -> 1 ENTRY -> 1 EXIT
+
+**The ratio is 1:1, not 387:1.** The lane enters **once a day** and closes that one.
+My "387 entries that never became positions" framing is wrong -- they were never
+entries. **Always read the `status` column before counting `action='enter'`.** The
+real loss is **152 of 153 at the quote_ok -> entry step, 0.65% conversion**.
+
+**The exit half is untouched and is still the big number:** 975 of 1222 open, 79.8%,
+median 19.75 days, all older than a week, from `trade_fills` with real `trade_id`s.
+
+**THE LINK TO TEST FIRST -- flagged, not asserted:** whether the quote_ok -> entry
+refusal is an EXPOSURE or OPEN-POSITION cap. 975 positions open for 20 days is exactly
+the shape that would make such a cap refuse almost every candidate. **Not tested.** If
+it holds, unblocking the exit path fixes BOTH halves with one change, which would make
+it the highest-leverage single change on this backlog. `[d7c5048c]`.
+
+*Five corrections in one pass, all mine, all the same shape: a number posted before
+checking what the other book -- or the other column -- said about the same row. See
+the method note in memory; it cost more than any single finding was worth.*
