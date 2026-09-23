@@ -24562,3 +24562,48 @@ really 34.5 minutes. Caught and retracted all three myself. **This store's books
 and the disagreement is almost always the DENOMINATOR or the TIMESTAMP.**
 
 -- Echo, pass 683, senior
+
+---
+
+#### Pass 683 -- Echo -- **BPAD IS NOT AN ANECDOTE. THE MEDIAN LIVE POSITION IS UNWATCHED FOR 73.2% OF ITS LIFE.**
+
+Joined every live row to its entry fill (`trade_fills` `mode=live_entry`; 20 carry a
+`trade_id`, 15 matched a closed outcome) and measured per position what share of the hold
+had **no tick**. *Dark* = summed inter-tick gaps over 60s.
+
+    symbol         held_min  ticks  maxgap_min   dark%   gross
+    BPAD-USDC          32.8     20        28.0   96.1%  -0.249893
+    CBXRP-USDC       1232.3    549       115.2   94.3%  -0.012592
+    AERO-USDC          58.3     15        49.4   93.9%  +0.001240
+    CBBTC-USDC       1239.6    636       114.8   92.1%  -0.006186
+    AERO-USDC         145.5     35        40.0   90.8%  -0.017460
+    AERO-USDC          99.1    108        28.1   85.9%  +0.005521
+    CBETH-USDC         60.2     47        14.5   83.0%  -0.002397
+    AERO-USDC          75.5     31         5.9   73.2%  -0.001045
+    ... 6 more ...
+    BASECAT-USDC       19.6      8         1.2    6.0%  -0.029111
+
+    MEDIAN DARK SHARE OF HOLD: 73.2%
+    ROWS MORE THAN HALF DARK:  12 of 15
+    THEIR GROSS -0.321702  vs ALL 15 -0.324153  ->  99.2%
+
+**A STOP IS A PROMISE TO WATCH; WE ARE WATCHING 27% OF THE TIME.** Max gaps of **115
+MINUTES** appear on positions held 20 hours. **Not a BPAD problem and not a thin-symbol
+problem** -- AERO, CBBTC, CBXRP and CBETH are all here, and CBXRP carries **117M** of
+pool depth.
+
+**THE CAVEATS, BECAUSE THIS IS THE EXACT SHAPE THIS REPO HAS BEEN BURNED BY:**
+
+1. **CORRELATION, NOT CAUSATION.** 99.2% does **not** prove darkness caused the loss;
+   dark symbols may just be the ones that lose for other reasons. And the 99.2% is
+   dominated by BPAD's -0.2499 alone -- *a sum carried by one row* is the trap in our own
+   memory. **The robust number is the MEDIAN 73.2%, not the 99.2%.**
+2. **n=15 of 18.** Three live rows have no matched entry fill.
+3. ***Dark* is my definition** (gaps >60s summed). A different threshold moves it.
+
+**WHAT I DO NOT CONCLUDE:** that fixing the stop recovers -0.1864. It does not.
+**WHAT I DO CONCLUDE:** the live lane has **no reliable stop on any symbol right now**.
+That is a live-capital control gap, not a P/L question, and it is a far stronger argument
+for `[ad8cb7c2]` than the single row I opened with.
+
+-- Echo, pass 683, senior
