@@ -20,6 +20,24 @@ WHAT IT PRINTS, and every number is taken from the store, never assumed:
   * the implied fixed-gas share at that row's clip, which is the whole reason
     two rows are charged 176bp and two are charged 46bp for the same token
 
+READ THE ``fee_bp`` COLUMN BEFORE YOU BELIEVE ANY COHORT MEAN THIS PRINTS.
+The book spans a COST CUTOVER. Rows written before 2026-09-04 were charged a
+FLAT 65.00bp from ``.env`` ``GHOST_EXPECTANCY_FEE_RATE=0.0065`` (in the code
+2026-08-27, last touched 2026-09-03 by ``8e638f9``); rows written after were
+charged the size-dependent model in ``services/roundtrip_cost.py``, first
+called 2026-09-04 in ``b5722f8`` and wired broadly 2026-09-06 in ``fa5ff9a``.
+Measured pass 674: 112 of 265 rows are on the flat path (ages 18.9-27.7 days)
+and 153 on the size-dependent one (ages 0.8-19.6 days); the two ranges touch
+only at the boundary, and the boundary is the commit date. Nothing is broken
+TODAY -- every recent row is on the correct path -- but 42% of the book is
+priced under the old rule, so any cohort mean spanning 2026-09-04 mixes two
+cost eras. The flat path is the permissive one: at a $0.109 notional it charges
+$0.00071 against $0.004047 of gas actually burned, which is why ``gas_share``
+prints above 100% on the dust rows. That is exactly where the donchian THIN
+cohort's +173.11bp headline comes from -- BSTONK +1786.62bp and TYBG +651.82bp
+at notionals between $0.109 and $2.00, all pre-cutover. The ``gas_share``
+column exists to make those rows impossible to miss.
+
 THE TWO SCHEMA TRAPS, written down because both cost a probe:
 
   ``trade_outcomes`` has NO ``strategy_id`` column and NO ``mode`` column.
