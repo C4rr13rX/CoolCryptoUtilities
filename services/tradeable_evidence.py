@@ -215,12 +215,38 @@ def reconstruct(db_path: Optional[Path | str] = None) -> Dict[str, Evidence]:
       3. an outcome on a symbol the live lane cannot trade is not evidence that
          real money could have been placed.
 
+    Filter 3 is asked at ``(strategy, symbol)`` granularity, which is the
+    granularity ``record()`` asks it at (trading/strategies/ledger.py:798) and
+    the granularity the entry site asks it at. This module used to ask
+    ``_live_tradeable(symbol)`` with no strategy, and that is not a smaller
+    version of the same question -- it is the POOLED half of it. A pooled-clean
+    symbol that this executor's own record condemns came back tradeable, so
+    round trips the live lane refuses outright were counted as proof that real
+    money could have been placed on them.
+
+    The two halves disagree, and they disagree on the pair the live lane is
+    aimed at most. Driving the real gate 2026-09-23: ``refusing atf_static on
+    AERO-USDC`` (17 round trips, mean return -0.470% against 0.772% cost,
+    t=-4.05) and ``refusing atf_static on CBBTC-USDC`` (t=-2.90) are both PAIR
+    refusals -- neither symbol is refused pooled. ``refusal_reason``'s own
+    docstring records the direction: a call site that omits the id "can only
+    ever be more permissive, never less", so every count this module produced
+    was inflated in the direction of "this strategy has earned a licence".
+
     The relative half of the implausibility test is NOT applied. It scales
     against the strategy's own recent history at the moment of the write, which
     is not recoverable after the fact, and guessing at it would let this module
     report a population the gate never saw. Omitting it can only ADMIT rows the
     ledger might have refused, so every count here is an upper bound -- which is
     the safe direction for a number used to argue a strategy lacks an edge.
+
+    STILL NOT THE LEDGER'S COUNTER, AND NOT A REPLACEMENT FOR IT. Everything
+    here is replayed against the bans standing TODAY, while the ledger's stored
+    ``tradeable`` sub-book was accumulated against the ban standing when each
+    trade closed. ``_live_tradeable``'s "NO LOOK-AHEAD" note says why that
+    difference is deliberate: recomputing the population from today's bans is
+    selection on the outcome, so this reconstruction reports and must never be
+    written back over the counter a licence is granted from.
     """
     from trading.strategies.ledger import _exceeds_evidence_horizon, _live_tradeable
 
@@ -229,7 +255,12 @@ def reconstruct(db_path: Optional[Path | str] = None) -> Dict[str, Evidence]:
     # `_live_tradeable` reaches into trading.pipeline per call; the symbol set is
     # tiny and the history is not, so memoise rather than re-ask hundreds of
     # times for the same ticker.
-    tradeable_cache: Dict[str, bool] = {}
+    #
+    # Keyed on (strategy, symbol), not on the symbol alone. With the strategy
+    # now part of the question the answer is no longer a property of the
+    # ticker, and a symbol-keyed memo would let whichever strategy reached
+    # AERO-USDC first decide it for every other strategy in the file.
+    tradeable_cache: Dict[Tuple[str, str], bool] = {}
 
     for row in iter_ghost_exits(db_path):
         sid = str(row["strategy_id"])
@@ -254,14 +285,15 @@ def reconstruct(db_path: Optional[Path | str] = None) -> Dict[str, Evidence]:
             continue
 
         symbol = str(row["symbol"] or "")
-        if symbol not in tradeable_cache:
+        key = (sid, symbol)
+        if key not in tradeable_cache:
             try:
-                tradeable_cache[symbol] = bool(_live_tradeable(symbol))
+                tradeable_cache[key] = bool(_live_tradeable(symbol, sid))
             except Exception:  # noqa: BLE001
                 # Same direction the ledger takes: a symbol whose tradeability
                 # cannot be established is not proof that it was tradeable.
-                tradeable_cache[symbol] = False
-        if not tradeable_cache[symbol]:
+                tradeable_cache[key] = False
+        if not tradeable_cache[key]:
             ev.dropped_untradeable += 1
             continue
 

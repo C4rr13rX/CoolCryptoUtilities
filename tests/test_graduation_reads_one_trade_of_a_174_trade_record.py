@@ -116,7 +116,16 @@ class TradeableEvidenceIsReconstructedFromHistory(unittest.TestCase):
         rows += [_exit("s1", "AERO-USDC", 0.01) for _ in range(3)]
         _make_db(self.db, rows)
 
-        def tradeable(symbol):
+        def tradeable(symbol, strategy_id=None):
+            # Takes the strategy because the real predicate does, and because
+            # `reconstruct` now passes it: the gate refuses at (strategy,
+            # symbol) granularity as well as pooled. A one-argument double
+            # here does not merely miss that -- it raises TypeError inside
+            # reconstruct's own `except Exception` and every row silently
+            # books as untradeable, so the test reads 0 tradeable trades and
+            # blames the production change. This double is deliberately
+            # indifferent to the strategy; BSTONK-USDC is refused POOLED,
+            # which is what this test is about.
             return symbol != "BSTONK-USDC"
 
         with mock.patch.object(

@@ -383,9 +383,20 @@ def _live_tradeable(symbol: str, strategy_id: Optional[str] = None) -> bool:
     is always a pair, and the two answers disagree on the symbol the live lane
     is aimed at most: AERO-USDC is allowed pooled and refused for atf_static.
     Passing it asks the same question the entry site asks. Omitting it can only
-    be MORE permissive (``refusal_reason`` documents that), so the older
-    single-argument callers in services/tradeable_evidence.py and
-    scripts/tradeable_symbol_edge.py keep working and keep the pooled ban.
+    be MORE permissive (``refusal_reason`` documents that), so a
+    single-argument caller keeps working and keeps the pooled ban.
+
+    THAT TOLERANCE COST MORE THAN IT SAVED, and the note that used to stand
+    here named the two callers relying on it as though that were harmless.
+    ``services/tradeable_evidence.reconstruct`` was one of them, and it is the
+    module ``services/live_gate_map.py:94`` calls "THE POPULATION GRADUATION
+    USES" -- so the pair ban was dropped from the one census whose entire job
+    is to say which round trips the live lane could have placed. Measured
+    2026-09-23 on the real database, adding the id here removed 81 of
+    ``atf_static``'s 154 reconstructed round trips: 52.6% of the only
+    live-capable strategy's evidence was earned on pairs it is refused. It now
+    passes the id; ``scripts/tradeable_symbol_edge.py`` still does not, and
+    reports a pooled column on purpose.
 
     NO LOOK-AHEAD. This is consulted at ``record()`` time, so a trade is judged
     against the ban that was standing when it closed, computed from trades that
