@@ -20727,3 +20727,45 @@ conclusion.
    conversion over the 138 ghost entries since 09-06) = **0.0868**, which does
    NOT reject at 5% -- **so the live silence is not yet evidence that the live
    gate broke**, and nobody should read the current zero as such.
+
+### Pass 674 -- Dune -- THE 96.6% REFUSAL IS UNINSTRUMENTED. 228 deaths/day carry no status row.
+
+Follow-up to the decomposition above; sharpens backlog item **[1e78682b]** onto
+its instrumentation branch. `trading_ops` by status, **last 24 hours**:
+
+    entry-arbitration              3237
+    entry-predropped-edge-ban      2893
+    entry-refused-lattice          2632
+    entry-refused-no-candidates     675
+    ghost_candidate                 299
+    ghost_candidate_quote_ok        265
+    published                       132
+    entry-refused-duplicate          21
+    entry-refused-symbol-motion       7
+    ghost-exit                        6
+    ghost-entry                       5
+    entry-refused-slot-busy           4
+
+**1. THIS SETTLES A CALL-GRAPH QUESTION BY ARITHMETIC ALONE.** Kite p674 found
+the chaos gate killing **956 candidates/day**. That cannot be the
+quote_ok -> ghost-entry step, because **you cannot kill 956 out of a population
+of 265**. Every large refusal status here -- edge-ban 2893, lattice 2632,
+arbitration 3237 -- is an order of magnitude larger than the entire quote_ok
+population, so all of them operate on the per-tick arbitration stream and are
+**UPSTREAM** of quote_ok. Kite's finding belongs to the 2.8x SUPPLY term, not
+the 14.5x CONVERSION term. Still worth fixing; not the bottleneck.
+
+**2. AND THE BOTTLENECK HAS NO INSTRUMENT.** quote_ok 265 -> ghost-entry 5 in
+24h = **1.89%**. So **260 candidates/day die between being quoted and becoming a
+ghost entry**, and the only refusal statuses small enough to BE that step are
+duplicate 21 + symbol-motion 7 + slot-busy 4 = **32 total**. That leaves
+**228 deaths a day with no status row at all.**
+
+This is the p672 finding *"71 of 72 strategies decline invisibly -- an
+INSTRUMENTATION GAP, not starvation; never attribute refusals from `skipped{}`"*
+showing up as the reason four passes of funnel censuses have all bottomed out at
+this exact step. They were not finding nothing; **there is nothing written**.
+
+**CLOSED: "census the ghost gate again."** Five more censuses return the same
+silence. **The deliverable at this step is INSTRUMENTATION** -- a written
+refusal reason on the quote_ok -> ghost-entry decision -- not another count.
