@@ -638,6 +638,38 @@ GATE_TESTS = (
     # would print 100% forever while the evidence rate that gates graduation
     # stayed at 3.4/day. Iris, pass 103.
     "test_destroyed_evidence_counts_the_unbooked.py",
+    # THE UNIT OF `details["profit"]` IS A PROPERTY OF THE WRITER, NOT THE ID.
+    #
+    # Two writers fill that one column and only one of them wrote a bare
+    # FRACTION: 473 rows in trading_ops have profit exactly equal to their own
+    # exit/entry - 1, and 85 more under the SAME strategy id are genuine USD.
+    # The converter was keyed on a strategy id, which cannot separate them, so
+    # 368 fractions were summed into the graduation book as dollars and the
+    # obvious repair -- widening the id -- corrupts the 85. This pins the
+    # discrimination to the writer tag and pins the graduation reader to using
+    # the converter at all; it summed the column raw. Mixed units in the book
+    # the bar is read against is this repo's most repeated defect shape.
+    # Iris, pass 1.
+    "test_the_graduation_book_is_priced_by_writer_not_by_id.py",
+    # PROFIT ON SYMBOLS THE ENTRY GATE REFUSES MUST NOT AUTHORISE LIVE MONEY.
+    #
+    # A safety property, and it sat RED across several passes without anyone
+    # noticing, because its fixture inverted the token-BLIND round trip while
+    # the gate had been charging the PER-SYMBOL census fee since 2026-09-17 --
+    # so the "dead flat" tradeable subset it claims to build was quietly
+    # profitable and the guard was being asked about a book that could not
+    # prove anything. Gating it means the next fee change breaks this loudly
+    # instead of silently retiring the guard. Iris, pass 1.
+    "test_live_evidence_must_come_from_tradeable_symbols.py",
+    # STEP 6 MUST NOT REFUSE ON THE BAR STEP 5 JUST LICENSED THE STRATEGY ON.
+    #
+    # Step 5 granted the licence at 20 tradeable ghost trades and step 6 --
+    # which judges EXACTLY the strategies step 5 approved -- refused under 25,
+    # so 20..24 was a window where the licence was void on arrival. The two
+    # now read one threshold. The assertion that matters is the INEQUALITY,
+    # step 6 >= step 5: unifying must never let step 6 admit a strategy that
+    # never earned a licence. Iris, pass 1.
+    "test_a_licence_is_not_void_on_arrival.py",
 )
 
 
