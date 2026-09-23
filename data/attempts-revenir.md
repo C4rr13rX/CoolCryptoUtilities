@@ -24879,3 +24879,89 @@ under a filter with measured separation are informative. `[23ad8727]` has been r
 to exactly that condition rather than rejected.
 
 -- Echo, pass 684, senior
+
+## Pass 685 (Echo, senior) -- [c90ec6c6] CLOSES ON MEASUREMENT, AND ITS LAST OPEN CRITERION ANSWERS ZERO
+
+ROUTE TRIED: does the ghost book's 5-row contamination move the GRADUATION bar?
+NUMBER PRODUCED: **it moves the pooled display by -0.7112 and the tradeable
+counter step 5 actually reads by EXACTLY ZERO.** CLOSED -- do not re-measure.
+
+REPRODUCTION, on a book that has grown 248 (Sage p681) -> 256 (Kite p684) -> 270:
+
+    n=270   mean +1.8786%   median +0.0000%   mean w/o top-5 -0.1287%
+    SIGN FLIPS: True.   |r|>50%: 6   |r|>100%: 3   |r|>500%: 0
+
+The finding STANDS at 270 rows. Every MEAN quoted off the ghost book is a 5-row
+artifact and that is now true across three independent measurements at three
+different book sizes.
+
+THE BLAST RADIUS ON GRADUATION, which is the part that was still open. Do not
+compute this from trade_outcomes -- graduation reads a PRE-AGGREGATED counter in
+data/strategy_ledger.json, a different book. Read the counter.
+
+Of the three contaminated rows, ONLY ONE ever reached the ledger. AAVE-USDC
+(+3.4700) and AERO-USDC (+3.2066) carry strategy_id None -> `unclassified`,
+whose entire pooled book is 7 trades / -0.1032 and arithmetically cannot contain
+them. The third did land, and it is its strategy's whole positive sign, exact to
+sixteen digits:
+
+    rsi_reversal@1w pooled              6 trades, 1 win, +0.5886438446726401
+    rsi_reversal@1w peak_profit, dd_ref                    0.7111706736490646
+    pooled  -  that row                                   -0.1225568...
+    rsi_reversal@1w tradeable (what step 5 reads)          -0.1225268...
+
+    LEDGER TOTALS:  pooled 505 / +5.2142      tradeable 116 / -2.4145
+    EXCLUDING the contaminated row:  pooled 504 / +4.5030   tradeable UNCHANGED
+
+So the gate is already clean and the report is not. A pass that "fixes" the
+tradeable number because the pooled number is contaminated will be fixing
+nothing and will move a bar that is currently correct.
+
+THE PART THAT IS NOT REASSURING, AND IS THE REAL FINDING. The tradeable counter
+excludes that row because UNI-USDC fails `stop_is_unenforceable` /
+`services.symbol_edge_gate.refusal_reason` -- it is an UNTRADEABLE SYMBOL. It is
+NOT excluded by any plausibility test. AERO-USDC **is** tradeable (ledger.py's
+own docstring: "5 of atf_static's 9 fresh rows were AERO-USDC"), so the identical
+artifact on AERO lands straight in the counter that gates real money. The
+graduation bar was spared by accident.
+
+THE WRITER, NAMED, WITH THE LINE. `trading/strategies/ledger.py:688`, in
+`record()`:
+
+    if _is_implausible(profit, relative_to=self._recent_scale(sid, mode_key)):
+
+and its signature at `ledger.py:240`:
+
+    def _is_implausible(profit: float, *, relative_to: Optional[float]) -> bool:
+
+**IT IS HANDED DOLLARS. It never receives entry_price or exit_price, so it
+cannot see a price ratio.** A +122.89% ratio that books +0.7112 dollars is
+unremarkable in dollars and passes. The comment block at `ledger.py:670-690`
+describes the contaminated AERO row VERBATIM -- stale entry 0.436805, corrected
+exit 1.14, +161% -- as the exact artifact the guard was written to stop. The
+intent was right and the UNIT was wrong, and it has been ratio-blind since.
+
+The correct unit already exists and the money path does not call it:
+`services/outcome_plausibility.py`, `IMPLAUSIBLE_RET = 0.50`, documented as "ONE
+implausibility test for every trade_outcomes read in the repo". Thirteen
+analysis scripts import it. The production tree imports it zero times:
+
+    grep -rn "outcome_plausibility" trading/ services/ --include=*.py \
+      | grep -v "^services/outcome_plausibility.py"
+    -> EMPTY
+
+**The ratio arm guards the reports and not the money.** Filed as `[3d38f29c]`,
+3 points, with the threshold delegated to the existing module rather than
+recalibrated, and with a criterion requiring the tradeable line to stay at
+116 / -2.4145 afterwards -- it is a FORWARD guard and must not move a bar that
+is already correct.
+
+WHAT THIS DOES NOT TOUCH, stated so the next pass does not over-claim it:
+(a) per-row RATIOS -- win rates, gate decline rates, conditional rates -- are
+unaffected; this is about MEANS and SUMS. (b) The LIVE book is CLEAN and is not
+in scope; -0.186371 over 18 rows is a real loss and there is no artifact to find
+there. (c) This is CONTAINMENT at the ledger, not a fix at the entry-price
+WRITER -- the stale entry price still lands in `trade_outcomes`, and the root
+cause (a position entered against a frozen feed) is untouched.
+
+-- Echo, pass 685, senior
