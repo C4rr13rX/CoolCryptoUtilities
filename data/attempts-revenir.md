@@ -21894,3 +21894,65 @@ is what caught both.
 **AFFECTS LIVE READS NOW:** WETH-USDC's newest tick was **69.9 min** old;
 AERO/MAMO/CAKE/ALIGN/BLUECHIP all 57.4 min. 7d/30d corpus queries unaffected.
 Anything reading a LIVE price should quote the tick age beside the number.
+
+
+## Pass 677 (Dune) -- UNPRICED-AS-ALLOWED IS CLOSED: the unpriced half of the book is the negative half
+
+ROUTE TRIED: ask, at selector admission, whether a symbol can be COST-judged at
+all -- i.e. whether its BASE token has an address in `data/token_addresses.json`
+-- instead of letting "no cost" fall through as "cheap enough".
+
+HYPOTHESIS / COMPLEMENT, stated before the measurement: unknown-to-allowed is
+costing money and REFUSE is right; the complement is that unpriced symbols are
+an ordinary slice of the universe, BASECAT is one bad symbol not a class, and
+refusing deletes a working universe for nothing.
+
+THE NUMBER THAT SEPARATED THEM, over ALL 265 closed rows in `trade_outcomes`:
+
+    PRICEABLE  25 symbols  157 rows  net  +4.3848
+    UNPRICED   33 symbols  108 rows  net  -2.2674
+
+THE COMPLEMENT LOSES, and not on one symbol: BASECAT-USDC is -1.9138 of the
+unpriced total, leaving the other 32 unpriced symbols at **-0.3536 over 71
+rows** while the priceable side pays.
+
+BLAST RADIUS, stated rather than hidden, on `market_stream` base:
+168h = 182 streamed symbols, 29 priceable, **153 (84.1%) refused**;
+24h = 46 / 7 / 39. Taken anyway: those 153 are overwhelmingly symbols that never
+booked a round trip, so their contribution to the book is exactly zero.
+
+SHIPPED (commit 9e535ba): `UNPRICED_SYMBOL_ADMISSION = os.getenv(
+"SELECTOR_UNPRICED_ADMISSION", "refuse")` plus `_unpriced_symbol_refused()` in
+`trading/selector.py`, wired into BOTH admission paths -- `try_add_candidate`
+and the bulk scan over `analyse_historical_pairs`, because the file's own
+comment warns that a gate wired only into the helper leaves the largest
+producer of candidates untouched. Two carve-outs, both load-bearing: synonyms
+resolve through `TOKEN_NORMALIZATION` (the book holds **WETH, not ETH**, and a
+naive base-token-in-book test refuses our deepest pair), and **held positions
+are exempt** (`held=True`) because a held symbol refused a bot is a position
+nothing can sell -- this file already records one stranded 362.9h that way.
+Fails open on an unreadable book.
+
+CLOSED: "unknown cost is read as allowed" at selector admission. Do not re-file
+it. Do NOT propose an h* cost gate as the ex-ante fix either -- pass 673 closed
+that: at min-of-curve costs over 168h at H=2700s all 9 priced symbols sit at
+h* 0.531-0.919, none reaches 1.00, so h* would have refused NONE of COMP, DRB
+or BASECAT before trade 1.
+
+STILL OPEN, and it is a LOOKUP not a policy problem (backlog `b9785ac6`): of the
+9 symbols the 20260917 census called unquotable, **1 (BSTONK) is already in the
+book**, **6 are merely absent from it and live on base** -- CBXRP $117.7M,
+CBZEC $279k, BASECAT $167k, CBMEGA $11k, CBADA $4.7k, MOG $62 -- and only **2
+(OMARCHY, PUMP) are genuinely unavailable on base**. So "census-unquotable" and
+"book-absent" are NOT the same set. The refuse default currently refuses a
+$117.7M pool because nobody wrote its address down. The remedy is a six-row
+backfill followed by a $10 round-trip quote, NOT a looser default: BASECAT is
+on that list at $167k of headline liquidity and still booked -1.9138 over 37
+round trips, so an address makes cost KNOWABLE, never small.
+
+PROOF: `python -X utf8 -m pytest
+tests/test_an_unpriced_symbol_is_refused_by_a_stated_default.py` -> 8 passed in
+33.10s; pre-fix `HEAD~1:trading/selector.py` contains none of
+`UNPRICED_SYMBOL_ADMISSION`, `_unpriced_symbol_refused`, `_is_priceable`,
+`_address_book_tokens`. `python -X utf8 scripts/pass_gate.py --check` -> OK,
+725 passed / 0 failed, live P/L unchanged at -0.186371 over 18.
