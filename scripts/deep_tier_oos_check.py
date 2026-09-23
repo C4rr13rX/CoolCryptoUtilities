@@ -35,7 +35,14 @@ import sqlite3
 DB = os.environ.get("TRADING_DB_PATH", "storage/trading_cache.db")
 SYMBOLS = ("CBBTC-USDC", "CBXRP-USDC")
 CUTOFF = dt.datetime(2026, 9, 16, tzinfo=dt.timezone.utc).timestamp()
-CENSOR = 0.20  # the item's censor rule, unchanged: |move| <= 20%
+# The item's censor rule, unchanged: |move| <= 20%. It is a PRIVATE COPY of
+# the ratio arm of services.outcome_plausibility, set TIGHTER than the shared
+# 50% bar and carrying no dollar arm. Measured 2026-09-22 over the 243 ghost
+# rows in trade_outcomes: this rule keeps 234, and of those the SHARED rule
+# refuses ZERO -- so it is strictly stronger here and the gap is empty. The
+# shared rule alone refuses 6 of 243. Stated rather than assumed, because
+# "my filter is tighter" is exactly the claim that goes stale silently.
+CENSOR = 0.20
 TARGET_N = 13
 IN_SAMPLE_LOWER = 7.5  # bp; the bar the out-of-sample mean must clear
 
