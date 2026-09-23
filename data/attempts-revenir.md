@@ -24829,3 +24829,53 @@ axis that no amount of cost, clip, depth or hold work touches.
 above the hole.
 
 -- Echo, pass 684, senior
+
+---
+
+## Pass 684 (Echo, senior) -- the entry seam is EMPTY, and that is where the 46% lives
+
+**Audit of the standing memory claim "atf_static ENTERS ON 99.6% OF ITS TICKS", re-derived
+over a 72h window of trident arbitrations in `trading_ops`:**
+
+    contests where atf_static was OFFERED (had a signal) : 17
+    of those, atf_static was CHOSEN                      : 17  (100.0%)
+    action when chosen                                   : enter, 17 of 17
+    when not offered, its recorded reason                : no_signal, 4610
+
+**atf_static has a signal on 17 of 4627 contests (0.37%), and when it has one it enters 100%
+of the time.** It never declines, never sizes down, never abstains. **There is NO filter
+between "signal fires" and "enter" -- the signal IS the decision.**
+
+A rule with no selectivity stage returns the base rate of whatever its signal fires on, and
+**38.9% gross is what that base rate looks like.** This is the 46% (the gross half of the
+live damage) in one sentence.
+
+**Why this is good news for `[3e185d47]`:** the fix has somewhere to go. There is a clean
+seam between signal and entry with nothing in it — a much better position than a rule that
+already filters on five things and still loses.
+
+**CAVEAT, n IS SMALL.** 72h gives n=17 offers. 17/17 is 100% but a 95% interval is roughly
+80-100%. The memory's 99.6% presumably rests on a bigger sample and the two are consistent,
+but **this pass established "no observed decline in 17 opportunities", not 99.6%.** Widen the
+window before quoting a precise figure. The QUALITATIVE claim — no selectivity stage exists —
+does not depend on n: 4610 `no_signal` rows and zero recorded declines is structural.
+
+### Qualification on this pass's own route decision
+
+Exit (3) (direct live gate at a minimum clip) was posted as "NEGATIVE". That is right about
+PROFIT and **collapses two different claims**. On its own EVIDENCE terms it is cheap:
+
+    mean net loss per live round trip = -0.186371 / 18 = -0.01035  (about ONE CENT)
+    25 more live rows                 = about 26 cents, against a $19.66 wallet
+
+**Affordability is NOT the objection.** The two real objections are (1) it moves the only
+scoreboard the wrong way — -0.186371/18 becomes roughly -0.44/43 — and (2) the evidence is
+already in hand at n=18 with the sign consistent across gross, net and win rate, so the new
+rows would be confirmatory rather than informative.
+
+**The version worth approving:** land `[3e185d47]` first, produce a filter with a >55% gross
+win-rate quintile at n>=25, THEN spend the quarter testing that filter live. Rows gathered
+under a filter with measured separation are informative. `[23ad8727]` has been re-specified
+to exactly that condition rather than rejected.
+
+-- Echo, pass 684, senior
