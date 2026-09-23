@@ -70,17 +70,37 @@ DB_PATH = Path(os.getenv("TRADING_DB_PATH") or (ROOT / "storage" / "trading_cach
 #: own ``unclassified`` entry is a different thing wearing the same name.
 COLLIDED_BUCKET = "unclassified"
 
-#: Named strategies holding a ledger tradeable record against ZERO store rows,
-#: measured at HEAD 2026-09-23. Only ``atf_static_scout`` is a DECLARED
-#: ghost-only executor; these four are not declared anywhere, which is the open
-#: half of the defect. The set may SHRINK freely as the store receives rows --
-#: it growing is what this file stops, because a new entry means either a write
-#: path died or a second ghost-only executor arrived undeclared.
+#: Named strategies holding a ledger tradeable record against ZERO store rows.
+#:
+#: THE FIRST VERSION OF THIS COMMENT SAID THE STORE NEVER RECEIVED THEM. THAT
+#: WAS WRONG AND THE CORRECTION IS THE POINT OF THIS FILE. The store holds every
+#: one of these rows. ``_live_tradeable`` removes them, and the arm doing the
+#: removing is ``services.symbol_edge_gate.refusal_reason`` -- which computes its
+#: verdict FROM the closed round trips it is filtering. Split over all 284 closed
+#: rows at HEAD 2026-09-23:
+#:
+#:      refused by the STOP gate            2
+#:      refused by the SYMBOL EDGE GATE   100   <- 35.2%, and it is in-sample
+#:      tradeable                         182
+#:
+#: Per row, and every count matches the ledger EXACTLY -- not one missing row:
+#:
+#:      rsi_reversal@5d       DRB-USDC   edge-refused 3   (ledger tradeable 3)
+#:      bollinger_squeeze     OP-USDC    edge-refused 1
+#:      bollinger_squeeze     VVV-USDC   edge-refused 1   (ledger tradeable 2)
+#:      donchian_breakout     OP-USDC    edge-refused 1   (ledger tradeable 1)
+#:      donchian_breakout@3d  OP-USDC    edge-refused 1   (ledger tradeable 1)
+#:
+#: So these are not a dead write path and not a second undeclared ghost-only
+#: executor. The ledger is the predicate AT WRITE TIME; this recomputation is the
+#: predicate AT READ TIME; the gate has since learned to refuse those symbols.
+#: The set may shrink or grow as the gate learns, which is why the assertion
+#: below names the edge gate in its failure message rather than blaming a writer.
 KNOWN_STORE_ZERO = {
-    "rsi_reversal@5d",          # ledger 3/0/-0.0760
-    "bollinger_squeeze",        # ledger 2/1/-0.0307
-    "donchian_breakout",        # ledger 1/0/-0.0268
-    "donchian_breakout@3d",     # ledger 1/0/-0.0142
+    "rsi_reversal@5d",          # ledger 3/0/-0.0760, all 3 edge-refused
+    "bollinger_squeeze",        # ledger 2/1/-0.0307, both edge-refused
+    "donchian_breakout",        # ledger 1/0/-0.0268, edge-refused
+    "donchian_breakout@3d",     # ledger 1/0/-0.0142, edge-refused
 }
 
 
@@ -279,8 +299,71 @@ class LedgerStoreReconciliation(unittest.TestCase):
         }
         self.assertFalse(
             actual - allowed,
-            "undeclared strategies hold ledger evidence the store has none of: "
-            "%s -- name the cause before any recompute" % sorted(actual - allowed),
+            "strategies hold ledger evidence this recomputation cannot see: %s "
+            "-- CHECK services.symbol_edge_gate.refusal_reason FIRST. Every one "
+            "of the four known cases is an edge-gate refusal, not a missing "
+            "write, and the gate's verdict moves as it learns. Only after "
+            "ruling the gate out is this a dead writer."
+            % sorted(actual - allowed),
+        )
+
+    def test_the_store_book_is_an_in_sample_selection(self) -> None:
+        """The predicate is 98% one gate, and that gate reads this same book.
+
+        ``_live_tradeable`` has two arms. The stop arm removes 2 of 284 closed
+        rows; ``services.symbol_edge_gate.refusal_reason`` removes 100 -- 35.2%.
+        That gate decides by measuring the closed round trips it is filtering
+        ("refusing atf_static on AERO-USDC -- 17 closed round trips at mean
+        return -0.470% vs 0.772% cost, t=-4.05"), so the store-side "tradeable
+        book" is a function of WHEN it is asked, not a quantity. Two agents
+        measured 182 and 177 minutes apart on pass 687 for exactly this reason.
+
+        This asserts the shape, not the value: the edge arm must dominate the
+        stop arm. If that ever inverts, the in-sample problem has moved and
+        every conclusion drawn from a "store book" number needs re-deriving.
+        """
+        try:
+            from services.symbol_edge_gate import refusal_reason
+            from trading.pipeline import stop_is_unenforceable
+        except Exception:  # noqa: BLE001
+            self.skipTest("cannot import both arms of the tradeable predicate")
+        con = sqlite3.connect("file:%s?mode=ro" % DB_PATH.as_posix(), uri=True)
+        con.row_factory = sqlite3.Row
+        stop_refused = edge_refused = 0
+        try:
+            for r in con.execute(
+                "SELECT symbol, status, details FROM trade_outcomes"
+            ):
+                if str(r["status"] or "").lower() != "closed":
+                    continue
+                try:
+                    det = json.loads(r["details"] or "{}")
+                except Exception:  # noqa: BLE001
+                    det = {}
+                if not isinstance(det, dict):
+                    det = {}
+                sym = str(r["symbol"] or "")
+                sid = str(det.get("strategy_id") or "") or COLLIDED_BUCKET
+                try:
+                    if bool(stop_is_unenforceable(sym)):
+                        stop_refused += 1
+                        continue
+                except Exception:  # noqa: BLE001
+                    stop_refused += 1
+                    continue
+                try:
+                    if refusal_reason(sym, sid) is not None:
+                        edge_refused += 1
+                except Exception:  # noqa: BLE001
+                    pass
+        finally:
+            con.close()
+        self.assertGreater(
+            edge_refused,
+            stop_refused,
+            "the in-sample edge gate no longer dominates the stop gate "
+            "(edge %d vs stop %d); re-derive every store-book number that "
+            "assumed it did" % (edge_refused, stop_refused),
         )
 
     def test_the_scout_is_in_the_store_now(self) -> None:
