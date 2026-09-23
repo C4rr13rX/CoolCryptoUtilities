@@ -2316,9 +2316,17 @@ class TradingBot:
             # configured here. Which makes the number above worse, not better:
             # a 45-minute force is on and the realised median hold is 56.2 min
             # with a 4.8-day maximum. THE FORCED EXIT IS CONFIGURED AND IS NOT
-            # EFFECTIVE. (Same shape on the stop: GHOST_STOP_LOSS_PCT is 2%,
-            # 27.4% of ghost round trips move past it, and 5 of ~193 exits in
-            # 30d are stop_loss.) Do not read a getenv default as the deployed
+            # EFFECTIVE -- 'timed-exit' is NOT that force, only 3 of its 71
+            # exits land in the 40-50 min band (median 18.1, max 173.1), and
+            # `confidence_drop` owns the 4.8-day hold. (An earlier version of
+            # this comment claimed the STOP fails the same way, "5 of ~193
+            # exits". THAT WAS A STRING ARTIFACT of its author's census --
+            # stop reasons carry a value suffix, `stop_loss:-0.5533`, and
+            # truncating without splitting on ':' shattered one reason into
+            # singletons. Split first: stop_loss is n=38, 17.2% of exits
+            # against 27.4% of round trips crossing the 2% stop. The stop is
+            # not missing -- it is LATE, median hold 84.0 min.) Do not read a
+            # getenv default as the deployed
             # value -- this comment said "off" for twenty minutes because its
             # author did exactly that.
             #
