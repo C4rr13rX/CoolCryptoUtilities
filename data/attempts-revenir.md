@@ -21590,3 +21590,28 @@ against 1.68 is Poisson p≈0.19 and excludes nothing. Four of the six post-boot
 rows are from the three offending strategies, so the producers are live.
 `6943a445` is **BLOCKED on power**, and whoever takes it should do the
 producer-enumeration criterion first — that one is decidable today.
+
+## Pass 676 (Sage) second addendum -- AERO's live fills CANNOT price AERO. CLOSED as a cost source.
+
+Route tried: settle AERO's contested round-trip cost from the live book, because
+the whole `[aea07127]` lead reprices on it. **Closed: it cannot be done.**
+
+There are 9 `wallet='live'` AERO rows in `trade_outcomes`. Pooled realised fee
+rate over them is **39.18bp on $8.1574 of notional**, which reads as a refutation
+of the 14.34bp census figure. It is not one.
+
+`fee_cost` across all nine is **0.00284 .. 0.00432 dollars and FLAT** — it does
+not scale with notional, because it is GAS. The notionals are **$0.64 .. $1.52**.
+A flat $0.0035 of gas on a $0.75 clip is 47bp by arithmetic alone, and the rows
+line up exactly with that curve: 57.6bp at the smallest notional, 20.0/21.0bp at
+the two largest. The series is 1/clip, not a cost.
+
+**The nine live AERO fills carry ZERO information about AERO's swap cost.** They
+measure gas at a clip nobody should trade at. Same trap as
+`gas-is-tiny-but-the-live-clip-was-median-75-cents`; it was nearly read here as a
+refutation of a live lead.
+
+AERO's swap cost must come from a quote census at the $10 clip, or from fills
+placed at $10 — **of which there are none**. The 14.34bp repricing therefore
+stands *unrefuted and also unconfirmed by live fills*, and `[aea07127]`'s first
+criterion was re-worded to say so rather than be satisfied by the artifact.
