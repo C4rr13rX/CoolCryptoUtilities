@@ -58,8 +58,23 @@ class _DB(_Stub):
 
 
 class _Ledger(_Stub):
+    """Cleared to spend, so that the TOKEN is the only thing that can demote it.
+
+    Both methods, because `bot._strategy_live_approved` asks
+    `may_place_live_order` -- the licence AND `live_order_refusal` -- not just
+    whether a licence is held. Answering only the first sends the entry to
+    ghost for a LEDGER reason, which is fatal to this file specifically: these
+    two tests assert that an unresolvable token is what falls back to ghost and
+    a resolvable one is NOT demoted. With a half-specified double both outcomes
+    become ghost, `test_a_resolvable_token_is_not_demoted_to_ghost` fails, and
+    the file reports a token-resolution bug that does not exist.
+    """
+
     def is_live_approved(self, strategy_id):
         return True
+
+    def may_place_live_order(self, strategy_id):
+        return self.is_live_approved(strategy_id)
 
 
 class _Portfolio(_Stub):

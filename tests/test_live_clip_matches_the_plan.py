@@ -103,10 +103,24 @@ class _DB(_Stub):
 
 
 class _Ledger(_Stub):
-    """Only atf_static graduated -- the real ledger state on the day."""
+    """Only atf_static graduated -- the real ledger state on the day.
+
+    `may_place_live_order` MIRRORS the licence answer rather than repeating the
+    literal, so the selectivity this double exists for lives in one place.
+    `bot._strategy_live_approved` asks the conjunction -- licence AND
+    `live_order_refusal` -- and a double that implements only the licence half
+    falls through to `_Stub`, sending every entry to ghost. That does not make
+    these six clip tests fail loudly on the gate; it makes them measure the
+    clip of a GHOST entry, which is a different code path with a different
+    notional. A double must answer every question its caller asks or it is
+    quietly testing something else.
+    """
 
     def is_live_approved(self, strategy_id):
         return strategy_id == "atf_static"
+
+    def may_place_live_order(self, strategy_id):
+        return self.is_live_approved(strategy_id)
 
 
 class _Portfolio(_Stub):

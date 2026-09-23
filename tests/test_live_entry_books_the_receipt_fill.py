@@ -74,8 +74,31 @@ class _DB(_Stub):
 
 
 class _Ledger(_Stub):
+    """A strategy that is fully cleared to spend, which is what these tests need.
+
+    Both methods, because the money path asks BOTH. `is_live_approved` answers
+    only whether a licence is held; `may_place_live_order` is the conjunction
+    the ledger wrote for `bot._strategy_live_approved` -- the licence AND
+    `live_order_refusal`, which refuses a sid whose own recorded book lost
+    money.
+
+    A double that answers only the first is not a neutral simplification here.
+    It falls through to `_Stub`, the bot reads "may not place a live order",
+    correctly books a ghost entry, and six tests about RECEIPT FILLS fail with
+    `assert 'ghost-entry' == 'live-entry'` -- which reads as a broken live path
+    rather than an under-specified double. That misdiagnosis cost a correct
+    live-money safety fix a revert in pass 1.
+
+    Mirrored rather than hardcoded True so the two answers cannot drift: these
+    tests are about what the entry BOOKS once it is live, not about who is
+    allowed to be.
+    """
+
     def is_live_approved(self, strategy_id):
         return True
+
+    def may_place_live_order(self, strategy_id):
+        return self.is_live_approved(strategy_id)
 
 
 class _Validator(_Stub):
