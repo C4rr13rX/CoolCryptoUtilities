@@ -21080,3 +21080,72 @@ Secondary correction to this pass's own opening measurement: the deep-pool
 share of the evidence budget is **8.3%** pooled (22 of 265), not the 7.2% first
 posted -- the narrower deep set omitted the ETH-ticker pairs, the same
 omission that bit the donchian cohort. By mode: **7.4% ghost, 18.2% live**.
+
+## Pass 676 — Dune — item b19d13cb: "the 16 rows that clear the entry gate clear it on an inflated net_margin"
+
+**ROUTE TRIED:** treat the 2.4x–117x disagreement between `net_margin` and
+`bus_plan.expected_return` as a defect that makes the entry gate
+(`trading/bot.py:7377`, `min_margin_required = max(entry_fees*1.5, MIN_NET_MARGIN)`)
+unable to bind, and consider feeding the gate `expected_return` instead.
+
+**VERDICT: CLOSED. The premise is wrong in both directions.** Do not re-file.
+
+**1. The population rolled.** Kite measured 45 `trading_ops` rows in 7d carrying
+`.entry_fee_rate`, 16 of them `action=enter`. Re-counted 2026-09-23 with
+`ts > time.time()-7*86400` (the column is a unix float): **35 rows, 35 of 35
+`action=enter`, 35 of 35 `wallet='ghost'`, `status='ghost-entry'`.** Kite's table
+is no longer row-for-row auditable. Everything below is on the current 35.
+
+**2. The gate is NEVER REACHED on any entry in the book.** `trading/bot.py:7689`
+opens an `if/elif` chain at indent 8. `:7696` is
+`elif (directive and directive.action == "enter" and not entry_duplicates_held_position
+and not entry_evicts_another_strategys_position): should_enter = True`.
+The margin conjunct `margin >= min_margin_gate` is at `:7883`, inside
+`elif pos is None:` at `:7781` — the **same chain, a later branch**. A tick
+carrying a strategy directive that says enter short-circuits past the margin gate
+entirely. **35 of 35 ghost rows and 2 of 2 live rows carry
+`bus_plan.action == "enter"`. 37 of 37.** The margin gate is dead code for every
+entry this system has recorded. The `GHOST_EXPLORE_ENABLED` bypass at `:7892` is
+a *second* bypass and is ghost-only (`not self.live_trading_enabled`); it is not
+the one that matters.
+
+**3. Inflation would REFUSE, not admit.** Of the 35 rows only **16** have
+`net_margin >= min_margin_required`; **19 are below it**, including **10 at
+exactly 0.0000** (the `_summarise_predictions` default when `preds[4]` is absent)
+and 5 at exactly −0.0100. A gate fed `bus_plan.expected_return` instead would
+pass **34 of 35** — the proposed substitution **loosens** the gate 2.1x. The
+item's stated mechanism ("an inflated margin clears any fee") is refuted on its
+own data.
+
+**4. The complement is settled at the source: same quantity, two estimators.**
+`net_margin` = `preds[4][0][0]`, a raw regression head of `self.pipeline`
+(`trading/bot.py:6009`), default 0.0. `expected_delta` = `preds[1][0][0]`
+(`price_mu`). `bus_plan.expected_return` is the classical strategy's own forecast
+(`trading/scheduler.py:1034`, clipped ±5.0 at `:1371`). **Both are dimensionless
+fractions of notional** — `net_margin` is consumed as a rate at `bot.py:7379`
+(`max(0, margin - entry_fees) * trade_notional_usd`), `expected_return` as a rate
+at `scheduler.py:1023` (`last_price * (1 + expected - fee)`). Not a concept
+difference, not a units factor.
+
+**5. The variation is the DENOMINATOR.** `expected_return` over the 35 spans
+0.0165..0.1092 — 6.6x, every value plausible. `net_margin` spans −1.3948..+2.4648
+and is **unbounded: 14 of 35 exceed |1.0|**, i.e. the head forecasts losing more
+than 100% of notional on a long spot leg. OP-USDC is the 117x row: 2.0087 / 0.0172
+— the head said +200.9%, donchian said +1.72%. Nothing clips `preds[4]` and
+nothing calibrates it. This is the same untrained pipeline whose `preds[0]`
+confidence head is a constant 0.5 (item 6d718c1a).
+
+**6. A LIVE row exists, tied to settled tx hashes.** Two `live-entry` rows carry
+`entry_fee_rate`, both `atf_static`:
+`BPAD-USDC` tx `0x15d7a40c56ea57f371…` at `net_margin = 0.0000` (the default), and
+`AERO-USDC` tx `0x444b9563b43985212f…` at `net_margin = −1.1596` against
+`bus_plan.expected_return = 0.05`. Both are **below** their own
+`min_margin_required` (0.00589 and 0.00687) and both entered anyway. Explore is
+barred to them, so these two prove the `:7696` directive branch admits **live**
+entries past the margin gate. Both are 17.3–17.5 days old; **there is no live
+entry inside the 7d window at all.**
+
+**CONSEQUENCE FOR THE GOAL.** The entry gate is not a gate. Repricing
+`net_margin` is inert — it is read by a branch nothing reaches. If the margin
+floor is wanted on directive entries it has to be moved *above* `:7696` in the
+chain, and that is a behaviour change on the live lane, not a number fix.
