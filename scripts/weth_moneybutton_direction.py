@@ -64,6 +64,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # so the two scripts cannot disagree about what a return is.
 from scripts.weth_direction_census import (  # noqa: E402
     COST_ALL_IN_BP,
+    PAIR_TOLERANCE,
     _binom_p_one_sided,
     _db,
     forward_returns,
@@ -169,8 +170,17 @@ def _accuracy_block(fwd: np.ndarray, label: str) -> Dict[str, Any]:
 
 
 def _forward_from(ts: np.ndarray, px: np.ndarray, idx: List[int],
-                  horizon_sec: float, tolerance: float = 0.5):
-    """Forward return at `horizon_sec` for each selected tick index."""
+                  horizon_sec: float, tolerance: float = PAIR_TOLERANCE):
+    """Forward return at `horizon_sec` for each selected tick index.
+
+    `tolerance` is the census's own `PAIR_TOLERANCE`, IMPORTED rather than
+    chosen here.  It was briefly 0.5 against the census's 0.25, which changed
+    nothing (the rule fires 0 times, so this path paired nothing) but would
+    have meant the selected-tick sample admitted a 50% horizon overshoot while
+    the decile sample -- which goes through the census's own
+    `forward_returns` -- admitted 25%.  Two pairing rules in one script is how
+    a comparison stops being a comparison.
+    """
     hi = horizon_sec * (1.0 + tolerance)
     out: List[float] = []
     kept: List[int] = []
