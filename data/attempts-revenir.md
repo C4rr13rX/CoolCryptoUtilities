@@ -20620,3 +20620,38 @@ it has produced **zero legs in 17.2 days**. Restarting the lane is worth more
 than any cost measurement priced here. `AUTO_EXECUTE_ON_GRADUATION` defaults to
 1, so `LIVE_TRADES_DRY_RUN` must be set explicitly before any restart.
 **I armed nothing and restarted nothing.**
+
+### Pass 674 -- Dune -- two traps that cost readings tonight, banked so they cost nobody else
+
+**TRAP 1 (Echo's, found while killing their own item; banked here at their
+request because Dune held this file).** `trading_ops.ts` IS A UNIX FLOAT, NOT A
+DATETIME STRING. min(ts)=1787341301.47, max(ts)=1790132620.06. So the
+natural-looking `WHERE ts > datetime('now','-14 days')` **MATCHES ZERO ROWS AND
+RAISES NOTHING** -- SQLite sorts all numbers before all text, so the comparison
+is simply false everywhere. It does not error; it returns an empty set, **and an
+empty set reads as a finding**. Echo ran exactly that and printed
+`strategy_publish rows 14d: 0`; the true numbers are 1331 plans and 6900
+bus_actions. Use `cut = time.time() - 14*86400` and `WHERE ts > ?`.
+*Corollary for any inherited cost census: if its window was built on a
+datetime-string comparison against this table, its n is not the n it thinks it
+is. Check before trusting a sample size. (The n=18 above is safe -- it was
+computed by pulling all rows and filtering in Python, no SQL date comparison.)*
+
+**TRAP 2 (Dune's own, and the provenance matters so nobody reads it as a
+production bug).** `net_margin_after_fees` on a `live-exit` row is a FEE, not a
+return -- but the field is not broken, it is being read out of context:
+
+  * `trading/bot.py:7787` computes it at ENTRY as `margin - entry_fees`, a
+    FORWARD quantity, and `:7884` gates on it against `MIN_NET_MARGIN = 0.0001`
+    (`trading/constants.py:73`). That is an ex-ante decision variable and it is
+    correct there.
+  * `trading/bot.py:6771` recomputes it at EXIT as `margin - fees`. At exit
+    `net_margin` is **EXACTLY +0.0000 on 12 of the 18 live rows**, so what lands
+    on the exit row is `0 - fees` -- the fee schedule.
+
+So the hazard is ANALYTIC, not a production defect: nothing in `trading/` or
+`services/` computes realised P/L from it. But any census that does will get the
+fee back and mistake it for a result. Discriminator, three seconds: the BSTONK
+row that booked **+3227 bp** of realised gross carries
+`net_margin_after_fees = -0.0065`, **the same value as a row that lost 286 bp**.
+**Realised fraction is `profit / (entry_price * size)`.**
