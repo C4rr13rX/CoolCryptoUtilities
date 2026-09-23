@@ -165,6 +165,82 @@ def collect() -> dict:
     return out
 
 
+def _tradeable_median_from_store():
+    """Median net_profit of the live-tradeable closed rows, or None.
+
+    A SUM CAN BE CARRIED BY ONE ROW AND A MEDIAN CANNOT, and this report has
+    only ever printed sums. Pass 687 measured the pooled tradeable book at
+    +6.1425 over 182 rows with a MEDIAN of -0.009095; the top row was 56% of the
+    sum and the top five were 146%, the top two landing on one day under no
+    ``strategy_id``. Per symbol it is worse and more general -- six positive
+    sums, five negative medians, one row carrying 44-382% of each.
+
+    Returning None rather than a zero is the same choice made throughout this
+    file: a report that printed 0.0 when it could not measure would be quoted
+    as a measurement. Every failure path here is silent BY DESIGN -- the median
+    is a corroboration line, and an unreadable store must not take the ladder
+    down with it.
+
+    THIS DELEGATES THE PREDICATE. ``ledger._live_tradeable`` is imported, never
+    reimplemented; ``scripts/tradeable_book.py:73`` records what happened the
+    last time a second copy of it existed. Note that the predicate is READ-TIME
+    and 98% of its refusals come from ``services.symbol_edge_gate``, which
+    computes its verdict FROM these same rows -- so this book moves as the gate
+    learns. That is why the caller labels the line with its source.
+    """
+    import json as _json
+    import sqlite3 as _sqlite3
+
+    try:
+        from trading.strategies.ledger import _live_tradeable
+    except Exception:  # noqa: BLE001
+        return None
+    db = os.getenv("TRADING_DB_PATH") or str(ROOT / "storage" / "trading_cache.db")
+    try:
+        con = _sqlite3.connect("file:%s?mode=ro" % Path(db).as_posix(), uri=True)
+    except Exception:  # noqa: BLE001
+        return None
+    nets = []
+    try:
+        for sym, status, net, details in con.execute(
+            "SELECT symbol, status, net_profit, details FROM trade_outcomes"
+        ):
+            if str(status or "").lower() != "closed":
+                continue
+            try:
+                det = _json.loads(details or "{}")
+            except Exception:  # noqa: BLE001
+                det = {}
+            if not isinstance(det, dict):
+                det = {}
+            if str(det.get("annulled") or "").lower() in ("1", "true", "yes"):
+                continue
+            sid = str(det.get("strategy_id") or "") or "unclassified"
+            try:
+                if not _live_tradeable(str(sym or ""), sid):
+                    continue
+            except Exception:  # noqa: BLE001
+                continue
+            nets.append(float(net or 0.0))
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        try:
+            con.close()
+        except Exception:  # noqa: BLE001
+            pass
+    if len(nets) < 5:
+        return None
+    nets.sort()
+    total = sum(nets)
+    return {
+        "n": len(nets),
+        "median": nets[len(nets) // 2],
+        "total": total,
+        "top_share": (100.0 * nets[-1] / total) if total else 0.0,
+    }
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -535,6 +611,27 @@ def render(r: dict) -> str:
           tot.get("pooled_trades", "?"),
           float(tot.get("pooled_profit", 0.0) or 0.0),
       ))
+    # THE MEDIAN, BECAUSE A SUM CAN BE CARRIED BY ONE ROW AND A MEDIAN CANNOT.
+    # Measured pass 687: six symbol buckets with a positive SUM, five with a
+    # NEGATIVE median, one row carrying 44-382% of each. The pooled tradeable
+    # book read +6.1425 over 182 rows with a median of -0.009095, its top row
+    # 56% of the sum and its top five 146%. The win rate above does NOT catch
+    # this -- AERO reads 54% win on a -0.003381 median -- so the two are
+    # printed together and fail differently.
+    #
+    # SOURCE IS DELIBERATELY NAMED ON THE LINE. The sums above come from the
+    # ledger's accumulated counter, which stores no rows, so no median of THOSE
+    # rows exists to print. This median is recomputed from trade_outcomes
+    # through the ledger's own _live_tradeable, which is a READ-TIME predicate
+    # over a WRITE-TIME counter's population -- a different book, and labelling
+    # it as anything else would be the drift this report exists to expose.
+    med = _tradeable_median_from_store()
+    if med is not None:
+        A("    median row (store, read-time predicate): %+.6f over %d rows; "
+          "top row %.0f%% of the sum" % (med["median"], med["n"], med["top_share"]))
+        if med["median"] <= 0.0 and med["total"] > 0.0:
+            A("      ^ POSITIVE SUM, NON-POSITIVE MEDIAN: the sign is carried by "
+              "the tail, not by the typical trade. Do not read it as an edge.")
     eta = tot.get("eta_days_to_first_graduation")
     A("  tradeable evidence rate: %.1f/day; nearest graduation ~%s"
       % (
