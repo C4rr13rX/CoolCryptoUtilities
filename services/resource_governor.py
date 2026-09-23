@@ -80,6 +80,21 @@ _OUR_HOG_FRACTION = float(os.getenv("GOVERNOR_OUR_HOG_FRACTION", "0.75"))
 # How often the background sampler runs (seconds).
 _SAMPLE_INTERVAL = float(os.getenv("GOVERNOR_SAMPLE_INTERVAL", "2"))
 
+# How often the process-TREE RSS walk runs (seconds). This is deliberately much
+# slower than _SAMPLE_INTERVAL. Measured on this box 2026-09-22 against live
+# production pid 6340 (388 processes, 1 descendant), n=30: the walk costs a
+# median 40.3ms, p90 372.2ms, max 521.8ms of wall time, and psutil's
+# children(recursive=True) enumerates the WHOLE system process table to build a
+# ppid map -- a C call that holds the GIL for its duration. At the 2s sample
+# cadence that is a 2.01% duty cycle at the median and 18.6% at p90, paid
+# forever by a value that only ever moves slowly: our tree is 2,561 MB of
+# long-lived Python. Every consumer of _our_rss_mb already reads the CACHED
+# field under _lock (lines ~389, ~470, ~559, ~645, ~655) rather than a fresh
+# reading, so a value up to _RSS_SCAN_SEC old changes no decision. The system
+# memory guards are untouched: _CRITICAL_MEM and _EMERGENCY_MEM both branch on
+# ``mem`` from virtual_memory(), which is still sampled every single tick.
+_RSS_SCAN_SEC = float(os.getenv("GOVERNOR_RSS_SCAN_SEC", "30"))
+
 # Absolute bounds on the dynamic worker count.
 _MIN_WORKERS = int(os.getenv("GOVERNOR_MIN_WORKERS", "1"))
 _MAX_WORKERS = int(os.getenv("GOVERNOR_MAX_WORKERS", "0"))  # 0 = auto
@@ -119,6 +134,9 @@ class ResourceGovernor:
         self._max_workers_ceil = _MAX_WORKERS if _MAX_WORKERS > 0 else max(4, self._cpu_count * 2)
         self._gc_triggered_at: float = 0.0
         self._full_gc_at: float = 0.0
+        # Last time the process-tree RSS walk ran. 0.0 forces a scan on the
+        # first sample so the guards are never armed off a zero reading.
+        self._rss_scan_at: float = 0.0
         self._emergency_triggered_at: float = 0.0
         self._started = False
         self._stop = threading.Event()
@@ -251,17 +269,28 @@ class ResourceGovernor:
             except Exception:
                 pass
 
-            # Our own process tree RSS
-            try:
-                proc = psutil.Process()
-                our_rss = proc.memory_info().rss / (1024 * 1024)
-                for child in proc.children(recursive=True):
-                    try:
-                        our_rss += child.memory_info().rss / (1024 * 1024)
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-            except Exception:
-                pass
+            # Our own process tree RSS.
+            #
+            # children(recursive=True) walks the entire system process table and
+            # holds the GIL while it does — median 40.3ms, p90 372.2ms on this
+            # box. Run it on _RSS_SCAN_SEC, not on every sample, and carry the
+            # previous reading forward in between. See _RSS_SCAN_SEC above for
+            # the measurement and for why a stale value is safe here.
+            with self._lock:
+                our_rss = self._our_rss_mb
+            if (now - self._rss_scan_at) >= _RSS_SCAN_SEC:
+                self._rss_scan_at = now
+                try:
+                    proc = psutil.Process()
+                    scanned = proc.memory_info().rss / (1024 * 1024)
+                    for child in proc.children(recursive=True):
+                        try:
+                            scanned += child.memory_info().rss / (1024 * 1024)
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
+                            pass
+                    our_rss = scanned
+                except Exception:
+                    pass
 
             # Estimate memory used by OTHER programs
             other_mem = max(0.0, (total_mb - avail_mb) - our_rss)
