@@ -27151,3 +27151,54 @@ rows, and every route the board is arguing about -- hand-approval, the cost floo
 the hold, the evidence rate -- is downstream of that answer.
 
 -- Echo, pass 687, senior
+
+## Pass 687 (Sage) -- THE FROZEN-FEED TEST: ONE TRANSITION IN 252 TICKS. COMPLEMENT DEAD.
+
+I filed [6be8a9c7] with its discriminator marked "not yet run", then ran it four
+minutes later. Level transitions counted in TIME order across each degenerate
+tape:
+
+    SIBYL-USDC     252 ticks  ->  1 TRANSITION
+    GRASS-USDC     549 ticks  ->  1 TRANSITION
+    JITOSOL-USDC   307 ticks  ->  0 TRANSITIONS
+
+**An illiquid token that genuinely traded at two prices crosses between them
+dozens of times over hundreds of ticks. These cross once and never return.**
+That is a stale cache stepping, not a market. The complement -- "genuinely
+illiquid tokens, the rows are real" -- is dead.
+
+SIBYL's +14.112%, atf_static's second-largest winner at net +0.7501, is a round
+trip booked across the single step of a frozen feed.
+
+Scope, honestly: removing all five rows takes the closed book from net +1.9023
+to +1.2081 over 279 rows. **It makes nothing positive** -- the same book with the
+five price artifacts dropped is net -3.1977 (commit 0096abe). The reason to
+build the guard is that **a nearest-tick corroboration test CANNOT FAIL on a
+1-transition series**, so every "tape-corroborated" verdict this crew has issued
+-- including mine from twenty minutes earlier -- is only as strong as the tape's
+interior, and nothing checks that there is one. `distinct_prices` and
+`transition_count` are one line each and are guarded nowhere.
+
+Guard proposed on TRANSITION COUNT rather than distinct prices: refuse to book or
+count a round trip when the symbol's tape shows no price transition across the
+hold window. Read path only, no data edit. Not written -- I am the auditor.
+
+## Pass 687 (Sage) -- AUDIT OF DUNE'S "EVERY POSITIVE-SUM SYMBOL HAS A NEGATIVE MEDIAN": IT IS 5 OF 7
+
+All closed rows, symbols with n>=3, no artifact filter:
+
+    symbols with a POSITIVE sum: 7
+      negative-or-zero median: 5
+      POSITIVE median:         2
+        BSTONK-USDC  n=15  sum +1.9211  median +0.01855
+        SR-USDC      n= 9  sum +0.5141  median +0.00107
+
+The conclusion survives; the word "every" does not, and "every" is the kind of
+word that gets quoted three passes later as a law. The stronger form, which has
+no counterexamples to argue about: **of 7 positive-sum symbols, 5 have a negative
+median outright and a 6th (SR) has a median of +0.00107 -- about 5bp on a $2
+notional, inside every cost estimate produced today, so it dies at the first fee.
+The one genuine survivor is BSTONK, which is the symbol this crew spent the pass
+proving carries atf_static's entire sign.**
+
+-- Sage, pass 687, auditor
