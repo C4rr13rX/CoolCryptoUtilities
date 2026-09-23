@@ -23837,3 +23837,103 @@ VVV -0.8463%, CBBTC -0.5240%, CBETH -0.3322%, CBXRP -0.4080%, VIRTUAL -0.3445%.
 **That is the graduation evidence base: net -0.56784 over 240 corroborated rows at a
 30.8% net win rate, with no usable positive symbol in it.** It agrees in sign with
 the live book (-0.4643%, 38.9% win). **Both books are negative; they never disagreed.**
+
+---
+
+## Pass 682 — Kite — the clip lever is dead, the cheapest venue is banned, and the ban is running a t-test on three rows that are not trades
+
+Three routes measured, all read-only against `storage/trading_cache.db`. Two are
+closed NEGATIVE; the third is the first mechanical reason this loop has that
+names *why* the deep pools have no evidence.
+
+### 1. "Raise the clip to amortise the cost" — CLOSED NEGATIVE
+
+Every non-null ghost row (n=520 of 611) costed per symbol with
+`services.roundtrip_cost.net_profit_usd` at clips $6 / $20 / $50 / $200. The
+token-blind default moves **38.6bp → 33.9 → 32.7 → 32.1**. A 33x increase in
+clip buys **6.5bp**, because the fixed $0.004047 gas amortises and the 0.3187%
+RATE does not. On WETH it is 8.8 → 2.3bp, the same 6.5bp.
+
+**Do not cost a clip change as a cost fix.** Route (a) "hand-approve at a
+minimum clip" is still fine as an *evidence* argument — it is not a cost one.
+
+### 2. "The apparent edge is in cheap symbols" — CLOSED, IT IS THE OPPOSITE
+
+Cost in bp of clip at $6, bracket = % of that symbol's trips whose return beats
+it:
+
+    CENSUS-PRICED   AERO n=80 17.0bp (57.5%) | CBBTC n=48 17.7bp (39.6%)
+                    VIRTUAL n=27 187.6bp (7.4%) | CBETH n=19 88.2bp (0.0%)
+                    COMP n=13 7237.6bp (0.0%) | VVV n=6 246.0bp (0.0%)
+                    WETH n=5 8.8bp (0.0%)
+    BLIND DEFAULT   BASECAT n=115 (65.2%) | CBXRP n=50 (48.0%) | BSTONK n=39 (69.2%)
+                    BPAD n=13 (76.9%) | SOL n=11 (54.5%) | +6 more, all 38.6bp
+
+**Every symbol with a majority beat-rate except AERO is one whose cost was never
+measured** — 38.6bp is exactly the token-blind default (0.3187% + $0.004047),
+which `roundtrip_cost` itself logs as "a DEFAULT, not a price". Their median
+absolute returns (BASECAT 272bp, BSTONK 811bp, BPAD 852bp, MOONBASE 842bp) are
+the shape of a thin token that cannot be exited at its mark. AERO is the only
+census-priced survivor and it is the symbol Dune showed the same pass carries
+fabricated off-tape rows — re-run its 57.5% without them before trusting it.
+
+### 3. THE DEEP PAIRS ARE OFFERED AND REFUSED, NOT UNSIGNALLED — this is the live one
+
+Pre-registered complement: "WETH generates no signals, so pointing the lane at
+it yields nothing." **DEAD.** `trading_ops`, 7 days, `action='hold'` is an
+arbitration *decision* row, so hold:enter is the refusal ratio:
+
+    UNI-USDC   2814 / 461 = 16.38%      WETH-USDC  585 /  3 = 0.51%
+    ZORA-USDC  3487 / 444 = 12.73%      ETH-USDC  1116 /  3 = 0.27%
+    MAMO-USDC  3330 / 330 =  9.91%      ETH-USDT  1530 /  2 = 0.13%
+    OP-USDC     313 /   6 =  1.92%      WETH-USDT  751 /  1 = 0.13%
+                                        AERO-USDC 7898 /  1 = 0.01%
+
+**The four ETH pairs: 3982 arbitrations, 9 entries.** The cheapest venue we own
+gets 0.2% of the lane's decisions. And `no_strategy_or_forecast_cleared_the_entry_test`
+appears 97 times on UNI and **zero** times on WETH-USDC, WETH-USDT or AERO — the
+cheap pairs are not failing for lack of a signal.
+
+### The mechanism, and a confirmed chain from a defect to the refusal
+
+`trading/scheduler.py:600` `_log_predropped` writes `status='entry-predropped-edge-ban'`
+with a `dropped` array carrying one reason string per refused candidate. The
+refusal is `_strategy_edge_refusal(strategy_id) or _symbol_edge_refusal(pair, strategy_id)`,
+and it is a **cost-aware t-test on excess return** — mean round-trip return
+against that symbol's measured round-trip cost, not against zero. That is a good
+design and the big bans are honest evidence (`atf_static` on AERO: 17 trips,
+mean -0.992% vs 0.650% cost, t=-6.24; WETH's largest: `donchian_breakout@1w`,
+4 trips, t=-3.93).
+
+**The sample is the defect.** Every ban in 7 days with |t| > 1000 — 1020
+candidate-drops across at least 8 symbols including ETH-USDC and LINK-USDC — is
+the SAME strategy, `rsi_reversal@5d`, on the SAME "3 closed round trips",
+re-costed per symbol (mean return constant at -0.461%, cost varying 0.461 /
+0.462 / 0.465 / 0.937):
+
+    MAMO 278, AERO 194+53+22, BLUECHIP 162+39, ZORA 153+23+20, LINK 30, ETH-USDC 25
+    t = -92,145.70 / -92,165.81 / -92,548.06 / -92,550.12 / -139,623.57
+
+A |t| of 10^5 on n=3 means the sample standard deviation is ~0. **`rsi_reversal@5d`
+has n=4 rows in the ghost book of which 3 are NULL** (`return_pct` exactly 0.0)
+— the highest null fraction of any named strategy, from the same null-row
+population reported in this pass's earlier entry. Three identical zeroes have
+variance exactly zero, and that is where -92,145 comes from.
+
+**Chain: a writer emitted zero-return exits → three of them are the entire
+evidence base for one strategy → a t-test on zero variance returns an
+astronomically significant verdict → a standing edge ban drops that strategy
+1020 times in 7 days.** Limit stated honestly: matched on the count 3 and on
+strategy identity, **not on row ids**. Another agent should tie the three rows
+by id before this goes into memory; it is not for its author to verify.
+
+**Not claimed:** unbanning `rsi_reversal@5d` is not a route to profit — its real
+evidence is ONE non-null trip. The point is that permanent structural decisions
+are being made off samples of three, and one of those samples is not trades.
+
+**Not looked at, deliberately:** `failed_a_necessary_condition` is 212 of
+WETH-USDC's 585 refusals and is written at `trading/bot.py:8918`. That file was
+claimed by Sage this pass and was not opened.
+
+Filed as `[83b4851f]` (evidence budget by venue; its kill test is answered here)
+and `[df-degenerate-t]` — see backlog.
