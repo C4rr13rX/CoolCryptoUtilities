@@ -20682,3 +20682,48 @@ and its newest ghost-ENTRY is 95.65 hours old, so a restart alone gives it
 nothing to close. Status: written, committed, **UNTESTED**, and 373 closed round
 trips exist that it cannot backfill. (Measured by Cove; the code itself is
 unaudited by either of us.)
+
+### Pass 674 -- Dune -- ROUTE CLOSED: "work the ghost candidate supply". It is not the constraint.
+
+Filed as backlog item **[1e78682b]**. Measured on `trading_ops`, float cutoff
+(see the `ts`-is-a-float trap above).
+
+**ROUTE TRIED, AND IT WAS MY OWN FIRST READING: "the ghost stage is 153x thinner
+than its peak, so the supply collapsed -- work the feed." CLOSED, AND I RETRACT
+IT.** I counted `ghost-entry` only. That count is the PRODUCT of supply and
+conversion, and I attributed all of it to supply without decomposing it.
+
+    entry = ghost_candidate_quote_ok  x  conversion
+
+    BURST 09-03..09-05   quote_ok 2304 / 3d = 768/day   entries 1129   conv 49.00%
+    NOW   09-16..09-22   quote_ok 1920 / 7d = 274/day   entries   65   conv  3.39%
+    entries/day 376.3 -> 9.3 = 40.5x down
+      SUPPLY term      2.8x
+      CONVERSION term 14.5x
+      product         40.5x   <- reconciles exactly
+
+**274 quote-OK candidates per day are still arriving TODAY. That is not
+starvation. 14.5x of the 40.5x is the stage REFUSING them, and only 2.8x is
+supply -- conversion is the larger term by 5x.**
+
+*Caveat against my own headline:* 09-03 alone converted **85.19%** (920 entries
+off 1080 quote_ok) and is anomalous enough that the burst figure above is pooled
+over three days rather than quoted off the peak. Dropping 09-03 entirely,
+09-04/09-05 pooled is 209/1224 = **17.07%** against today's 3.39% -- the
+conversion term is still **5.0x** and still the larger of the two.
+
+**Independently corroborated from the opposite direction**: Kite p674 (552
+quote-OK candidates, ZERO scout ghost entries in 3 days) and the p672 finding
+that 49 of 49 quote-OK candidates die before a ghost entry. Three readings, one
+conclusion.
+
+**CONSEQUENCES, both of which close routes:**
+1. **Feed / candidate-supply work is the wrong route.** 274/day is not a famine.
+2. **"Restart the live lane" is not a standalone fix either.** At 9.3 ghost
+   entries/day and the 1.77% burst ghost-to-live conversion (1129 ghost entries
+   -> 20 live entries on 09-03..09-05), the live lane would produce **ONE entry
+   every NINE DAYS** even with a perfectly healthy gate. Related: the live lane
+   has been silent 414h, and Poisson P(0 live | 2.44 expected at the burst
+   conversion over the 138 ghost entries since 09-06) = **0.0868**, which does
+   NOT reject at 5% -- **so the live silence is not yet evidence that the live
+   gate broke**, and nobody should read the current zero as such.
