@@ -115,6 +115,31 @@ def test_a_silent_feed_writes_one_row_per_refused_candidate(_env):
         assert float(details["max_age_sec"]) == 900.0
 
 
+def test_the_priceless_candidate_branch_is_visible_at_all(_env):
+    """The branch that logged NOTHING, and is the one production is hitting.
+
+    ``_corroborated_price`` opens with ``if quoted <= 0.0: return None`` and
+    returns without calling ``_log_corroboration_refusal``. So a candidate
+    that carries NO PRICE was counted in the aggregate N and left no other
+    trace of any kind -- which is why p676's branch-namer had produced zero
+    production lines while the aggregate kept counting refusals.
+
+    Measured 2026-09-23 07:19 on the live signal set: MAMO-USDC, the only
+    candidate reaching this gate, has ``price_usd=0.0`` with
+    ``quote_probe.ok=True``. The refusal is NOT "the feed disagrees with a
+    good quote" -- there is no quote to disagree with.
+    """
+    db = _FakeDb(prices={"MAMO-USDC": 0.0105})
+    atf._run_ghost_quote_scout(
+        db=db, signals=[_signal("MAMO-USDC", 0.0)], chain="base",
+        quote_token="USDC", max_positions=10,
+    )
+
+    rows = _refusal_rows(db)
+    assert len(rows) == 1, "a priceless candidate must leave a row, not silence"
+    assert rows[0]["details"]["reason"] == "quoted_price_not_positive"
+
+
 def test_the_deviation_branch_is_distinguishable_from_the_silence_branch(_env):
     """A feed that disagrees is a DIFFERENT reason, with both numbers on it."""
     # Feed says 1.00, the quote says 2.00: 100% deviation against a 35% bar.
