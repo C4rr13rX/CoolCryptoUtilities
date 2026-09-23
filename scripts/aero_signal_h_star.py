@@ -65,7 +65,7 @@ comes from the read-only quote census, ``data/round_trip_quote_census_
 census.py --round-trip-census, git 769cc58, chain base, Uniswap V3 QuoterV2,
 both legs SAME fee tier).  Its AERO entry, verbatim:
 
-    fee_tier 500, rows 45, address 0x940181a9...98631
+    fee_tier 500, rows 45, address 0x940181a94a35a4569e4529a3cdfb74e38fd98631
     points  $0.10 0.1010%  $0.25 0.1004%  $0.50 0.1004%  $0.75 0.2429%
             $1.00 0.1302%  $2.00 0.1303%  $4.00 0.1020%  $6.00 0.1029%
     implausible  $10: cost 0.0376%% is BELOW the 2*fee floor 0.1000%%
