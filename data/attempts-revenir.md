@@ -23039,3 +23039,92 @@ trades and a second demotion. Anyone proposing to re-arm atf_static again is pro
 to repeat an experiment this ledger already ran and already recorded the result of.
 They need a reason the next eighteen differ -- and the deep-pool subset of the last
 eighteen is gross-negative at n=15 before a single fee (see the entry above).
+
+## Pass 682 (Bay, worker) -- [b8ebf664] "POSITIVE INSIDE 15 MINUTES" IS REFUTED, AND SO IS MY OWN REPLACEMENT HEADLINE FOR IT
+
+**Route:** re-derive standing instruction (c), "the tradeable book is POSITIVE
+inside 15 minutes and negative after". **Verdict: CLOSED NEGATIVE on the
+instruction, and my own p680 counter-headline is ALSO withdrawn.** Read-only,
+storage/trading_cache.db. Entries = `trading_ops.action='enter'` with a
+`trade_id` in `details`, paired to `trade_outcomes` on `trade_id`, wallet-split.
+263 round trips.
+
+### I overturned my own filed headline: one contaminated row was 75.7% of it
+
+p680 (me) filed "the 0-15 min bucket is the WORST in the book, ~2x the next",
+ghost mean -0.04903. **That is 75.7% one row**: COMP-USDC, exit 2026-08-26 12:40
+host-clock (UTC-4/-5), hold 6.8 min, **net -1.1195 on notional 2.000 = -56% in
+under seven minutes**. That is backlog [57d69341], already BLOCKED: *COMP-USDC's
+feed carries TWO price regimes -- two assets under one ticker*. The 56% is the
+regime jump booked as P/L.
+
+    ghost, all-time      AS FILED (p680)        MINUS COMP-USDC
+    0-15    n=37 mean -0.04903 (WORST)   n=36 mean -0.01930 (BEST of the negatives)
+    15-30   n=49 mean -0.02068           n=48 mean -0.02083
+    30-60   n=43 mean -0.02409           n=40 mean -0.02569
+    60-120  n=71 mean -0.02704           n=63 mean -0.02883
+    120+    n=46 mean +0.15576           n=43 mean +0.16644
+
+**Removing one row moves 0-15 from worst to best. DO NOT QUOTE THE -0.04903.**
+
+### What survives, which is the part the instruction turns on
+
+0-15 is still **negative**: -0.6946 net, **-0.6158% of notional**, n=36. So
+instruction (c) does not reproduce -- correct conclusion, wrong reason.
+
+### Origin found and re-derived on its own window (criterion 3)
+
+Born 2026-09-10, pass ~99/100, items [aee0af15] -> [71975c13], instrument
+`scripts/hold_time_edge.py` @ 9013334. It read: *HELD<=15min 17 trips +0.0158%
+of notional win 58.8%*. Re-derived on THAT window (exits <= 2026-09-10, minus
+COMP): **n=23, -0.8628% of notional, win 73.9%** -- negative on its own window.
+Note the shape: **73.9% winners with a negative sum**, the exact
+[[a-sum-can-be-carried-by-one-row-a-win-rate-cannot]] signature. Not an exact
+replication -- the original ran a narrower `tradeable` predicate (n=17, later
+n=9) that has since changed -- so: **WEAKENED on the origin window, REFUTED on
+the current one.** It is not simply "true then, false now"; it was thin then.
+
+### The number nobody has quoted: 0-for-47 in the current era
+
+Split at 2026-09-10. In the CURRENT era **every bucket under 60 minutes has a
+0.0% win rate**: 0-15 n=13 win 0.0%, 15-30 n=29 win 0.0%, 30-60 n=5 win 0.0%.
+**Forty-seven consecutive short-hold ghost round trips, not one winner.** And
+the only positive bucket, 120+, has **n=0 in the current era** -- it exists only
+before 09-10, in the same book [[the-ghost-book-positive-is-uncorroborated-entry-prices]]
+showed is carried by rows no tick corroborates. **Both directions of the hold
+axis are closed:** short is 0-for-47, long is uncorroborated and no longer
+occurs. Agrees with p681's [[forcing-a-clock-exit-is-worse-at-every-cap]] and
+[[route-c-shorten-the-hold-is-closed-on-two-independent-instruments]] from a
+third instrument.
+
+### Survivorship: second route ATTEMPTED and FAILED, naming why (criterion 2)
+
+1254 entries carry a `trade_id`; only **250 pair to an exit**; 1004 unpaired.
+Second route attempted: bound their holds off `trading_ops.action='hold'`, which
+runs 12605 rows/48h and looks like a position heartbeat. **It is not.**
+`action='hold'` is an **ARBITRATION DECISION** row -- `details` is
+`{reason: candidate_carries_a_standing_edge_ban | one_tick_was_offered_to_many_and_spent_by_one, ...}`
+-- and **0 of 12605 carry a trade_id**, so 0 of 1004 unpaired entries get even a
+lower bound. **TRAP: anyone reading `action='hold'` as "still holding a
+position" is reading a decision log as position state.**
+**THE SURVIVORSHIP TEST CANNOT BE CLOSED; the verdict carries it as a caveat.**
+
+### Criterion 4 respected
+
+Standing instructions NOT edited. Report and verdict only -- changing the loop's
+own briefing is an operator decision.
+
+### Separate, and it is the first failing ladder link (my opening measurement)
+
+Step 3 prints "no ghost activity in 1h". The lane is **not** idle: `action='enter'`
+is nonzero in **45 of the last 48 hours**, ~20/hr, 920 rows. It is a CONVERSION
+failure. `trading_ops.status` on those 920: `ghost_candidate` 529,
+`ghost_candidate_quote_ok` 384, **`ghost-entry` 7**.
+Conversion candidate -> ghost-entry: 1h 0/9, 6h 1/27, 24h **1/395 = 0.25%**,
+48h 7/920 = 0.76%, 7d 56/3946 = 1.42%. And ghost-entry has a **60-HOUR silence
+from 09-19 13:00 to 09-22 01:06** while candidates flowed throughout -- a 1-hour
+bucket cannot see it. **NOT CLOSED:** if `ghost_candidate_quote_ok` is itself the
+entry and `ghost-entry` is a second writer, conversion is 41.7% and there is no
+funnel problem; that is a one-query test against
+[[two-ghost-entry-lanes-do-not-share-a-denominator]] and must be run before
+anyone quotes the 1.42%.
