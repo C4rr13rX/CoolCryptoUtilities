@@ -984,6 +984,83 @@ def _run_ghost_quote_scout(
             "signal": sig,
         }
         db.log_trade(wallet="ghost", chain=chain, symbol=symbol, action="exit", status="ghost-exit", details=details)
+        # THE RECEIPT. Written here because until pass 672 it was not written
+        # anywhere.
+        #
+        # Measured 2026-09-22 over all 265 rows of ``trade_outcomes``: ZERO
+        # name ``atf_static_scout``, while the strategy ledger credits it with
+        # 22 tradeable / 255 pooled round trips and ranks it first on the
+        # graduation board at +0.1030. The reason is directly above: this loop
+        # wrote a ``trading_ops`` event (``ghost-exit``) and called
+        # ``_record_ghost_outcome`` into ``StrategyLedger``, and neither of
+        # those is ``trade_outcomes``. Every de-contamination instrument in
+        # this repo -- the implausibility filter, the TP clamp, the tradeable
+        # predicate, ``scripts/tradeable_book.py``, every census -- reads
+        # ``trade_outcomes``. So the one book that clears both graduation bars
+        # was the one book none of them could audit, and a counter nothing can
+        # audit is not evidence.
+        #
+        # This adds a row and changes no bar, no gate and no guard: the ledger
+        # call below is unchanged and still the number graduation reads. The
+        # receipt exists so the ledger's claim can be CHECKED.
+        #
+        # ``outcome_id`` follows trading/bot.py:10823's shape
+        # (``<trade_id>:exit:<n>``) and is deterministic in entry_ts, so a
+        # replayed cycle cannot double-count one round trip -- the INSERT is
+        # ``ON CONFLICT DO NOTHING``.
+        try:
+            qty = (clip_usd / entry) if entry > 0 else 0.0
+            db.record_trade_outcome(
+                outcome_id="%s-%s:%d:exit:1" % (SCOUT_STRATEGY_ID, symbol, int(entry_ts)),
+                trade_id="%s-%s:%d" % (SCOUT_STRATEGY_ID, symbol, int(entry_ts)),
+                wallet="ghost",
+                chain=chain,
+                symbol=symbol,
+                session_id=int(getattr(db, "ghost_session_id", 0) or 0),
+                base_token=str(symbol).split("-")[0].upper(),
+                quote_token=(str(symbol).split("-")[1].upper() if "-" in str(symbol) else "USDC"),
+                pnl_currency="USD",
+                entry_price=entry,
+                exit_price=mark,
+                quantity=qty,
+                # Gross is the move on the clip; fee is the round trip this
+                # module already charges. net = gross - fee holds by
+                # construction, because ``profit_usd`` is defined that way in
+                # ``_net_profit_usd``.
+                gross_profit=float(profit) * clip_usd,
+                fee_cost=_roundtrip_cost_usd(clip_usd),
+                # Ghost rows never checkpoint: there is no stable to move.
+                checkpoint=0.0,
+                net_profit=profit_usd,
+                status="closed",
+                ts=now,
+                details={
+                    "strategy_id": SCOUT_STRATEGY_ID,
+                    "mode": "ghost",
+                    "source": SOURCE,
+                    "reason": reason,
+                    "exit_reason": reason,
+                    "entry_ts": entry_ts,
+                    "exit_ts": now,
+                    "age_sec": age,
+                    "return_pct": profit,
+                    "clip_usd": clip_usd,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - a receipt must never stall the loop
+            # print() is void in this process (stdout capture is dead), so the
+            # one channel a failure can survive on is system.log.
+            try:
+                from services.logging_utils import log_message
+
+                log_message(
+                    "atf-static",
+                    "scout trade_outcomes receipt failed for %s: %s: %s"
+                    % (symbol, type(exc).__name__, exc),
+                    severity="warning",
+                )
+            except Exception:  # noqa: BLE001
+                pass
         # The ledger is USD too: trading/bot.py records ``economic_profit``
         # here, and graduation scores the two writers against one threshold.
         _record_ghost_outcome(SCOUT_STRATEGY_ID, profit_usd, symbol=symbol,
