@@ -28121,3 +28121,50 @@ CLOSED.** What is withdrawn is the claim that repricing makes the book
 dramatically WORSE, not the claim that it graduates nothing.
 
 -- Cove, pass 688, worker
+
+================================================================================
+PASS 688 (Sage, worker) -- ADDENDUM, AND IT PARTIALLY REVERSES MY OWN ROUTE (ii)
+CLOSURE ABOVE. THE CLIP IS NOT CAPPED BY THE WALLET. IT IS CAPPED BY A CONFIG
+LINE, AND RAISING IT TO WHAT THE WALLET ALREADY HOLDS IS WORTH 11.43bp FREE.
+Filed [675b8c1b].
+================================================================================
+
+    .env:395   LIVE_MAX_BOOTSTRAP_USD=6.00
+    .env:359-361, the repo's own note: "ATF_STATIC_MAX_LIVE_POSITIONS=2 x $3.00
+      = $6.00, exactly LIVE_MAX_BOOTSTRAP_USD ... deployable_stable_usd ($18.19)
+      and live_capital_cap_usd ($6.00) both still bind inside _live_clip_usd()"
+
+THE CHAIN CORROBORATES IT, AND I HAD THE NUMBER AT THE TOP OF THIS PASS AND
+READ IT WRONG. My opening measurement: max settled live notional over 18 closed
+rows is EXACTLY $3.0000, zero rows above. I filed that as "the clip axis above
+$3 is UNTESTED". IT IS NOT UNTESTED -- IT IS CAPPED. A configured ceiling read
+as missing evidence, for two hours.
+
+    gas at $3.00 (the clip the executor can place)  = 13.49bp
+    gas at $19.66 (what the wallet holds)           =  2.06bp
+    RAISING THE CAP TO WHAT IS ALREADY IN THE WALLET = 11.43bp, for free.
+
+Against the ~16bp irreducible floor on AERO/CBBTC/CBETH (pool 2.08 + entry toll
+~14) that is most of the gap, with no funding, no new code and no model change.
+
+WHAT DOES NOT CHANGE: my route (ii) arithmetic stands. Capital BEYOND $19.66
+buys only 2.06bp more, so "ask the operator for funding" remains closed. THE
+LEVER IS THE CAP, NOT THE FUNDING, and those are different asks. I answered the
+money question correctly and it was the wrong question.
+
+THREE THINGS THAT MUST BE CHECKED BEFORE ANYONE ACTS ON THIS:
+  1. I read an .env line and a COMMENT, not a running value. _live_clip_usd()
+     must be resolved to a NUMBER on the running config. The comment describes
+     a change from $1.50 to $3.00 as if recent. If it does not resolve to
+     $3.00, this is wrong and should be REJECTED, not redefined.
+  2. THE CAP IS A RISK CONTROL, not an oversight. 2 x $3.00 was sized
+     deliberately against an $8.38 wallet that is now ~$19. Raising it raises
+     maximum live exposure. OPERATOR'S CALL. State the bp gained and the
+     exposure added; do not raise it unilaterally.
+  3. THE ~14bp ENTRY TOLL DOES NOT AMORTISE -- one-sided and size-invariant.
+     Only the fixed gas leg does. The floor does not fall to 2bp; it falls from
+     ~16bp to ~16bp minus the gas saved. And VIRTUAL INVERTS (79.36bp at $1 to
+     293.64bp at $19.66): past some size you pay DEPTH, not fees. A cap raise
+     is a gain only where pool cost is flat over the range.
+
+-- Sage, pass 688, worker
