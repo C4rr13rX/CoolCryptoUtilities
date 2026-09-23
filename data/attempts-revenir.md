@@ -25186,3 +25186,56 @@ clean feeds, then the graduation funnel is selecting on net P/L over a populatio
 with no gross edge, and 62 days of ghost evidence will graduate a loser.
 
 -- Echo, pass 685, senior
+
+## Pass 685 (Echo, senior) -- FIRST CUT AT [227051f1]: NO MEASURABLE GROSS EDGE ON CLEAN FEEDS, IN EITHER DIRECTION
+
+ROUTE TRIED: does ANY strategy have a gross-positive edge, before costs, on the
+symbols whose feeds can actually support a trade?
+NUMBER PRODUCED: **nothing reaches significance, and the two books straddle
+zero.** NOT CLOSED -- this is a first cut, n is thin, see the caveats.
+
+Attrition: 288 rows with both prices -> **116** on clean-feed symbols (AERO,
+WETH, UNI, CBBTC, CBETH, COMP, VIRTUAL; USDC and USDT legs). Censored at
+`IMPLAUSIBLE_RET=0.50`. Ghost and live SEPARATE, never pooled.
+
+```
+GHOST clean feed, 102 -> 98 censored
+  strategy               n   gross_mean   win%       t
+  unclassified          29     +1.0840%    76%   +1.39
+  obv_accumulation@5d    8     +0.3289%    38%   +0.80
+  obv_accumulation@1w    7     -0.1780%    14%   -1.96
+  atf_static            18     -0.2806%    39%   -1.55
+  (pooled)              98     +0.2080%    54%   +0.82
+
+LIVE clean feed, 14 -> 14 (nothing censored)
+  atf_static            11     -0.4002%    36%   -1.12
+  (pooled)              14     -0.1157%    43%   -0.30
+```
+
+**NOT ONE CELL REACHES SIGNIFICANCE.** The books disagree in SIGN at pooled
+level -- ghost +0.21% against live -0.12% -- and neither is distinguishable
+from zero. **That straddle is the finding**: with a real edge the two
+instruments would not sit on opposite sides of nothing.
+
+**`atf_static` -- the strategy the funnel is closest to promoting -- is
+gross-negative on BOTH books**: ghost -0.2806% over 18, live -0.4002% over 11.
+Consistent sign, consistent magnitude, neither significant. The most
+informative line in the table.
+
+**THE ONLY CELL THAT LOOKS TRADEABLE IS NOT A STRATEGY.** `unclassified`
++1.0840% at 76% over 29 rows is t=+1.39, and `strategy_id` only BEGAN
+2026-09-03 -- that bucket is old rows with the attribution missing. You cannot
+deploy a bucket. Worth identifying what those 29 rows were; expect an artifact.
+
+**CONSEQUENCE FOR THE FUNNEL.** Graduation selects on NET P/L over ghost
+trades. If the population it selects from has no measurable GROSS edge on the
+only symbols worth trading, then selecting its top returns the **luckiest**
+strategy, not the best one. That is how you graduate a loser after 62 days of
+patient evidence.
+
+CAVEATS, because this does not close the item: n=98 ghost and n=14 live is
+thin; the 9-symbol clean set is from my own census and nobody has checked it;
+the uncensored comparison the item requires was not run. `[227051f1]` stays
+open and should be p686's first job.
+
+-- Echo, pass 685, senior
