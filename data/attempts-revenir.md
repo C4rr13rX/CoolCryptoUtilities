@@ -24507,3 +24507,58 @@ before reading what the other book says the field IS.** Both are now written int
 memory file, so the next pass inherits the rule and not just the numbers.
 
 -- Echo, pass 683, senior
+
+---
+
+#### Pass 683 -- Echo -- **THE DISCRIMINATOR IS RUN AND `[ad8cb7c2]` IS ANSWERED. The stop is not broken; it is BLIND FOR 81% OF THE HOLD.**
+
+**FIRST TEST, KILLED.** Gap from the last `market_stream` tick to the exit: **2.1
+SECONDS.** The feed was dense *at* the exit. H as written -- *"the feed was dark so the
+stop never got a tick"* -- is **REFUTED at the exit boundary**.
+
+**SECOND TEST, AFTER FIXING MY OWN METHOD.** My next query reported the position "sat
+**246 HOURS** below its stop". **That was garbage**: it measured from the first tick BPAD
+ever had (2026-08-26), because `trade_outcomes.ts` is the EXIT time and I had no entry
+time. **The same trap, a third time in one pass.** The entry is in `trade_fills`:
+`ts 1788630482.0`, `mode=live_entry`, `quote_spent 1.5`.
+
+**THE REAL WINDOW: entry 13:48:02, exit 14:22:30 local. HELD 34.5 MINUTES. 24 ticks.**
+
+    13:48:49   -61.36%    <- first tick, 47s after entry
+    [ 1678 SECOND GAP -- 28 MINUTES, NO TICKS ]
+    14:18:33   -19.18%    <- feed returns
+    14:20:49   -19.21%    <- STOP FIRES, ~2 min later
+    14:22:16   -15.87%
+
+**THE FEED WAS DARK FOR 1678s OF A 2068s HOLD = 81% OF THE POSITION'S LIFE.** Median gap
+between ticks that did arrive: **2.0 seconds**. The feed is either fast or absent,
+nothing in between. **H IS CONFIRMED with the darkness in the MIDDLE of the hold rather
+than at its end**, and the stop fired ~2 minutes after ticks resumed -- tick-driven
+evaluation working as designed the moment it had anything to work with.
+
+**THE STOP IS NOT BROKEN. IT IS BLIND FOR 81% OF THE TIME IT IS SUPPOSED TO BE WATCHING.**
+That generalises: against a feed measured dark 40-49% of minutes, a "2% stop" is a
+*2%-or-whatever-the-next-tick-says* stop, and every live position on a thin symbol
+carries unbounded downside. **This is a live-capital control finding, not a P/L curiosity.**
+
+**SECOND FINDING, NOT SOUGHT: THE ENTRY PRICE AND THE TAPE DISAGREE BY 2.6x.** Executed
+`0.00027581944`; the tape 47 seconds later reads `0.00010657134` = **-61.36%**. **All 24
+in-window ticks are below the -2% stop level -- the position was never above water on the
+tape.** Either the entry overpaid 2.6x or BPAD's tape is unreliable. **I lean tape**,
+because the late ticks (-19.18%) agree closely with the executed exit (-19.21% trigger /
+-16.66% fill): right at the END, wrong at the START. Consistent with `[e40ea91e]` (we
+trade tokens we cannot price: BASECAT, BPAD, BSTONK) and `[173cc47d]` (impossible prices
+on 8 low-cap symbols). **FLAGGED, NOT ASSERTED -- one of those two is true and I have not
+separated them.**
+
+**FRAMING NUMBER:** `quote_spent` was **$1.50**. The row carrying 65.6% of all live gross
+loss is a **$1.50 clip** that lost $0.2549. Its `slippage_bps=75` is a literal per
+`[5c6977ca]` -- do not trust that field.
+
+**METHOD, AND IT IS THE HEADLINE OF MY PASS:** I hit the exit-time-vs-entry-time /
+wrong-denominator trap **three separate times in one pass** -- refuting Dune on the wrong
+instrument, filing an already-answered contradiction, and measuring 246 hours that were
+really 34.5 minutes. Caught and retracted all three myself. **This store's books disagree,
+and the disagreement is almost always the DENOMINATOR or the TIMESTAMP.**
+
+-- Echo, pass 683, senior
