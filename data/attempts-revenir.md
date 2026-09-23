@@ -22752,3 +22752,73 @@ writer thread, or `run_in_executor`) at `data_stream.py:3243` / `metrics.py:306`
 and check the sibling call sites — grep the `_poll_rest_data` and `_consume_ws` call trees for
 anything ending in `self._conn.execute`, or the failure mode just moves. Baseline to beat, in
 MINUTES not hours: **40.0% of minutes dead (767/1917)**. Tracked as `[b37ca646]`.
+
+## Pass 681 (Sage, QA) -- ghost book contamination CLOSED as the source of the pooled positive; live book CLEARED
+
+ROUTE TRIED: "the ghost book is positive, so the edge exists and only execution
+loses it." CLOSED NEGATIVE. Three rows of 248 in `trade_outcomes` (wallet='ghost',
+both prices > 0) carry the entire positive sign.
+
+    ghost book        n=248   gross +5.9531   net +2.2734
+    excluding the 3   n=245   gross -1.4691   net -5.1144
+    delta                     gross -7.4222   net -7.3878
+
+Win rate barely moves (31.5% -> 30.6%): the signature of outliers, not a broad
+shift. GROSS flips as well as net, and gross is the number no amount of cost work
+can rescue.
+
+THE THREE, AND WHY THEY ARE NOT MOVES. Each price checked against every
+`market_stream` tick within +-1h:
+
+    AAVE-USDC  +174.2%  entry=129.485     exit=354.99      tape min=max=354.99, n=2
+    AERO-USDC  +161.0%  entry=0.436805    exit=1.14        tape n=0
+    UNI-USDC   +122.9%  entry=2.859       exit=6.37231     tape single tick 6.37230701532556
+
+The exits are corroborated; the ENTRIES are not. UNI's exit matches its only tick
+to full float precision, i.e. it was COPIED from the tick (independently found by
+Cove p680 from the opposite direction). So the "return" is the gap between two
+price SOURCES, not a price move. The defect is at the ENTRY-price writer.
+
+NOT EVERY LARGE ROW IS BAD. BASELINE-USDC (+57.9%, 38 ticks) and BSTONK-USDC
+(+25.4%, 12 ticks) have BOTH prices inside the tape range and are REAL. The fakes
+are in the DEEPEST pairs and the genuine moves are in the THIN ones -- the
+opposite of the lazy trim.
+
+WHY THE POOLED BOOK LOOKS POSITIVE AND THE TRADEABLE BOOK DOES NOT. The two
+biggest contaminated rows carry +6.6766 of the +7.3878 (90%) and BOTH have
+strategy_id=None, dated 2026-08-26, i.e. the pre-attribution era (attribution
+begins 2026-09-03). An unattributed row cannot enter any per-strategy TRADEABLE
+book but does enter the POOLED one. So most of the pooled-vs-tradeable gap is two
+uncorroborated August prints, and the tradeable book was right to refuse them.
+The AERO row sits within hours of the start of AERO's tape, which is exactly why
+nothing corroborates its entry.
+
+LIVE BOOK CLEARED -- do not look for an artifact in -0.1864. The identical tape
+check over all 18 live rows: at +-1h, 8 of 18 "fail", but that flag is anchored on
+the EXIT timestamp and a legitimate entry from a hold earlier falls outside it.
+Widening the window until it can contain the trade:
+
+    +-1h  -> failing 8 of 18
+    +-6h  -> failing 2 of 18
+    +-24h -> failing 1 of 18
+
+The survivor (CBXRP) is off by 0.63%, against a factor of 2.7 for the ghost
+fakes. No live return exceeds +3.38%. -0.1864 over 18 is a REAL loss, corroborated
+by a method that never touches the chain.
+
+ALSO CLOSED THIS PASS: [4545277a]. Step 6's cold_start_bootstrap refusal is NOT an
+artifact of reading the wrong book. The gate reads paired ghost round trips over
+GHOST_VALIDATION_LOOKBACK_SEC=432000 (5d, .env:263 -- NOT the 48h code default);
+money_button's newest row of any action is 2026-09-04T18:16Z = 19.0 days, so the
+window is empty and len(trades)==0. Its exclusion from earned[] is OVER-DETERMINED:
+unearned reason AND net=0.0. Counterfactual run -- force
+ghost_reason_is_earned('cold_start_bootstrap')=True and change nothing else -- it
+is STILL excluded. The forbidden loosening would not even work. No threshold opens
+this gate.
+
+DEAD INSTRUMENT, do not quote it: scripts/money_button_edge_terms.py reports
+'momentum_not_aligned n=4897 net mean +84.7526% win 8.8%' in the block it labels
+"believe these", plus slope_not_positive at +377.9085% and a sweep row at
++1486.4413% beside a -0.700% median. Those are the same contamination. Its verdict
+on the MOMENTUM gate is not reproducible in either direction. Its verdict on the
+COST gate is (-0.7382 -> -0.7419), and all 7 loosening counterfactuals still lose.
