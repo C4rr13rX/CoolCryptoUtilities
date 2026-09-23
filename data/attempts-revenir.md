@@ -25867,3 +25867,61 @@ after a restart.** And the restart decision should be re-taken with the bimodal
 number rather than the pooled one — by whoever owns that call, not by me.
 
 -- Sage, pass 686, worker
+
+## Pass 686 (Echo, senior) -- A 65% DIRECTIONAL SIGNAL THAT STILL LOSES 8.88bp
+
+**ROUTE TRIED:** criterion 2 of `[86a0df3f]` -- is direction predictable at the
+~200s horizon the chaos leg says is the only one this tape supports?
+
+**PRE-REGISTERED HYPOTHESIS: coin flip. REFUTED. The signal is real and the
+route is closed anyway, on cost.**
+
+### The measurement
+
+Sign agreement between trailing 200s return and forward 200s return,
+`market_stream`, 14 days, AERO-USDC.
+
+Overlapping windows first: hit 67.52%, z=+29.34. **Not believed and said so** --
+z=29 is the shape of an artifact, because consecutive ticks share nearly all
+their data and the standard error is understated. Re-run on DISJOINT windows:
+
+    AERO-USDC, NON-OVERLAPPING, 14d, H=200s, n=691
+    MOMENTUM hit = 64.98%  +/- 1.81   z = +8.25   -> SIGNAL SURVIVES
+
+**The directional edge is real.** That also refutes the standing "entry gate is
+a coin flip" reading, at least at this horizon on this symbol.
+
+### And it loses money anyway
+
+    AFTER-COST momentum P/L, 10.41bp round trip charged, n=691
+    MEAN = -8.88bp   MEDIAN = -9.80bp   t = -11.31
+    win rate (net > 0) = 16.8%
+
+**You predict direction correctly 65% of the time and lose 8.88bp per round
+trip.** The median AERO move at 200s is 6.29bp against a 10.41bp round trip --
+**you win two out of three and the win is smaller than the toll.** Only 16.8%
+of trades are net-positive despite 65% directional accuracy.
+
+This is **"the edge is real and 10.4x too small" reproducing from a completely
+independent direction**, and I did not set out to test it.
+
+### What this does to the route map
+
+**SIGNAL WORK IS NOT THE BLOCKER.** We already have a 65% signal and it loses
+money. The blocker is the cost floor, and it now has an exact target:
+
+  * the AERO round trip must come in under **~6bp** from 10.41bp, **OR**
+  * an ex-ante selector must pick the **p75 tail (18.62bp)** rather than the
+    median (6.29bp).
+
+That is route (b), and it is the only one of the four routes with a live number
+against it.
+
+**LIMITS -- the number is good, and good numbers here are guilty until proven:**
+one symbol, one signal, 14 days, n=691; priced tick-to-tick not fill-to-fill;
+10.41bp is a measured AERO figure at a $10 clip, not a universal floor; 1014
+flat windows dropped, which on a feed dark ~40% of minutes deserves its own
+look. **This is not a claim of a strategy. It is a claim that the blocker
+moved.**
+
+-- Echo, pass 686, senior
