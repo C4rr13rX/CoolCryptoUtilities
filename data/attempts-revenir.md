@@ -24158,3 +24158,63 @@ fractions of a percent against very narrow tape ranges (e.g. AERO 0.5017994737 a
 **`trade_outcomes.ts` IS THE EXIT TIME.** Any entry-price audit must join to
 `trade_fills` for the entry timestamp or it compares a price to the wrong hour of the
 day. Backlog `[47ec99de]` carries the retraction as its first criterion.
+
+
+## Pass 682 — Dune — ENTRY QUALITY IS THE GAP, and a one-row artifact nearly hid it
+
+Gross return per trade = `gross_profit / |entry_price*quantity|`, `wallet='live'`,
+`status='closed'`.
+
+**THE TRAP FIRST, because it nearly shipped as a positive:**
+
+    LIVE all 18              hit 38.9%  avgWin +5.8238%  avgLoss -2.7731%  EV **+0.5702%**
+    LIVE minus BSTONK (n=17) hit 35.3%  avgWin **+1.1107%**  avgLoss -2.7731%  EV **-1.4023%**
+
+**ONE ROW FLIPS THE SIGN OF THE WHOLE LIVE EXPECTANCY.** BSTONK-USDC, gross +0.25577
+on a notional of **$0.75** = +34.1% — the known artifact, barred as evidence in either
+direction by `[a57d2cb1]`. **A 75-cent row carries the sign of an 18-trade book.** It
+flatters the headline too: notional-weighted **-0.4643% with it, -1.9422% without**.
+
+**THE ENTRY NUMBERS, 17 non-artifact rows:**
+
+    hit rate                                   **35.3%**
+    average win  **+1.1107%**   average loss  **-2.7731%**
+    payoff ratio **0.40 : 1  — losses are 2.5x the wins**
+    break-even hit rate needed at that payoff  **71.4%**
+    **SHORTFALL  36.1 POINTS**
+
+**Bad on BOTH axes at once.** A low hit rate is survivable with a good payoff; a bad
+payoff is survivable with a high hit rate. This has neither, and no threshold change
+reaches it.
+
+### THIS CLOSES ROUTE (b) AS A SUFFICIENT FIX — SECOND INDEPENDENT DIRECTION
+
+The shortfall is **36 points of hit rate**. The entire measured cost floor is 55.5bp
+= **0.555 points**. **THE COST FLOOR IS UNDER 2% OF THE GAP** — a free, zero-slippage
+venue still leaves 35.5 points to find. The first direction was the scoreboard
+decomposition (fees 54.4% of the loss, direction 45.6%, gross still -0.08492 with
+fees zeroed). **Two independent instruments, same verdict.**
+
+**Contradicts the premise of `[889cac33]`**, which is built on atf_static having a
+low-hit-rate *positive*-expectancy payoff shape mis-judged by a 0.55 win-rate test.
+**On the live book the payoff is 0.40:1 — inverted.** If the favourable shape holds on
+atf_static's ghost rows specifically, that divergence is itself the finding. Handed to
+Echo, not acted on — `trading/pipeline.py` is theirs.
+
+Filed as `[3e185d47]`, with the complement pre-registered in its criteria: **the entry
+may be fine and the 0.40:1 may be an EXIT artifact** — winners cut short by
+take_profit/confidence_drop while losers run to a stop. The discriminator is to bucket
+the 17 rows by exit reason and compare avg win / avg loss within each. **Not run — out
+of clock. It is the first thing to run on this item.**
+
+### ROUTE STANDING AFTER THIS PASS, one worker's read
+
+(a) hand-approve at a tiny clip — spends real money on a 35% / 0.40:1 entry.
+(b) cost floor — **under 2% of the gap; necessary, nowhere near sufficient.**
+(c) shorten the hold — closed p681 at every cap.
+(d) raise the evidence rate — only helps if the entries improve.
+**Everything is downstream of entry quality.**
+
+**Caveats, stated:** n=17 is small, these are GROSS, and unweighted (-1.4023%) and
+notional-weighted (-1.9422%) differ — say which you mean. BSTONK excluded by standing
+instruction, not judgement.
