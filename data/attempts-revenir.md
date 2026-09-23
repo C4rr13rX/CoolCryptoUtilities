@@ -22121,3 +22121,94 @@ gas term: 14.46bp. Three things follow.
 
 NONE OF THIS UNBLOCKS THE ITEM. The disjoint sample is still absent and the
 verdict is still WITHHELD. Cost was never the open question; the sample is.
+
+
+## Pass 679 (Cove) -- [bf54ba78] THE LIVE LANE IS NOT UNREACHED AND IT IS NOT REFUSING INVISIBLY: IT DIES AT THE LATTICE, 190 LINES ABOVE EVERY LIVE-LANE INSTRUMENT
+
+ROUTE TRIED: the card's leading hypothesis -- "the live entry path is reached
+and refusing invisibly, so instrument it and read what it says". CLOSED, and
+the card's own premise ("not even a REFUSAL has been written since") is CLOSED
+as FALSE.
+
+MY OWN HYPOTHESIS FIRST, AND IT DIED. Reading trading/bot.py:8961-8990, the
+live/ghost fork calls `self.metrics.feedback(label='entry_downgraded_to_ghost')`
+and NOT `db.log_trade`, so I predicted the downgrade was firing into
+feedback_events where no wallet='live' query could see it. Pre-registered on the
+board before running. MEASURED: 136 rows ever, by day-ago 20d:3 19d:62 18d:59
+17d:6 16d:6, then ZERO for 16 days. The fork is not evaluated at all. Dead.
+
+WHAT IS ACTUALLY HAPPENING. trading_ops, last 24h, by status:
+
+    entry-arbitration            2228
+    entry-predropped-edge-ban    1899
+    entry-refused-lattice        1756   <- trading/bot.py:8781
+    ghost_candidate               248
+    entry-refused-no-candidates   211
+    ghost_candidate_quote_ok      179
+    published                     102
+    ghost-entry                     6
+
+The entry path IS reached, 1756 times a day, and dies at the LATTICE gate --
+~180 lines above the swap guard (8860) and ~190 above the live/ghost fork
+(8968). Every live-lane instrument this loop has built sits downstream of it,
+which is why all of them record nothing. The refusal row has existed the whole
+time; it was invisible because it carries neither a `live-` status nor (since
+the arm went off) `wallet='live'`, and those are the two filters anybody writes.
+
+A FREE BIT NOBODY HAD READ. bot.py:8786 writes
+`wallet="live" if self.live_trading_enabled else "ghost"`, so that row's wallet
+column is a direct readout of the arm in production:
+
+    entry-refused-lattice by day-ago and wallet
+    17d live:3 | 16d live:3 ghost:4 | 15d live:18 | 14d live:36 ghost:37
+    13d..0d ghost ONLY        (total wallet='live' trading_ops rows = 1238,
+                               newest 14.49 days old)
+
+live_trading_enabled went FALSE at ~2026-09-09, FOUR DAYS AFTER the 2026-09-05
+live cliff. THEY ARE TWO EVENTS, NOT ONE. Between 09-05 and 09-09 the bot was
+live-capable and WAS writing wallet='live' refusals -- it simply never entered.
+
+WHY THE LATTICE REFUSES: its CHAOS leg, and the reason strings are the known
+lookback-as-forecast defect (p674) now measured as total closure --
+"chaos: UNI-USDC: information decays after 6.3 min but the signal looks 1440.0
+min ahead -- 229.9x past where prediction is possible". 1440=@1d, 720=@12h,
+300=@5h. It refuses WETH, UNI, MAMO, LDO and BLUECHIP alike. COMPLEMENT
+CHECKED: a real horizon objection would concentrate on long-horizon ids; @5h at
+300 min is refused as 75-110x past the limit on the SAME symbols, so the leg is
+judging the LABEL, not the trade.
+
+STEP 6's LABEL IS NOT STALE-CACHED (the card asked). It is read from
+data/reports/confusion_matrices.json -> transition_plan, published by production
+5.0 minutes before I read it. The verdict inside is
+`reason=no_qualified_strategy:cold_start_bootstrap`, `strategy_id=money_button`,
+`samples=0`. So the label is live-computed and it is a SYMPTOM of the above:
+0 samples because ~0 entries.
+
+THE CLIFF DATE vs GIT, correcting the card. The card says a date-ranged git log
+returns only loop/dashboard infrastructure. Scoped to the money path
+(`git log --since=2026-09-04 --until=2026-09-07 -- trading/ services/ main.py
+router_wallet.py`) it returns 22 TRADING-PATH commits, including on 2026-09-05
+itself: e07583e 18:17 "The entry gate believed the strategy's own advertisement"
+and f7ff63d 20:06 "Every exit believed the extension was a forecast", the second
+of which lands ~1h before the 21:10 last live row. I have NOT established that
+either caused the cliff -- I am recording that the "no money-path commit that
+day" claim is wrong, not replacing it with a causal one.
+
+NOT STALE CODE: production booted 2026-09-23 05:51-06:34 local (Get-Process
+python* StartTime), i.e. hours before this measurement and long after every
+2026-09-06 live-lane fix, and the lane is still silent. .env:40 sets
+ENABLE_LIVE_TRADING=1.
+
+SHIPPED (f2ce813, instrumentation only, no gate/bar/guard/threshold touched,
+nothing armed): the entry-refused-lattice row now records
+`live_trading_enabled` and `live_approved` outright, at the point the path
+actually dies, instead of leaving the arm to be inferred from a wallet column
+that conflates "not armed" with "ghost bot". Test:
+tests/test_the_lattice_refusal_says_what_the_live_lane_would_have_done.py,
+4 passed; the same AST check run against `git show HEAD:trading/bot.py` reports
+MISSING ['live_approved', 'live_trading_enabled'], so it fails without the change.
+
+STILL OPEN, AND IT IS THE NEXT MEASUREMENT: I have NOT established that the
+lattice CAUSED the ghost collapse (ghost-entry 19d:851 -> 1d:6, a 142x fall).
+"Refusals up" and "entries down" can both be a supply story. The test is the
+lattice's own refusal RATE against the candidate supply reaching 8777, per day.
