@@ -62,6 +62,9 @@ _HARD_MEM = float(os.getenv("GOVERNOR_HARD_MEM", "0.75"))
 # Critical threshold — trigger emergency GC and pause new work.
 _CRITICAL_MEM = float(os.getenv("GOVERNOR_CRITICAL_MEM", "0.82"))
 
+# How rarely a FULL (gen-2) collection may run. Everything else is gen-0.
+_FULL_GC_SEC = float(os.getenv("GOVERNOR_FULL_GC_SEC", "300"))
+
 # Absolute emergency — start killing our own child processes.
 _EMERGENCY_MEM = float(os.getenv("GOVERNOR_EMERGENCY_MEM", "0.90"))
 
@@ -115,6 +118,7 @@ class ResourceGovernor:
         self._cpu_count: int = max(1, os.cpu_count() or 1)
         self._max_workers_ceil = _MAX_WORKERS if _MAX_WORKERS > 0 else max(4, self._cpu_count * 2)
         self._gc_triggered_at: float = 0.0
+        self._full_gc_at: float = 0.0
         self._emergency_triggered_at: float = 0.0
         self._started = False
         self._stop = threading.Event()
@@ -282,7 +286,21 @@ class ResourceGovernor:
         if our_rss > self._max_rss_mb * 0.85:
             if (now - self._gc_triggered_at) > 10:
                 self._gc_triggered_at = now
-                collected = gc.collect()
+                # A full gc.collect() is a stop-the-world gen-2 sweep that
+                # holds the GIL uninterruptibly. At 83.9% system memory the
+                # branch above is TRUE continuously, so the 10s cooldown ran
+                # one full sweep every 10 seconds against a 14.9s median
+                # loop_lag -- the governor was the thing blocking the loop it
+                # exists to protect. Collect gen-0 on the normal cadence
+                # (microseconds, and gen-0 is where short-lived tick objects
+                # die anyway) and pay for a full sweep at most every
+                # GOVERNOR_FULL_GC_SEC. The memory guard itself is untouched:
+                # the LOW/NORMAL priority pauses below still fire every sample.
+                if (now - self._full_gc_at) > _FULL_GC_SEC:
+                    self._full_gc_at = now
+                    collected = gc.collect()
+                else:
+                    collected = gc.collect(0)
                 logger.warning(
                     "RSS pressure: our tree uses %.0fMB / %.0fMB limit — GC collected %d",
                     our_rss, self._max_rss_mb, collected,
@@ -292,7 +310,21 @@ class ResourceGovernor:
         if mem >= _CRITICAL_MEM:
             if (now - self._gc_triggered_at) > 10:
                 self._gc_triggered_at = now
-                collected = gc.collect()
+                # A full gc.collect() is a stop-the-world gen-2 sweep that
+                # holds the GIL uninterruptibly. At 83.9% system memory the
+                # branch above is TRUE continuously, so the 10s cooldown ran
+                # one full sweep every 10 seconds against a 14.9s median
+                # loop_lag -- the governor was the thing blocking the loop it
+                # exists to protect. Collect gen-0 on the normal cadence
+                # (microseconds, and gen-0 is where short-lived tick objects
+                # die anyway) and pay for a full sweep at most every
+                # GOVERNOR_FULL_GC_SEC. The memory guard itself is untouched:
+                # the LOW/NORMAL priority pauses below still fire every sample.
+                if (now - self._full_gc_at) > _FULL_GC_SEC:
+                    self._full_gc_at = now
+                    collected = gc.collect()
+                else:
+                    collected = gc.collect(0)
                 logger.warning(
                     "CRITICAL memory (%.1f%%) — GC collected %d objects, pausing low-priority work",
                     mem * 100, collected,
