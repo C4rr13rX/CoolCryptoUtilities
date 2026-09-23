@@ -25673,3 +25673,81 @@ leg is correctly refusing the entire registry — is the likelier outcome and
 closes the item as a **finished negative**, not a failure.
 
 -- Sage, pass 686, worker
+
+---
+
+## Pass 686 (Sage) -- [4cbb00c7] CLOSED NEGATIVE. The chaos leg is right, and there is no horizon to feed it.
+
+**Route tried:** find the strategy's real decision horizon and feed it to the
+chaos leg instead of a label or a hold ceiling. **Result: there is nothing to
+feed it. The complement won 0 of 296. CLOSED.**
+
+Criterion 4's pre-registered discriminator, run rather than filed: if realised
+holds sit inside the 1.6-5.8 min usable window, a true decision horizon exists
+and feeding it opens the leg. If they sit far outside, no strategy here decides
+on a horizon this universe supports, the leg is correct, and the item closes.
+
+### Realised hold, 30d, read straight off `details.age_sec` on `ghost-exit`/`live-exit`
+
+No entry/exit pairing needed — the exit writer records it.
+
+    strategy              n    median     p10      min
+    atf_static          162      60.7    28.9     6.09
+    atf_static_scout    134      52.8    27.3     9.48
+    POOLED n=296        median 55.3   p10 27.3   p01 9.5   min 6.09
+
+### Usable horizon, from the chaos leg's own printed decay, 24h, per symbol n=20
+
+    min 1.20   median 2.73   max 80.80
+
+    POOLED median hold / median usable = 55.3 / 2.73 = **20.3x**; the leg refuses above **1.0x**
+    Round trips whose ENTIRE realised hold fits inside the usable horizon:
+      **0 of 296 = 0.00%**
+
+Per symbol against its **own** horizon — the fair test, and it is worse:
+
+    AERO-USDC   n=40   hold 51.6 min   usable 1.70   **30.4x**
+    SR-USDC     n=2    hold 61.3       usable 2.20    27.8x
+    MAMO-USDC   n=1    hold 29.0       usable 2.10    13.8x
+
+**The shortest hold this repo has produced in thirty days is 6.09 minutes, and
+the median symbol's information is gone at 2.73.** The true decision horizon is
+~55 min. Bay's 60-min clamp is within 9% of it — it was not a wrong stand-in,
+and feeding the leg the honest number gives it 55 instead of 60. It refuses
+both.
+
+### What this closes
+
+**The chaos leg is not a broken gate.** It started as a string-parsing bug
+(Cove p681), the string was fixed (Bay p680, `74d5671`), production never ran
+the fix (Sage p686, `[3bc8ed8c]`), a restart would buy 3.4% (Echo p686), and the
+remaining 96.6% is **not recoverable by any horizon change** — because the
+horizon is not the wrong field. **The HOLD is the wrong length.** The leg is a
+correct instrument reporting that this system holds positions ~20x longer than
+its own price information survives.
+
+**Do not widen the 1.0x threshold at `web/tradingagent/lattice.py:142`.** It is
+arithmetically sound and the measurement above is the reason.
+
+### Caveats that must travel with it
+
+- **296 round trips is `atf_static` + `atf_static_scout` ONLY** — the two
+  strategies that actually exit. The other 42 have no exits carrying `age_sec`
+  in 30d. This is a statement about the strategies that **trade**, not all 44.
+  Given `[1c7ca878]` (1 of 44 has ever traded live) that is nearly the same set,
+  but say it as measured.
+- The usable-horizon **max is 80.80 min** on one symbol, so the universe is not
+  uniform. My per-symbol aggregation (median of decays per symbol) and Echo's
+  (max 5.80) differ on the tail; the medians agree closely (2.73 vs 3.30) and
+  the conclusion holds under either.
+
+### The obvious next thought is ALREADY CLOSED -- do not reopen it
+
+"So shorten the hold" is **route (c)**, and it is refuted on two independent
+instruments: forcing a clock exit is **worse** at 15/30/60 min
+(`route-c-shorten-the-hold-is-closed-on-two-independent-instruments`,
+`forcing-a-clock-exit-is-worse-at-every-cap`). A 2.73-minute usable horizon is
+not a hold problem you can fix by exiting sooner. It is a statement about the
+universe these symbols trade in.
+
+-- Sage, pass 686, worker
