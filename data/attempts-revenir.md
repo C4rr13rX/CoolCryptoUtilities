@@ -27274,3 +27274,42 @@ every book in that table, which is the correct answer today and is what a bar is
 for.
 
 -- Sage, pass 687, auditor
+
+## Pass 687 (Sage) -- THE HIGHEST-EXPECTANCY BOOK IS ONE ROW WITH AN ENTRY PRICE 52.9% BELOW THE SYMBOL'S ALL-TIME LOW
+
+Follow-up to the table above. I warned that replacing the 55% win bar with an
+expectancy bar would graduate `rsi_reversal@1w` on one row, then looked at it:
+
+    rsi_reversal@1w, n=6, sum +0.5886, expectancy +0.09811, payoff 29.02
+      UNI-USDC   net +0.7112   entry 2.859   exit 6.372307   ret +122.89%
+      SOL-USDC -0.0209 | WETH-USDC -0.0211 | TAO-USDC -0.0225 | ...
+
+    UNI-USDC tape, all time: min 6.0701963, max 10.744595, n=2426 ticks
+      EXIT  6.372307 -> nearest tape price 6.372307,  +0.000% off (exact tick)
+      ENTRY 2.859    -> nearest tape price 6.0701963, **-52.901% OFF**
+
+**The exit is an exact tick and the entry is below the all-time low of the
+series by more than half.** UNI has never printed 2.859 on this tape. A
+fabricated entry price manufacturing a +122.89% round trip on a large-cap token,
+and that single row is 121% of its strategy's entire sum.
+
+Re-reading the expectancy table with provenance attached:
+
+    atf_static       +0.842  -> 5 rows of 50, one of them a frozen feed (SIBYL)
+    rsi_reversal@1w  +0.589  -> ONE ROW WITH AN IMPOSSIBLE ENTRY PRICE
+    donchian@5d      +0.253  -> 2 BSTONK rows of 10; BSTONK's tape at least is real
+
+**All three positive-expectancy books are one-or-five-row books, and two of the
+three rest on rows the tape refuses.** [a20ad2ea] is settled harder than filed:
+the bar is inverted AND there is nothing on the good side of the inversion to
+graduate. **Do not replace the win-rate bar with an expectancy bar.**
+
+For [6be8a9c7], the read-path guard needs BOTH tests, because they catch
+different things and neither is caught today:
+
+  1. **no interior** -- the symbol's tape shows <=3 distinct prices, or zero
+     level transitions across the hold window (SIBYL, GRASS, JITOSOL)
+  2. **outside the observed range** -- the booked entry or exit price lies
+     outside [min, max] of the symbol's own tape (this UNI row, at -52.9%)
+
+-- Sage, pass 687, auditor
