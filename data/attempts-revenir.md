@@ -19726,3 +19726,67 @@ of signals, not starved of quotes -- dropping 49 of 49 in the single step
 between ghost_candidate_quote_ok and a ghost entry. Candidates carry
 strategy_id atf_static, source c0d3rv2_atf_static, on MAMO-USDC 26 and
 UNI-USDC 24.
+
+## Pass 672 (Cove) -- CLOSED NEGATIVE: loosening the ghost gate's term 2 is INERT, not dangerous
+
+Route tried: item [9ef737d3], "put an EARNED strategy into approved_ids()".
+BUILT NOTHING -- the item is blocked by its own criterion 1 on [82662e5d], and
+that block was verified, not assumed.
+
+THE BLOCK IS REAL AND CURRENT. atf_static_scout still has ZERO trade_outcomes
+rows. The table is 265 rows all-time; criterion 1 was written at 246, so it grew
+by 19 and the scout got none of them.
+
+    sqlite3 storage/trading_cache.db (read-only):
+      select count(*) from trade_outcomes                              -> 265
+      select count(*) from trade_outcomes where details like '%scout%' ->   0
+      select count(*) from trade_outcomes where details like '%atf%'   ->  44  (all atf_static)
+
+trade_outcomes has NO strategy_id column; attribution is details JSON only, and
+96 of 265 rows attribute to nothing at all.
+
+CLOSED NEGATIVE, and it is the useful part. The standing temptation on this item
+is to loosen term 2 -- add cold_start_bootstrap to GHOST_EARNED_READY_REASONS
+(pipeline.py:676). That route is now closed for a better reason than policy:
+IT WOULD ACHIEVE NOTHING. The only approved strategy fails term 3 on arithmetic.
+
+    money_button ghost book (data/strategy_ledger.json):
+      trades 2, wins 1, total_profit -0.016149119465853047
+    term 3 (pipeline.py:4732): float(total_net_profit) > 0.0   -> FALSE
+
+Grant money_button an earned reason and step 6 still refuses. The shortcut is
+INERT. Do not re-file it.
+
+THE CLOSED LOOP, QUANTIFIED. 44 known strategies carry a ledger entry. NINE have
+ghost total_profit > 0 (necessary for term 3). Applying term 1's floor of 5
+trades (fast_track_min_trades, pipeline.py:5183-5184) leaves FOUR:
+atf_static_scout 255 (+6.6625), atf_static 59 (+2.1290), donchian_breakout@5d 11
+(+0.1964), rsi_reversal@1w 6 (+0.5886). approved_ids() is exactly
+['money_button'], measured live this pass, and money_button is not among the
+nine. THE APPROVED SET AND THE TERM-3-CAPABLE SET ARE DISJOINT. Step 6 cannot
+open today by any amount of threshold tuning.
+
+CAVEAT, stated because it is what could overturn this: these are LEDGER GHOST
+numbers. The narrower TRADEABLE book disagrees in SIGN for two of the four --
+rsi_reversal@1w is +0.5886 ghost but -0.1225 tradeable, donchian_breakout@5d is
++0.1964 ghost but -0.0750 tradeable. That can only SHRINK the capable set, which
+was already disjoint from approved, and it does not touch the money_button
+number (negative on the more generous of the two books). Also NECESSARY-ONLY:
+terms 1 and 3 were measured, not the other eight clauses of the fast_track
+conjunction at pipeline.py:5190-5200. Nobody outside those four CAN open step 6;
+it is not claimed that those four WOULD.
+
+TRAP NAMED SO NOBODY "DISCOVERS" IT AS A WIN. The gate does not read approved_ids
+directly: pipeline.py:4715 calls _live_gate_candidates(), which at
+pipeline.py:4660-4675 returns approved_ids() ONLY IF STRATEGY_GRADUATION_ENFORCED
+is on, and returns an EMPTY LIST otherwise -- whereupon pipeline.py:4716-4717
+falls the gate back to the POOLED book (+6.4981, versus -1.1306 tradeable).
+Flipping that env var turns step 6 GREEN by DELETING the per-strategy subject of
+the gate. It is the exact regression documented at pipeline.py:4693-4708. CLOSED.
+
+PREMISES RE-VERIFIED, so the next taker need not re-derive them. Criteria were
+written at pass 478; at pass 672 every line number is still exact: 676, 4715,
+4727-4733, 4730/4731/4732, 4749-4751, 5194 (total_net_profit > 0.0 IS inside the
+fast_track conjunction), ledger.py 76 / 539 / 550 / 836 / 1376. approved_ids()
+== ['money_button']. Scout graduation_blocked=True, demotions=0. No refinement
+needed.
