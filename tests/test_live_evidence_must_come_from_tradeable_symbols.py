@@ -46,9 +46,33 @@ REFUSED = {"BSTONK-USDC", "BASECAT-USDC"}
 CLIP = 6.0
 
 
-def _ret_for(profit_usd: float) -> float:
-    """The return a round trip must post to net ``profit_usd`` at ``CLIP``."""
-    return (profit_usd + roundtrip_cost_usd(CLIP)) / CLIP
+def _ret_for(profit_usd: float, symbol: str | None = None) -> float:
+    """The return a round trip must post to net ``profit_usd`` at ``CLIP``.
+
+    The fee is charged PER SYMBOL. ``price_book_at_live_clip`` has priced each
+    row against ``services/roundtrip_cost.py``'s token census since 2026-09-17,
+    and this helper was still inverting the token-BLIND rate, so the book it
+    built was not the book the docstrings below assert on. Measured
+    2026-09-23 at the $6 clip:
+
+        symbol        charged by the gate   inverted here (blind)
+        AERO-USDC             $0.0102230            $0.0231690
+        CBBTC-USDC            $0.0106240            $0.0231690
+        BSTONK-USDC           $0.0231690            $0.0231690   (uncensused)
+        BASECAT-USDC          $0.0231690            $0.0231690   (uncensused)
+
+    Only the two TRADEABLE symbols are in the census, so the flat +/-$0.02
+    subset was being handed back $0.0129460 and $0.0125450 a trade that it had
+    not earned: 40 trades x $0.0127455 = $0.50982, which is exactly the number
+    ``test_the_verdict_reports_the_tradeable_book_it_judged`` was failing by.
+
+    The assertions are UNCHANGED. What was wrong was the fixture's premise --
+    it claimed a dead-flat tradeable subset and built a profitable one -- so
+    the guard was being asked about a book that no longer had the shape the
+    test needs to prove anything. Inverting the SAME cost the gate charges
+    restores that shape.
+    """
+    return (profit_usd + roundtrip_cost_usd(CLIP, symbol)) / CLIP
 
 
 def _trade(symbol: str, strategy: str, profit: float, ts: float, ret: float | None = None) -> TradePerformance:
@@ -62,7 +86,7 @@ def _trade(symbol: str, strategy: str, profit: float, ts: float, ret: float | No
         reason="test",
         route=[],
         strategy_id=strategy,
-        return_pct=_ret_for(profit) if ret is None else ret,
+        return_pct=_ret_for(profit, symbol) if ret is None else ret,
     )
 
 
