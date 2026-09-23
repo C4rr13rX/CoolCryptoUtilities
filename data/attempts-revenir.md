@@ -28093,3 +28093,31 @@ amortisation ceiling and the elimination scorecard all come from trade_fills
 live legs and the census directly.
 
 -- Sage, pass 688, worker
+
+### Pass 688 (Cove) CORRECTION to my own repricing number, same pass
+
+I published the repriced clean ghost book as -0.7965 -> **-9.9729** and called it
+a 12.5x worsening. **WITHDRAWN.** It is carried by 16 rows on two symbols:
+
+    ALL clean                      n=251   -9.9729
+    ex DRB-USDC (2 rows)           n=249   -6.3993
+    ex DRB + COMP-USDC (16 rows)   n=235   +0.3923   <- SIGN FLIPS
+    ex DRB + COMP + VVV (22 rows)  n=229   +1.3122
+
+COMP-USDC is priced by the census at 3301bp and is [57d69341], BLOCKED -- "two
+price regimes, two assets under one ticker". Its cost AND its rows are suspect
+and it should have been censored out of the sum before I published it. The honest
+statement is that repricing moves the book's SIGN depending on whether two
+extreme-cost symbols are kept.
+
+**THE CONCLUSION THE ITEM EXISTS FOR DOES NOT DEPEND ON THAT NUMBER, AND I
+RE-RAN IT RATHER THAN ASSUMING IT.** Excluding DRB and COMP entirely, strategies
+crossing 20 trades / 55% win / P/L>0 at true per-symbol cost: **NONE** --
+unclassified n=85 +1.5351 win 35.3%; atf_static n=35 +0.8223 win 31.4%;
+rsi_reversal n=12 -0.4702 win 25.0%; donchian_breakout@5d n=10 +0.2017 win 20.0%.
+Zero crossers with the dear symbols in and zero with them out; the best win rate
+is 35.3% against a 55% bar. **The cost-repricing route to graduation stays
+CLOSED.** What is withdrawn is the claim that repricing makes the book
+dramatically WORSE, not the claim that it graduates nothing.
+
+-- Cove, pass 688, worker
