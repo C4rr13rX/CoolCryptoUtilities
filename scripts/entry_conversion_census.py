@@ -177,11 +177,68 @@ def main():
     plain = per_status.get("ghost_candidate", 0)
     ok = per_status.get("ghost_candidate_quote_ok", 0)
     ent = per_status.get("ghost-entry", 0)
+    # THESE THREE NUMBERS ARE NOT A CHAIN, AND PRINTING THEM AS ONE IS THE
+    # DEFECT. `ghost-entry` has TWO writers, not one:
+    #
+    #   services/atf_static_strategy.py:1266  the atf scout, which reaches its
+    #       entry loop ONLY through `signals` -- and that loop refuses any sig
+    #       whose `quote_probe.ok` is falsy (:1131). Every scout entry
+    #       therefore HAS a `ghost_candidate_quote_ok` row behind it.
+    #   trading/bot.py:9794                   the bot's own directive path,
+    #       which never calls the quote-probe writer at all. The only place in
+    #       the repo that writes `ghost_candidate_quote_ok` is
+    #       atf_static_strategy.py:1918, and bot.py does not go through it.
+    #
+    # So a bot.py entry is not a quote_ok row that converted -- it is a row
+    # from a lane the quote_ok population never contained. Measured 2026-09-23
+    # over 24h: 5 entered symbols, ALL FIVE from bot.py, and FOUR of them
+    # (ALIGN, CAKE, LDO, OP) had no `ghost_candidate_quote_ok` row in the
+    # window -- ALIGN, CAKE, LDO and OP have none in the table's entire
+    # history. Over 7d it is 13 of 19. The old line here read
+    # "125 proposed -> 15 quotable (88% lost) -> 5 entered" and concluded
+    # "the QUOTE step is the large cut": 4 of those 5 never reached the quote
+    # step, so the conclusion was drawn from a denominator that does not
+    # contain the numerator.
+    ent_by_producer: dict[str, set[str]] = {"scout": set(), "bot.py": set()}
+    cur.execute(
+        "SELECT symbol, details FROM trading_ops WHERE ts>=? AND status='ghost-entry'",
+        (cutoff,),
+    )
+    for sym, raw in cur.fetchall():
+        try:
+            det = json.loads(raw) if raw else {}
+        except Exception:  # noqa: BLE001 - a malformed row must not kill the census
+            det = {}
+        lane = "scout" if det.get("source") == "c0d3rv2_atf_static" else "bot.py"
+        ent_by_producer[lane].add(str(sym or "").upper())
+    cur.execute(
+        "SELECT DISTINCT symbol FROM trading_ops WHERE ts>=? AND action='enter' "
+        "AND status='ghost_candidate_quote_ok'",
+        (cutoff,),
+    )
+    ok_syms = {str(r[0] or "").upper() for r in cur.fetchall()}
     if plain:
-        print("\n  THE FUNNEL IN SYMBOLS, which is the honest unit:")
-        print("    %d proposed -> %d quotable (%.0f%% lost) -> %d entered"
-              % (plain, ok, 100.0 * (1 - ok / plain), ent))
-        print("  The QUOTE step is the large cut, not the entry gate.")
+        print("\n  THE FUNNEL IN SYMBOLS -- SPLIT BY PRODUCER, because the two")
+        print("  lanes do not share a denominator:")
+        print("    %d proposed -> %d quotable (%.0f%% lost by the quote step)"
+              % (plain, ok, 100.0 * (1 - ok / plain)))
+        scout_ent = ent_by_producer["scout"]
+        bot_ent = ent_by_producer["bot.py"]
+        print("\n    LANE A, the atf scout (atf_static_strategy.py:1266). This")
+        print("    lane DOES pass through the quote step, so quote_ok is its")
+        print("    honest denominator:")
+        print("      %d quotable -> %d entered  (%s)"
+              % (ok, len(scout_ent), ", ".join(sorted(scout_ent)) or "none"))
+        print("\n    LANE B, the bot's directive path (trading/bot.py:9794).")
+        print("    This lane NEVER emits a quote_ok row, so quote_ok is NOT")
+        print("    its denominator and any ratio against it is meaningless:")
+        print("      %d entered, of which %d have NO quote_ok row this window"
+              % (len(bot_ent), len(bot_ent - ok_syms)))
+        if bot_ent - ok_syms:
+            print("      no quote_ok row: %s" % ", ".join(sorted(bot_ent - ok_syms)))
+        print("\n    DO NOT divide %d entered by %d quotable. %d of the %d"
+              % (ent, ok, len(bot_ent - ok_syms), ent))
+        print("    entered symbols were never in the quotable population.")
 
     db.close()
 
