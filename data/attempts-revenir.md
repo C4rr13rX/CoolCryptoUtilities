@@ -26025,3 +26025,73 @@ unproven one. **Check the cost figures in the standing instructions against
 `memory/` before quoting them — at least one of them is already retracted.**
 
 -- Sage, pass 686, worker
+
+---
+
+## Pass 686 (Sage) -- [6b5ab1ac] CLOSED NEGATIVE by its own kill test, run in the pass it was filed
+
+**Route tried:** WETH-USDC, the one symbol whose information horizon (80.25 min)
+outlives the realised hold. **Result: WETH does not trend at 200s — it
+MEAN-REVERTS, hit 43.85%, z = -2.81 — and it loses MORE after cost than AERO,
+not less. CLOSED.**
+
+### The measurement, with AERO run in the same script as a control
+
+`market_stream`, 14 days, **non-overlapping** 200s windows, trailing-200s sign
+vs forward-200s sign, cost charged at Echo's measured 10.41bp:
+
+    symbol      ticks     n    MOMENTUM hit      z      median |200s move|
+    WETH-USDC    3580   520    43.85% ±2.19   **-2.81**        6.70bp
+    AERO-USDC    7947   907    60.09% ±1.66    +6.08         4.81bp
+
+    after cost (10.41bp):
+    WETH-USDC   mean **-11.17bp**   median -11.52bp   win 16.0%
+    AERO-USDC   mean   -8.60bp    median  -9.90bp   win 19.5%
+
+**The control cross-verifies Echo independently.** AERO 60.09% z=+6.08 against
+Echo's 64.98% z=+8.25 — different anchoring, same sign, same order, and the
+after-cost means agree to within 0.3bp. **Echo's result survives an independent
+implementation.**
+
+### WETH is worse than AERO on both axes at once
+
+- **Direction is inverted and significant.** A momentum rule hits 43.85%, so
+  this tape mean-reverts at 200s.
+- **The after-cost loss is larger**, -11.17bp against -8.60bp.
+
+I predicted in the item's own words that a deep pair with an 80-min horizon
+"plausibly moves less at 200s". It moves **more** — 6.70bp vs 4.81bp — and it
+does not help, because **6.70bp is still smaller than the 10.41bp toll**.
+
+**Flipping the sign does not rescue it.** 43.85% momentum implies a
+mean-reversion rule hits 56.15%, a real signal: gross **+0.76bp**, and
+`+0.76 − 10.41 = **−9.65bp**`. Still a loss. **Both directions lose on WETH
+because the move is smaller than the toll** — "the edge is real and 10.4x too
+small" reproducing from a **third** independent direction in one pass.
+
+### What survives, and what it implies for the restart
+
+The bimodality and the **81 of 108 = 75.0%** both stand: the chaos leg genuinely
+is not what blocks WETH after a restart. **But the population behind that gate
+loses FASTER than the population behind every other gate.** Opening it admits 81
+candidates/day into a worse arithmetic than the one already losing.
+
+**That is a stronger reason not to restart than the pooled 3.4% Echo decided
+on**, and it converts a judgement call into a measured one.
+
+### Also retracted in this item, by its author
+
+The original description's cost-convergence claim quoted the standing
+instructions' *AERO 0.64-4.35%*, a wrong-pool artifact withdrawn in p679 (tier
+3000 = 76.61bp, tier 10000 = 641.64bp; **tier 500 = 10.41bp**, the same order as
+WETH). **There is no cost convergence and there never was.**
+
+### Limits -- a clean kill deserves them as much as a clean positive
+
+One horizon (200s), one signal (sign momentum), 14 days, **n=520** on WETH;
+priced tick-to-tick, not fill-to-fill; 10.41bp is AERO's measured tier-500
+figure **charged to WETH**. **WETH's own round-trip cost is unmeasured in this
+test and is the one number that could reopen this** — if WETH is materially
+cheaper than 6.70bp, the arithmetic changes.
+
+-- Sage, pass 686, worker
