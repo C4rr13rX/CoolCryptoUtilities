@@ -20500,3 +20500,123 @@ STILL OPEN, filed as [c203a53a] (P1) and [80f80530] (P2):
     fake shape and running the real scout: events=['exit'], all assertions
     pass. The "42 passed" cited on criterion 5 would print identically with
     the receipt deleted.
+
+---
+
+## Pass 674 -- Dune -- item [7b79c272] "COST IS UNMEASURABLE AT n=18"
+
+**VERDICT: THE ITEM'S PREMISE SURVIVES AND IS STRONGER THAN FILED. Route (a),
+"measure the cost floor with live legs", is CLOSED BY FUNDING -- not by power,
+not by rate. Recommendation is option (iii)-with-a-condition. NOTHING ARMED.**
+Instrument: `scripts/live_sample_power.py` (read-only, arms nothing).
+Reproduce: `python -X utf8 scripts/live_sample_power.py`
+
+### 1. I KILLED MY OWN FIRST ANSWER. The field I reached for is a fee constant.
+
+First pass I read per-round-trip net off `net_margin_after_fees` on the 18
+`live-exit` rows. It gives median **-65.00 bp**, MAD 19.77, and a tidy
+"programme is fundable, $7.28 of $23.18" conclusion. **That number is an
+artifact and I retract it.** `net_margin` is **EXACTLY +0.0000 on 12 of the 18
+rows**, and `net_margin_after_fees` is that zero minus a per-trade fee constant.
+The discriminator: the row that booked **+3227 bp** of realised gross (BSTONK)
+carries `net_margin_after_fees = -0.0065`, the **same value** as a row that lost
+286 bp. A field that cannot tell those apart is the fee schedule, not a return.
+**Do not compute live P/L off `net_margin_after_fees`.** The only field that
+moves with the fill is `profit` (USD); realised fraction is
+`profit / (entry_price * size)`.
+
+### 2. THE HONEST SAMPLE, and it reproduces the known book exactly.
+
+    n = 18 live round trips, profit_usd / notional_usd
+    median            -115.26 bp
+    MAD                145.18 bp
+    mean / SD          -77.86 / 934.54     <- do not use; 3 rows carry it
+    bootstrap 95% CI  [-270.01, +22.86]    half-width 146.44 bp, 20000 resamples
+    winners            6 of 18
+    extremes           BPAD -1699.5, CBBTC -1392.2 ... BSTONK +3227.1
+    median notional    $0.75
+
+BSTONK +3227 / BPAD -1699 match the p672 broad-based-loss finding exactly, so
+this derivation is independently corroborated. **The CI straddles zero: the
+verdict at n=18 is UNDETERMINED, and a 146 bp half-width cannot resolve anything
+this repo argues about (the biggest cost claim here is ~25 bp wide).**
+
+### 3. THE RATE. p487 divided by the wrong span, and so did the item's own fix.
+
+    live-entry 20 | live-exit 18 | live-swap-settled 46
+    by calendar day:  2026-09-03: 3,  09-04: 6,  09-05: 9,  and NOTHING SINCE
+    SILENT FOR 414.0 HOURS = 17.2 DAYS   (the item says 13.4; it has grown)
+    rate / ACTIVE day  6.00      rate / ELAPSED day  0.92      -- 6.5x apart
+
+Eighteen consecutive zero days after 3/6/9 is a **switch, not a Poisson tail**.
+Any days-to-sample figure that does not name which span it divided by is not a
+number. p487's 1.1/day and the item's corrected 7.66/day are both this error in
+opposite directions; measured on exits the active rate is **6.00/day**.
+
+### 4. REQUIRED SAMPLE, bootstrap on the median, no normality assumed.
+
+    resolve to     round trips   days @active   days @elapsed
+    +/-25 bp            2018          336.3         2198.2
+    +/-10 bp           23298         3883.0        25378.6
+    +/- 5 bp          148252        24708.7       161491.5
+
+Method: bootstrap half-width measured at n=18 and n=72, exponent fitted
+(pinned to [0.30,0.70] near root-n), extrapolated. It is an extrapolation and
+is labelled one in the output.
+
+### 5. THE THREE OPTIONS, COSTED. This is the deliverable.
+
+**(i) GHOST-ONLY -- $0, and the cost question is never settled.** Ghost paths
+carry no slippage and no gas, so they cannot price either. The only ghost gross
+that exists, **+15.03 bp**, is `exit_surface_sweep.py`: a SIMULATION over 1408
+ghost paths, BEST of 28 cells, slippage-free, self-labelled an upper bound at
+`attempts-revenir.md:16335`. The realised live figure is **-0.0849** over 18
+round trips. Comparing them is CONSERVATIVE (ghost is optimistic), so p486's
+closures are stronger than claimed, not weaker. Cost: nothing. Yield on the cost
+question: nothing, permanently.
+
+**(ii) LIVE AT A RESEARCH CLIP -- and it contains a contradiction that kills it.**
+Gas is FIXED per round trip ($0.0040, p496), so clip choice is a real dial:
+
+    $0.75  ->  57.45 bp all-in   (gas alone is 53.3 bp -- 93% of the cost)
+    $1.00  ->  44.12 bp
+    $2.00  ->  24.12 bp
+    $5.00  ->  12.12 bp
+    $10.00 ->   8.12 bp          (gas 4.00 bp, fee+slip 4.12 bp at p498's WETH 2.06/side)
+    $23.18 ->   5.85 bp
+
+To resolve +/-25 bp needs 2018 round trips. At a $10 clip that is **$16.39 fees
++ $133.04 expected loss = $149.43, which is 6.4x the $23.18 deployable. NOT
+FUNDABLE.** (Expected loss uses the observed median re-priced for gas to a $10
+clip, **-65.93 bp**, which is an OPTIMISTIC bound -- it assumes slippage is
+clip-invariant and it is not.)
+
+The contradiction: at the **$0.75** clip the programme is affordable in dollars
+(2018 x $0.75 x 115.26 bp = **$17.44**, inside the wallet) -- but at $0.75,
+**53.3 of the 57.45 bp of cost is gas**, so you would spend the whole wallet
+measuring the base gas price, which is already known to four decimals. *The clip
+that is affordable cannot answer the question; the clip that can answer it costs
+6.4x the wallet.* That is not a tuning problem, it is the wallet being two
+orders of magnitude too small for the effect size.
+
+**(iii) STOP MEASURING COST -- $0, and it is what the arithmetic supports.**
+Costed seriously, not as the unthinkable branch: a losing system that funds its
+own measurement indefinitely is the failure mode here, and at a median
+**-115.26 bp** with **6 of 18 winners** that is precisely what option (ii) is.
+**RECOMMENDED**, with one condition: the cost axis reopens only if a SIGNAL
+appears that changes the expected sign. It does not reopen on "try a bigger
+clip", "try a deeper pool" or "wait for more rows" -- all three are priced above.
+
+### 6. WHAT DOES NOT FOLLOW, stated so the next pass cannot borrow it.
+
+**WIDE ERROR BARS ARE NOT EVIDENCE OF HIDDEN PROFIT.** Every point estimate
+loses: median -115.26 bp, live gross -0.0849, 6 of 18 winners, scoreboard
+-0.1864. The honest verdict is UNDETERMINED at any affordable sample -- not
+known bad, not secretly good.
+
+**THE BINDING CONSTRAINT IS NOT THIS ITEM.** At 6.00 round trips/ACTIVE day the
+lane would take 336 active days to resolve +/-25 bp even if it were funded, and
+it has produced **zero legs in 17.2 days**. Restarting the lane is worth more
+than any cost measurement priced here. `AUTO_EXECUTE_ON_GRADUATION` defaults to
+1, so `LIVE_TRADES_DRY_RUN` must be set explicitly before any restart.
+**I armed nothing and restarted nothing.**
