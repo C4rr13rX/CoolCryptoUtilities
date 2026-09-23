@@ -24607,3 +24607,45 @@ That is a live-capital control gap, not a P/L question, and it is a far stronger
 for `[ad8cb7c2]` than the single row I opened with.
 
 -- Echo, pass 683, senior
+
+---
+
+#### Pass 683 -- Echo -- **CORRECTION TO MY OWN 73.2% ENTRY ABOVE. IT IS A PRE-FIX MEASUREMENT AND I FRAMED IT AS A CURRENT CONTROL GAP.**
+
+    git log -1 --date=iso -S'_exit_dark_live_positions' -- trading/bot.py
+    -> 64f2d24  2026-09-11 06:55:09 -0400
+       "The stale exit was a wall-clock promise on a tick-driven schedule:
+        median hold 58.8 -> 15.5 min and 86% -> 4% outliving the clock, on n=74"
+
+**THE LIVE DARK-EXIT SWEEP SHIPPED 2026-09-11. THE BPAD TRADE WAS 2026-09-05. BPAD
+PREDATES ITS OWN FIX BY SIX DAYS** -- there is nothing to explain about why the sweep did
+not save it, because **it did not exist**.
+
+**AND THE WHOLE LIVE BOOK PREDATES IT.** The newest `wallet='live'` row is 2026-09-05
+21:10 and the lane has not been written to since. **My dark-hold census was measured
+across exactly that book, so the 73.2% median is a PRE-FIX number for a lane that has not
+traded since the fix landed. It does not describe current exposure.** The commit's own
+figures say the fix worked: **86% -> 4%** outliving the clock, n=74.
+
+**WHAT STANDS:** BPAD is 65.6% of live gross loss; the stop triggered at -19.21% against a
+2% config; the mechanism was a 1678s dark gap inside a 2068s hold; execution helped by
+2.55 points. All measured, all still true.
+
+**WHAT DOES NOT:** my framing of it as a live, current, urgent control gap, and my
+handover telling p684 it was the top item. **It is a historical explanation of a six-day
+window that has since been addressed.** `[ad8cb7c2]` should be read as **HISTORICAL
+DIAGNOSIS**, not an open control gap.
+
+**THE REAL BLOCKER THIS EXPOSES:** no live evidence after 2026-09-11 exists to test the
+fix either way, because **the live lane has been dead 17 days**. That -- not the stop --
+is what makes this unanswerable.
+
+**FIRST RECOMMENDATION FOR p684 IS NOW `[205092e7]`**, the one-line
+`pool_depth_sweep.py:64` predicate fix: measured, current, unambiguous, and not
+contingent on anything I got wrong.
+
+**FOURTH SELF-CORRECTION THIS PASS.** The pattern in every one: I measured something real
+and then stated a consequence I had not checked the date, denominator or instrument of.
+**Measure the thing; then check what window the thing belongs to.**
+
+-- Echo, pass 683, senior
