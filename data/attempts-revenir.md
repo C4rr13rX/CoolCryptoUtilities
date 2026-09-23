@@ -21149,3 +21149,88 @@ entry inside the 7d window at all.**
 `net_margin` is inert — it is read by a branch nothing reaches. If the margin
 floor is wanted on directive entries it has to be moved *above* `:7696` in the
 chain, and that is a behaviour change on the live lane, not a number fix.
+
+## Pass 676 (Bay) -- [c78afa6f] THE TWO GHOST-ENTRY LANES DO NOT SHARE A DENOMINATOR, AND FOUR PUBLISHED CONVERSION RATES ARE DIVISIONS ACROSS THEM
+
+**The item's own acceptance criteria were wrong and this is the correction.** They
+said, quoting: "Cove answered from the code: exactly ONE call site writes
+`status='ghost-entry'` (services/atf_static_strategy.py:1247) ... ONE lane with an
+emission gap, NOT two disjoint lanes." There are **TWO** writers:
+
+  * `services/atf_static_strategy.py:1266` -- the atf scout. Its entry loop is
+    `for sig in signals:` and at **:1131** it does `if not quote_probe.get("ok"):
+    continue`. A scout entry therefore **cannot exist** without a preceding
+    `ghost_candidate_quote_ok` row.
+  * `trading/bot.py:9794` -- the bot's directive path. It sets `strategy_id` from
+    `getattr(directive, "strategy_id")`, which is where `rsi_reversal@12h`,
+    `ema_cross` and `donchian_breakout@5d` on the entry rows come from. It never
+    calls the **only** `ghost_candidate_quote_ok` writer in the repo
+    (`atf_static_strategy.py:1918`).
+
+`scripts/ghost_entry_producer_split.py:7` already opens with "Two different
+executors write `status='ghost-entry'` into the same table". It was on disk the
+whole time.
+
+**THE EMISSION GAP, ANSWERED WITH NO EXCEPTIONS.** 102 ghost-entry rows over 14d:
+**64 bot.py, 38 scout**. 29 distinct symbols entered. **TEN** have
+`quote_ok_alltime = 0` (ALIGN, CAKE, ELON, ETH-USDC, ETH-USDT, LDO, MO, OP, PUMP,
+TAO, XRP, WETH-USDT) and **ten of ten are bot.py-only**. Every symbol the scout
+entered has quote_ok rows (23 / 1829 / 2531 / 24). The gap is not a branch inside
+one function; it is a second entry path that never emits quote_ok at all.
+
+**THE 2.6:1 ALL-TIME RATIO IS A FIVE-DAY BURST.** Criterion 3 asked for the loop
+that emits quote_ok more than once per candidate. There is no such loop in current
+code. Daily buckets over 32 days: **Aug 27-31 carries 40402 of 49469 quote_ok rows
+(81.7%)** against 11201 of 18742 candidates (59.8%). Aug 28 wrote **5570 quote_ok
+against ZERO candidates**; Aug 29 wrote **17091 against 21** (ratio 813.86). Before
+Aug 27 the daily ratio is 0.32-0.53 *every day*. Since Sep 16 it is 0.43-1.72; the
+last 24h is 252/301 = **0.84**, i.e. correctly a subset. Excluding Aug 27-31 the
+all-time ratio is 9067/7541 = **1.20**, not 2.60. **That residual 1.20 is still
+above 1.0 and I am leaving it UNEXPLAINED rather than guessing** -- but no current
+denominator should use the all-time figure, which is four-fifths one August window.
+
+**THE PUBLISHED NUMBERS THAT ARE WRONG.** Every one divides entries from BOTH lanes
+by a quote_ok population that only contains ONE:
+
+  * `scripts/entry_conversion_census.py` -- printed "125 proposed -> 15 quotable
+    (88% lost) -> 5 entered" and concluded "The QUOTE step is the large cut, not
+    the entry gate." **All five entries are bot.py and four (ALIGN, CAKE, LDO, OP)
+    were never in the quotable population.** FIXED this pass, commit `e74c1e4`.
+  * `attempts-revenir.md` ~7525 (p673) -- "571 candidates / 48h convert to 19
+    entries -- 3.3% -- and **quote_ok -> entry is 19/255 = 7.5%**". Over 7d, 13 of
+    19 entered symbols have no quote_ok row in-window. The 7.5% is a ratio between
+    disjoint populations. The 3.3% against *all* candidates is likewise pooled.
+  * `attempts-revenir.md` ~2885 (p670) -- shipped `6108675` on the stated invariant
+    that a rate "cannot exceed `ghost_candidate_quote_ok`". **As an invariant on
+    ghost-entry that is false.** (The `6108675` guard itself is sound: it is gated
+    on `if atf_scout_candidate` at `trading/scheduler.py:1169`, so it really is
+    scout-only. The *reasoning* generalises where the code does not.)
+  * `attempts-revenir.md` ~19726 (p672) -- "**49 candidates were QUOTED
+    SUCCESSFULLY in six hours and not one became a ghost entry** ... dropping 49 of
+    49 in the single step between `ghost_candidate_quote_ok` and a ghost entry."
+    The count is right; the word "dropping" is not. Nothing is dropped *between*
+    those statuses -- see the corrected reading below.
+  * `attempts-revenir.md` ~19965 (p672) -- "578 candidates, ghost-entry 6 ... **270
+    of the 276 that already passed the quote probe still died**". Same pooling: the
+    6 entries are not drawn from the 276.
+
+**WHAT THE CORRECT DENOMINATOR ACTUALLY SAYS, and it is worse than the pooled one.**
+Split by producer over 24h, Lane A (the scout, the only lane whose denominator
+quote_ok *is*): **15 quotable -> ZERO entered.** Not 5 of 15. Zero. The five entries
+that made the pooled funnel look alive came entirely from Lane B. So the item
+title's claim -- atf_static supplies candidates and converts **none** -- is not just
+correct, it was being **masked** by the pooled print. And p672's "49 of 49" is the
+same fact seen through the wrong frame: those candidates do not die in a step
+between two statuses, they die because **the scout's entry loop is the only
+consumer of them and it entered nothing.**
+
+**NOT DONE / NOT CLAIMED.** I did not loosen a gate and did not add a row; the diff
+is 61 lines of denominator in one script. I have **not** explained the residual
+1.20:1 ratio outside the August burst, and I have **not** corrected the four
+attempts-revenir numbers in place -- they are named here with their line numbers so
+the next pass can decide, because rewriting another pass's recorded conclusion is
+not mine to do unilaterally.
+
+**PROVEN BY:** `python -X utf8 scripts/entry_conversion_census.py` (last 20 lines);
+`grep -rn "\"ghost-entry\"" --include=*.py services/ trading/` returns exactly two
+production hits.
