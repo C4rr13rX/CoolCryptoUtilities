@@ -23455,3 +23455,91 @@ contributed one stop at -1.59%, so it touches none of the numbers above -- but n
 should quote PEPE volatility from this table until it is chased. With COMP-USDC and
 AERO-USDC on 2026-08-26 that is three bad-price artifacts found in one pass by looking
 at price series that no book reconciles against.
+
+## Pass 682 (Echo) -- [889cac33] the gate's win-rate measure: dollars or returns. CLOSED.
+
+**ROUTE: "the live gate refuses atf_static on a NORMALISATION ARTIFACT -- repricing flips
+the sign of 33 of 304 rows, so the dollar win rate measures the normalisation as much as
+the strategy; switch the gate to the clip-independent return_pct win rate (55.3%, which
+clears 0.55) instead of the dollar one (43.8%, which fails by 11.2 points)."**
+
+**CLOSED. The premise is arithmetically impossible and the 11.2-point gap is the COST WALL.**
+
+`net_profit_usd` (services/roundtrip_cost.py:543) is `ret * notional - roundtrip_cost_usd(notional, symbol)`,
+and `price_book_at_live_clip` passes the SAME clip ($6.00) to every row. `ret * 6.0` is a
+strictly monotone transform of `ret`: it cannot change a sign or an ordering. The only term
+that can flip a row is the cost subtraction. So 100% of the sign flips are the cost wall.
+
+Measured through the gate's own two calls (`MetricsCollector.ghost_trade_snapshot(strategy_id='atf_static')`
+then `price_book_at_live_clip`), LIFETIME n=304:
+
+    gross wins (return_pct > 0)                          168/304 = 55.26%
+    rows gross-positive but net-negative after own cost      35
+    168 - 35                                             133/304 = 43.75%  <- the repriced dollar win rate, EXACTLY
+
+The repriced dollar win rate is the after-cost return win rate. There is nothing else in it.
+
+**VERDICT: the gate stays DOLLAR-denominated.** Returns is the GROSS book, dollars is the NET
+book, and a gate whose job is protecting capital reads net. No threshold moved, no measure swapped.
+
+### The number that actually closes atf_static, which is not the win rate
+
+Criterion: state the net AFTER the measured per-symbol cost wall, trip by trip. Total after-cost
+net is +19.9800 on a $6 clip -- **and that is an artifact.** Split by whether the round-trip cost
+census has ever priced the symbol:
+
+    LIFETIME n=304        census-priced (CBBTC/AERO/CBETH/VIRTUAL)  n= 92  sum  +0.1842  win 32.6%  median -0.010624
+                          cost-census UNPRICED default              n=212  sum +19.7958  win 48.6%  median -0.009865
+
+**99.1% of the entire after-cost net sits in the half of the book whose cost is a token-blind
+DEFAULT** -- the one `roundtrip_cost.py` itself warns is "wrong for this symbol by an unknown
+factor in an unknown direction". Concentration inside it: top 1 row of 304 carries 12.2%, top 7
+carry 53.2%, top 20 carry 93.2%. The top rows are BSTONK +41.09%, BPAD +28.61%, BPAD +25.44%,
+BSTONK +25.35% -- BSTONK and BPAD are refused by this repo's own `stop_survivability_gate`
+(p99 single-tick jumps 10.83% and 108.59% against a 4.00% ceiling). atf_static's whole positive
+is 10 BSTONK trips (+7.39) and 16 BPAD trips (+3.78) in tokens the entry gates will not let it
+trade again.
+
+### Corrected mid-pass by Kite, verified by Echo, and the conclusion SURVIVES
+
+Kite found that 76 of the 304 rows have `return_pct`, `profit` and `expected_delta` all exactly
+0.0 (75 of 76 `reason=max_hold`, confined to 2026-08-22..27 UTC) -- a writer that lost its prices
+for five days, not 76 flat round trips. Reproduced independently here to the row, including the
+-1.4849 they contribute because `price_book_at_live_clip`'s `if ret is None` guard does not catch
+0.0 (filed as **[893807ba]**, assigned to Kite). Dropping them takes the lifetime dollar win rate
+43.75% -> **58.33% (133/228), which CLEARS 0.55**. Re-split on those 228 real rows:
+
+    REAL ONLY n=228       census-priced                             n= 70  sum  +0.4179  win 42.9%  median -0.004351
+                          cost-census UNPRICED default              n=158  sum +21.0470  win 65.2%  median +0.033192
+
+**98.0% of the positive is still in the unpriced half, and the priced half still has a NEGATIVE
+median and a 42.9% win rate.** Kite's fix raises the headline; it does not move the edge.
+
+### Window, and what does NOT follow
+
+The gate's window is 5 days (`.env:263 GHOST_VALIDATION_LOOKBACK_SEC=432000`). Windowed,
+atf_static is **n=5, win 0.0%, net -0.1185**, and all five trips are WTCOIN-USDC x4 and UNI-USDC x1
+-- both cost-census UNPRICED. All 76 null rows fall outside the window, so none of the above
+changes any verdict today. **atf_static DOES NOT GRADUATE**, on either measure, on either book.
+
+### Criterion 5 (the UNRUN one): notionals
+
+Implied notional (`|profit| / |return_pct|`), lifetime: n=228 usable, min 0.0308, **median 1.0000**,
+max 550.7802. Kite measured p25 = median = p75 = 1.000000 with 169 of 228 rows at exactly $1 and
+Spearman(notional, raw profit) = +0.081. After repricing every row is the clip, $6.00, by
+construction. **This retires a claim in `price_book_at_live_clip`'s own docstring**: it says the
+book spans "$0.031 to $39.573 -- a factor of 1276 ... not one game but a mixture of them". That was
+the 5-day book on 2026-09-06. On the lifetime book the IQR is ONE. The 4x is therefore a 6x
+scale-up of a $1 book minus fees, **not a size-bias correction** -- +19.98 is the same edge times six.
+
+### Two routes NOT re-run (closed by Bay, p681)
+
+"the live lane is being refused" (zero rows in 17.6 days) and "the 5-day gate window is the only
+blocker" (lifetime still fails the dollar win rate at 43.8%).
+
+### Bearing on the standing routes
+
+This independently CLOSES standing route (b), "restrict the tradeable universe to deep pools",
+from the GHOST book -- Bay closed it from the LIVE book at 7dab324 the previous pass. Deep pools
+do not reveal an edge here; they remove the only part of the book that was positive, and that part
+was positive because its cost is unmeasured and its symbols are already refused.
