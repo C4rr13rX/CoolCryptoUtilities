@@ -2298,13 +2298,29 @@ class TradingBot:
             #     unreadable-horizon exit.
             #
             # Nothing on the directive states how long the position will be
-            # held. But the executor does: a position is evicted at
-            # MAX_HOLD_SECONDS (bot.py:6620, default 3600), so a hold longer
-            # than that is not something this bot can produce. Judging a
-            # 10080-minute horizon it can never hold is a fabricated number.
-            # Clamping to the ceiling is the honest upper bound -- it never
-            # LOOSENS the leg for a short label (a 10m directive stays 10m),
-            # it only stops the leg inventing a week-long forecast.
+            # held, so the leg needs SOME honest stand-in. MAX_HOLD_SECONDS is
+            # the one this bot already publishes.
+            #
+            # ⚠ CORRECTED BY ITS OWN AUTHOR, SAME PASS. The first version of
+            # this comment said "a position is EVICTED at MAX_HOLD_SECONDS, so
+            # a longer hold is not something this bot can produce". THAT IS
+            # FALSE and the book says so: pairing entries to exits by trade_id
+            # over 30d, n=259 round trips, realised hold median 56.2 min, p90
+            # 220.1, MAX 6970.6 -- 4.8 days. 47.9% EXCEED 60 MINUTES.
+            # MAX_HOLD_SECONDS is a FILTER on which positions get EVALUATED
+            # (see `held_position_age < max_hold_sec` below, and the note at
+            # the cost check recording that this once switched that check off
+            # entirely for aged positions), NOT an eviction. The only forced
+            # exit is MAX_HOLD_FORCE_SECONDS and it DEFAULTS TO 0 = OFF.
+            #
+            # The clamp still stands, on the weaker and true justification: it
+            # lands the judged horizon at 60 min against a realised MEDIAN of
+            # 56.2 -- within 7% -- where the raw label said 10080. It is an
+            # UPPER BOUND ONLY and never LOOSENS the leg for a short label (a
+            # 10m directive stays 10m). Its one honest cost is that it
+            # UNDERSTATES the p90 220-min tail, so on those trades the leg is
+            # now slightly too LENIENT rather than too strict. It refuses ~98%
+            # either way, so nothing unsafe follows.
             #
             # PRE-REGISTERED, BEFORE SHIPPING: THIS DOES NOT OPEN THE GATE, AND
             # A ZERO IS NOT A FAILED FIX. Censused from the leg's own printed

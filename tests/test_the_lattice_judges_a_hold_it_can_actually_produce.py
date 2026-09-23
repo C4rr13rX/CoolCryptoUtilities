@@ -8,9 +8,17 @@ comments that "5d" means "5.5d of 2h bars" -- history the rule LOOKS BACK
 over. The chaos leg then read that as a forward prediction and refused
 `donchian_breakout@1w` for "looking 10080.0 min ahead".
 
-Nothing on the directive states the intended hold. The executor does: a
-position is evicted at MAX_HOLD_SECONDS (trading/bot.py, default 3600), so a
-horizon above that ceiling describes a trade this bot cannot place.
+Nothing on the directive states the intended hold, so the leg needs an honest
+stand-in, and MAX_HOLD_SECONDS is the one this bot already publishes.
+
+⚠ CORRECTED BY ITS OWN AUTHOR, SAME PASS: MAX_HOLD_SECONDS is NOT an eviction.
+It filters which positions get EVALUATED; the only forced exit is
+MAX_HOLD_FORCE_SECONDS, which defaults to 0 = OFF. Measured over 259 paired
+round trips in 30d, realised hold median 56.2 min, p90 220.1, MAX 6970.6 --
+47.9% exceed 60 minutes. So the clamp is justified NOT by "the bot cannot hold
+longer" but by "60 min is within 7% of the realised median, and 10080 min is
+not within anything". The file name says "can actually produce" and that is the
+claim these tests DO prove: the clamp never widens the leg.
 
 THE CLAMP IS NOT A LOOSENING. It is an upper bound only. A short label passes
 through untouched, so nothing that was refused on an honest horizon starts
