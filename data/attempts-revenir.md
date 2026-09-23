@@ -22393,3 +22393,63 @@ TWO CAVEATS: (1) the configured Alchemy endpoint is_connected()=False and 429'd
 all 33 -- receipts must be verified against https://mainnet.base.org; (2) the
 same artifact's `split.live` field reads {rows: 22, net: -0.3319860} and
 reproduces against NOTHING (four DB filters tried). Do not quote `split`.
+
+---
+
+## Pass 680 (Bay) -- the lattice chaos leg, and two routes closed on hold time
+
+**ROUTE: fix the chaos leg's horizon parse. CLOSED AS A GATE-OPENER, SHIPPED
+ANYWAY (74d5671, comment corrected in 94f2981).**
+`directive.horizon` is a LABEL on both of its only two setters, and neither is a
+forecast: `trading/strategies/horizons.py:212` overwrites it with the wrapper's
+tier label (and `HORIZON_SPECS:37-44` documents that label as a LOOKBACK span in
+its own comments -- `("5d", 7200, 66)  # 5.5d of 2h bars`), and
+`trading/strategies/base.py:475` falls back to the class constant
+`default_horizon`. Confirmed one-to-one on all 5 suffix-less ids in 7d of
+refusals (rsi_reversal 45.0 min, ema_cross 60.0, stochastic_reversal 20.0,
+mean_reversion 45.0, bollinger_squeeze 45.0) -- which also CORRECTS p674's own
+memory table calling that group "real, varying", and corrects backlog
+[afbbda66]'s claim that they take the `unreadable_horizon` exit and PASS. They
+do not; they refuse, 195 times in 7d.
+NUMBER: the clamp to `MAX_HOLD_SECONDS` buys **1.99%** -- 125 of 6273 refusals
+pass, 6148 still refuse. At the realised median hold 57.2 min it is 2.47%. **A
+continued high refusal count after a restart is CONFIRMATION, not failure.**
+
+**ROUTE: lower `MAX_HOLD_SECONDS` to shorten the hold. CLOSED, and it closed my
+own filed item [275298c6] the hour I filed it.**
+`MAX_HOLD_SECONDS` is a **FILTER on which positions get EVALUATED**
+(`bot.py:7678`, `bot.py:10878`), NOT an eviction; the only forced exit is
+`MAX_HOLD_FORCE_SECONDS` (`bot.py:10395`) and it **defaults to 0 = OFF**.
+NUMBER: 259 paired round trips over 30d, realised hold median 56.2 min, p90
+220.1, **MAX 6970.6 min = 4.8 days**; **47.9% exceed 60 minutes**. Lowering the
+var would SHRINK the evaluated set -- the opposite of the intent. Nothing in
+this system bounds hold time.
+
+**ROUTE: route (c) of the standing instructions, "the tradeable book is POSITIVE
+inside 15 minutes and negative after". NOT REPRODUCED ON THE CURRENT BOOK --
+IT IS BACKWARDS.**
+NUMBER, ghost n=244 (split by `wallet`, never pooled): 0-15 min n=37 mean
+**-0.04903** (the WORST bucket, ~2x); 15-30 -0.02068; 30-60 -0.02409; 60-120
+-0.02704; 120+ **+0.01110**. LIVE n=15: **ZERO round trips were ever held under
+15 minutes**, so the live lane has never tested the recommended route.
+**AND THE ONLY POSITIVE IS AN ARTIFACT, killed immediately:** the 120+ bucket's
++0.4883 is **80.2% three rows** (BSTONK-USDC +0.8407, BASELINE-USDC +0.1999,
+CBADA-USDC +0.1325); without them it is **-0.6848**. Surviving statement: every
+bucket is negative and the shortest is the worst.
+⚠ SURVIVORSHIP COMPLEMENT TESTED, WEAKENED, **NOT CLOSED**: only 245 of 1214
+entries pair. Unpaired age-since-entry median **472.4h** with **0.0% younger
+than 1h**, in a tight 470-507h band -- ~19.7-day-old entries whose exit was
+never written, time-localised, not hold-localised. Their holds cannot be
+measured at all, so "unlikely", not "ruled out".
+
+**STILL OPEN (worth a pass): the decay spread.** Median information decay is
+**12.20 min on the DEEP pairs** (WETH/ETH, n=1030) vs **4.90 THIN** (n=5245),
+censused from the chaos leg's own printed decay over 6275 refusals. The leg
+(information decay off the price series) and the cost table (pool depth off the
+chain) share no inputs and **rank this universe the same way**. Artifact kill
+test run: corr(tick gap, decay) = 0.251, ratio spread 41x -- artifact bounded,
+not eliminated.
+
+**DOES NOT UNBLOCK THE LIVE LANE:** money_button, the one approved strategy, has
+**ZERO** `entry-refused-lattice` rows across 6322 refusals / 38 distinct ids in
+7d. All of the above returns GHOST evidence only.
