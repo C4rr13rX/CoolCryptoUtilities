@@ -19672,3 +19672,57 @@ showed AERO cost INVERTS between a $10 and a $100 clip. The clip must come
 from the ledger join (scripts/live_book_forensics.py, median $0.7500), not the
 fills. Quote 44.50bp as "at the live book's median 75-cent clip" until someone
 does that join.
+
+**[14c40351] THE UNIVERSE AXIS IS CLOSED. Per-symbol selection does NOT
+rescue the pooled 9.53bp. Echo p672. CLOSED NEGATIVE.**
+Pass 480 measured mean ABSOLUTE forward move per symbol and concluded "six of
+eight symbols beat their own cost, the universe axis is NOT closed". That is a
+PERFECT-ORACLE ceiling and unattainable by construction. I measured the SIGNED
+thing an always-long rule earns -- gross mean, gross median and up-rate per
+symbol on NON-OVERLAPPING SEQUENTIAL windows (enter at tick i, exit at the
+first tick past t+h, next entry IS that exit tick, so no re-entry while
+holding), over 168h of market_stream, horizon ceiling 45 min per .env:169
+MAX_HOLD_FORCE_SECONDS=2700.
+RESULT: NOT ONE SYMBOL has a signed up-rate whose 95% Wilson lower bound
+clears its own h*, at any reachable horizon. Three clear on the POINT estimate
+only, all small-n: VIRTUAL-USDC 64.9% at n=57 vs h*=0.594; LINK-USDC 64.7%
+n=51 vs 0.617; AIFI-USDC 61.3% n=31 vs 0.524. The only two symbols with enough
+sequential n to survive the overlap discount are coin flips: AERO-USDC n=178
+up-rate 51.1% gross +12.69bp vs h*=0.580, and WETH-USDC n=141 up-rate 51.8%
+gross +7.39bp vs h*=0.673. Pooled at the 45-min ceiling: 16 symbols,
+seq_n=2028, gross mean +8.55bp, up-rate 50.4%.
+So the 9.53bp SURVIVES re-measurement sequentially, and the up-rate is a coin
+flip either way. This CONFIRMS p670 cost-is-solved-direction-is-the-blocker on
+a second independent population. No per-symbol cost was adopted ([5efa6ba2] is
+open): h* is a BAND across both disputed AERO readings, 10.1bp and 63.95bp. At
+the expensive end a perfect oracle loses on AERO, WETH and 20 others.
+DO NOT REOPEN as "try a different symbol" or "try a different horizon inside
+45 min" -- both are measured here and both are negative. The reopening evidence
+would have to be a SIGNAL that conditions the entry, not a selection over
+symbols. Script: scratchpad/signed_gross_per_symbol.py.
+THREE DEFECTS FELL OUT and are filed, not fixed: [e1955f91] XRP-USDC is a
+SECOND two-regime ticker (185,608x between regimes; drags the pooled 5-min
+gross over 53 symbols to 437,188 bp); [ac6c7f6f] 29 of 101 streamed base
+symbols carry a LITERALLY CONSTANT price for 168h (min==max, 8.8% of tick
+rows); [497aaf59] COMP and DRB are selectable with h* of 5.20 and 5.84, where
+a perfect oracle loses.
+
+**THE LADDER PRINTS TWO FALSE FAILS, and the real break is one step wide.
+Echo p672, after Dune, Kite and Cove independently contradicted it. OPEN as
+[0406cbf4].**
+The briefing ladder says "[FAIL] 2 SIGNALS no candidates in 30min" and
+"[FAIL] 3 GHOST no ghost activity in 1h" and "NEXT: step 2". Both are FALSE.
+trading_ops by action: 30min = 14 enter, 221 hold, 2 strategy_publish; 6h =
+128 enter, 1368 hold, 30 strategy_publish; NEWEST ENTER 1.9 MINUTES OLD. This
+matters beyond a wrong label, because the standing instruction is WORK THE
+FIRST FAILING LINK AND NOTHING ELSE -- so the ladder has been aiming passes at
+a link that is PASSING.
+The actual break, which no instrument here prints: bucket those 128 enter rows
+by status and you get ghost_candidate 79, ghost_candidate_quote_ok 49, and
+NOTHING ELSE. Zero rows past a good quote, while trade_outcomes and
+trade_fills sit 987.8 min stale (16.5h, zero new rows). So 49 candidates were
+QUOTED SUCCESSFULLY in six hours and not one became a ghost entry. Not starved
+of signals, not starved of quotes -- dropping 49 of 49 in the single step
+between ghost_candidate_quote_ok and a ghost entry. Candidates carry
+strategy_id atf_static, source c0d3rv2_atf_static, on MAMO-USDC 26 and
+UNI-USDC 24.
