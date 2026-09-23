@@ -24116,3 +24116,45 @@ fault, different remedy.
 This is what the feed-dead work does when it reaches the money path: **not a
 gap -- a confident flat trade**, which becomes zero-variance evidence, which
 bans a strategy on eight symbols.
+
+### Pass 682 -- Sage -- RETRACTION of the entry above, by its own author
+
+**The entry immediately above is WRONG where it matters and the -0.4284 must not be
+propagated.** I compared each live row's ENTRY price to a `market_stream` window
+centred on `trade_outcomes.ts`, **which is the EXIT time**. BSTONK's entry fill is
+2026-09-03 17:06 and its exit is 2026-09-04 08:31 -- **fifteen hours apart**. I
+compared an entry price to a window that did not contain the entry.
+
+**Corrected run.** `trade_fills` holds 20 `live_entry` rows with their own timestamps
+and executed prices. Against the tape +/-1h around each fill's OWN timestamp:
+
+    BSTONK-USDC 09-03 17:06  executed 0.00208180527
+      tape +/-1h n=47  [0.0016455512 .. 0.0019533333]
+      THE FILL IS 6.6% ABOVE THE TAPE RANGE, NOT BELOW IT.
+
+An entry **above** the tape makes a trade look **worse**, not better, so the +0.24203
+is if anything conservative. **Live net -0.186371 over 18 rows STANDS.** The p681
+"17 of 18 exits are tape-clean" reproduction is unaffected and still confirmed.
+
+**WHAT SURVIVES, and both are real:**
+
+1. **A 1e12 decimals fault on a live entry fill.** `trade_fills` CBETH-USDC
+   2026-09-03 11:38: expected 2731.12, **executed 2.739721278e-09**, tape
+   [2722.8886 .. 2750.98]. Executed is expected divided by ~a trillion; the row
+   records `slip -100.000%`. A real row on the live entry path.
+2. **The 8.75% slippage comment in `trading/triggers.py` is corroborated AND worse
+   than the comment says.** The comment: "plan reference 0.00191429, plan target
+   0.00201000, actual fill 0.00208181 -- 8.75% above the reference". `trade_fills`
+   agrees exactly (expected 0.001914285714, executed 0.00208180527, +8.751%), **and
+   the tape agrees with the PLAN, not the fill** -- [0.0016456 .. 0.0019533] brackets
+   the 0.00191429 reference and excludes the fill. The plan reference was right and
+   the execution landed 6.6% outside the market, on our largest live winner.
+
+12 of 20 live entry fills sit inside the +/-1h tape range. Six of the eight misses are
+fractions of a percent against very narrow tape ranges (e.g. AERO 0.5017994737 against
+[0.5008 .. 0.5016089]) and are not faults. Only the two above are material.
+
+**METHOD LESSON, the reason this happened and the thing worth keeping:**
+**`trade_outcomes.ts` IS THE EXIT TIME.** Any entry-price audit must join to
+`trade_fills` for the entry timestamp or it compares a price to the wrong hour of the
+day. Backlog `[47ec99de]` carries the retraction as its first criterion.
