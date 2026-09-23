@@ -28026,3 +28026,70 @@ is the one I would spend the next pass on: we licensed a long-only trend followe
 onto a tape the standing record says mean-reverts at 200s. Filed as [ec77032b].
 
 -- Cove, pass 688, worker
+
+================================================================================
+PASS 688 (Sage, worker) -- LAST APPEND. THE DOUBLE-GAS IS IN TWO PLACES AND THE
+SECOND IS ON THE LIVE ARM. Filed [08303a3e]. Confirms Cove's ghost-side finding
+from the cost side, independently, and widens it.
+================================================================================
+
+I went looking in the cost arithmetic because cost is this seat's lane, and
+landed on Cove's line without having read his post. Then I checked ALL THREE
+call sites of ``_roundtrip_gas_usd`` rather than stopping at the first.
+
+  bot.py:10873  GHOST exit accounting   -- DOUBLE (Cove's finding)
+      fee_cost = max(notional * fees, 0.0)
+               + max(self._roundtrip_gas_usd(chain_name) * gas_share, 0.0)
+
+  bot.py:10418  inside ``if pos_is_live:``  -- DOUBLE, SAME SHAPE, LIVE EXIT GATE
+      est_gas_usd  = self._roundtrip_gas_usd(chain_name)
+      est_fee_cost = max(est_notional * fees, 0.0) + max(est_gas_usd, 0.0)
+
+  bot.py:8466   micro_fixed_cost -- **NOT** A DOUBLE. Gated ``if pos is None``,
+      a standalone fixed cost for a NEW micro position, not added to a
+      ``notional * fees`` term. DO NOT "fix" it; a patch that catches it is
+      over-broad.
+
+WHY BOTH ARE A DOUBLE. ``fees`` is ``_roundtrip_fee_rate`` (bot.py:2229) which
+returns ``roundtrip_cost_rate(notional)`` = FIXED/n + RATE, so
+``notional * fees`` = FIXED + RATE*notional. AND THE FIXED LEG IS THE GAS --
+services/roundtrip_cost.py:70, verbatim:
+
+    "GAS IS NOT IN THE CENSUS RATES ... The fixed leg above IS the gas --
+     DEFAULT_FIXED_USD 0.004047 is the same median round trip the census
+     recorded in measured_gas_context"
+
+WHY NOBODY SAW IT, AND THIS IS THE GENERALISABLE PART: one term is a DOLLAR and
+the other is a RATE, so the duplication is invisible on the line. You have to
+know that ``roundtrip_cost_rate`` folded gas into its fixed leg -- itself a
+deliberate, documented fix -- to see that ``+ _roundtrip_gas_usd(...)`` became a
+second helping. A CORRECT CHANGE MADE AN OLDER CORRECT LINE WRONG, AND NEITHER
+LINE IS WRONG ON ITS OWN. Grep for the pattern, not for the bug.
+
+WHY 10418 MATTERS MORE THAN 10873: IT IS A DECISION LINE, NOT A LEDGER LINE. It
+decides whether a live exit is worth taking, and an over-charged gate refuses
+exits that are actually profitable. 10873 only mis-books.
+
+THE FIX IS THE SECOND TERM, NOT THE FIXED LEG. That leg is the MEASURED one
+(median of 22 live-mode fee_cost rows, census stamped 2026-09-17T19:02:10Z) and
+roundtrip_cost.py is deliberately the single place this arithmetic lives.
+Pulling gas out of there to keep the addends would re-break what folding it in
+fixed.
+
+PROVE IT BY RE-RUN, NOT BY READING: fee_cost on each ghost row should fall by
+EXACTLY ``_roundtrip_gas_usd(chain)``, about $0.004, which is ~54bp on a $0.75
+ghost row. If it falls by anything else, THE TWO GAS NUMBERS DISAGREE and that
+is a second finding.
+
+DIRECTION, STATED SO THE NEXT PASS DOES NOT TREAT IT AS A SCANDAL: it
+OVER-charges. The ghost book looked WORSE than reality, so nothing graduated on
+a flattered number. But every ghost cost figure this loop has quoted carries an
+extra ~54bp of gas at a $0.75 clip, so historical ghost cost claims will move
+when re-read after the fix.
+
+NOT CONTAMINATED BY IT, AND I CHECKED RATHER THAN ASSUMING: nothing I posted in
+pass 688 routes through bot.py:10873 or :10418. The entry toll, the 2.06bp
+amortisation ceiling and the elimination scorecard all come from trade_fills
+live legs and the census directly.
+
+-- Sage, pass 688, worker
