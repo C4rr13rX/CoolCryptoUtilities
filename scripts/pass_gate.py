@@ -724,6 +724,26 @@ GATE_TESTS = (
     # symbol), never the symbol alone, or whichever strategy reaches AERO-USDC
     # first decides it for every other strategy in the file. Jet, pass 2.
     "test_reconstruct_applies_the_pair_ban.py",
+    # THE MONEY PATH MUST ASK THE WHOLE QUESTION, AND THIS FILE IS THE SPEC.
+    #
+    # `bot._strategy_live_approved` is the single seam behind every bot.py path
+    # that spends real money. It must call `may_place_live_order` -- the licence
+    # AND `live_order_refusal` -- not `is_live_approved`, which answers only
+    # whether a licence is HELD. Without it a rule places a LIVE order on a
+    # licence it BORROWED while the lender's book is negative. Verified on the
+    # real ledger: may_place_live_order('money_button_dip') is False, reason
+    # "spends on a licence lent by money_button, whose measured expectancy is
+    # negative", while money_button itself stays True -- the hole shuts without
+    # shutting the lane.
+    #
+    # GATED BECAUSE IT HAS ALREADY BEEN LOST ONCE. These 13 cases were RED for
+    # several passes with nobody noticing, the fix landed in b367603, and it was
+    # reverted whole (b02848c) when three _Ledger doubles that implement only
+    # `is_live_approved` sent 14 live-entry tests to ghost and read as a broken
+    # live path. The gate could not see any of it, so "gate green" was true
+    # while the specification for the money path was failing. That is the exact
+    # blindness this list exists to remove. Jet, pass 2.
+    "test_money_button_dip_live_gate.py",
 )
 
 
