@@ -733,24 +733,50 @@ class TradingDatabase:
             return None
 
     def get_json_many(self, keys: Sequence[str]) -> Dict[str, Any]:
-        """Read many KV keys under a SINGLE acquisition of the database lock.
+        """Read many KV keys, bounding how long the database lock is HELD.
 
-        Callers that walk a date range per symbol otherwise pay one lock
-        round trip per cell. Every other thread in the process queues behind
-        those, so a wide read turns into a system-wide stall.
+        The previous version acquired the lock once and then ran one
+        ``execute`` per key inside that single acquisition. Reducing the
+        number of acquisitions is the wrong target: the feed does not need
+        the lock taken fewer times, it needs it RELEASED more often. Holding
+        it across the whole list turned N short holds the feed could
+        interleave between into one hold of the same total length that
+        nothing can interleave, so the worst-case starvation scaled with
+        ``len(keys)`` -- and the news call sites pass a cartesian product of
+        days x symbols. Measured p682: one such call held the lock while
+        every other thread in the process queued behind it.
+
+        So: one statement per chunk, the lock released between chunks, and
+        the JSON decode moved OUT of the locked region. The chunk also keeps
+        the parameter count under SQLite's variable limit.
         """
         out: Dict[str, Any] = {}
-        wanted = [str(k) for k in keys]
+        seen: set = set()
+        wanted: list = []
+        for k in keys:
+            k = str(k)
+            if k not in seen:
+                seen.add(k)
+                wanted.append(k)
         if not wanted:
             return out
-        with self._cursor() as cur:
-            for key in wanted:
-                cur.execute("SELECT value FROM kv_store WHERE key=?", (key,))
-                row = cur.fetchone()
-                if not row or row["value"] is None:
+        chunk_size = 400
+        for start in range(0, len(wanted), chunk_size):
+            chunk = wanted[start:start + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            with self._cursor() as cur:
+                cur.execute(
+                    "SELECT key, value FROM kv_store WHERE key IN (%s)" % placeholders,
+                    chunk,
+                )
+                rows = cur.fetchall()
+            # Decode outside the lock -- json.loads on a wide read is not free.
+            for row in rows:
+                value = row["value"]
+                if value is None:
                     continue
                 try:
-                    out[key] = json.loads(row["value"])
+                    out[row["key"]] = json.loads(value)
                 except Exception:
                     continue
         return out
