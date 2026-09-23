@@ -20370,3 +20370,58 @@ not a cost finding.
 RETRACTED BY ITS AUTHOR: p480's "COMP h* = 5.203, DRB h* = 5.842, unpayable at any
 skill". The arithmetic compared 3.4010% against 351.0bp -- but 3.4010% IS 340.1bp.
 A percent was read against a basis point. COMP's real h* is 0.919.
+
+## Pass 673 (Cove) -- [ad629479] the per-symbol cost model is SHIPPED, and it makes the ghost book WORSE
+
+ROUTE TRIED: route (b) from the standing instructions -- attack the cost floor.
+The item's argument was that the flat fee is misshapen and that a correctly
+shaped one "may flip which strategies look payable without any signal work".
+
+WHAT WAS ACTUALLY BROKEN. `services/roundtrip_cost.py` has taken a `symbol`
+argument and priced nine base tokens off the Uniswap V3 quoter since
+2026-09-17. Nothing passed one. `trading/pipeline.py price_book_at_live_clip`
+called `net_profit_usd(ret, clip)` in the one-argument form, so every row in
+the book the live gate reads paid the token-blind 38.62bp at the $6 clip
+whatever it traded. Fixed in 738f68d.
+
+THE NUMBER, `python -X utf8 -u scripts/ghost_gate_forensics.py`, 120h book,
+n=32 after excluding one frozen row:
+
+    net, FLAT fee (was)        mean -35.77bp  CI [-52.84, -18.70]  win 0.156
+    net, PER-SYMBOL fee (is)   mean -61.17bp  CI [-82.43, -39.91]  win 0.062
+    gross (market only)        mean  +2.85bp  CI [-14.22, +19.92]  SPANS ZERO
+
+25.4bp WORSE, and the win rate halves. CLOSED as a route to a payable book.
+
+WHY. 5 of 32 rows change sign and FOUR of them go win -> loss, all VIRTUAL-USDC,
+whose census fee at the $6 clip is 187.62bp against the flat 38.62bp -- the flat
+fee was under-charging it 4.9x. The single improvement is one AERO row,
+-7.02bp -> +14.56bp.
+
+THE ITEM'S HEADLINE IS STALE and the record should say so: it claims the flat
+fee is "wrong in OPPOSITE directions" on WETH and AERO, under-charging AERO
+1.7-11.3x off the operator's 0.64-4.35% figure. That figure is already recorded
+as RETRACTED. Against the census the criterion itself names, the flat fee
+OVER-charges both: WETH 8.79bp (4.39x too dear), AERO 17.04bp (2.27x too dear).
+The genuine opposite-direction error is the tail -- VIRTUAL 4.9x and COMP 187x
+too CHEAP -- and that tail is what moved the book.
+
+DOES ANY SYMBOL CLEAR THE 0.55 BAR WITH A CI THAT EXCLUDES IT? No. Every symbol
+with n>=2 has a win rate of exactly 0.000 under the corrected fee: VIRTUAL n=6,
+OP n=5, WTCOIN n=4, LDO n=3, ETH-USDT n=2, ETH-USDC n=2, UNI n=2.
+
+CRITERION 2 IS NOT FULLY MET AND IS NOT REDEFINED. It asks for WETH and AERO
+reported separately. Today's book carries WETH-USDC n=1, WETH-USDT n=1 and
+AERO-USDC n=1 -- three rows. No CI exists at n=1, so the count is reported
+instead of a bar. The deep-pool symbols this repo keeps arguing about are
+barely IN the ghost book: 11 of its 16 symbols were never priced by the census
+(OP, LDO, WTCOIN, ZORA, XRP, UNI, ELON, BLUECHIP, CAKE, ETH-USDC, ETH-USDT) and
+are UNCHANGED by this commit by construction, recorded as `unpriced_default`.
+
+FROZEN ROWS: one today, not the three the item names -- ALIGN-USDC written by
+ema_cross@3d, entry price == exit price to the bit. Now excluded from EVERY
+book rather than from the gross book only.
+
+NOT TESTED IN PRODUCTION. Production pid 6340 booted 2026-09-21 22:57:35, and
+41 commits have landed since; five of them touch code production imports, this
+one included. The gate will not read a per-symbol fee until a restart.
