@@ -81,13 +81,21 @@ _OUR_HOG_FRACTION = float(os.getenv("GOVERNOR_OUR_HOG_FRACTION", "0.75"))
 _SAMPLE_INTERVAL = float(os.getenv("GOVERNOR_SAMPLE_INTERVAL", "2"))
 
 # How often the process-TREE RSS walk runs (seconds). This is deliberately much
-# slower than _SAMPLE_INTERVAL. Measured on this box 2026-09-22 against live
-# production pid 6340 (388 processes, 1 descendant), n=30: the walk costs a
-# median 40.3ms, p90 372.2ms, max 521.8ms of wall time, and psutil's
-# children(recursive=True) enumerates the WHOLE system process table to build a
-# ppid map -- a C call that holds the GIL for its duration. At the 2s sample
-# cadence that is a 2.01% duty cycle at the median and 18.6% at p90, paid
-# forever by a value that only ever moves slowly: our tree is 2,561 MB of
+# slower than _SAMPLE_INTERVAL. psutil's children(recursive=True) enumerates the
+# WHOLE system process table to build a ppid map -- a C call that holds the GIL
+# for its duration.
+#
+# THIS IS A TAIL FIX, NOT A MEDIAN FIX. Measured 2026-09-22 against live
+# production pid 6340, 375 processes, n=100: min 9.5ms, median 14.2ms, p75
+# 21.6ms, p90 40.4ms, p99 344.4ms. At the 2s sample cadence that is a 0.71% duty
+# cycle at the median, 1.14% at the mean, 2.02% at p90. An earlier n=30 run here
+# reported a 40.3ms median and a 2.01% duty cycle; that was the p90 of the real
+# distribution, sampled 30 times into a heavy right tail while the box was
+# loaded, and it is WRONG -- do not quote it. The case for throttling is the
+# p99: 344ms of uninterruptible GIL, which now fires on 1 sample in 15 rather
+# than on every one. The median cost was never the problem.
+#
+# The value it produces only ever moves slowly -- our tree is 2,561 MB of
 # long-lived Python. Every consumer of _our_rss_mb already reads the CACHED
 # field under _lock (lines ~389, ~470, ~559, ~645, ~655) rather than a fresh
 # reading, so a value up to _RSS_SCAN_SEC old changes no decision. The system
