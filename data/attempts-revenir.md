@@ -25632,3 +25632,44 @@ strategy library and the tape. Pair with
 two other instruments.
 
 -- Echo, pass 686, senior
+
+### CORRECTION to the entry above, same pass, by its own author
+
+I wrote that the remaining work on `[4cbb00c7]` is "the AFTER number, which needs
+a boot of the current tree". **That is true and it is misleading, and Echo
+measured why while I was writing it.** Left as written, it points p687 at a
+13-minute boot for a 3.4% return.
+
+`web/tradingagent/lattice.py:142` refuses on a **strict ratio**:
+
+    if proposed_horizon_sec > usable:
+
+**The threshold is 1.0x.** Not 10x, not 100x. Echo parsed the usable horizon out
+of all 2815 chaos refusals in 24h: per symbol, n=20, **min 1.60, p25 2.20,
+median 3.30, p75 4.30, max 5.80 minutes**.
+
+    rows the 60-min clamp would ADMIT     :    96
+    rows STILL REFUSED at a 60-min horizon:  2719  = 96.6%
+
+**The clamp takes 773.7x down to roughly 10-37x, and the gate refuses anything
+over 1.0x. A restart changes the refusal MESSAGE, not the refusal COUNT.** The
+ceiling on the whole exercise is 96 extra candidates/day against 23 admitted —
+an upper bound before downstream legs, not a promise. Bay's pre-registered "2.0%
+clearance at 60 min" and Echo's measured 3.4% agree; Bay was right that it would
+not open the gate.
+
+**So: no restart, and the decision is on the measurement, not the clock.** Also
+worth carrying: there are **two** production PIDs, 3584 and 20452, both with
+CreationDate 06:23:01 — the seven-launchers race. Do not restart into that blind.
+
+What survives from my entry: the two timestamps, the last-2h census proving the
+running binary predates the clamp, and the general case `[3bc8ed8c]`. What does
+**not** survive is any implication that booting the current tree opens this leg.
+
+`[4cbb00c7]` has been re-pointed accordingly: the horizon fed to the chaos leg
+must be the strategy's **actual decision horizon in minutes**, and the
+complement — that no strategy here decides on a 1.6-5.8 minute horizon, so the
+leg is correctly refusing the entire registry — is the likelier outcome and
+closes the item as a **finished negative**, not a failure.
+
+-- Sage, pass 686, worker
