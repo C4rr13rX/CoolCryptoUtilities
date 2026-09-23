@@ -23128,3 +23128,74 @@ entry and `ghost-entry` is a second writer, conversion is 41.7% and there is no
 funnel problem; that is a one-query test against
 [[two-ghost-entry-lanes-do-not-share-a-denominator]] and must be run before
 anyone quotes the 1.42%.
+
+---
+
+## Pass 682 -- Sage -- [957a82d3] the stop and the forced exit
+
+**Route tried:** find why `MAX_HOLD_FORCE_SECONDS=2700` and `GHOST_STOP_LOSS_PCT=0.02`
+are both configured and both apparently ineffective.
+
+**OPENING MEASUREMENT (my own pick, before the assignment).** `trading_ops`, 7 days:
+`ghost/hold 30863`, `ghost/enter 3946`, `ghost/exit 47`. **84 entries per exit, 1.2%
+conversion**; `wallet='live'` contributes zero rows of all three actions.
+Hypothesis *the evidence rate is entry-limited* is **DEAD**: 564 entries/day is not a
+starved entry lane, and 6.7 exits/day is what matches the 4.6 tradeable/day rate.
+
+**MY OWN CANDIDATE (4), PRE-REGISTERED AND THEN KILLED.** I proposed that the exit
+evaluator is starved of polls rather than broken, and pre-registered the kill test:
+gaps between consecutive `hold` ops per symbol, 7d, n=30796 --
+`p50 0.02 min, p75 0.64, p90 4.12, p95 10.10, p99 52.45`. **88% of gaps are under 5
+minutes.** The evaluator runs. Only 1.2% of gaps exceed 45 min, which cannot explain
+47.9% of round trips passing 60 minutes. **CLOSED -- my candidate was wrong.**
+
+**THE ITEM'S STOP NUMBER DOES NOT REPRODUCE.** The item says the 2% stop produces
+"only 5 of ~193 exits". Over 30 days, n=266 exited rows in `trade_outcomes`:
+**`stop_loss` is 42 of 266 (15.8%)**, the third most common exit reason behind
+`timed-exit` 73 and `confidence_drop` 72. The stop is not failing to fire.
+
+**ITEM CANDIDATE (2) IS CLOSED -- DO NOT SPEND A PASS ON IT.** The item asks whether a
+rebuilt position dict drops `pos['mode']`. **266 of 266 exited rows carry `mode` in
+`details` -- 244 ghost, 22 live, zero missing.** The key survives to exit time.
+
+**THE ACTUAL FINDING: THE STOP FIRES, IT JUST DOES NOT FIRE AT 2% -- AND WHETHER IT
+DOES IS A FUNCTION OF POOL DEPTH, NOT OF THE CODE.** Splitting the 42 stops:
+
+| set | n | median | mean | worst | overshoot cost |
+|---|---|---|---|---|---|
+| DEEP (CBBTC/CBETH/WETH/AERO/CRV/PEPE/ZORA/VIRTUAL/CBXRP) | 8 | -2.168% | -2.176% | **-3.026%** | +0.044857 |
+| THIN (everything else) | 32 | -4.277% | -6.003% | **-18.399%** | +2.155321 |
+
+Against a configured -2.000%, the deep set overshoots by **0.18pp** and **no deep row
+blew through**; the thin set overshoots by **4.00pp (22x)** and costs **48x more**.
+`trading/triggers.py:197` is a polled stop with no limit price: `if pnl_pct <=
+-stop_loss: return` exits at whatever price the poll carries. On a deep pair a poll 4
+minutes later is still within 0.2pp of the level; on a thin one the price has already
+gapped past it. Individual thin firings: BPAD `stop_loss:-0.1921`, CP -14.15%,
+OMARCHY -13.06%, MOONBASE -11.37%. BASECAT alone is 19 of the 42 stops.
+
+**THE MONEY:** total overshoot cost over 30 days, honouring -2%, is **+2.200178 of
+gross, 98.0% of it in thin pairs.** The tradeable ledger the graduation bar reads is
+**-2.0841**. The thin-pair stop overshoot alone is larger than the entire tradeable
+deficit. **This is independent confirmation of route (b) from an instrument that has
+never been pointed at it** -- not a cost-per-round-trip census, but the width of the
+risk control itself.
+
+**TWO ARTIFACTS CAUGHT (both dropped from every number above).** 2026-08-26, ghost,
+both exactly $1.9999 notional, both exiting near 45% of entry:
+`COMP-USDC 16:40 entry 42.82 exit 19.1288 (-55.328%)` and
+`AERO-USDC 20:58 entry 1.14 exit 0.5139 (-54.926%)`. AERO has never traded at $0.51,
+and [[aero-has-no-tape-before-its-own-discovery-window]] dates the start of AERO's
+series to exactly 2026-08-26 -- **a bad first tick, not a loss.** COMP is already
+filed as [57d69341]; AERO was not. Together they carry 1.058 of fictional gross loss.
+
+**NOT CLOSED / WHAT I DID NOT SHOW:** that polling faster fixes the thin pairs. I
+doubt it -- a token that gaps 17% across a 4-minute poll will gap it across a
+30-second one. The lever this points at is the tradeable UNIVERSE, not the cadence.
+Also not shown: the forced-exit half. `max_hold_force` is 2 of 266 exits in 30 days,
+and for ghost positions `trading/triggers.py:277` requires `pos_is_live`, so it cannot
+fire at all -- by design, already recorded, not a defect.
+
+**Live book re-verified in passing:** gross -0.084920, net -0.186371, n=18, matching
+the board; **net win rate 5 of 18 = 27.8%**, and the sum is carried by two rows
+(BSTONK +0.24203, BPAD -0.25493) -- quote the win rate alongside it.
