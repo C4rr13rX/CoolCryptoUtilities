@@ -8782,6 +8782,43 @@ class TradingBot:
                         "reason": f"lattice:{lattice_refusal}",
                     }
                 )
+                # SAY WHAT THE LIVE LANE WOULD HAVE DONE, ON THE ROW THAT
+                # ACTUALLY STOPS IT.
+                #
+                # This is where the entry path dies, ~180 lines above the swap
+                # guard (8860) and ~190 above the live/ghost fork (8968), and
+                # measured on 2026-09-23 it fires 1756 times in 24h against 6
+                # ghost entries -- so every live-lane instrument downstream of
+                # here records nothing because nothing reaches it. The 17-day
+                # "the live lane wrote no refusal" reading came from exactly
+                # that: the refusal IS written, it just carries neither a
+                # wallet='live' row (once the arm went off) nor a 'live-' status,
+                # so both of the queries anyone would write miss it.
+                #
+                # The two facts a live-lane reader needs were inferable only
+                # from the `wallet` column above, which conflates "the arm is
+                # off" with "this is a ghost bot". Record them outright:
+                # `live_trading_enabled` is the arm as the bot sees it, and
+                # `live_approved` is whether this directive's strategy would
+                # have been allowed to spend money had the lattice passed. A
+                # row that says enabled=True/approved=False is a live entry
+                # refused by graduation; enabled=False is a lane that is not
+                # armed at all; both=True is a REAL live trade the lattice
+                # turned back, and that last one has never been observed.
+                #
+                # Instrumentation only. Neither value is read back here and the
+                # refusal above is unchanged -- this adds two fields to a dict.
+                try:
+                    live_armed = bool(self.live_trading_enabled)
+                except Exception:
+                    live_armed = False
+                try:
+                    would_be_live = bool(
+                        live_armed and self._strategy_live_approved(directive)
+                    )
+                except Exception:
+                    # Never let an instrument take down the refusal it reports.
+                    would_be_live = False
                 try:
                     self.db.log_trade(
                         wallet="live" if self.live_trading_enabled else "ghost",
@@ -8794,6 +8831,8 @@ class TradingBot:
                             "reason": "failed_a_necessary_condition",
                             "detail": lattice_refusal,
                             "strategy_id": str(getattr(directive, "strategy_id", "") or ""),
+                            "live_trading_enabled": live_armed,
+                            "live_approved": would_be_live,
                         },
                     )
                 except Exception:
