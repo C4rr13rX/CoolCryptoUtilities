@@ -21717,3 +21717,45 @@ head 0 **FLAT** (Echo/Kite, constant 0.5); head 3 **ALIVE** (Kite); heads 1 and 
 price-invariant — `LEVEL` gives price_mu 0.989662 at 1e-4 *and* at 1.2e4 — and
 varies 1.64x across 8 clean live windows (0.9116..1.4975), so it responds to
 *shape*; it simply reports on a scale 800x too large.
+
+## Pass 676 (Cove) -- the uncensored-reader sweep is 4 of 6 PROVEN, 2 UNOBSERVABLE, and loop_status is exempt by measurement
+
+Item `c2e8768a`. Criterion was: each remaining non-live analysis reader of
+`trade_outcomes` either partitions via `services.outcome_plausibility.partition`
+or prints an UNCENSORED banner naming how many rows it did not censor. The item's
+own trap is that a script defining its own `summarise()` shadows the import and
+the censor call dies with `TypeError` -- which a grep cannot see. So these were
+RUN, not read.
+
+PROVEN GREEN, `python -X utf8 scripts/<name>.py`, rc=0, no TypeError:
+  entry_basis_census            "UNCENSORED BY DESIGN -- 6 of 265 rows exceed the
+                                 ledger's own |return| > 50% refusal", largest
+                                 AAVE +174.2% / AERO +161.0% / UNI +122.9%
+  exit_conf_vs_realised_margin  "!! UNCENSORED -- 6 of 265 rows (2.3%)"
+  deep_tier_oos_check           both arms: private censor 1 of 14, plausibility
+                                 13 read / 0 refused ("the SAME book here")
+
+EXEMPT, MEASURED NOT ARGUED: `loop_status`. Its only three `trade_outcomes` reads
+(`scripts/loop_status.py:91,94,102`) all carry `WHERE wallet='live'`. Pulling
+exactly that population and running `op.partition` over it prints
+`wallet=live rows 18 kept 18 REFUSED 0` -- censoring is a NO-OP on its own SELECT,
+so it joins live_book_forensics and tx_hash_provenance_audit in the exempt set.
+This leans on the p675 result that `wallet` is the clean live/ghost split; if that
+falls, this exemption falls with it.
+
+CLOSED AS UNOBSERVABLE THIS PASS, not as done: `routing_arbitrage_census` and
+`money_button_universe`. Banner code exists (routing:558-579, money_button:246-299)
+but both run past 200-280s and print NOTHING until the end, so neither banner could
+be observed firing. Code-exists is not the criterion. Item left BLOCKED with that
+note rather than marked done.
+
+SIDE MEASUREMENT, and a TRAP worth more than the item: `trading_ops.action` has NO
+`live-exit` value -- `action` is enter/hold/strategy_publish/exit/swap/repair/
+wallet_read, and live-exit lives in `status`. `WHERE action='live-exit'` returns
+ZERO ROWS SILENTLY and reads as a finding. On `status`: live-entry n=20 newest
+416.41h old, live-exit n=18 newest 415.47h, live-swap-settled n=46 newest 415.60h
+-- 17.3 DAYS since the last settled live swap. ghost-entry newest 20.31h old with
+ZERO in the last 6h, while ghost_candidate_quote_ok is 36 in the last 6h and 0.02h
+fresh. Supply is alive on a fresh tape; conversion is at zero. NOT MEASURED: whether
+20.3h is inside the historical ghost-entry gap distribution, so this does not yet
+license "the ghost lane stopped".
