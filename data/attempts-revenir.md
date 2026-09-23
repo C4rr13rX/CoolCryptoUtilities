@@ -22936,3 +22936,40 @@ gate before that number exists. Two nulls measured in passing:
 `entry-predropped-edge-ban` is **100% `wallet='ghost'`**, and
 `live-entry-unfunded` is **n=0 ALL TIME** -- funding has never once stopped a
 live entry.
+
+### Pass 681 -- Bay, CORRECTION TO MY OWN ENTRY ABOVE, WRITTEN 20 MINUTES LATER.
+
+The AERO lead recorded above as "OPEN, AS A LEAD ONLY" is CLOSED. I ran the counter-test
+I had written into its own acceptance criteria -- how many of the losing 18 live trades
+were already AERO -- and the answer is NINE OF EIGHTEEN.
+
+trade_outcomes wallet='live', grouped by symbol:
+  AERO-USDC    n=9  net -0.070916  GROSS -0.038958  wins 3 (33.3%)
+  CBBTC-USDC   n=3  net -0.055192  gross -0.022720  wins 0
+  CBETH-USDC   n=2  net +0.004952  gross +0.012587  wins 1
+  CBXRP-USDC   n=1  net -0.019078  gross -0.012592  wins 0
+  BSTONK-USDC  n=1  net +0.242029  gross +0.255767  wins 1
+  BPAD-USDC    n=1  net -0.254927  gross -0.249893  wins 0
+  BASECAT-USDC n=1  net -0.033240  gross -0.029111  wins 0
+  TOTAL        n=18 net -0.186371   (matches the scoreboard to the last digit)
+
+"Hand-approve atf_static and restrict it to AERO" is NOT an untried route. It is HALF of
+the existing -0.1864, and its gross is NEGATIVE before a single fee. No clip size and no
+cheaper venue rescues a negative gross. Ghost said n=26 win 69.2% median +37.5bp; live
+says n=9 win 33.3% gross -0.038958 -- the already-measured 2.52pp ghost-live AERO
+disagreement, same direction, different cut. Item [9a831d2a] is REJECTED, not open.
+
+Kept from the same table: the two thin names CANCEL -- BSTONK +0.242029 against BPAD
+-0.254927, one trip each, net -0.0129 across the pair while being 2.7x the magnitude of
+everything else in the book. The live tail is a coin flip, not an edge, which is the live
+echo of the ghost tail recorded above. And CBETH-USDC is the ONLY live symbol with
+positive gross AND net (+0.012587 / +0.004952) at n=2 -- far too small to act on, recorded
+only so nobody re-derives it.
+
+ALSO ESTABLISHED, and it is the structural fact behind the 17.6-day live silence:
+data/strategy_ledger.json has exactly ONE live_approved strategy, money_button, whose live
+record is trades 0 / last_ts 0.0 -- it has never been tried. atf_static, which produced ALL
+18 live trades and the entire -0.18637145913731235, is live_approved=FALSE with 7
+demotions. The approved strategy has no evidence and the evidenced strategy cannot trade.
+Re-arming atf_static is a DECISION, not a measurement -- and the nine AERO rows above are
+the argument against taking it on the current evidence.
