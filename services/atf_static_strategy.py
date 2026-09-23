@@ -590,6 +590,7 @@ def _corroborated_price(
     symbol: str,
     chain: str,
     quoted: float,
+    out: Optional[Dict[str, Any]] = None,
 ) -> Optional[float]:
     """Validate a DexScreener quote against the streamed feed.
 
@@ -606,8 +607,20 @@ def _corroborated_price(
     applies to the stream itself.
 
     Returns the price to use, or None to skip the symbol entirely.
+
+    ``out``, when given, is filled with the refusal reason and the two numbers
+    behind it. It exists because the aggregate log line this refusal used to
+    leave -- "refused N uncorroborated candidate(s)" -- carries a COUNT and no
+    symbol, no branch and no price, so every outside-in measurement of this
+    funnel has been guesswork. The caller on the ENTRY path writes ``out`` to
+    ``trading_ops`` as one row per refused candidate. Filled on refusal only,
+    and never on the exit/mark callers, which do not pass it: those refusals
+    are a different population and mixing them would break the reconciliation
+    against the aggregate line, which is entry-only.
     """
     if quoted <= 0.0:
+        if out is not None:
+            out.update({"reason": "quoted_price_not_positive", "quoted": quoted})
         return None
     if not _bool_env("ATF_STATIC_REQUIRE_FEED_PRICE", "1"):
         return quoted
@@ -644,6 +657,13 @@ def _corroborated_price(
             feed=None,
             max_age=max_age,
         )
+        if out is not None:
+            out.update({
+                "reason": "no_tick_within_max_age",
+                "quoted": quoted,
+                "feed": None,
+                "max_age_sec": max_age,
+            })
         return None
     max_dev = _float_env("ATF_STATIC_MAX_FEED_DEV", 0.35)
     if max_dev > 0.0:
@@ -658,6 +678,14 @@ def _corroborated_price(
                 deviation=deviation,
                 max_dev=max_dev,
             )
+            if out is not None:
+                out.update({
+                    "reason": "quote_deviates_from_feed",
+                    "quoted": quoted,
+                    "feed": feed,
+                    "deviation": deviation,
+                    "max_dev": max_dev,
+                })
             return None
     # Prefer the feed: it is the corroborated number, and marking against it
     # keeps entry and exit on the same price basis.
@@ -1199,13 +1227,56 @@ def _run_ghost_quote_scout(
         quote_probe = sig.get("quote_probe") if isinstance(sig.get("quote_probe"), dict) else {}
         if not quote_probe.get("ok"):
             continue
+        corroboration: Dict[str, Any] = {}
         entry_price = _corroborated_price(
-            db, symbol, chain, _float(sig.get("price_usd"), 0.0)
+            db, symbol, chain, _float(sig.get("price_usd"), 0.0),
+            out=corroboration,
         )
         if not entry_price or entry_price <= 0:
             # No streamed tick to confirm the quote: refuse the entry rather
             # than open a position priced from a source nothing can check.
             skipped_unpriced.append(symbol)
+            # ONE ROW PER REFUSED CANDIDATE, not a count at the end of the loop.
+            #
+            # The aggregate line below ("refused N uncorroborated candidate(s)")
+            # carries a COUNT and at most eight sorted symbol names. It cannot
+            # answer "which symbol, which branch, how often" without parsing
+            # logs, and six passes of this loop have measured this funnel from
+            # the outside and guessed. This row makes the refusal a first-class
+            # database fact: one read-only query over trading_ops now returns a
+            # per-symbol, per-reason census.
+            #
+            # SCOUT LANE ONLY. `ghost-entry` has two writers that do not share a
+            # denominator: this scout, which cannot enter without its own
+            # quote_ok row, and trading/bot.py's directive path, which never
+            # emits quote_ok and never reaches this gate. A count taken off
+            # these rows is a count of SCOUT candidates and must never be
+            # divided by a pooled entry denominator.
+            #
+            # Behaviour is unchanged: same refusal, same `continue`, same
+            # aggregate line. A logging failure must not stall the entry loop.
+            try:
+                db.log_trade(
+                    wallet="ghost",
+                    chain=chain,
+                    symbol=symbol,
+                    action="hold",
+                    status="entry-refused-uncorroborated-price",
+                    details={
+                        "symbol": symbol,
+                        "reason": str(corroboration.get("reason") or "uncorroborated_price"),
+                        "detail": "the streamed feed does not corroborate the quoted price",
+                        "strategy_id": SCOUT_STRATEGY_ID,
+                        "lane": "scout",
+                        "quoted": corroboration.get("quoted"),
+                        "feed": corroboration.get("feed"),
+                        "deviation": corroboration.get("deviation"),
+                        "max_dev": corroboration.get("max_dev"),
+                        "max_age_sec": corroboration.get("max_age_sec"),
+                    },
+                )
+            except Exception:  # noqa: BLE001 - instrumentation must never stall the loop
+                pass
             continue
         # A stop-loss is only as good as the feed that triggers it.
         #
