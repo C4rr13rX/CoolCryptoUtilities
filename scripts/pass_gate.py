@@ -670,6 +670,35 @@ GATE_TESTS = (
     # step 6 >= step 5: unifying must never let step 6 admit a strategy that
     # never earned a licence. Iris, pass 1.
     "test_a_licence_is_not_void_on_arrival.py",
+    # A ROUND TRIP IS CHARGED AT ITS OWN CLIP, NOT AT ONE FLAT RATE.
+    #
+    # symbol_edge_gate decides which symbols may be entered AT ALL and which
+    # ghost trades count as evidence toward graduation, and two of its three
+    # legs subtracted one flat fraction from every return while the third
+    # costed trip by trip -- so the legs disagreed with the one that reaches
+    # the P/L. At a $0.20 clip the FIXED charge alone is 2.02% of notional, so
+    # a symbol returning +1.0% read as "clears its cost" while losing on every
+    # trip. Gale, pass 1.
+    "test_a_trip_is_charged_at_its_own_clip.py",
+    # A CONJUNCT THAT IS READING NOTHING MUST NOT VETO THE THREE THAT ARE.
+    #
+    # 0.5 is the code's own "no reading" sentinel in that key, not a measured
+    # coin flip, and the entry test refused it against a 0.6 floor: 1804 of
+    # 1805 refusal rows sat inside the neutral band while direction_prob,
+    # net_margin and expected all had real range. This is the largest refusal
+    # on the entry path, so it is where the evidence rate is made -- and the
+    # abstention is the kind of change that must stay bounded, which is why
+    # the file also pins that BOTH heads neutral still refuses. Gale, pass 1.
+    "test_a_stuck_head_cannot_veto_the_live_ones.py",
+    # THE WRITER MUST SAY WHAT UNIT IT WROTE.
+    #
+    # The other half of the fraction-vs-dollars defect: trading/bot.py filled
+    # details['profit'] with USD at five sites and stamped no unit, so every
+    # reader had to guess from a hardcoded strategy id. A 0.4% return and 40
+    # cents both read as "0.004" and size can never separate them, so an
+    # unstamped writer is one rename away from poisoning the graduation book
+    # again. Gale, pass 1.
+    "test_the_bot_stamps_the_unit_it_writes.py",
 )
 
 
