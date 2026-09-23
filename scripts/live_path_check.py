@@ -17,7 +17,7 @@ number:
     6  RISK        the transition plan permits capital
     7  WALLET      deployable funds exist
     8  EXECUTOR    a bot exists that CAN place a live order
-    9  LIVE        real trades have happened
+    9  LIVE        real trades are STILL happening (not "have ever happened")
    10  PROFIT      those trades made money
 
 Run it on a schedule. The first FAIL is the thing to fix; everything after it
@@ -383,15 +383,29 @@ def check_executor() -> Link:
 #: it was failing.
 EXECUTED_LIVE_STATUSES = ("live-entry", "live-exit")
 
+#: How stale the newest executed live row may be and still count as a LIVE
+#: lane. An ALL-TIME count answers "did this ever execute", which is a
+#: historical fact and not a state -- COVE p681 measured all sixteen '%live%'
+#: statuses stopping together at 2026-09-05 21:10 while this link went on
+#: printing "[PASS] LIVE 38 executed live rows" for 17.6 days, because the
+#: count carried no ts filter. The ladder exists to locate the FIRST FAILING
+#: LINK right now, so this rung has to be a state.
+#:
+#: 24h, not the 1h used for the refusal counter below: live trades are rare by
+#: design and a short window would manufacture a failure on a healthy lane.
+#: A lane that has placed nothing in a full day is not passing as a live lane.
+LIVE_SILENCE_FAIL_SECONDS = float(os.getenv("LIVE_SILENCE_FAIL_SECONDS", "86400"))
+
 
 def check_live(now: float) -> Link:
     link = Link(9, "LIVE")
     try:
         c = _db()
         placeholders = ",".join("?" * len(EXECUTED_LIVE_STATUSES))
-        total = list(c.execute(
-            "SELECT COUNT(*) FROM trading_ops WHERE status IN (%s)" % placeholders,
-            EXECUTED_LIVE_STATUSES))[0][0]
+        total, newest = list(c.execute(
+            "SELECT COUNT(*), MAX(ts) FROM trading_ops WHERE status IN (%s)"
+            % placeholders,
+            EXECUTED_LIVE_STATUSES))[0]
         refused = list(c.execute(
             "SELECT COUNT(*) FROM trading_ops WHERE status IN "
             "('guard-blocked-live','live-entry-blocked','live-entry-failed',"
@@ -404,7 +418,28 @@ def check_live(now: float) -> Link:
         if refused:
             detail += " (%d live entries REFUSED in 1h)" % refused
         return link.failed(detail, "fix the first FAIL above")
-    return link.passed("%d executed live rows" % total)
+    if newest is None:
+        # Rows exist but carry no usable ts. Say so rather than passing on a
+        # count whose freshness cannot be established.
+        return link.unknown(
+            "%d executed live rows ALL TIME but MAX(ts) is NULL -- "
+            "freshness unmeasurable" % total)
+    # trading_ops.ts is a UNIX FLOAT, not a datetime string. Host clock is
+    # local; state the timezone so this never reads as UTC.
+    silent = max(0.0, float(now) - float(newest))
+    stamp = time.strftime("%Y-%m-%d %H:%M %Z", time.localtime(float(newest)))
+    if silent > LIVE_SILENCE_FAIL_SECONDS:
+        detail = (
+            "SILENT %.1fh -- %d executed live rows ALL TIME, newest %s. "
+            "The lane is not executing; an unchanged scoreboard is NOT "
+            "evidence that a change failed." % (silent / 3600.0, total, stamp)
+        )
+        if refused:
+            detail += " (%d live entries REFUSED in 1h)" % refused
+        return link.failed(detail, "fix the first FAIL above")
+    return link.passed(
+        "%d executed live rows ALL TIME, newest %s (%.1fh ago)"
+        % (total, stamp, silent / 3600.0))
 
 
 def check_profit() -> Link:
