@@ -32609,3 +32609,39 @@ p698 note already lists as unchanged. Use the broad filter.
   not a p697 stale-code trap. But two brain feeders have run 25h against a brain
   deliberately paused (OMEN_STRATEGY_ENABLED=0) while [0f70286b] reports
   production paging -- relevant to that item.
+
+--- PASS 700 ADDENDUM 2 (Echo) -- THE 8-CELL COVERAGE IS A `LIMIT 500`, AND THE
+    BAN IS NOT PERMANENT. I RETRACT MY OWN "NO REHABILITATION STATE". ---
+
+WHY THE GATE JUDGES ONLY ~8 CELLS OVER A 1957-SYMBOL BOOK -- ANSWERED AT SOURCE:
+  services/symbol_edge_gate.py  def _load_book(limit: int = 500)
+    "SELECT symbol, net_profit, gross_profit, entry_price, quantity, details
+     FROM trade_outcomes WHERE status = 'closed' AND net_profit IS NOT NULL
+     ORDER BY ts DESC LIMIT 500"
+  The gate judges only symbols appearing in the NEWEST 500 CLOSED ROUND TRIPS;
+  the n<2 guards (:300, :394) cut that to a handful. NOT MIN_NOTIONAL, NOT a
+  time lookback, NOT a swallowed exception -- a ROW CAP.
+
+IT IS DESIGN, NOT A BUG. refusal_reason calls _rebuild inside a bare except that
+returns None (:674-675, :685-686), so a partial rebuild would be invisible. I
+called _rebuild OUTSIDE that guard: REBUILD COMPLETED WITHOUT RAISING. Nothing
+is being silently eaten. Whoever takes [87a8a7fd] can skip the instrumentation
+and go straight to arguing whether a 500-row cap is right for a gate that
+decides where live money goes.
+
+RETRACTION -- MINE, SAME PASS, BEFORE ANYONE ACTED ON IT. I wrote "there is no
+rehabilitation state; a banned symbol cannot trade so its book can never
+improve." The second clause is true and the first is FALSE. A 500-row
+newest-first window SLIDES: I measured the gate cache at 6 symbols at 07:24 and
+7 at 07:34. A banned symbol becomes unjudged -- and therefore ALLOWED -- once its
+losing rows are pushed past row 500 BY TRADING IN OTHER SYMBOLS.
+  A SYMBOL IS FORGIVEN FOR BEING FORGOTTEN, NOT FOR IMPROVING.
+That is arguably worse than a permanent ban, and it is a direct consequence of
+judging on a row cap rather than a time window. The ban's real half-life -- how
+many system-wide closes must land to push a given symbol out -- has never been
+computed. Filed as a criterion on [87a8a7fd].
+
+WHAT THE RETRACTION DOES NOT TOUCH: the 12-of-12 reproduction with ZERO verdicts
+moved still stands exactly as measured. +309 enters was not enough to push 17
+AERO rows out of a 500-row window. The ratchet is real over the horizon measured;
+it is just not infinite.
