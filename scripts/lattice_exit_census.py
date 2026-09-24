@@ -93,6 +93,49 @@ def _fmt(ts: float) -> str:
     return _dt.datetime.fromtimestamp(ts).strftime("%m-%d %H:%M")
 
 
+def _floor(conn: sqlite3.Connection, symbol: str) -> int:
+    """Where does chaos_profile FIRST answer?  Call it; do not read it.
+
+    Pass 692 read `len(rets) < 32` at chaos.py:78/148/224, inferred a 33-price
+    floor, and concluded the 64 at bot.py:2386 was arbitrary and roughly twice
+    what the estimator needs.  That was wrong, and one call showed it: the
+    `< 32` checks are not the binding constraint and the profile first answers
+    at 64 exactly.  This mode exists so the next agent does not repeat the
+    inference.
+    """
+    import pathlib
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "web"))
+    try:
+        from tradingagent.chaos import chaos_profile
+    except Exception as exc:  # noqa: BLE001
+        print(f"cannot import chaos_profile: {exc}")
+        return 1
+
+    prices = [float(p) for (p,) in conn.execute(
+        "SELECT price FROM market_stream WHERE symbol=? AND price>0 "
+        "ORDER BY ts DESC LIMIT 400", (symbol,))][::-1]
+    print(f"{symbol}: {len(prices)} real prices from market_stream")
+    if len(prices) < 64:
+        print("  fewer than 64 available -- pick a denser symbol")
+        return 0
+
+    print("  the guard at bot.py:2386 permits below 64. Does the estimator"
+          " actually need 64?")
+    first = None
+    for n in (20, 21, 33, 60, 61, 62, 63, 64, 100, 200, 400):
+        if n > len(prices):
+            continue
+        usable = chaos_profile(symbol, prices[-n:], bar_sec=30.0
+                               ).get("usable_horizon_sec")
+        if usable is not None and first is None:
+            first = n
+        print("    n=%-4d usable_horizon_sec = %s"
+              % (n, "None" if usable is None else f"{float(usable):.2f}"))
+    print(f"  first answers at n={first}; the guard's literal is 64")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("days", nargs="?", type=float, default=7.0)
@@ -100,10 +143,15 @@ def main() -> int:
                     help="break out len(prices) on the short_window rows")
     ap.add_argument("--strategy", default=None,
                     help="restrict to one bus_plan.strategy_id")
+    ap.add_argument("--floor", metavar="SYMBOL", nargs="?", const="ETH-USDC",
+                    help="probe chaos_profile at increasing n to find the "
+                         "sample count it FIRST answers at")
     ap.add_argument("--db", default=DEFAULT_DB)
     args = ap.parse_args()
 
     conn = _open(args.db)
+    if args.floor:
+        return _floor(conn, args.floor)
     rows = list(_rows(conn, args.days, args.strategy))
     if not rows:
         print(f"no ghost-entry rows in {args.days:g}d"
