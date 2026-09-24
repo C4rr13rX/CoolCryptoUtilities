@@ -29766,3 +29766,35 @@ strategy at a minimum clip, remains the only route never costed in this ledger.
 strings -- `WHERE ts >= datetime('now','-24 hours')` returns zero rows **silently**.
 And any nearest-tick price lookup on this feed must state its tolerance: on WETH the
 net median flips sign between 120s and 300s on identical data.
+
+### CORRECTION TO THE ABOVE, same pass, by Kite -- the WETH pool term is 2.08bp
+
+Everywhere this section says WETH's pool round trip is 4.08bp, read **2.08bp**.
+I used `probe_cost_pct = 0.0407512`; the census's `points` series is already the
+round trip, and the file proves it against itself by rejecting its own $0.50 clip
+with *"cost 0.0196% is below the 2*fee floor 0.0200% -- a round trip through one
+pool cannot cost less than twice its fee."* Tier 100 is 0.01% per leg, 2*fee =
+0.0200%, and the series sits at 0.0201-0.0208% just above it.
+`roundtrip_cost_breakdown(19.66,'WETH-USDC')` returns `pool_rate 0.0002081` --
+**the shipped model agreed with Kite, not with me, the whole time. Check a cost
+constant against the code that charges it, not only against the file it came from.**
+
+    Toll(clip) = 40.47bp/clip_dollars + 2.08bp pool + 13.5bp slippage
+    floor at infinite clip   17.58 -> **15.58bp**
+    gap at infinite clip      9.12 -> **7.12bp**
+    gross-of-slippage crack   4.38 -> **6.38bp**   (a 46% WIDER target)
+
+Nothing else in this section changes. Only gas is fixed, two rates survive any
+clip, the floor still sits above the 8.46bp best move, and only a live WETH
+receipt answers it. The 18-of-18 horizon result and the "13.5bp cannot be depth"
+argument are both unaffected -- 0.0201% to 0.02081% across a 10x clip is 0.14bp
+either way.
+
+**Provenance of the three terms, since the correction landed on the weakest-
+evidenced one and the ranking is the point.** Every closed LIVE row all time:
+AERO 9, CBBTC 3, CBETH 2, CBXRP 1, BSTONK 1, BPAD 1, BASECAT 1 -- **WETH 0,
+ETH 0.** So gas ($0.004047/round trip) is chain-measured off 18 live rows and
+reproduces exactly; pool (2.08bp) is a quote, self-labelled
+`THESE_ARE_QUOTES_NOT_FILLS`; slippage (13.5bp) is pooled over 38 legs that are
+half AERO and contain no WETH at all. **The smallest term is the best evidenced
+and the largest is the worst.** That is the whole argument for `[54167b0b]`.
