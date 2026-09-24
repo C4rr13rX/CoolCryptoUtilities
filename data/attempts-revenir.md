@@ -33269,3 +33269,60 @@ instrument exists and is tested. Reconcile data/two_regime_census.json against
 it rather than treating it as the first word. Check whether 47-vs-73 is
 explained by the tick floor and the two-week gap, or whether the criteria
 genuinely disagree.
+
+--------------------------------------------------------------------------------
+PASS 702 (Echo, senior) -- ADDENDUM 7: two more re-derivations, and the process
+change that would have prevented all three.
+--------------------------------------------------------------------------------
+
+RETRACTED AS A DISCOVERY -- "the live lane is unentered, not refused" was
+already measured at pass 483 (2026-09-18), memory file
+`live-lane-is-silent-not-refusing-and-the-fix-is-already-in-production`:
+
+  "The live branch is ABSENT, not refusing: zero entries *and* zero refusals.
+   A REFUSED LANE LEAVES ROWS."
+  live-entry total 20 last 319.5h ago since_fix 0 ... guard-blocked-live 62
+  all since_fix 0
+
+Same counters, same reasoning, same conclusion. p702 measured 447h where p483
+measured 319.5h -- the SAME EVENT six days later. Stands only as an independent
+reproduction.
+
+AND IT CARRIES A FACT p702 DID NOT HAVE, WHICH CHANGES THE PLAN:
+
+    821daa1 "halt_live now DEMOTES the bot to ghost..."  2026-09-17 20:52
+    production pid 22264 booted                          2026-09-18 16:47
+
+Production booted 26.6h AFTER that fix, so IT IS ALREADY RUNNING IT AND IT DID
+NOT HELP. p702 read that demotion mechanism as a fresh diagnosis; it is a
+SHIPPED FIX THAT FAILED. That makes [124eee67] harder, not easier.
+
+The same note records that the documented fallback signal is missing --
+live_lane_refusal_census.py:28 says the halt path writes
+metrics.feedback("scheduler", label="halted") and no such row exists since
+boot. So the halt is UNVERIFIABLE from production data, which is the same dead
+end p702 hit from the other side with its retracted substring artifact. Two
+passes, two routes: WE CANNOT SEE THE HALT FIRING.
+
+THIRD RE-DERIVATION: `backlog-is-the-same-defect-filed-five-times` (pass 438,
+2026-09-17) already recorded five ids for one defect and the 107-todo count.
+p702 posted the identical observation as new, having found six ids on one
+cause. The backlog was 107 todo then and is 263 now -- the re-derivation is
+itself the evidence that naming this does not fix it.
+
+WHAT SURVIVES p702, verified by grepping memory for the actual disjunct names:
+six files mention them; the closest (`live-gate-chain`) records a sequential
+CHAIN "insufficient_accuracy -> ghost_validation_block -> loss_streak_block",
+NOT the nine-way OR at pipeline.py:6764, and no file notes that block_reason is
+a first-match chain masking the other eight. The seven-independent-condition
+narrowing appears genuinely new.
+
+THE PROCESS CHANGE, proposed as a change to how the loop runs rather than a
+backlog item:
+
+    BEFORE MEASURING, GREP THE MEMORY DIRECTORY FOR THE NOUNS IN YOUR ITEM.
+    Not MEMORY.md -- it indexes ~80 of 547 files and says so in its own header.
+    The directory. One command. It would have saved most of this pass.
+
+The senior skipped this cheap check three times in one session. That makes it a
+missing step, not a discipline problem.
