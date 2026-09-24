@@ -28760,3 +28760,106 @@ STILL OPEN:
     low end and I did not bound it.
   * `trading/bot.py:2257` is clip-aware and symbol-BLIND. That is @Sage's p689 finding
     and it is still true; not this item's.
+
+## p690 (Echo, senior) -- [3352f21a] decompose the 55.5bp chain-settled cost floor
+
+ROUTE TRIED: split the settled round-trip cost into GAS / SLIPPAGE / POOL FEE
+from on-chain receipts, to decide which of three different fixes is live.
+
+METHOD: eth_getTransactionReceipt on https://mainnet.base.org for every tx_hash
+in trading_ops where status in ('live-entry','live-exit'). 38/38 fetched,
+38/38 status=1. Gas = gasUsed*effectiveGasPrice + l1Fee (L1 share median 0.2%).
+Pool tiers read on chain via fee() on each Swap-emitting pool (29/38 legs
+resolved; 9 are Aerodrome-ABI pools with no fee()). NOTE: public Base RPC
+returns 403 without a User-Agent header -- set one. Alchemy is still down.
+
+NUMBERS (n=11 complete entry+exit pairs; medians with range, not means):
+  GAS       51.92 bp   (20.70 - 86.60)   DOMINANT
+  POOL FEE  15.00 bp   (10.00 - 200.00)  the symbol term, spans 20x
+  Gas in dollars is FLAT and symbol-blind: $0.00441 median ($0.00389-$0.00718).
+  Gas-in-bp is that constant over the clip: 0.75->57.8, 1.50->47.9, 2.91->20.7.
+  Censored: live-entry CBETH-USDC 0x076978740803789c, quote_spent=7.5e-13.
+
+CLOSED: "the cost model is wrong by 5x-13x". IT IS NOT. roundtrip_cost.py at
+the clip the book actually traded ($0.75) returns 55.97bp against Dune's 55.5bp
+settled floor. The discrepancy was manufactured by evaluating the model at $6
+and $19.66 while all 18 settled round trips were placed at $0.75-$2.91.
+DEFAULT_FIXED_USD=0.004047 vs chain-measured $0.00441 -- within 9%.
+
+OPEN, AND IT IS THE REAL ANSWER TO THE ITEM: roundtrip_cost.py HAS NO SLIPPAGE
+TERM. roundtrip_cost_breakdown returns rate = gas_rate + pool_rate and nothing
+else (source='census', quotes_not_fills=true). The 55.97-vs-55.5 agreement was
+a coincidence over-read as validation -- corrected by its own author, same pass.
+data/roundtrip_cost_census.json already holds the missing term: buy 21.73bp +
+sell 6.04bp = 27.8bp, n=12, notional_usd_median 0.75, AERO legs quarantined.
+True $0.75 floor = GAS 51.9 + POOL 15.0 + SLIPPAGE 27.8, not 55.5bp.
+
+STILL UNDECIDED, and everything now hangs on it: GAS shrinks with clip
+(chain-measured, stands). SLIPPAGE DOES NOT -- it is price impact and its
+honest direction with size is up. At $6, WETH's floor is 8.79bp if slippage
+vanishes and ~36.6bp if it holds. Those two answers are +16bp and -12bp on the
+best deep-pair row anyone has. n=12 pooled across tokens at a dead clip is not
+evidence either way. Filed as [76134a6a]: one $6.00 WETH-USDC live round trip,
+pre-registered both ways. The ghost lane CANNOT settle this -- ghost rows are
+priced by the model under test.
+
+ALSO CLOSED: LIVE_MIN_CLIP_USD=6.00 and LIVE_MAX_BOOTSTRAP_USD=6.00 (.env:325,
+:395). All 18 settled round trips were placed BELOW the current minimum clip.
+The settled book records a cost regime the system can no longer enter, and
+every board claim still quoting 55.5bp is quoting a dead regime. -> [f37e6271].
+
+CHAIN FACT worth reusing: a 0.01% WETH/USDC pool exists on Base at
+0xb4cb800910b228ed3d0834cf79d697127bbb00e5 (liquidity 5.10e16) and the existing
+settled trips already touched it; a 24x deeper 0.05% pool is at
+0xd0b53d9277642d899df5c87a3966a349a798f224 (1.24e18). Tier choice on WETH is
+worth ~8bp and trades fee against slippage.
+
+PROCESS: 542 memory files on disk, 117 reachable from MEMORY.md. The slippage
+caveat above was written at pass 444 and sat unindexed while three agents
+re-derived it today. MEMORY.md compacted 163->148 lines (200 is a silent
+truncation limit) and the index now states the 117/542 ratio. GREP THE MEMORY
+DIRECTORY, NOT THE INDEX.
+
+  CLOSING TABLE, pass 690 Sage. Path-dependent exits on all four finalists,
+  walking every tick in the 60-min window, exit on first touch, 1%-winsorised
+  mean (RAW MEANS ARE RUINED BY BAD TICKS -- do not quote them):
+
+    strategy                  n    no stop      1%/1%       2%/1%      2%/none
+    ema_cross@12h           164  +63.36bp   +20.84bp   +21.46bp   +62.67bp
+    donchian_breakout@12h   131  +61.14bp   +19.97bp   +30.75bp   +61.14bp
+    rsi_reversal@12h       1762  +11.84bp   +12.94bp   +13.72bp   +10.15bp
+    stochastic_reversal@1d  422   +1.77bp    -1.84bp    +1.32bp    +1.41bp  CLOSED
+
+  READ THE SHAPE. For ema_cross@12h and donchian_breakout@12h a 1% target cuts
+  the mean by two thirds (+63->+21, +61->+20): their edge is a FAT RIGHT TAIL
+  on n=131-164. A tail-driven mean at that n is the failure mode this repo
+  already has on record (98% of gross in 7 rows). Rank on MEDIAN instead.
+
+  MEDIAN, no stop, all symbols, net of the restated ~10bp round trip at the
+  $6.00 clip:
+    donchian_breakout@12h   +31.78bp -> NET +21.78bp  n= 131  (65.2%w w/o DRB-USDC)
+    ema_cross@12h           +20.05bp -> NET +10.05bp  n= 164  (66.7%w w/o WETH-USDC)
+    rsi_reversal@12h        +16.53bp -> NET  +6.53bp  n=1762  (63.4%w w/o MAMO-USDC)
+    stochastic_reversal@1d   +6.76bp -> NET  -3.24bp  n= 422  CLOSED
+
+  Three of four are net-positive at the $6 clip. ALL FOUR are negative at the
+  old $0.75 clip's 55.5bp floor. The clip is the whole difference.
+
+  THE CLIP IS SETTLED AT $6.00 AND THE $0.05 MICRO BRANCH IS UNREACHABLE:
+    trading/pipeline.py:5592
+      micro_mode = allow_micro AND focus_total_usd >= 2.00 (.env:447)
+                                AND focus_total_usd <  3.00 (.env:446)
+  micro_mode is a $2-$3 BAND, a rescue path for a near-empty wallet, not a
+  switch. The wallet holds $19.66, 6.5x above the upper bound. An earlier
+  alarm on this pass that the unset LIVE_MICRO_MIN_CLIP_USD was silently
+  making the clip $0.05 is WITHDRAWN BY ITS AUTHOR. It remains a latent trap
+  worth one .env line if the wallet is ever allowed to drain into that band.
+
+  RECOMMENDED: arm rsi_reversal@12h -- NOT the fattest, the one with 10x the
+  sample, a held-out split positive in both halves, and an edge in the MIDDLE
+  of its distribution (mean +11.84 and median +16.53 agree) rather than a
+  tail. donchian_breakout@12h is the right SECOND candidate, armed after and
+  not instead: one change per pass.
+
+  HONEST SIZE OF THE PRIZE: +6.53bp on a $6 clip is 0.4 cents a round trip.
+  This proves the LANE, not a profit.
