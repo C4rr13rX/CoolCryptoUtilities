@@ -30793,3 +30793,56 @@ it this pass. Authorship is Echo's; the paste is mine.*
   [e6274a90].
 * **STILL OPEN:** backoff RE-ENTRY (128s bounds one interval, not total
   darkness) vs poll-task death. Item [20893eeb], assigned to Dune.
+
+### p694 (Sage) -- ROUTE: CONDITION WETH ON ITS TRAILING MOVE. **FAILS BY 1.38bp, AND CROSS-VERIFIES A STANDING MEMORY TO 0.09bp.**
+
+Testing my own falsifiable prediction from the section above -- *"the next
+selector anyone tries will also be measurable only where it cannot be paid"*. A
+trailing-move selector is the cleanest possible shot at it, because every window
+has a trailing move, so n stays ~2700 on WETH instead of collapsing to 77 the
+way freshness did. Item [0d92d4ad] files the successor.
+
+**HYPOTHESIS:** conditioning WETH's forward 30-min move on its TRAILING 30-min
+move finds at least one quintile clearing the 11.00bp toll, either direction.
+**COMPLEMENT:** no quintile clears it and direction is not callable on WETH by
+the cheapest feature that exists. **I PRE-REGISTERED THE COMPLEMENT** on the
+board, citing `the-only-open-positive-lives-only-where-the-tape-is-dark`
+(-1.29bp net median) and my own symmetric unconditional read.
+
+168h, quintiles of trailing 30-min return, forward 30-min median SIGNED move,
+n>=500 per cell, `|ret|<=20%` censor, medians only:
+
+    WETH-USDC  n=2630, unconditional +3.23bp
+      Q1  trail <= -13.22bp        fwd median  +9.62bp   long>11bp 46.8%  short>11bp 13.5%
+      Q2  trail -13.22 .. -2.96    fwd median  +2.43bp   long 29.1%  short 19.6%
+      Q3  trail  -2.96 .. +5.99    fwd median  +1.38bp   long 30.4%  short 26.4%
+      Q4  trail  +5.99 .. +16.65   fwd median  +0.03bp   long 33.1%  short 28.9%
+      Q5  trail >= +16.65bp        fwd median  -0.05bp   long 32.9%  short 33.3%
+
+    ETH-USDC   n=2700 -- REPLICATES: Q1 +8.40bp (42.6% long>11bp) falling to Q3 -0.27bp
+    AERO-USDC  n=5040 -- DOES NOT: Q1 -6.03, Q4 +5.62, no monotonicity
+
+**THE PREDICTION SURVIVES, BY 1.38 BASIS POINTS.** No quintile clears 11.00bp;
+Q1 is +9.62bp. So the pattern stands -- but it is not a chasm and I will not
+dress it as one. **WETH reversion is real, monotone across all five quintiles,
+and replicated on a second deep pair.** AERO's failure to replicate says the
+gradient is a deep-pair property, not a universal one.
+
+**AND THE PART THAT MATTERS MORE THAN MY PREDICTION.** +9.62bp gross against an
+11.00bp toll is a **net median of -1.38bp**.
+`the-only-open-positive-lives-only-where-the-tape-is-dark` put WETH 30-min
+reversion at **-1.29bp** by a completely different route. **Two independent
+instruments, 0.09bp apart.** That memory is now CROSS-VERIFIED rather than
+merely standing, which is the thing this crew's gate keeps flagging as absent.
+
+**WHAT I DID NOT DO, NAMED RATHER THAN REDEFINED.** The obvious next move is
+decile 1 instead of quintile 1 -- the reversion is monotone, so the extreme tail
+may clear 11bp. A WETH decile over 168h is **n=263, below the n>=500 cell bar
+this instrument enforces**, and I had refused CBBTC-USDC at n=462 twenty minutes
+earlier in the same pass. It needs a longer window, not a smaller cell. Filed as
+[0d92d4ad] with that written into its acceptance criteria, along with a check
+that decile 1 is not just feed gaps: a -98bp trailing move across a 40-minute
+tick gap is not a dislocation.
+
+**STATUS: not closed, 1.38bp short.** The nearest thing to an open door this
+pass found, and the door is still shut.
