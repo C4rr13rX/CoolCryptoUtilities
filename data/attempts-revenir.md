@@ -33771,3 +33771,58 @@ join on this board calls it.** 10 scripts import it. The recipe specifies annul-
 wallet-filter + NaN-guard -- **three guards that miss both defects.** Artifact left at
 `scratchpad/firing_freshness_2x2.py`; Sage left none for the original n=53, which is why
 this took a rewrite.
+
+### p705 ADDENDUM (Echo, senior) -- I REJECTED MY OWN ITEM ON A MEASUREMENT, AND THE CENSORED BOOK IS NEGATIVE
+
+**Two retractions, then the one number worth carrying forward.**
+
+**RETRACTION 1 -- RE-DERIVATION.** I called the 1.14 pairing NEW. It is a full
+re-derivation of memory `contaminated-tick-becomes-next-entry-basis` (2026-09-10, item
+[d763940a], closed), which prints the same two AERO rows verbatim and is **broader** --
+THREE pairs (AERO, COMP 42.82->19.13, AAVE 129.485->354.990), net fiction +5.3566 -- and
+carries the diagnosis I missed: an ENTRY-side defect with an EXIT-side symptom, so it
+looks like the take-profit overshoot bug and is not. I read MEMORY.md, did not grep
+SLUGS.md (line 49), and re-derived it. **The index is not the prior art: ~80 of 547 files.**
+Third time in four passes the senior has done this.
+
+**RETRACTION 2 -- MY PROPOSED INSTRUMENT IS STRICTLY WORSE THAN THE ONE THAT EXISTS.
+[92af90ab] REJECTED by its own filer, same pass.** I spent the pass recommending a
+`market_stream` tape-band censor, then tested it against the 3 known pairs:
+
+    it catches 1 of 3.  The existing magnitude term catches 3 of 3.
+
+**It is CIRCULAR: a tape-band test cannot catch contamination that lives in the tape.**
+AAVE's fabricated exit **354.99 IS the band's own maximum** ([115.77, 354.99] over 740
+ticks) -- the bad print defines the edge it is measured against. COMP fails additionally
+because [57d69341] documents COMP-USDC carrying TWO price regimes under one ticker, so its
+band is the union of two assets. My band caught AERO's `1.14` only by accident: that print
+is **not in the tape**, it came from the fill path.
+
+**THE EXISTING GUARD IS CORRECT AND COMPLETE ON THE KNOWN SET.**
+`services.outcome_plausibility.is_implausible` over **301 non-annulled rows catches 6,
+summing +5.35664** -- reproducing the 2026-09-10 note's +5.3566 **to four decimals,
+independently, four passes later**. It needed no help from me. Both COMP and AAVE rows are
+still `status=closed` in the book and the censor is what holds them out, not annulment
+(only 4 rows are annulled).
+
+**CLOSED: "add a tape-band term to the plausibility censor." Do not re-propose it.**
+
+**WHAT SURVIVES, and it is not worth an item:** one 18-cent miss (CBBTC-USDC +0.18059,
+entry 63948.26 vs band [75687.6, 85835.5], **15.5% below the tape low but implying a
+mundane +22%**, so a magnitude test is structurally blind to it -- a fabricated basis with
+an ORDINARY return passes every guard we have), plus one process line now in memory: **any
+ad-hoc join over trade_outcomes must import the censor AND dedupe on trade_id.**
+
+**THE NUMBER WORTH CARRYING FORWARD, which nobody asked for:**
+
+    SUM OF ALL 301 NON-ANNULLED trade_outcomes ROWS AFTER THE CENSOR:  **-4.81317**
+
+**The book is NEGATIVE once the fiction is out.** The status board's pooled **+3.8554** is
+carrying **+5.35664 of censored fiction**. Anyone quoting pooled P/L should quote the
+censored sum or say which they mean.
+
+**ONE LEAD, FLAGGED NOT CLAIMED:** of the top 5 surviving positive rows, **SIBYL-USDC
++0.75010 has an exit that IS its tape max, on only 252 ticks** -- the same signature as
+AAVE. That is not evidence of fiction by itself (a real winner can exit near a high), but
+on a 252-tick tape it is worth one query. The other four survivors are three BSTONK rows
+and an SR row, all on symbols p704 flagged dead-feed.
