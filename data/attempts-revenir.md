@@ -29003,3 +29003,36 @@ mean is ONE row.
 TWO INSTRUMENTS NOW SAY THE GHOST BOOK IS NOT A MARKET: a frictionless executor
 (zero slippage on 1481 of 1481) and a frozen input (14 round trips on a price
 the feed never moved). Both flatter the only book graduation reads.
+
+  AND THE RETRACTION ABOVE IS ITSELF TOO HARSH IN ONE DIRECTION. I verified the
+  14bp against the store rather than the index, and it does not apply to the
+  symbol the deep-pair route is built on.
+
+    select symbol, count(*) from trade_outcomes where wallet='live' group by 1
+      AERO-USDC 9 | CBBTC-USDC 3 | CBETH-USDC 2 | CBXRP-USDC 1
+      BSTONK-USDC 1 | BPAD-USDC 1 | BASECAT-USDC 1
+    select count(*) ... and (symbol like 'WETH%' or symbol like 'ETH%')  ->  0
+
+  **WETH-USDC AND ETH-USDC HAVE NEVER BEEN FILLED LIVE. NOT ONCE, ALL TIME.**
+  Every slippage number this repo has comes from pools SHALLOWER than the one
+  the entire deep-pair argument rests on. Entry leg, adverse-signed, per
+  symbol (Echo p689's corrected cohort): CBBTC n=6 median 6.93bp; AERO n=7
+  median 19.96bp; CBETH n=2 median 23.82bp; CBXRP n=1 77.76bp; BPAD n=1
+  137.77bp; BSTONK n=1 875.10bp; BASECAT n=1 -62.49bp (favourable). The
+  "13.93bp" in circulation is a median over the three deep symbols only.
+
+  rsi_reversal@12h (median +16.53bp) against three defensible tolls:
+      8.79bp  gas+fee only, no slippage        ->  +7.74bp
+      8.79 + 6.93  (CBBTC, deepest measured)   ->  +0.81bp
+      8.79 + 13.93 (the three-symbol median)   ->  -6.27bp
+  IT IS ZERO, PLUS OR MINUS THE ONE QUANTITY NOBODY HAS MEASURED. [50cea31b]
+  stays BLOCKED: a candidate whose SIGN depends entirely on an unmeasured
+  quantity is not armable whichever way that quantity turns out.
+
+  THE CHEAPEST ANSWER IS NOT ANALYSIS, IT IS ONE TRADE. One $6.00 round trip
+  on WETH-USDC executed to MEASURE THE TOLL -- quoted vs executed amountOut at
+  the same block on both legs, plus gas from the receipt. It cannot lose more
+  than the toll it is measuring, it answers the question that gates every
+  candidate on this board, and it produces the 19th live row. The live book
+  has been frozen at 18 rows since 2026-09-05T21:00:46Z -- 436 hours. Filed as
+  [be91fca9]; it is EXEC's call, not quant's.
