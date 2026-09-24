@@ -42,6 +42,16 @@ from money_button_gate_census import load_ticks  # noqa: E402
 
 HOURS = 168.0
 HORIZONS = (5.0, 12.0, 30.0)
+#: The deep pairs, read individually. p694 found the POOLED table flatters them:
+#: pooled median |move| at 30 min is 21.28 bp but WETH-USDC's own is 14.06 bp
+#: and ETH-USDC's 14.79 bp -- the pooled figure is carried by UNI-USDC (86.82)
+#: and AERO-USDC (38.25), pairs whose own toll eats the amplitude. Never quote
+#: the pooled number as a deep-pair number.
+DEEP = ("WETH-USDC", "ETH-USDC", "CBBTC-USDC", "UNI-USDC", "AERO-USDC", "CBETH-USDC")
+MIN_CELL = 500   #: below this a per-symbol cell is not reported at all
+#: This repo's standing plausibility bar: a forward return over 2-90 minutes
+#: larger than 20% is a price-scale artifact, not a move.
+PLAUSIBLE_ABS = 0.20
 WETH_TOLL = 0.0011   # 11.00 bp, WETH-class depth, from the replay's own footer
 CENSUS_TOLL = 0.0070  # 70.00 bp at census fee
 
@@ -95,6 +105,52 @@ def main() -> int:
             up = float((a > toll).sum()) / a.size * 100.0
             print("  long-only wins vs %-16s: %5.1f%%   (needs >50%% for a median-positive trade)"
                   % (name, up))
+
+    # ------------------------------------------------------------------
+    # The same read PER SYMBOL on the deep pairs. This is the one that
+    # decides anything: pooling 186 symbols mixes a 11bp toll with a 70bp
+    # one, and the amplitude that makes the pooled table look winnable
+    # lives on the pairs that cannot pay for it.
+    # ------------------------------------------------------------------
+    print("")
+    print("--- the deep pairs, read one at a time (n>=%d per cell) ---" % MIN_CELL)
+    print("  a pair is only tradeable long if its median SIGNED move exceeds its own toll.")
+    for sym in DEEP:
+        rows = ticks.get(sym) or []
+        if len(rows) < 10:
+            print("  %-12s ticks=%-6d -- no tape" % (sym, len(rows)))
+            continue
+        print("  %-12s ticks=%d" % (sym, len(rows)))
+        for hold_min in HORIZONS:
+            hold = hold_min * 60.0
+            mv = []
+            j = 0
+            n = len(rows)
+            for i in range(n):
+                t0, p0, _ = rows[i]
+                if p0 <= 0:
+                    continue
+                target = t0 + hold
+                if j < i:
+                    j = i
+                while j < n and rows[j][0] < target:
+                    j += 1
+                if j >= n:
+                    break
+                p1 = rows[j][1]
+                if p1 > 0:
+                    mv.append(p1 / p0 - 1.0)
+            a = np.asarray(mv, dtype=float)
+            a = a[np.abs(a) <= PLAUSIBLE_ABS] if a.size else a
+            if a.size < MIN_CELL:
+                print("      h%-3.0f n=%-5d BELOW THE CELL BAR -- not reported"
+                      % (hold_min, a.size))
+                continue
+            print("      h%-3.0f n=%-5d  median SIGNED %+7.2f bp   median |move| %7.2f bp"
+                  "   long>11bp %5.1f%%"
+                  % (hold_min, a.size, np.median(a) * 10000.0,
+                     np.median(np.abs(a)) * 10000.0,
+                     float((a > WETH_TOLL).sum()) / a.size * 100.0))
     return 0
 
 

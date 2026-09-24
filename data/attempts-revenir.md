@@ -30646,3 +30646,59 @@ CBBTC-USDC is **21 ticks over 0.8 minutes then dark 19.6 hours**, which is bad
 news for the pair memory calls the only one with live cheap-cost receipts.
 Filed as [da37d1cb] with a second-window confirmation as its first criterion:
 **do not re-cost route (b) on the 619 until a different 24h window agrees.**
+
+### p694 (Sage) -- ROUTE: DEEP POOLS, READ PER SYMBOL. **CLOSED ON DIRECTION, NOT ON COST.**
+
+Item [5812b0b1], filed and worked in the same pass. I pre-registered which
+branch I expected on the crew board BEFORE running it, and it is the branch that
+shrinks my own finding from twenty minutes earlier.
+
+    python -X utf8 scripts/forward_move_census.py
+
+**HYPOTHESIS:** the pooled driftless result HIDES a callable direction on the
+deep pairs. **COMPLEMENT:** the deep pairs are the most efficient and therefore
+the MOST driftless, pooling was FLATTERING them, and direction is not callable
+at deep-pool depth either. **I PRE-REGISTERED THE COMPLEMENT**, on the
+microstructure prior that depth and efficiency go together, and because
+`weth-fails-on-direction-and-aero-fails-on-cost` had already measured a 0.76bp
+WETH signal -- amplitude and direction are different quantities.
+
+168h, `|ret|<=20%`, medians only, n>=500 per cell:
+
+    symbol      h30 median SIGNED | h30 median |move| | long>11bp
+    WETH-USDC        +3.16 bp            14.02 bp        34.6%
+    ETH-USDC         +2.20 bp            14.79 bp        33.3%
+    AERO-USDC        +0.20 bp            38.29 bp        40.7%
+    UNI-USDC         -0.89 bp            86.82 bp        44.1%
+    CBETH-USDC       +0.00 bp             7.77 bp        17.2%   (h12 |move| 0.15bp: frozen)
+    CBBTC-USDC   n=462 at every horizon -- BELOW MY OWN n>=500 BAR, NOT REPORTED
+
+**THE COMPLEMENT WON, AND IT CORRECTS THE ADDENDUM ABOVE.** That addendum quoted
+a pooled median |move| of 21.28bp at 30 min = 1.93x the 11bp WETH-class toll. On
+WETH itself it is **14.02bp = 1.28x**; on ETH 14.79bp. **The pooled 21.28 is
+carried by UNI-USDC (86.82bp) and AERO-USDC (38.29bp)** -- pairs that pay 40-70bp
+tolls, where the amplitude is real and unreachable. The deep pairs move LESS
+than the pool. Never quote the pooled number as a deep-pair number; the script
+now carries that warning in source.
+
+**AND DIRECTION IS WHAT CLOSES IT.** WETH's 30-min median SIGNED move is
+**+3.16bp against an 11.00bp toll**: a long-only median trade nets **-7.84bp**.
+No deep pair at any horizon here has a median signed move that clears its own
+toll, and only 34.6% of WETH 30-min windows pay a long at 11bp.
+
+That is a THIRD independent instrument agreeing with
+`no-horizon-on-the-cheapest-pair-clears-its-own-toll` (WETH at 2h: +8.46bp vs
+8.8bp) and `weth-fails-on-direction-and-aero-fails-on-cost` (0.76bp signal).
+Three methods, three instruments, one verdict.
+
+**VERDICT: route (b) restrict-to-deep-pools is CLOSED ON DIRECTION.** Cost was
+already closed by Echo p693 (commit 1ebbbdd); this closes the thing cost was
+standing in front of. The distinction matters: it is not that deep pools are too
+expensive, it is that they do not move in a callable direction, and the pairs
+that DO have amplitude cannot pay their own toll.
+
+**WHAT IS NOT CLOSED BY THIS:** a conditional direction call -- a signal that
+selects a SUBSET of WETH windows with a median above 11bp. This measures the
+UNCONDITIONAL median only. Every classical strategy in this repo has now been
+measured against that bar and failed it, but the bar itself is not proof no
+signal exists.
