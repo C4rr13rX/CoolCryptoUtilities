@@ -31005,3 +31005,78 @@ carries 71.4%. Ghost 1217 entry + 264 exit = 1481; live 20 + 18 = 38.
   BPAD reads -178.49bp (favourable) and BSTONK +1244.62bp on ONE fill each.
   **A per-symbol toll built on these will be WORSE than a pooled 21.10bp.** WETH-USDC specifically:
   11 ghost fills, 0 live fills -- its toll is UNMEASURED at any clip and must be labelled so.
+
+## PASS 695 -- ECHO (senior/lead)
+
+**ROUTE (d), "RAISE THE EVIDENCE RATE RATHER THAN LOWERING THE BAR": CLOSED.**
+Census, not a selection. Every strategy with n>=5 ghost outcomes in `trade_outcomes`
+(grouped on `details.strategy_id`), repriced at `services.roundtrip_cost.roundtrip_cost_rate(
+notional, symbol)` -- the SYMBOL-AWARE branch the ghost book never calls:
+
+    strategy                   n       net   top1%   top2%   net ex-top1
+    atf_static                35   +0.8223  102.7%  194.4%      -0.0219   ONE-ROW
+    rsi_reversal              13   -2.2592                      -2.5754   negative
+    donchian_breakout@5d      10   +0.2017  171.7%  226.9%      -0.1446   ONE-ROW
+    rsi_reversal@12h           9   -0.1561                      -0.1990   negative
+    obv_accumulation@1w        9   -0.6950                      -0.6905   negative
+    obv_accumulation@5d        8   -0.8979                      -0.9056   negative
+    atf_static_scout           8   -0.8560                      -1.0182   negative
+    rsi_reversal@1w            6   +0.6543  109.1%  108.9%      -0.0593   ONE-ROW
+    rsi_reversal@5h            5   -0.0509                      -0.0657   negative
+    stochastic_reversal        5   -1.8290                      -1.8382   negative
+    unclassified               5   -0.0297                      -0.0257   negative
+
+8 of 11 net NEGATIVE outright. 3 of 11 positive, and ALL THREE have one row worth >=100%
+of net, so ALL THREE go negative on ex-top1. **ZERO of 11 survive deleting one row.**
+More rows of these strategies cannot graduate anything: the rate is not the constraint,
+the expectancy is. This promotes p687's "every positive book is a one-row book" from a
+selection to a census, now with symbol-aware costs.
+donchian_breakout@5d and rsi_reversal@1w are BOTH on the scoreboard's own
+"closest to the bar" shortlist today. Filed as [763c802e] (concentration guard,
+services/tradeable_evidence.py).
+
+**ROUTE: "MOVE THE 55% WIN BAR BECAUSE atf_static HAS A 4.82:1 PAYOFF": CLOSED.**
+Sage's n=35 numbers reproduce EXACTLY (win 31.4%, avg_win +0.1712, avg_loss 0.0355,
+payoff 4.82:1, net +1.0303). Repriced symbol-aware the payoff SURVIVES at 3.84:1
+(net +0.8223) -- so the "frictionless artifact" complement is REFUTED. It dies on
+CONCENTRATION instead: one BSTONK row is 102.7% of the book, BSTONK's 3 rows are 126.9%,
+and **EX-BSTONK n=32 is net -0.2212, win 25.0% against a 29.5% breakeven -- below its own
+bar.** BSTONK re-measured DARK 17.3 days (last tick 2026-09-06 19:26, tape head
+2026-09-24 02:53), so the edge belongs to a symbol with no tape. The 55% bar is refusing a
+genuinely bad book here; p687's inversion may still be true but needs a different carrier.
+
+**ROUTE: "CHARGE THE GHOST ENTRY LEG A TOLL DERIVED FROM LIVE FILLS" ([80b71312] crit 2): CLOSED.**
+Signed every live fill in the ADVERSE direction. Dropping only the broken row: n=37,
+adverse on 24 of 37, **sign test two-sided p=0.099 (NOT significant)**, median +13.54bp,
+**bootstrap 95% CI on the median [-1.50, +23.51]bp -- straddles zero.** 14 of 37 live fills
+had slippage that HELPED. expected-vs-executed is quote-to-fill DRIFT (roughly symmetric),
+not one-directional AMM impact. n=38 cannot calibrate a per-symbol toll.
+Dune's data/live_slippage_calibration.json (32aff64) is good and should stay, but as a
+documented observation with this CI attached -- NOT as a lookup the trading path trusts.
+
+**STILL OPEN, and the only standing route this pass did not close: ROUTE (b), the cost floor.**
+`trading/bot.py:2259` calls `roundtrip_cost_rate(notional)` while the signature is
+`roundtrip_cost_rate(notional_usd=None, symbol=None)`. **The symbol argument already exists
+and the ghost book has never passed it**; roundtrip_cost.py's own docstring already says the
+flat constant "over-charges WETH". Measured both branches in one process:
+    WETH-USDC  $6.00     8.79bp aware vs 38.62bp blind   4.4x OVERCHARGE
+    CBBTC-USDC $6.00    17.71bp vs 38.62bp               2.2x
+    AERO-USDC  $6.00    17.04bp vs 38.62bp               2.3x
+    COMP-USDC  $6.00  7237.62bp vs 38.62bp               187x UNDERCHARGE
+    BASECAT / CBXRP     UNPRICED -- unchanged by any fix, and the two LARGEST ghost entry
+                        counts in the book (145 and 177)
+The 8.79bp is the same 8.8bp the crew nets WETH against in analysis scripts, while the book
+feeding graduation uses 38.62bp: same quantity, two values, 4.4x apart, different files.
+NOT re-scoring -- p692's "+$0.31, zero sign flips" stands. The value is FORWARD ENTRY
+ADMISSION (bot.py:2408 feeds this rate as round_trip_cost on the directive path).
+
+**TWO FACTS FOR WHOEVER READS THIS NEXT.**
+1. The ghost book's frictionless fill is STRUCTURAL, at `trading/bot.py:10041-10042`:
+   `expected_price=float(price), executed_price=float(price)` -- THE SAME VARIABLE. Not a
+   missing toll; one price written to both columns. It can never be anything but equal.
+2. The ghost `fee_rate` has TWO writers and 85% of the book is a FOSSIL. 65.00bp on 1253
+   fills, last written **2026-09-05 04:58** (dead 19 days). The CURRENT writer is 38.62bp,
+   n=211, 2026-09-05 18:29 -> 2026-09-23 14:57. **Any median over all ghost fills measures a
+   retired writer.** I made this exact error mid-pass and corrected it on the board.
+   Also: `slippage_bps` in live fill details is a CONSTANT 75 on all 20 rows it appears in
+   (min=max=75) -- that is the router's TOLERANCE config, not a realised measurement.
