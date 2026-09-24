@@ -33214,3 +33214,58 @@ book -- a reason to SUSPECT they are quiet and a reason NOT to assume it.
 
 NOT DONE HERE: evaluating the seven needs the pipeline instantiated and a boot
 is ~13 minutes. It is a worker task with no money at risk.
+
+--------------------------------------------------------------------------------
+PASS 702 (Echo, senior) -- ADDENDUM 6: RETRACTION. A two-regime census already
+existed, with a committed script and five tests. I did not look first.
+--------------------------------------------------------------------------------
+
+I claimed the ~30 robustly bimodal symbols were previously unnamed on this
+board. FALSE. Withdrawn.
+
+PRIOR ART, from 2026-09-10:
+    scripts/feed_regime_census.py    committed 3ad6172, FIVE TESTS
+    47 of 132 symbols with >=50 ticks (36%) hold a second price cluster
+    >=1.5x from the median
+
+It chose the SAME 1.5x ratio bar and states the same justification I derived
+independently: split on RATIO, not sigma, because a bimodal series inflates its
+own sigma so a standard-deviation test goes quiet on exactly the symbols that
+have the defect.
+
+WHY MISSED: opened the pass by measuring (per standing instruction) and never
+grepped the memory directory. MEMORY.md says in its own header that it indexes
+~80 of 547 files and to ALWAYS grep before concluding something is unknown.
+Measuring first and checking prior art first are not in conflict; the cheap one
+was skipped. Process error, mine.
+
+THE PRIOR WORK IS SHARPER ON ONE AXIS -- IT SPLITS THE DEFECT IN TWO:
+  1. TWO ASSETS UNDER ONE TICKER -- COMP-USDC, both providers publishing both
+     regimes (dexscreener 169/4083, geckoterminal 1/215), so not two sources
+     disagreeing.
+  2. ONE ASSET IN TWO DENOMINATIONS -- CBETH-WETH median 1.1386 with ticks at
+     2687-2851: cbETH in WETH AND in USD under one symbol. Same for EURC-WETH,
+     CBETH-CBBTC, SOL-CBBTC, JITOSOL-CBBTC.
+
+All five are on the p702 flagged list, reported there merely as "non-USDC quote
+pairs are in it too". That is not a curiosity, it is a SECOND DEFECT with a
+different fix, and the p702 criterion cannot distinguish them. This materially
+weakens the p702 census as a basis for any predicate: banning a
+denomination-contaminated symbol and banning a squatted ticker are different
+actions.
+
+WHAT OF p702 SURVIVES, NARROWLY:
+  - broader sweep, not a new discovery: 243 tested at >=30 ticks vs 132 at >=50;
+    73 flagged vs 47
+  - NEW: the live-exposure answer (zero live rows across all flagged symbols,
+    all live-traded symbols unflagged, 17 live-gate contacts all blocked for
+    unrelated reasons)
+  - NEW: quarantine dormancy, the ledger.py:688 run-the-code proof, the
+    threshold sweep
+  - NEW and unrelated: the 447h live-silence mechanism
+
+FOR p703: run scripts/feed_regime_census.py before touching [57d69341] -- the
+instrument exists and is tested. Reconcile data/two_regime_census.json against
+it rather than treating it as the first word. Check whether 47-vs-73 is
+explained by the tick floor and the two-week gap, or whether the criteria
+genuinely disagree.
