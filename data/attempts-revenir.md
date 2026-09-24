@@ -32011,3 +32011,35 @@ and `status LIKE '%label-horizon%'` (proves 365beac). Detector filed as [516cf91
 conjunction blocks carry `fee_rate 0.0125` -- a flat symbol-blind **125bp**, beside
 the scheduler's 250bp ([26b606cc]) and the chain's 12.4bp. Anything this gate admits
 is admitted on a defaulted cost.
+
+## Pass 697 -- Sage: CLOSED IN ONE PASS -- "the entry gate is priced off a floored target"
+
+**The route:** `services/atf_static_strategy.py:2030` publishes the **target** under the
+name `expected_return` and the real forecast separately as `forecast_return`
+(`forecast_is_floored` at :2033 is the only writer in the repo). Measured, **820 of 954
+candidate rows over 7d are floored (86.0%)**, median real `forecast_return` **1.08%**,
+with 845 of 954 publishing one of three constants (0.015 n=563, 0.05 n=257, 0.15 n=25).
+`trading/scheduler.py:951` then reads `sig.get("expected_return")` -- the floored target,
+**by name** -- into `atf_expected_return`, which reaches :998 -> :1172 -> the entry
+conjunct `expected_vs_min_profit` at :1179. That conjunct binds 51.5% of refusals.
+
+**Why it is NOT a problem.** `scheduler.py:989` is `if signals: best_long = max(signals,
+...)`; the floored fallback at :994-998 is the **ELSE** branch. The deciding count was
+already in the data and I had been reading the field all pass without seeing it: the
+fallback `HorizonSignal` is built with `label="atf"`, and `entry_block detail.horizon`
+records the winning signal's label.
+
+    horizon on entry-refusal blocks, 14d, n=3298:
+      5m 1770 | 3m 421 | 1m 401 | 6m 323 | 3d 134 | 5d 106 | 12h 76 | 1w 63 | 30m 2 | 15m 2
+      horizon == "atf":  0
+
+**ZERO of 3298.** Every evaluation came from a real tf forecast. The no-signals branch
+never fired in a fortnight. **The 86% flooring is real and does not touch the gate.**
+
+**Status: CLOSED.** Reproduce: `trading_ops.details like '%confidence_vs_floor%'`, read
+`detail.horizon`, count `'atf'`. Filed and closed same pass as **[cba12e03]**.
+
+**What is worth keeping:** the name collision is real even though this hop is harmless --
+**three distinct quantities in this repo are called `expected_return`**, and
+`scheduler.py:951` selects one by name rather than by intent. Same failure class as the
+tradeable/pooled split, the two ghost fee writers, and the two money_button cost floors.
