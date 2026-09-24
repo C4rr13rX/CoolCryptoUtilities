@@ -308,6 +308,27 @@ def _recommend(measurable: List[tuple], sd_ceiling: float) -> None:
     print("   2.4x the toll. Its positive record is not evidence of an edge, it is")
     print("   evidence of dispersion. B says so; the shipped bar does not.")
     print()
+    # The question the census exists to serve: after the ceiling, who is left
+    # that could ever PAY? Measurability is necessary and not sufficient -- a
+    # strategy the bar can see is still worthless if what it can see is below
+    # the toll.
+    print()
+    print("   WHO SURVIVES BOTH TESTS -- measurable at n=20 (sd <= "
+          f"{sd_ceiling:.1f} bp) AND")
+    print(f"   a mean gross return above the {TOLL_BP} bp toll:")
+    under = [r for r in measurable if r[3] <= sd_ceiling]
+    pays = [r for r in under if r[2] > TOLL_BP]
+    print(f"     measurable at the bar : {len(under)} of {len(measurable)}")
+    print(f"     ...and above the toll : {len(pays)}")
+    for r in sorted(pays, key=lambda r: -r[2]):
+        print(f"       {r[0]:<26} n={r[1]:<4} mean {r[2]:+8.1f} bp  sd {r[3]:6.1f} bp")
+    if not pays:
+        print("       (none)")
+    best_under = sorted(under, key=lambda r: -r[2])[:3]
+    print("     best three measurable strategies by mean, toll-clearing or not:")
+    for r in best_under:
+        print(f"       {r[0]:<26} n={r[1]:<4} mean {r[2]:+8.1f} bp  sd {r[3]:6.1f} bp")
+    print()
     print("   NOT SHIPPED THIS PASS, by criterion 4. The change would land on")
     print("   services/tradeable_evidence.py:324 (min_trades) and")
     print("   services/strategy_population.py:333/:364, as an ADDITIONAL blocker")
