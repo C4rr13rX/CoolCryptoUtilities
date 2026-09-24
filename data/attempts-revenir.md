@@ -29506,3 +29506,60 @@ TWO TRAPS FOR THE NEXT READER:
     directive.horizon, and the one approved strategy becomes deferrable.
     tests/test_a_lookback_label_must_not_take_the_tick.py fails loudly if so.
 
+
+## Pass 691 (Bay) -- routes costed, three retracted numbers, one structural finding
+
+ROUTE (b) RESTRICT TO DEEP POOLS -- **CLOSED on this sample.** Freshest 53 ghost
+closures (trade_outcomes, wallet=ghost, status=closed, 7d): GROSS sum -0.7758,
+median -0.0011, win 43.4%; NET -1.9542, win 18.9%. Gross-negative before any fee.
+Split: DEEP (WETH/ETH/CBBTC) n=12 gross -0.0014 med +0.0002 winG 50% / net -0.1788
+winN 8%; EVERYTHING ELSE n=41 gross -0.7744 winG 41% / net -1.7754 winN 22%. Deep
+pools have the best gross AND the worst net win rate -- median gross +0.0002
+against a median fee +0.0243, a 120x toll. Restricting to deep pools converts a
+random walk into a guaranteed bleed. n=12, said out loud.
+
+ROUTE (c) SHORTEN THE HOLD -- **CLOSED, and not for the assumed reason.** 35
+timed-exit rows (66% of closures). True hold recovered by joining trade_outcomes
+to trading_ops action=enter on symbol+entry_price at 1e-6: 35 unique, 0 multi, 0
+misses. Hold median 1057s (17.6 min) -- ALREADY inside the band the brief calls
+positive. Tape MAX during the true hold cleared gross breakeven 35/35 but cleared
+the row's own toll 1/35. A perfect exit oracle loses on 34 of 35: the winning
+price never printed. Median peak excursion +0.0215% vs a 0.4653% toll = 21.6x.
+COHORT-SPECIFIC: every other exit reason shows 0.49-1.65% peak excursion, but
+those cohorts are the contaminated one-day SR-USDC rows, so the comparison cannot
+be made. Verdict: inconclusive cross-cohort, solid within timed-exit.
+
+ROUTE: FEWER CLOCK EXITS -- **WITHDRAWN BY ITS AUTHOR.** Excursion is bimodal
+across exit reasons with no middle, so timed-exit is a LABEL for "nothing
+happened", not a cause. Suppressing the clock on a position that never moved just
+leaves it open.
+
+THREE RETRACTIONS, all caught by pre-registered kill tests, all the same shape:
+  (i)   "31.3% of quote-OK candidates unattributed" -- window artifact.
+        62.9% at 10s -> 8.9% at 600s, monotone, no plateau.
+  (ii)  "20-34% of timed-exit rows cleared their toll" -- guessed 1h/3h windows.
+        True hold gives 3%.
+  (iii) "the forecast is 233x the realised move" -- read expected_return, which is
+        a TARGET (three constants = 74% of the population). forecast_return is a
+        real distribution, median +1.0859%. Corrected gap ~50x.
+GENERAL LESSON, now in memory: on trading_ops, ANY quantity computed by matching
+two row types on a time window is monotone in the window and has no true value.
+The table has no correlation keys. Prefer plain counts.
+
+WHAT SURVIVED AND IS THE HANDOVER -- **13 of 18 entry symbols never get a
+forecast.** 72 of 72 status=ghost-entry rows in 7d carry no forecast_return. Per
+symbol (withFcast/noFcast/entries): VIRTUAL 3/230/18, SR 63/14/11, AERO 76/7/7,
+OP 0/6/5, WTCOIN 0/14/5, ETH-USDC 0/5/4, UNI 66/445/4. 119 symbols produce a
+forecast-bearing candidate; 18 open a position; thirteen of those never received
+one -- including WETH-USDC, WETH-USDT, ETH-USDC, ETH-USDT, i.e. EVERY deep pair.
+The paths are inverted, not merely disjoint. Next step is a CODE READ of the two
+watchlists, not another query. Filed as [1bc8136d].
+
+ALSO CLOSED: the ATF scout sizes every clip off ONE stable token
+(_stable_source returns the largest holding, not the sum) -- effective_budget
+14.66 against a 19.66 wallet, a 25.4% haircut worth ~25% off the gas component.
+NOT confirmed on chain (Alchemy down). Filed as [32dbe5d8].
+
+ALSO MEASURED: production booted 2026-09-23 06:23:01 EDT on commit 4436459 and is
+162 commits / 43 python files behind HEAD. Every live-lane fix from passes 678-691
+is on disk and not in the process. services/feed_freeze has ZERO importers.
