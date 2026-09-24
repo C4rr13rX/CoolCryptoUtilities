@@ -33326,3 +33326,89 @@ backlog item:
 
 The senior skipped this cheap check three times in one session. That makes it a
 missing step, not a discipline problem.
+
+================================================================================
+PASS 703 (Echo, senior) -- ROUTE CLOSED: "PRODUCTION IS PAGING"
+================================================================================
+
+ROUTE TRIED: item [0f70286b] -- "production is paging, and it is the only named
+candidate that freezes db AND log writes together". Standing verdict going in
+(p694) was "the best-fitting candidate on the board and the hardest to prove,
+unproven in BOTH directions".
+
+THE NUMBER IT PRODUCED -- the hard-fault counter that p694's own note asked for.
+Live pid 28440 (booted 2026-09-24 04:23:11, ~4.9h uptime, AFTER the code
+boundary, no straddle). Get-Counter, 8 samples x 2s:
+
+    page faults TOTAL            108,839/sec     100%
+      demand zero (fresh alloc)   67,926/sec    62.4%
+      cache faults (file cache)   41,044/sec    37.7%
+      transition (still in RAM)   13,612/sec    12.5%
+      PAGES INPUT (hard, disk)       528/sec     0.48%
+      PAGES OUTPUT (to pagefile)       0.0/sec   0%
+    Paging File % usage               14.4      flat
+
+CLOSED. The 1.36 BILLION page faults are ALLOCATION CHURN: 62.4% are demand-zero
+(brand-new zeroed pages), and only 0.48% ever touch a disk.
+
+THE ARITHMETIC THAT MAKES IT UNARGUABLE, because "Pages Output = 0 right now"
+does not by itself prove nothing was paged out EARLIER:
+
+    Win32_PageFileUsage:  Allocated 32,542 MB
+                          CurrentUsage  4,619 MB   (all processes)
+                          PEAK usage    5,122 MB   (all processes, EVER)
+
+    production's commit-minus-resident gap alone = 9,521 - 3,504 = 6,017 MB
+
+    6,017 MB  >  5,122 MB peak pagefile usage, machine-wide, ever.
+
+There has NEVER been enough pagefile in use -- across every process on the box,
+at its all-time peak -- to hold production's gap alone. The gap is RESERVED-AND-
+NEVER-TOUCHED commit (Python arenas, sqlite page-cache reservation), not paged-
+out data. PEAK is a cumulative max, so this is immune to sampling noise.
+
+ALSO CLOSED, SAME PASS: the "it is an uptime LEAK, mitigate with a scheduled
+restart" alternative. Two independent legs, both fail:
+  - No uptime trend: the 5h process EXCEEDS the dead 21h process on both axes
+    (resident 3504 vs 3060 MB; commit 9521 vs 8270 MB).
+  - It gives memory back: 20s apart, WS 3504->4624->4309->4287 MB and commit
+    9521->9247->8932->8932 MB. COMMIT FELL 589 MB IN UNDER TWO MINUTES.
+    A leak does not give memory back. It is a sawtooth.
+  => a scheduled restart buys NOTHING; its premise is refuted, so it was not
+     costed. (Restarts still matter for STALE CODE -- a different reason.)
+
+METHODOLOGY WARNING, and I walked into it myself. My FIRST run (5 samples,
+Pages Input/sec alone, no decomposition) read 5,233/sec and I posted "my
+hypothesis lost" on it. The 8-sample run WITH the decomposition read 528/sec --
+10x lower. A bare Pages Input/sec sample is violently noisy on this box. Always
+take the decomposition: the SHARES are stable even when the absolute rates are
+not, and Pages Output/sec and the pagefile PEAK cannot lie.
+
+AUDIT RESULT, CLEAN: services/resource_governor.py had a stop-the-world
+gc.collect() firing every 10s against a 14.9s median loop_lag. It appears in TWO
+branches and the classic failure is fixing one. BOTH are fixed: :343 (RSS
+branch) and :367 (CRITICAL_MEM branch) each carry the _FULL_GC_SEC guard.
+
+A ROUTE I ALMOST OPENED AND DID NOT. Production reads 127 MB/sec and allocates
+in bursts, so "a long synchronous sqlite scan holds the GIL" looked new and
+good. It is ALREADY CLOSED: p680 bucketed logs/stream_debug.log by minute and
+found ~50 lines/min falling to ~2 across exactly the dead window -- the SUPPLIER
+stops producing, and a batched DB write cannot silence the writer's own log.
+Found by grepping the memory DIRECTORY (7 files on this subject) before
+measuring, which is the p702 rule. It paid for itself inside one pass.
+
+WHERE THE DARK-FEED INVESTIGATION NOW STANDS. p694's elimination argument still
+holds -- db-RLock cannot (different fd), endpoint cooldowns cannot (wallet_sync
+calls no price endpoint and dies with the rest), event-loop starvation cannot
+(loop_lag max 46.55s vs a 1056s shortest run). Add paging, leak, and GIL/GC to
+the refuted list and what the elimination LEAVES is THE SUPPLIER.
+
+NEXT: [16262224], re-scoped this pass. Read the fetch loop at
+trading/data_stream.py:1496 (sole write path -> db.py:1562 insert_market_sample),
+quote its exception handler, and discriminate "the loop stopped requesting" from
+"the supplier stopped answering" with an OUTBOUND REQUEST counter -- NOT a row
+count, because rows are zero under both. Attribute by supplier: dexscreener
+carries 1042 of 1122 rows vs geckoterminal 80.
+
+DO NOT RE-OPEN paging, leak, GIL, stop-the-world GC or db-RLock without quoting
+the measurement you are overturning.
