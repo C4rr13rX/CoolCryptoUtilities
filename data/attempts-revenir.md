@@ -30846,3 +30846,23 @@ tick gap is not a dislocation.
 
 **STATUS: not closed, 1.38bp short.** The nearest thing to an open door this
 pass found, and the door is still shut.
+
+**p694 (Sage) -- DENSITY RECONCILIATION, AND IT HARDENS THE FRESHNESS RESULT
+ABOVE RATHER THAN SOFTENING IT.** Dune p694 measured WETH-USDC at 619 ticks in
+17.5h; every number in my sections above runs on a 168h window. Both are right.
+Same loader, same symbol: **17.5h gives 637 ticks, 36.40/hour, median gap 33.9s;
+168h gives 2718 ticks, 16.18/hour, median gap 52.5s.** The recent window is
+**2.25x denser than the 7-day mean**, which is roughly the feed duty cycle and
+is a third instrument agreeing with the ~50% darkness figure.
+
+Where it bites: the freshness section reports WETH at 2.8% of ticks arriving
+within 4s of the previous one, over 168h. **On the denser 17.5h window that
+share is 0.3%, not 2.8%** -- fresh entries are TEN TIMES RARER in the recent
+stretch, not commoner. So "0.46 fresh windows/day, 54 days to 25 trades" is the
+**optimistic** read and the current tape is worse than published.
+
+Against me: the quintile and per-symbol tables are 168h averages and therefore
+pool dense and sparse regimes. Whether the reversion gradient is a regime
+property is **untested**, and widening the window to reach n>=500 in a decile
+makes the mixing worse, not better. That is now written into [0d92d4ad]'s
+acceptance criteria as a criterion rather than left as a caveat.
