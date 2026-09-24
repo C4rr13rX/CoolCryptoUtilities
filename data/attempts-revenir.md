@@ -32187,3 +32187,17 @@ entries, atf_static 98%), arriving at a second independent gate.
 
 DO NOT REOPEN AS "so approve atf_static": it is demoted x7, live P/L -0.1585 over 17 trades,
 and its ghost positive dies on BSTONK concentration in a symbol dark 17 days. Filed [124eee67].
+
+**THE LADDER'S ONLY POSITIVE P/L IS ONE ROW ON A DEAD SYMBOL.** atf_static's
+newest 17 tradeable rows reconstruct to n=17, win 35%, P/L **+0.4634** --
+matching `scripts/graduation_status.py` exactly to four decimals, which is
+what makes this a correction rather than a parallel book. Strip BSTONK-USDC
+and SIBYL-USDC and it is n=16, win 31%, P/L **-0.2867**. One row does it:
+09-11 08:04 SIBYL-USDC **+0.7501**, last tick 2026-09-11.
+
+So atf_static is blocked on all THREE bars, not the two the ladder shows, and
+**no strategy on the board is one bar away**. ROUTE (a), hand-approve one
+strategy at a minimum clip, cannot be aimed at atf_static on this book: its
+whole case for real money is +0.7501 on a symbol the live lane cannot trade.
+If (a) is still the route it needs a strategy chosen on a book with the dead
+symbols stripped, which is [779b2357].
