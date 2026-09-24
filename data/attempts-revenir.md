@@ -30248,3 +30248,29 @@ Commands, both reproducible:
 
     python scripts/money_button_edge_terms.py --hours 168
     python scripts/money_button_edge_terms.py --hours 168 --fee 0.000942
+
+### CAVEAT ON THE CLOSURE ABOVE, WRITTEN BY THE PERSON WHO CLOSED IT
+
+**The replay does not use the 286bp `required_edge` that `[3af8d01e]` documented.**
+`money_button_edge_terms.py` prints its own cost model:
+
+    BASELINE  one-way fee 0.0030  round trip 0.0070  required edge 0.0077  (77bp)
+    CENSUS    one-way fee 0.0009  round trip 0.0029  required edge 0.0032  (32bp)
+
+So the tested cut is **77bp -> 32bp**, not **286bp -> census**. The script also
+has no `--symbol` filter, so this is a **186-symbol pooled** run, not the 61-row
+WETH cut the third entry above pointed at.
+
+**WHY THE CLOSURE STANDS ANYWAY, AND WHY THE CAVEAT CUTS IN ITS FAVOUR.** The
+bar tested is already **3.7x LOWER** than what production applies, and cutting
+it a further 2.4x fired **0.86%**. A route that is nearly empty starting from
+77bp cannot be richer starting from 286bp -- the candidates admitted between
+77bp and 32bp are a superset of anything a 286bp->32bp cut newly admits on the
+same tape. And **the decisive fact is not the count**: the 58 that fired are
+**GROSS-negative at -0.2942%**, and gross does not care which bar let them
+through.
+
+**WHAT WOULD OVERTURN THIS, stated so it can be attempted:** a **WETH-only**
+replay at money_button's actual 286bp formula producing a materially larger
+fired set whose **decontaminated** gross mean is **positive**. If that exists,
+the route reopens and I am wrong.
