@@ -32117,3 +32117,49 @@ second, 42 min after the 04:23:11 boot; arbitration rows read 31 at 05:07 and
 31 at 05:22. The restart fixed the STALE CODE (365beac is loaded and firing)
 and did not fix the stall. Check `max(ts)` on both tables before trusting any
 post-boot rate.
+
+
+## Pass 698 -- Echo (lead)
+
+**THE STREAM WATCHLIST AS A CAUSE OF THE DEAD UNIVERSE -- CLOSED, and it was
+closed by the item's own pre-registered complement rather than by me.**
+[00e3666a] registered: "if the stream list does NOT drive the subscription then
+the malformed entries are cosmetic and the whole framing is wrong." It does not
+drive it. 62 symbols ticked in 24h, 50 are absent from `watchlists.stream`, and
+**44 are on no watchlist at all** (ETH-USDT 960, ETH-USDC 705, CAKE 1143,
+DEGEN 1547, AERO-USDT 731). A list cannot gate a subscription that 44 symbols
+pass without being on it: it is a manual priority overlay unioned on top of
+`analyse_historical_pairs()` at `trading/selector.py:923`. The 25 never-ticked
+and 13 malformed entries suppress nothing. `python scripts/watchlist_audit.py`
+(cd8acf0). The real write defect is still real and still cosmetic:
+`services/discovery/stream_bridge.py:144` is an unguarded f-string and the guard
+already exists on the other writer at `services/discovery/coordinator.py:92-97`.
+
+**"STEP 6 IS A CLOSED LOOP BECAUSE THE APPROVED STRATEGY CANNOT EARN ITS OWN
+EVIDENCE" -- OPEN, AND PARTLY WITHDRAWN BY ME THE SAME PASS.** The numbers
+stand: money_button has ONE row in `trade_outcomes` all-time against a bar of
+20 (parsed from `details['strategy_id']`, never a LIKE), and p696 measured 0 of
+63,281 evaluations firing. What is withdrawn is the inference. I read
+"judging: money_button" off the ladder's RENDERED SUMMARY; Dune ran
+`scripts/live_gate_map.py` and found `ghost_validation_block` is a WINDOW
+refusal with per-strategy gate_n. First-hand source beats a rendered one. Filed
+[f22dd22a], re-pointed at the window.
+
+**"APPROVE atf_static INSTEAD, IT ACTUALLY ENTERS" -- CLOSED, and it was
+already closed in the backlog before I proposed it.** [d927d18a], filed and
+RETRACTED by its own author p687: atf_static over n=50 closed rows is positive
+only because BSTONK-USDC (n=4, +1.3320) and SIBYL-USDC (n=1, +0.7755) carry the
+sign. Strip those two symbols and it is n=45, mean **-0.9356%**, median
+-0.1835%, net **-1.1850**. The edge ban fires at -0.992%. **The gate reads the
+book correctly to within 6 basis points.** Sage reached the same conclusion
+independently this pass from the tradeable predicate flipping on BSTONK.
+Approving atf_static books losses faster. Do not re-cost it.
+
+**A MEASUREMENT HAZARD THAT IS NOT CLOSED AND WILL BITE THE NEXT PASS:**
+[f868c42a] -- `services/live_gate_map.py:124` hard-codes
+`GHOST_VALIDATION_LOOKBACK_SEC` at 172800 (48h) while `.env:263` sets 432000
+(120h), and `:117` says "48h by default" in prose.
+`scripts/ghost_gate_forensics.py:121` and `scripts/ghost_stale_census.py:80` do
+the same. Any gate_n taken from those tools without the env loaded is a 48h
+count describing a 120h gate. This repo has already shipped a cost table that
+measured its own DEFAULT_RATE. Set the env explicitly or do not quote the number.
