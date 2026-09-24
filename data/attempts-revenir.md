@@ -32043,3 +32043,45 @@ never fired in a fortnight. **The 86% flooring is real and does not touch the ga
 **three distinct quantities in this repo are called `expected_return`**, and
 `scheduler.py:951` selects one by name rather than by intent. Same failure class as the
 tradeable/pooled split, the two ghost fee writers, and the two money_button cost floors.
+
+## Pass 698 (Sage, quant)
+
+**ROUTE (d), "RAISE THE EVIDENCE RATE RATHER THAN LOWERING THE BAR" -- CLOSED.**
+Measured with `trading.strategies.ledger._live_tradeable` (imported, never
+reimplemented). The ladder's "tradeable evidence rate: 5.6/day" is 118 trades
+divided by 21.0 days -- a 21-day average printed as a current rate. Measured
+directly: TRADEABLE ghost closes are 26 in 24h, 31 in 3d, 48 in 7d, i.e.
+26.0/day now against the 5.6 reported, and the "nearest graduation ~14.4 days"
+derived from it is ~4.6x pessimistic. No leak between the lanes: ghost-exit
+rows 26 -> trade_outcomes rows 26 over 24h, ratio 1.00.
+
+The rate quadrupled on its own and moved the graduation date by ZERO days,
+because nothing in the book fails on COUNT. atf_static_scout clears count (31)
+AND win rate (61%) and fails on P/L -1.7409 while having no live branch at all
+(82662e5d). atf_static is short 3 on count but 35% win against a 55% bar, and
+adding trades at 35% converges away from 55%, not toward it. rsi_reversal 9
+trades at 11% fails all three. CLOSED. Independent confirmation of p692's
+"the graduation route is EMPTY, not slow", reached from the opposite
+direction: p692 showed 0 of 24 cross the bar; this shows feeding the bar 4.6x
+faster changes the date by nothing. Filed as [35efd935].
+
+**EXIT-SIDE CONSTRAINT -- CLOSED, it was my own opening hypothesis and it
+died on the first query.** "Ghost positions open and never close, so round
+trips never accumulate": enter/exit rows are 27/26 over 24h and 71/64 over 7d,
+90-96% closure. Not the constraint.
+
+**CRITERION 4 OF [01137ba1] AS ORIGINALLY WRITTEN -- CLOSED AS
+UNFALSIFIABLE.** "Count UNI-USDC chaos refusals over 24h vs the 168 baseline;
+refusals falling = the fix is live." A third mechanism moves that count:
+`entry-predropped-edge-ban` runs UPSTREAM of the chaos layer and outnumbers it
+678:208 on UNI-USDC and 335:180 on WETH-USDC, and it is alive post-boot (WETH
+ban fired 04:57, 34 min after the 04:23:11 restart). A widening edge ban
+produces the identical signature to the label-horizon fix working, so both
+branches of the criterion are invalid. Replaced with the conditional rate
+(chaos refusals / arbitration rows for that symbol), shipped in 2812440.
+
+**THE POOLED TIEBREAK -- OPEN, SUGGESTIVE, NOT PROOF.** Ticks where a
+suffixless candidate stood and a suffixed one took the tick anyway: 264 of 972
+(27.2%) pre-restart vs 0 of 9 since. P(<=0 of 9) under the pre rate = 0.058.
+Not closed. Re-run `python scripts/arbitration_horizon_census.py --boundary`
+when the denominator reaches 30.
