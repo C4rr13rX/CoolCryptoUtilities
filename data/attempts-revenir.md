@@ -30049,3 +30049,76 @@ and nothing on stdout. Invocation was correct per its own `--help`. A second run
 with `--json` was still producing nothing when my clock ran down. **Whoever
 takes [c9fa569a] should confirm this before relying on the instrument**; the
 substantive answer above was obtained by direct query and does not depend on it.
+
+---
+
+## PASS 693 (Echo, senior), THIRD ENTRY -- I RAN THE KILL TEST ON MY OWN SECOND ENTRY AND IT REFUTED THE STRONG FORM. READ THIS BEFORE THE ENTRY ABOVE.
+
+**WITHDRAWN: "the cheap pairs have no approved strategy."** It is false.
+The entry above filed that as a kill test and named the disambiguating
+question -- is money_button's symbol selection a property of the STRATEGY or
+of what it was OFFERED. I ran it in the same pass.
+
+`trading_ops`, 7d, money_button skip rows, by symbol -- **11927 rows over 35
+distinct symbols**:
+
+    ETH-USDT     647     WETH-USDT    508     ETH-USDC     438
+    WETH-USDC    323     CBBTC-USDC     3     CBETH-USDC     1
+    -----------------------------------------------------------
+    DEEP-POOL TOTAL  1920   =  16.1% of everything it evaluates
+
+**money_button evaluates WETH-USDC 323 times in seven days and declines every
+one.** The watchlist is not the constraint. The strategy is. What survives from
+the second entry is only the narrow fact: its 5 all-time ENTRIES are on thin
+memecoins. What does not survive is the inference that it never sees the cheap
+pairs, and the "routes (a) and (b) are mutually exclusive" framing built on it.
+
+### THE INVERSION, WHICH IS THE REAL FINDING AND IS THE OPPOSITE OF WHAT I EXPECTED
+
+Skip reasons split by pool depth:
+
+                              DEEP (n=1920)     THIN (n=10008)
+        momentum_not_aligned      55.7%            67.6%
+        EDGE_BELOW_COST           22.2%            13.7%     <-- INVERTED, 1.6x
+
+**The cost gate refuses MORE often on the CHEAP pairs than on the expensive
+ones.** That is backwards until it is joined to `[3af8d01e]`: the
+`required_edge` term is built from the scheduler's **flat 125bp `fee_rate`**
+(`trading/scheduler.py:886`), which is **symbol-blind**. Deep pools are charged
+the same inflated toll as memecoins while having SMALLER moves, so they fail the
+edge test more often. **The flat-cost defect hurts the deep pools hardest.**
+
+WETH-USDC alone, 7d, n=323:
+
+        momentum_not_aligned   206   63.8%
+        EDGE_BELOW_COST         61   18.9%
+        too_few_samples         34   10.5%
+        move_exhausted          18    5.6%
+        slope_not_positive       4    1.2%
+
+**61 WETH-USDC refusals in seven days are refusals on a cost scalar 13.3x too
+high for that symbol** -- 125bp charged against a 9.42bp census round trip, on
+the one pair route (b) wants and the one pair `[76134a6a]` was going to settle.
+
+### THIS NARROWS A ROUTE INSTEAD OF CLOSING ONE, WHICH IS RARE HERE
+
+`[3af8d01e]` (reprice at census cost) and `[c9fa569a]` (symbol reach) are the
+same question from two ends. **Run the replay DEEP-POOL FIRST, not across all
+1796** -- 427 deep refusals, 61 of them WETH, is a tractable population with a
+13.3x lever on it and it lands exactly where route (b) wants to be.
+
+### WHAT I AM EXPLICITLY NOT CLAIMING
+
+I have **not** shown that one of those 61 would flip, nor that a flipped one
+would pay on the forward tape. And `momentum_not_aligned` still refuses **63.8%**
+of WETH ticks on a long-only sign test (`money_button.py:277`, r5>0 AND r10>0
+AND r30>0) that no repricing touches. **The ceiling of the entire cost route on
+WETH is ~19% of its evaluations.** The replay is still the decisive measurement
+and it has still never been run.
+
+### CONSEQUENCE FOR [76134a6a] -- MY OWN PRECONDITION-4 STATEMENT WAS TOO STRONG
+
+I told Sage the live lane cannot reach WETH because money_button never emits it.
+Correct as stated about ENTRIES, misleading as guidance: money_button is
+evaluated on WETH-USDC 323 times a week and refuses on reasons that are 18.9%
+COST. **That is a reachable gate, not an unreachable symbol.**
