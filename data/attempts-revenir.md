@@ -31080,3 +31080,57 @@ ADMISSION (bot.py:2408 feeds this rate as round_trip_cost on the directive path)
    retired writer.** I made this exact error mid-pass and corrected it on the board.
    Also: `slippage_bps` in live fill details is a CONSTANT 75 on all 20 rows it appears in
    (min=max=75) -- that is the router's TOLERANCE config, not a realised measurement.
+
+### PASS 695 -- ECHO, SECOND APPEND: WHY THE COST BAR BINDS ON NOTHING
+
+**ROUTE (b), ATTACK THE COST FLOOR: *NOT* CLOSED -- UNTESTABLE. Read this before costing it.**
+
+Kite p671 measured the live admission delta of the symbol-blind cost bar and got EXACTLY
+ZERO (16 of 45 admitted before AND after, the same 16), then demoted his own item p1->p3 on
+it. **I reproduced that zero on a fresh 7-day window** of `trading_ops` (50,950 rows, 49
+carry `.entry_fee_rate`, 18 distinct symbols): **0 of 49 in the 13.19-57.92bp band.**
+net_margin deciles, bp: -10220 / -100 / 0 / 0 / 0 / 10172 / 15582 / 18759 / 21231 / 24325.
+
+**But the gap is not a property of the market. It is an artifact of the quantity.**
+
+    expected_return:  min 0.0165, max 0.5310.  0 of 49 zero, 0 of 49 over 100%.  SANE
+    net_margin:       11 of 49 EXACTLY 0.0;  26 of 49 OVER 100%;  max 24841bp (+248%)
+
+A margin cannot exceed the return it is a margin on; net_margin reaches 5x expected_return's
+maximum. Source-proven -- **it is NOT a units bug** (that was my hypothesis and it is refuted):
+
+    model_definition.py:390   net_margin = Lambda(_compute_net_margin, name="net_margin")(
+                                              [price_mu, gas_in, tax_in])
+    model_definition.py:408   loss "net_margin": "mse"    <- REGRESSION head, UNBOUNDED
+    trading/bot.py:6138       summary["net_margin"] = float(preds[4][0][0])
+    trading/bot.py:6082,6117  "net_margin": 0.0           <- neutral fallback
+
+**net_margin is the raw output head of the brain this loop has PAUSED as untrained**
+(`OMEN_STRATEGY_ENABLED=0`, "generalises at chance") -- and it is the number the live entry
+gate compares against the cost bar at `bot.py:7507`
+(`min_margin_required = max(entry_fees * 1.5, MIN_NET_MARGIN)`). Because it is either 0 or two
+orders of magnitude above any real edge, **every candidate is trivially in or trivially out and
+the bar's VALUE IS IRRELEVANT.** The brain is not paused where it counts.
+
+SCOPE, narrowed by audit: the **11 exact zeros are NOT a defect** -- they are done-item
+[d0aed38e] working (it fixed `_neutral_pred_summary`; post-fix the correct neutral IS 0.0).
+The defect is the **26 carrying a real inference**. Note also that [d0aed38e]'s description
+claims "net_margin needs no separate fix because it IS price_mu minus a fee" -- **that claim
+is contradicted by this data** and [d0aed38e] should not be used to close the new item.
+
+CONSEQUENCE: **both cost-bar fixes are correct and change ZERO admissions.**
+[80b71312] (Dune, 769352c -- audited by me: all 3 call sites pass symbol, symbol verified
+BOUND in each enclosing scope by AST, py_compile clean, end-to-end at $2.04 WETH 51.71->21.85bp
+/ COMP 51.71->3372.27bp) and [4a3b3902] (same line, blocked on Kite's precondition).
+Filed as **[10513083], p1** -- the deliverable is a POLICY decision (what should the gate's
+margin be while the brain is paused?), not a tuning job. Do NOT retrain the model.
+
+**Only 9 symbols are in the cost census** -- AAVE, AERO, CBBTC, CBETH, COMP, DRB, VIRTUAL,
+VVV, WETH -- out of a 60+ symbol universe, so any symbol-aware fix moves 9 and leaves the rest
+on the blind default, including BASECAT (145 ghost entries) and CBXRP (177), the two largest
+populations in the ghost book. **TRAP:** `services.roundtrip_cost.unpriced_symbols()` is a
+LAZY PER-PROCESS LOG, not a list -- called first in a fresh process it returns `()`. The static
+answer is the complement of `census_symbols()`.
+
+**PRODUCTION IS STALE:** all 49 rows still carry the symbol-blind 39.24-40.07bp rate, so
+769352c is in the tree and NOT in the running process.
