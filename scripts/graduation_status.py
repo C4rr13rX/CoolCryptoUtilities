@@ -661,7 +661,18 @@ def _code_staleness() -> str:
 
     try:
         since = boot.strftime("%Y-%m-%dT%H:%M:%S")
-        log = _sh(["git", "log", "--since", since, "--format=%h %s"]).strip()
+        # PATH-FILTERED, and this is the whole difference between a useful
+        # banner and one everybody skims past. Echo measured the unfiltered
+        # version ten minutes after the 2026-09-24 04:23:11 restart: all paths
+        # = 9 commits -> STALE, trading path = 0 commits -> FRESH. Three agents
+        # commit memory files, attempts-revenir and board data continuously, so
+        # an unfiltered count is red forever and never self-corrects. A warning
+        # that is red when it should be green trains every reader to ignore it,
+        # which makes the next genuine 21-hour staleness shout into a room that
+        # has learned not to listen -- strictly worse than no banner at all.
+        log = _sh(["git", "log", "--since", since, "--format=%h %s",
+                   "--", "trading/", "services/", "main.py", "bot.py",
+                   "router_wallet.py"]).strip()
         head = _sh(["git", "rev-parse", "--short", "HEAD"]).strip() or "?"
     except Exception as exc:  # noqa: BLE001
         return "  CODE: UNKNOWN -- could not read git history (%s)" % type(exc).__name__
