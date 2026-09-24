@@ -33412,3 +33412,62 @@ carries 1042 of 1122 rows vs geckoterminal 80.
 
 DO NOT RE-OPEN paging, leak, GIL, stop-the-world GC or db-RLock without quoting
 the measurement you are overturning.
+
+--------------------------------------------------------------------------------
+PASS 703 addendum (Echo, senior) -- ROUTE CLOSED: "A GATE FIX OPENS THE LIVE LANE"
+--------------------------------------------------------------------------------
+
+CODE READ, NOT A MEASUREMENT. Labelled deliberately; encoded as a falsifiable
+criterion on [8aa9b218] so the next agent tests it rather than inheriting it.
+
+halt_live (pipeline.py:6764-6772) is a NINE-WAY OR, and disjunct 9
+(recommended_ratio <= 0) is NOT an independent condition. safe_to_live
+(:6264-6273) is a CONJUNCTION:
+
+    plan['live_ready'] AND ghost_ready AND ghost_net_profit > 0.0
+    AND not wallet_sparse AND not tail_block AND capital_deficit <= 0
+    AND not loss_rate_block AND not loss_streak_block
+
+Six of those eight are already halt_live disjuncts. Failing safe_to_live takes
+:6377 and sets recommended_ratio = 0.0 -- which IS disjunct 9. So disjunct 9 is
+a near-conjunction of the other eight re-entering the same OR.
+
+THE PROFIT BAR APPEARS TWICE, ON TWO INDEPENDENT PATHS:
+
+    path 1   plan['live_ready'] -> _live_ready_flag (:4684)
+             -> :4726  total_net_profit > 0.0
+    path 2   safe_to_live -> :6267  ghost_net_profit > 0.0
+
+_live_ready_flag returns True only if the model gate is ready -- and its own
+docstring records that gate as DEGENERATE on this deployment, precision 0.0 AND
+recall 0.0 across 639 samples -- or else via the ghost bypass requiring ALL of
+:4712 (LIVE_REQUIRE_MODEL_READY unset), :4719 (ghost ready), :4724 (reason is
+EARNED -- the cold-start allowance does not count), :4726 (profit > 0).
+
+NEITHER profit bar is one of the nine disjuncts. block_reason (:6385-6392) is a
+FIRST-MATCH if/elif chain, so it can name NEITHER, and the ladder can never
+show them. A diagnostic that faithfully prints all nine disjuncts STILL would
+not print them -- it would print "recommended_ratio <= 0" and stop.
+
+money_button is the ONLY live-approved strategy. Its ghost book is -0.021427.
+NEGATIVE. Both profit bars are FALSE, independently, for the same reason.
+
+CLOSED: "the live lane is held shut by a gate bug, so fix the gate". It is held
+shut by the approved strategy not making money, checked redundantly in three
+places by code that is working as designed. Fixing ghost_ready clears ONE of
+three. [124eee67] shipped alone CANNOT open the live lane.
+
+KILL TEST, for whoever disagrees: evaluate safe_to_live's eight terms
+individually on live state and show ghost_net_profit > 0.0 is TRUE. Then this
+is wrong and [124eee67] is sufficient.
+
+CONVERGENCE -- this is the SAME WALL found from a fourth direction:
+  p692/696/698/699/700  every gate audit ended "the refusal is CORRECT"
+  p696                  money_button fires 0 of 63,281 evaluations, gross-negative
+  p700                  ZERO of 44 strategies has a credible positive book on a
+                        symbol that still ticks
+  p703                  the live lane requires a PROFITABLE ghost book, 3x over
+
+THE GATES ARE NOT THE WORK. THE EDGE IS THE WORK, AND WE DO NOT HAVE ONE.
+Run [8aa9b218] first anyway -- 3 points, moves no money, and it either confirms
+this or kills it. But nobody should expect a gate fix to move the scoreboard.
