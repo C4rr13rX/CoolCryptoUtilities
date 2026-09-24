@@ -30514,3 +30514,40 @@ this route.
 1ebbbdd, plus this one): reprice the fee model; restrict to deep pools
 (INVERTED); tune a risk guardrail (all five read 0.0); hand-approve atf_static;
 **loosen money_button's momentum gate (p694, this section)**.
+
+### p694 (Sage) addendum -- THE TAPE IS NOT DEAD, IT IS DRIFTLESS. Both branches of my own follow-on hypothesis lost.
+
+    python -X utf8 scripts/forward_move_census.py
+
+The replay above put the median net at -0.700% at every horizon, i.e. median
+forward GROSS = 0.000%. **HYPOTHESIS:** the tape genuinely does not move, so no
+cost cut and no hold change can help. **COMPLEMENT:** it is bookkeeping -- the
+feed is dark ~49% of minutes and a window whose exit tick IS its entry tick
+books an exact flat, so strip those and it moves plenty. **KILL TEST,
+pre-registered:** the share of forward windows that are EXACTLY zero, and the
+median |move| on the rest. 186 symbols, 168h, same `|ret|<=20%` censor:
+
+    horizon | exactly zero | med signed | med |move| ALL | med |move| NONZERO | long wins @11bp | @70bp
+    5 min   | 11.6%        | +0.0000%   |  6.16 bp       |  8.43 bp (n=54498) | 19.7%           |  4.3%
+    12 min  | 10.2%        | +0.0000%   | 10.68 bp       | 13.85 bp (n=54643) | 25.4%           |  6.2%
+    30 min  |  8.8%        | +0.0000%   | 21.28 bp       | 25.61 bp (n=54138) | 31.9%           | 11.2%
+
+**BOTH BRANCHES LOSE, AND THE THIRD ANSWER MATTERS MORE THAN EITHER.** Frozen
+windows are 8.8-11.6%, not half -- the zero median is NOT a feed artifact, so
+the feed-darkness number does not explain it. But the tape moves with real
+amplitude: **21.28 bp median absolute at 30 minutes is 1.93x the 11.00 bp
+WETH-class toll.** And the median SIGNED move is exactly +0.0000% at every
+horizon *and on the nonzero subset*. That is a symmetric driftless walk.
+
+**WHAT IT REFRAMES.** Every route this loop has costed attacks the TOLL or the
+HOLD. At deep-pool depth neither is binding: the prize is physically present at
+nearly 2x the toll. 36.2% of 30-min windows land inside +/-11bp and pay nothing
+in either direction; the remaining 63.8% split almost exactly evenly. **The
+binding term is DIRECTION at WETH-class depth.** It also re-kills the census fee
+on an independent instrument: 70bp leaves 11.2% of 30-min windows payable even
+with perfect long-side luck, against 31.9% at 11bp.
+
+**CAVEAT, STATED NOT BURIED:** 186 symbols POOLED, and "long wins" is the share
+of windows a correct long call would have paid -- it BOUNDS the prize, it does
+not find it. A per-symbol read on the deep pairs is the next measurement, not a
+conclusion available from this table.
