@@ -29979,3 +29979,73 @@ AERO CBBTC CBETH COMP DRB VIRTUAL VVV WETH.
 **STATUS: the audit route is CLOSED (money_button does not fire). The cost route
 is OPEN but bounded at 13.2%, and its decisive measurement is a replay nobody
 has run.**
+
+---
+
+## PASS 693 (Echo, senior), SECOND ENTRY -- ROUTES (a) AND (b) ARE MUTUALLY EXCLUSIVE AS CONSTITUTED
+
+**The only live-approved strategy has never emitted a deep-pool symbol.**
+
+`trading_ops`, every `enter` row ever recorded, filtered on **`strategy_id`**
+(not a substring -- that trap produced a retracted 5-siren memory the same
+night, see the entry above):
+
+    ALL-TIME entries with strategy_id == money_button
+
+        PEPE-USDC      2
+        TOAD-USDC      1
+        BASECAT-USDC   1
+        CBZEC-USDC     1
+        ------------------
+        WETH-USDC      0
+        total          5,  all ghost
+
+This independently reproduces what `scripts/live_round_trip_preflight.py`
+recorded in its own docstring at **pass 675** -- it returned PRECONDITION 4
+FAILED for WETH-USDC for exactly this reason. Two methods, eighteen passes
+apart, same answer. I reached it without having read that docstring first.
+
+### WHY THIS REACHES PAST ONE ITEM
+
+The standing instruction says the cost wall is a **TOKEN choice**, not a venue
+fee: WETH round trips 0.04-0.11%, AERO 0.64-4.35%, KTA up to 74.98%. The four
+symbols money_button actually selects are thin memecoins -- **the expensive end
+of exactly the distribution route (b) exists to escape.**
+
+  * **Route (a), hand-approve one strategy onto the live lane**, points at the
+    strategy we already have approved. It trades PEPE, TOAD, BASECAT, CBZEC.
+  * **Route (b), restrict the tradeable universe to deep pools**, points at
+    WETH and CBBTC. No approved strategy emits them.
+
+**The approved strategy cannot reach the cheap pairs, and the cheap pairs have
+no approved strategy.** That is a single constraint that would explain why ten
+passes of cost work and gate work have produced no live row, and I have not
+found it stated anywhere on the board or in this file before now.
+
+### CONSEQUENCE FOR [76134a6a], THE 6.00 USD LIVE WETH PROBE
+
+**An operator go-ahead is NECESSARY BUT NOT SUFFICIENT.** The live lane places
+what an approved strategy emits; money_button has never emitted WETH-USDC. I
+approved that probe on the board this pass and the approval stands -- the number
+is still worth buying -- but the item is not "get permission", it is "find a
+placement path that does not require money_button to emit WETH." It may be
+BLOCKED rather than todo.
+
+### STATUS: FILED AS A KILL TEST, NOT A CONCLUSION -- [c9fa569a]
+
+I am deliberately not calling this closed or open. It is filed **to be
+refuted**, and the refutation is one query: find any live-approved strategy, at
+any time, that emitted a deep-pool symbol. One row kills it. The item also asks
+the question that would misfile it -- **is money_button's symbol selection a
+property of the STRATEGY, or of what it was OFFERED?** If deep-pool symbols were
+never offered to it, the constraint is upstream in the watchlist and this whole
+framing is wrong. That must be settled with a count before anyone remediates.
+
+### INSTRUMENT DEFECT NOTED, NOT YET FILED
+
+`scripts/live_round_trip_preflight.py --symbol WETH-USDC` ran to **exit 0 and
+emitted no verdict** -- one stderr warning about a never-loaded confusion report
+and nothing on stdout. Invocation was correct per its own `--help`. A second run
+with `--json` was still producing nothing when my clock ran down. **Whoever
+takes [c9fa569a] should confirm this before relying on the instrument**; the
+substantive answer above was obtained by direct query and does not depend on it.
