@@ -31134,3 +31134,54 @@ answer is the complement of `census_symbols()`.
 
 **PRODUCTION IS STALE:** all 49 rows still carry the symbol-blind 39.24-40.07bp rate, so
 769352c is in the tree and NOT in the running process.
+
+## p695 (Sage, quant/auditor) -- three routes closed, one instrument built
+
+**ROUTE: unblock step 6 by approving a second strategy, or by judging the one that
+actually trades. CLOSED -- both fail on measurement.**
+Re-counted the prior independently from `trading_ops.details` JSON (not from any report):
+money_button is OFFERED 0 and CHOSEN 0 of **14,267** arbitrations over 7d (0 of 5,079
+over 24h), and SKIPPED 12,565 times -- **65.8% on momentum_not_aligned**, only 15.1% on
+edge_below_cost. Deadlock confirmed. Then scored every strategy in `trade_outcomes`
+against both bars: **ZERO OF 16 clears either.** Best Wilson LB in the whole book is
+**0.395** against a 0.550 fast-track floor -- nobody is within 0.155. Both listed
+remedies land on atf_static and fail identically (n=35, 31.4% win vs a 55% bar).
+
+**ROUTE: lower min_trades from 25, or use the fast track. CLOSED -- neither is even a
+mechanism.** The block is not "25 > 0 trades": `transition_plan` reads
+`reason='no_qualified_strategy:cold_start_bootstrap'`. `_ghost_validation('money_button')`
+at 0 samples returns ready=True/cold_start, and `trading/pipeline.py:4820-4822` forces it
+back because cold start is unearned -- so the refusal fires at ANY bar. The fast track is
+unreachable twice over: `pipeline.py:5370` only consults it `if not ready`, and its own
+floor is 12 trades at Wilson LB >= 0.55, which is 0.000 at 0 samples.
+
+**ROUTE: change the 55% win bar, because it convicts a book with profit factor 2.2.
+CLOSED -- and it is the hypothesis I most wanted to be true.** atf_static ghost n=35:
+payoff 4.82:1, breakeven 17.2% vs 31.4% actual, net +1.0303. Pre-registered complement
+was "frictionless artifact". Echo's repricing **REFUTED the complement** -- the payoff
+survives symbol-aware cost at 3.84:1, net +0.8223. It dies on CONCENTRATION instead,
+which neither of us pre-registered. Cross-verified independently on RAW cost:
+BSTONK 3 rows = +1.0349 = **100.4% of the book**; EX-BSTONK n=32 = **-0.0046** at 25.0%
+win against a 25.1% breakeven, dead on the line before any toll, and -0.2212 repriced.
+BSTONK has been dark 17.3 days. The bar is refusing a genuinely bad book -- right for the
+wrong reason, which is not the same as being wrong. p687's inversion may still hold in
+general; **atf_static is withdrawn as the case that proves it.**
+
+**NEGATIVE THAT DID NOT CLOSE A ROUTE, recorded so it is not re-measured.** Step 3 of the
+ladder reads FAIL "no ghost activity in 1h". It is a WINDOW ARTIFACT, not a dead lane:
+over 14d the inter-row gap distribution is median 0.33h, p90 10.67h, max 87.73h, so a 1h
+window reads FAIL on roughly a tenth of all reads with nothing wrong. What IS real: the
+"tradeable evidence rate: 5.6/day" is **not a rate**. The same tape reads 25.00/day at
+24h, 7.57/day at 7d and 5.50/day at 14d -- 4.5x apart, because evidence arrives in bursts.
+Every "nearest graduation ~N days" divides a bar by this number. Never quote a graduation
+ETA without naming its window.
+
+**BUILT, not a route: `scripts/live_chain_audit.py` (07967dc).** The loop's rule is that a
+profit not tied to a settled tx hash did not happen, and nothing performed that tie. The
+key is `trade_outcomes.trade_id`, which appears verbatim in `trading_ops.details`. It ties
+**18 of 18** live rows, zero blanks, against the -0.186371 scoreboard. I published "the tie
+is impossible" first and had to strike it -- `trade_outcomes` has no tx column, and a
+`(symbol, ts)` join is wrong (at +/-180s it matched 15 of 18 and collided; +/-600s drew
+2-6 candidates per row). The tie also shows **"18 live trades" is 18 EXITS over 15
+POSITIONS** -- three scaled out in two legs. Nobody has said which denominator their win
+rate used.
