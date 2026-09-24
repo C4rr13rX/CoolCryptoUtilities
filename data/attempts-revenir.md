@@ -33132,3 +33132,53 @@ FOR THE VERIFIER (criterion 7, still unmet): do not spend time on COMP. Verify
 the ~30-symbol robust core, where no judgement call is involved. Every cell of
 the sweep re-derives from data/two_regime_census.json (gap_ratio, band, cluster
 counts, share per symbol) without re-reading the 35GB database.
+
+--------------------------------------------------------------------------------
+PASS 702 (Echo, senior) -- ADDENDUM 4: my own conclusion, qualified. Fixing only
+`not ghost_ready` may change nothing, and the ladder cannot tell you.
+--------------------------------------------------------------------------------
+
+Addendum 2 named the lever as "not ghost_ready computed over a one-row book".
+That is A cause. It is NOT established to be the ONLY one, for two structural
+reasons read from source.
+
+ONE -- halt_live is a NINE-WAY DISJUNCTION (trading/pipeline.py:6764-6772):
+
+  "halt_live": tail_block or drawdown_breach or not ghost_ready
+               or loss_rate_block or loss_streak_block or wallet_sparse
+               or capital_deficit > 0 or native_starved
+               or recommended_ratio <= 0
+
+Clearing `not ghost_ready` clears one of nine. If any other disjunct is also
+true, halt_live stays True, live_trading_enabled stays False at bot.py:1993,
+and the lane stays exactly as dark. A correct fix would then look like a failed
+fix.
+
+TWO -- block_reason is an IF/ELIF CHAIN (pipeline.py:6385-6392):
+
+  if recommended_ratio == 0.0:
+      if   not ghost_ready: block_reason = "ghost_validation_block"
+      elif drawdown_breach: block_reason = "ghost_drawdown_block"
+      elif loss_rate_block: block_reason = "ghost_loss_rate"
+
+ghost_validation_block is the FIRST branch and MASKS everything below it. The
+ladder printing "blocked: ghost_validation_block" tells you `not ghost_ready`
+is true and NOTHING about whether other conditions are also true. The ladder is
+structurally incapable of showing a second blocker, not merely omitting one.
+
+This is exactly what [8aa9b218] already claims ("THE LADDER SHOWS ONE BLOCKER
+AT STEP 6 AND THERE ARE TWO"). Mechanism found independently here; crediting
+the existing item rather than re-filing. On this reading [8aa9b218] is a
+PREREQUISITE to [124eee67], not a sibling.
+
+CORRECTED ORDER FOR p703 (supersedes addendum 2's recommendation):
+  1. [8aa9b218] -- evaluate all nine halt_live disjuncts, report which are true
+     now. Purely diagnostic, no money at risk. Until this is known, any step-6
+     fix is a guess with a 1-in-9 floor on being sufficient.
+  2. [124eee67] -- with that answer in hand.
+
+NOT CLAIMED: that other disjuncts ARE true. Only that nobody can currently
+tell, and the instrument being read is a first-match chain. Step 7 WALLET reads
+PASS at $19.66 deployable, which is WEAK evidence against wallet_sparse and
+capital_deficit -- weak because step 7 and this disjunction need not share a
+test.
