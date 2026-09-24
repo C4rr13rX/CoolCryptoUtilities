@@ -32334,3 +32334,236 @@ settled WETH round trips to replace a modelled cost floor with a measured one; a
 $23.18 wallet can carry the ~$20 clip the arithmetic wants, or whether this loop needs more capital
 before any route can clear. Nothing was armed.
 
+
+
+## Pass 700 (Echo, senior) -- [158d2f27] the live gate's approved-only candidate list
+
+ROUTE TRIED: widen `_live_gate_candidates()` from `approved_ids()` to the EVIDENCED
+population, on the theory that narrowing it to approved-only deadlocks step 6.
+NUMBER: `approved_ids()` = ['money_button'], read in-process from
+data/strategy_ledger.json (mtime 2026-09-24 06:12:31, written by the running process).
+money_button's whole book is ONE row: ghost, -0.021427.
+**CLOSED -- REFUSED.** pipeline.py:4806-4818 states this exact complement and rejects
+it by name: per-strategy cold start hands a live-money "ready" to every untried
+strategy; a regression did exactly that and a test caught it. The only writer of
+live_approved is ledger.py:1052-1090 `_grant_live_licence`, reached from
+`_evaluate_graduation_locked` (first graduation) or `_maybe_rearm_locked` (re-arm).
+The approved-only list is BY DESIGN. Do not reopen without new evidence.
+
+ROUTE TRIED: attribute the unknown/unattributed outcome bucket so its surplus becomes
+some strategy's evidence.
+NUMBER: unattributed ghost-closed n=89, +2.669282 (33.0% of the ghost book) vs named
+n=181, -1.553913. 8 of 89 recoverable from the `reason` prefix (rsi_reversal@3d,
++0.006328). The other 81 have no join: `trade_fills` HAS NO `trade_id` COLUMN.
+**CLOSED -- NO JOIN EXISTS.** And the bucket is not worth recovering: two rows
+(AAVE-USDC +3.470002, AERO-USDC +3.206624, both time_take_profit) are +6.676626 of it
+while the other 79 sum to -4.013672.
+
+ROUTE TRIED (Echo's own, pre-registered and KILLED the same pass): "the per-strategy
+estimator ignores single-row domination, so atf_static will re-arm onto real money on
+a two-row statistic."
+NUMBER: pipeline.py:5102-5126 ALREADY runs a leave-one-SYMBOL-out jackknife and it
+REFUSES atf_static: ghost n=35 +1.030283 across 11 symbols; remove the top profit
+symbol (BSTONK-USDC n=3 +1.034884) and the residual is **-0.004601 over 32 trades**.
+Trade-count dominance 0.286 vs the 0.82 guard, so that guard contributes nothing.
+**CLOSED -- the guard exists and works.** What survives is the MARGIN and the DEPTH:
+it refuses by 0.46 of one cent, one +0.005 ghost win on any non-BSTONK symbol flips it
+to PASS, and behind it is SIBYL-USDC n=1 +0.750102 against -0.754703 on the other 31
+non-BSTONK trades. The jackknife is one symbol deep; this book is two. Filed [d6a2d342].
+
+COST OF ADMITTING atf_static, on the only book that counts: ghost n=35 +1.030283
+(win 31.4%) vs LIVE n=15 -0.188244 (win 26.7%) -- same code, opposite sign, a
+1.218527 swing over 50 round trips. All 15 attributed live closed rows are atf_static.
+
+SCOREBOARD, measured 2026-09-24 06:2x: closed trade_outcomes 288 (287 at p699 -- one
+new row in the interval, and it was GHOST). Live rows 18, cumulative net -0.186371,
+newest live row 2026-09-05 17:00:46. The live lane has been silent 18.5 days while the
+ghost lane keeps printing.
+
+### Pass 700 (Echo) -- addendum: the two results that matter more than the assignment
+
+ROUTE TRIED: treat ladder steps 5, 6 and 8 as three faults.
+NUMBER: 24h trading_ops plan rows carrying halt_live = 28, halt_live TRUE on 28 of 28
+(18 enter, 10 exit). Newest risk_flags: ghost_ready false, ghost_reason
+no_qualified_strategy:cold_start_bootstrap, live_safe false, live_blocked_reason
+ghost_validation_block, ghost_samples 0; tail_block/loss_rate_block/loss_streak_block/
+wallet_sparse/native_starved ALL false, capital_deficit 0.0. bot.py:1909-1922 derives
+_live_halt_active() from that flag; bot.py:1993 makes live_trading_enabled = armed AND
+NOT halt.
+**CLOSED -- THEY ARE ONE CAUSE.** Step 8's "bots built with live_trading_enabled=False"
+is a downstream reporter of step 5. Do not work step 6 or step 8 as separate items.
+This also independently reproduces Bay's p692 measurement on a DIFFERENT build
+(28 rows now vs 20 then, restart 2026-09-24 04:23:11 in between).
+
+ROUTE TRIED: "step 6 is a closed loop / chicken-and-egg -- the approved strategy can
+never earn its own evidence."
+NUMBER: money_button's one ghost row is ts 2026-09-04 08:59:18 (PEPE-USDC, -0.021427),
+age **477.5 HOURS**. The gate's lookback is pipeline.py:4848
+GHOST_VALIDATION_LOOKBACK_SEC -> focus_lookback_sec = 172800 s = **48 HOURS**. Ten
+windows stale, so risk_flags.ghost_samples = 0 is CORRECT and is NOT an attribution bug.
+**RETIRED AS A FRAMING, AND REPLACED WITH ARITHMETIC.** The bar is min_trades inside a
+ROLLING 48h (pipeline.py:4939 min_trades = max(5, min_ghost_trades); tradeable bar
+:5190 GHOST_TRADEABLE_MIN_TRADES=30). money_button runs at 1 trade / 20 days =
+0.05/day against a 2.5/day floor -- **50x short, 300x for the tradeable bar**. It is not
+slow and it is not a paradox; it is a rate gap that waiting cannot close. Filed
+[f489ee61] as the top item. The open question is whether that rate belongs to
+money_button's predicate or to the lane it sits in.
+
+ENV VERIFIED (both on code defaults, neither present in .env, neither set in the
+environment): GHOST_REQUIRE_MULTI_SYMBOL_EDGE (pipeline.py:5138-5140, default 1 -> the
+jackknife runs) and STRATEGY_GRADUATION_ENFORCED (pipeline.py:4737, default 1 -> the
+candidate list is approved-only). An override on either would have falsified the whole
+p700 ruling, so check them before re-deriving any of this.
+
+AUDIT: [4a3b3902] REJECTED -- bot.py:2276 reads roundtrip_cost_rate(notional, symbol);
+the symbol IS passed and has been since p695. [82662e5d] corrected -- atf_static_scout
+has written EIGHT trade_outcomes rows (total -0.920763 over 2 symbols), not zero, and
+the table holds 292 rows, not 246; what survives is that the ladder credits it 264
+pooled / 31 tradeable against 8 audited rows.
+
+### Pass 700 (Echo) -- RETRACTION, made in-pass, and the throughput numbers that survive it
+
+RETRACTED: "the tradeable bar (GHOST_TRADEABLE_MIN_TRADES=30) is higher than the whole
+system's 48h throughput (29 entries), so graduation is arithmetically impossible for
+every strategy."
+WHY IT IS WRONG: pipeline.py:5183-5186 states that below GHOST_TRADEABLE_MIN_TRADES the
+tradeable-subset check FAILS OPEN -- "refusing on an unmeasured subset would shut the
+lane on the absence of evidence rather than on evidence". **30 is a minimum SAMPLE SIZE
+at which that guard runs, not a bar to clear.** It is also a different number from the
+ledger's graduation bar (20 tradeable ghost trades / 55% win / P/L>0, in
+ledger.py _evaluate_graduation_locked). Echo compared a throughput count to a fail-open
+threshold and read it as a ceiling. Do not repeat this: read the comment block above a
+constant before quoting the constant.
+
+WHAT SURVIVES, all measured 7d from trading_ops (action='enter', status='ghost-entry'):
+  - 72 ghost entries in 7d = **10.3/day across ALL strategies**; **29 in the last 48h**.
+  - **money_button: 0 of 72.** The only live-approved strategy entered nothing in a week.
+  - By strategy: atf_static_scout 26, atf_static 11, donchian_breakout@5d 6,
+    rsi_reversal@12h 6, donchian_breakout@1w 4, rsi_reversal 3, then 1-2 each.
+  - **37 of 72 entries (51%) are unspendable by construction**: the scout has no live
+    branch and atf_static is demoted x7. Half the system's evidence production cannot
+    reach real money no matter what it shows.
+  - Caveat kept: these are ENTRIES; the bar counts closed ROUND TRIPS (7d ghost-exit = 64).
+
+STILL OPEN and worth five minutes: whether the ledger's 20-tradeable graduation bar is
+evaluated over a rolling window or all-time. The pipeline gate's stats are windowed
+(pipeline.py:4848/:4851 fetch with lookback_sec); the LEDGER's bar is a different code
+path and was not checked this pass.
+
+### Pass 700 (Echo) -- final: the rate question ANSWERED, and the two clocks
+
+ROUTE TRIED: "money_button's once-in-20-days rate is caused by an upstream gate starving
+it (the lane), not by its own predicate."
+NUMBER: 3000 entry-arbitration rows over 48h. money_button OFFERED 0, CHOSEN 0
+(reproduces p695's 0-of-14,267 on the CURRENT build). Skip reasons:
+momentum_not_aligned 1890 (63.0%), edge_below_cost 520 (17.3%), move_exhausted 294
+(9.8%), slope_not_positive 283 (9.4%), too_few_samples 10 (0.3%), mixed_denomination 2,
+feed_frozen 1.
+**CLOSED -- ARM (A), IT IS THE PREDICATE.** It is offered ticks, it evaluates, and it
+declines on momentum. WARNING FOR WHOEVER RE-MEASURES: a single sampled row showed
+'too_few_samples' and makes the circular-dependency story look like the whole mechanism.
+It is 0.3%. Sample at least 1000 rows.
+SIDE RESULT: edge_below_cost 17.3% is the first measurement of the cost floor's bite on
+the only approved strategy. Cost work alone recovers at most a sixth of its refusals.
+
+STRUCTURAL RESULT OF THE PASS -- TWO EVIDENCE CLOCKS:
+  clock 1, the LEDGER's graduation bar (20 tradeable ghost trades / 55% win / P/L>0):
+    ledger.py:401-407 -- the stored tradeable sub-book is "incremental and is never
+    recomputed" => CUMULATIVE, ALL-TIME, reachable by accumulation.
+  clock 2, the PIPELINE live gate: trade set fetched with lookback_sec at
+    pipeline.py:4848/:4851, GHOST_VALIDATION_LOOKBACK_SEC -> 172800 s = 48 HOURS
+    => ROLLING, NOT reachable by accumulation, only by RATE.
+A strategy graduates on clock 1 and spends on clock 2 and nothing syncs them.
+money_button is live-approved AND invisible to the gate. This does NOT contradict p698's
+"raising the evidence rate is closed": that closed rate against clock 1 and was right.
+Rate is irrelevant to GRADUATION and is the ENTIRE blocker at the LIVE GATE.
+
+ALSO FILED: [925ea4c5] -- every strategy except money_button reports a flat
+undifferentiated 'no_signal' at arbitration (27,419 in a 400-row sample), so for 15 of
+16 strategies the "starved or declining?" question is unanswerable from the data.
+
+================================================================================
+PASS 700 -- Echo (senior, second session of the pass). THE TRADEABLE RATCHET,
+REPRODUCED INDEPENDENTLY, AND A FAIL-OPEN THAT TURNS OUT TO BE IN TWO GATES.
+================================================================================
+
+ROUTE TRIED: verify [37ed7fd1]'s only open criterion -- reproduce Cove's p692
+tradeable-predicate result against HEAD rather than reading the notes. Cove
+measured it and was explicitly barred from verifying it; Echo did not measure it.
+
+RESULT -- REPRODUCED EXACTLY, AND THE RATCHET IS NOW MEASURED RATHER THAN ASSERTED.
+Fresh process, HEAD a610b9d, REAL predicates (trading.strategies.ledger._live_tradeable,
+services.symbol_edge_gate.refusal_reason), no reimplementation.
+  12 of 12 verdicts IDENTICAL to Cove's p692 23:05-23:07 snapshot. ZERO moved.
+  False (4): CBBTC-USDC, BASECAT-USDC, CBXRP-USDC, AERO-USDC -- every one an
+    EVIDENCE refusal (book under cost) at t = -2.18 to -4.05.
+  True  (8): BSTONK, VIRTUAL, BASELINE, SPACEX, BPAD, LIQUIDBGT, ZORA, BASEJUICE.
+  THE ENTER COUNTS ALL MOVED AND NO VERDICT MOVED WITH THEM: CBBTC 11153->11191,
+    BASECAT 9010->9096, CBXRP 3209->3274, AERO 1990->2061. +309 fresh enters on
+    banned names, ZERO rehabilitations. That is the ratchet, dynamically.
+
+PRE-REGISTERED KILL TEST (Echo, against his own conclusion) -- H CONFIRMED:
+  H: the 8 "runway" symbols are allowed by ABSENCE from the gate cache, not by a
+     passing book. COMPLEMENT: present-with-allow, in which case the runway is
+     real evidence and criterion 3 stands. Discriminator: cache membership after
+     a forced _rebuild.
+  ALLOWED BY ABSENCE: 8 of 8.   ALLOWED BY A PASSING BOOK: 0 of 8.
+  5 of the 8 have ZERO closed round trips (BASELINE, SPACEX, LIQUIDBGT, ZORA,
+  BASEJUICE). Of the 3 with a book, 2 are already negative.
+
+STRUCTURAL RESULT -- _live_tradeable IS AN AND OF TWO FAIL-OPEN CACHE LOOKUPS
+WHOSE CACHES ARE DISJOINT. Both measured in ONE process:
+  symbol_edge_gate._cache       : 6   BASECAT, CBXRP, COMP, DRB, OP, VVV
+  symbol_edge_gate._pair_cache  : 2   (atf_static,AERO) (atf_static,CBBTC)
+  stop_survivability_gate._cache: 10  ARGUS, DOT, MUSE, RELY, SPIKE, TILCAYO,
+                                      TRUMP, VCAT, VDINO, XRP
+  UNION 16. OVERLAP ZERO. Not one symbol is judged by both gates.
+  Both fail open: refusal_reason('TOTALLY-FAKE-USDC', ...) is None through BOTH.
+  DECISIVE FOR THE FIX SITE: none of the stop gate's 10 symbols appears in
+  atf_static's top-12 entered names, so on the trading strategy's real universe
+  the stop arm is unconditionally None and _live_tradeable collapses to
+  symbol_edge_gate alone -- TWO pair verdicts decide the tradeability of the
+  strategy we are trying to graduate. Eighteen cells over a 1957-symbol book.
+
+THE MECHANISM -- A THREE-STATE MACHINE WITH NO STATE 4:
+  (1) n=0, UNJUDGED, allowed by absence, counts as runway
+  (2) accumulating, still allowed, still counts
+  (3) crosses the judging threshold with a book under cost -> BANNED
+  There is no rehabilitation state, and a banned symbol cannot trade, so its book
+  can never improve. TRAVERSING THE RUNWAY IS WHAT DESTROYS IT: every trade on an
+  unjudged symbol converts runway into evidence if it wins and into a permanent
+  ban if it loses, and atf_static wins 33% of tradeable trades against a 55% bar.
+  [37ed7fd1]'s headline ("step 5 can NEVER be cleared by accumulating ghost
+  trades") is RIGHT IN EFFECT and WRONG IN ITS STATED REASON. Not that trades do
+  not count -- that at a losing win rate the act of counting them consumes the
+  population that can count.
+
+STATUS OF ROUTES:
+  CLOSED -- "graduate atf_static through step 5 by accumulating ghost trades."
+    Closed on evidence, not impatience. Not slow: SELF-CONSUMING.
+  NOT CLOSED, AND NOW THE STRONGEST ARGUMENT ON THE BOARD -- route (a),
+    hand-approve ONE strategy at a minimum clip. Live rows are the only evidence
+    this machine cannot ratchet away. Still gated on the operator decision
+    recorded at p699 (a $6 clip cannot pay Base gas at 6.75bp).
+  DO NOT REOPEN -- "fix this by loosening the gate / unbanning the four symbols."
+    They are banned for losing money at t=-2.18..-4.05, re-confirmed this pass.
+    Unbanning is selecting on the dependent variable. The defect is COVERAGE
+    (18 judged cells), never the THRESHOLD.
+
+RETRACTED WITHIN THE PASS, BY ECHO, BEFORE ANYONE ACTED ON IT:
+  "the gate cache is SHRINKING, 10 at p698 -> 6 now." WRONG. p698's 10 was
+  stop_survivability_gate; the 6 is symbol_edge_gate. Two modules. Measured both
+  at 6 and 10 SIMULTANEOUSLY with zero overlap, which is incompatible with one
+  having shrunk into the other. There is no evidence of shrinkage. This was the
+  one number taken from another pass's note instead of measured.
+
+GOTCHA FOR ANYONE QUERYING trading_ops: it has NO strategy column. Columns are
+  id, ts, wallet, chain, symbol, action, status, details. The strategy is inside
+  the details JSON, and you must match the CLOSING QUOTE
+  ('%"strategy_id": "atf_static"%') or you silently fold in atf_static_scout
+  (314 enters).
+
+BACKLOG: [37ed7fd1] DONE. [779b2357] REFINED (scope doubled, FIX SITE MOVED to
+  _live_tradeable -- re-read its criteria, do not work from the p698 summary).
+  [87a8a7fd] filed then narrowed by Echo to one mechanical question so it does
+  not duplicate the top item. No production code written this pass.
