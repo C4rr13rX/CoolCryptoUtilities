@@ -31096,8 +31096,15 @@ net_margin deciles, bp: -10220 / -100 / 0 / 0 / 0 / 10172 / 15582 / 18759 / 2123
     expected_return:  min 0.0165, max 0.5310.  0 of 49 zero, 0 of 49 over 100%.  SANE
     net_margin:       11 of 49 EXACTLY 0.0;  26 of 49 OVER 100%;  max 24841bp (+248%)
 
-A margin cannot exceed the return it is a margin on; net_margin reaches 5x expected_return's
-maximum. Source-proven -- **it is NOT a units bug** (that was my hypothesis and it is refuted):
+**CORRECTION, same pass:** I first argued "a margin cannot exceed the return it is a margin
+on." **That inference is INVALID and is withdrawn** -- `.net_margin` is TOP LEVEL (brain
+summary) and `.bus_plan.expected_return` is NESTED (scheduler directive). Two independent
+forecasts, no arithmetic identity. The finding stands without it: **+248% is absurd on its
+own.** And do NOT exonerate bus_plan.expected_return as I did -- [6943a445] measured it over
+30 DAYS and found 45 of 1222 over the +/-5.0 clip, max 12,551,318, median clean at 0.0500.
+A clean median is what a too-small window shows. There may be TWO unbounded producers here.
+
+Source-proven -- **it is NOT a units bug** (that was my hypothesis and it is refuted):
 
     model_definition.py:390   net_margin = Lambda(_compute_net_margin, name="net_margin")(
                                               [price_mu, gas_in, tax_in])
