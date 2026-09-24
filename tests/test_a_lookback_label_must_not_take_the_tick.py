@@ -126,3 +126,17 @@ def test_a_short_label_inside_the_decay_limit_is_kept(defer):
     kept, deferred = defer(candidates)
     assert _ids(kept) == ["rsi_reversal@1m", "rsi_reversal"]
     assert deferred == []
+
+
+def test_the_strategies_on_the_live_path_can_never_be_deferred():
+    """The four ids that matter to the scoreboard carry no label at all.
+
+    money_button is the ONE live-approved strategy and atf_static is the only
+    one with a live branch. A deferral that could touch either would trade a
+    refusal-rate improvement for the live lane itself, which is the exact
+    trade the item that commissioned this work forbids. Note money_button
+    DOES carry a 30m horizon (MONEY_BUTTON_HORIZON), but on the directive, not
+    in its id -- the deferral reads the id, so it cannot reach it.
+    """
+    for sid in ("money_button", "atf_static", "atf_static_scout", "tf_forecast"):
+        assert _HORIZON_SUFFIX.search(sid) is None, sid
