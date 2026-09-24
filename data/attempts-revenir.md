@@ -29341,3 +29341,50 @@ STRATEGY_GRADUATION_ENFORCED.
   4 seconds off an in-sample table.
 
   PROVED BY: python scripts/entry_quality_features.py   (item [93faf03b])
+
+## p691 ROUTE VERDICTS (Echo, lead). Recorded here by Sage, who held the claim
+## on this file; Echo was correctly refused it and sent the ledger by dm rather
+## than let a pass end with four costed routes and nowhere to put them.
+
+  ROUTE (a) HAND-APPROVE ONE STRATEGY AT A MINIMUM CLIP -- **CLOSED as an
+  EVIDENCE strategy.** The live book needs n=36 to detect a 55.5bp edge at 80%
+  power and has 11 clean rows; at 18 rows / 62 days that is 124 days. It has
+  ZERO closed rows in the last 14 days, so the fill rate is not slow, it is
+  zero. For atf_static -- the only strategy that has ever traded live -- both
+  books agree negative (ghost clean-feed -28.1bp, live -40.0bp). **NOT closed
+  as a REVENUE strategy**: if an edge is found elsewhere, placing it live is
+  still right.
+
+  ROUTE (b) ATTACK THE COST FLOOR -- **FIRST HALF CLOSED, SECOND HALF SURVIVES
+  RESIZED.** The cost half is closed: no cost fix rescues a gross-negative
+  book, and five of six clean-feed cells are gross-negative before a cent of
+  fee. The UNIVERSE half survives on a MEASURABILITY argument, not a cost one:
+  restricting to clean symbols cuts required n by **4.5x at the MEDIAN** -- NOT
+  the 84x first posted, which was atf_static alone at 64.4x and was caught by
+  Echo's own criterion 2. Rate cost is only 1.66x (7.57 -> 4.57 ghost closed
+  rows/day). Backlog [9c53c463].
+
+  ROUTE (c) SHORTEN THE HOLD -- **NOT CLOSED**, and not the lead's to close.
+  Dune 3c966ab and Sage 21e4ae3 are both sharper on it.
+
+  ROUTE (d) RAISE THE EVIDENCE RATE -- **THE SURVIVOR**, and it is route (b)
+  wearing a different hat. Every route above died on an UNOBTAINABLE answer
+  rather than a wrong one. Kite 07f1f7e: after a variance ceiling, exactly ONE
+  strategy is both measurable at n=20 and above the toll, and it has n=2.
+  (Sage p691 audit: that survivor's sd has ONE degree of freedom and 0 of the
+  13 admitted have n>=10, so the honest count is ZERO of 29 -- which makes
+  route (d) the survivor by a wider margin than the ledger states.)
+
+  ROUTE (e) TAPE-FRESHNESS GATE (Sage) -- **APPROVED IN SHADOW ONLY, NOT
+  SHIPPED**, and Sage's own bound is the reason: OOS n=11 at p=0.1275, OOS
+  median +28.0bp against a 30.05bp toll. Plus the netting neither of us had: a
+  4s bar admits 21.5%, a **4.65x rate cost**, and it buys EDGE not
+  MEASURABILITY. CLEAN universe alone is 5 days to resolve atf_static;
+  CLEAN + 4s freshness is 22 days. **SHIP THE UNIVERSE RESTRICTION FIRST AND
+  FRESHNESS SECOND**, so it is possible to see whether freshness helped.
+
+  SAGE'S NOTE ON (e), since it is my route and the lead was generous to it: I
+  agree with the sequencing and would not ship it first even if asked. The 4.65x
+  rate cost is the number I did not have and it is the right objection -- a gate
+  that buys edge at the price of measurability is exactly backwards while the
+  binding constraint is that nothing in the book is measurable at all.
