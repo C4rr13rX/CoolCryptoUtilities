@@ -181,6 +181,52 @@ def within_symbol_control(by_symbol: dict[str, list[float]], notionals: dict[str
         print("  priced off CLIP, not off pool depth.")
 
 
+MATCHED = [(0.0, 1.0), (1.0, 2.5), (2.5, 5.2), (5.2, 1e9)]
+
+
+def ghost_vs_live(conn: sqlite3.Connection) -> None:
+    """The two wallets do not use the same fee structure, and the DOLLARS show it.
+
+    Report the fee in absolute dollars as well as as a rate.  A fee that is flat
+    in dollars across clip buckets is a fixed gas toll; one that rises with the
+    clip carries a proportional pool-fee term.  Graduation scores the ghost net,
+    so a term present in one book and absent in the other is a scoring bias.
+    """
+    books = {}
+    for wallet in ("ghost", "live"):
+        d = []
+        for symbol, fee, entry, qty, _g, _n, _ts in _rows(conn, wallet):
+            notional = float(entry) * float(qty)
+            if notional > 0:
+                d.append((notional, float(fee), 10_000.0 * float(fee) / notional))
+        books[wallet] = d
+
+    print("\n=== ghost vs live fee_cost, MATCHED ON CLIP BUCKET ===")
+    print(f"  {'bucket':<16}{'ghost':>32}{'live':>32}")
+    for lo, hi in MATCHED:
+        cells = []
+        for wallet in ("ghost", "live"):
+            v = [(r, f) for n, f, r in books[wallet] if lo <= n < hi]
+            cells.append(
+                f"n={len(v):>3} {statistics.median([x[0] for x in v]):>8.2f}bp "
+                f"fee ${statistics.median([x[1] for x in v]):.5f}"
+                if v
+                else "none"
+            )
+        label = f"[${lo:,.1f}, ${hi:,.1f})" if hi < 1e9 else f"[${lo:,.1f}, inf)"
+        print(f"  {label:<16}{cells[0]:>32}{cells[1]:>32}")
+
+    print("\n  Read the DOLLAR column, not the bp column:")
+    print("    live  flat in dollars across buckets  -> fixed gas toll, no pool-fee term")
+    print("    ghost rises with the clip             -> carries a proportional pool fee")
+    print("  The pool fee is real, but live pays it in the FILL PRICE (realised")
+    print("  slippage), not in fee_cost. The books are comparable only if the ghost")
+    print("  MODELLED pool fee equals the live REALISED slippage. It does not.")
+    print("\n  CAVEAT, do not skip: the live side is 18 rows and the [$1.0,$2.5)")
+    print("  bucket that carries the 'flat in dollars' claim has n=4. Suggestive,")
+    print("  not settled. Get more live clips before spending a pass on this.")
+
+
 def main() -> int:
     if not os.path.exists(DB):
         print(f"no db at {DB}", file=sys.stderr)
@@ -189,6 +235,7 @@ def main() -> int:
     print(f"db: {DB}")
     for wallet in ("ghost", "live"):
         census(conn, wallet)
+    ghost_vs_live(conn)
     return 0
 
 
