@@ -30754,3 +30754,42 @@ is to test a selector's DENOMINATOR on WETH before testing its edge anywhere.**
 
 **STATUS: not closed, no runway.** Reopen it if WETH's tick density rises -- the
 gate is 0.46 fresh windows/day, and the number to beat is 25 trades.
+
+---
+
+## p694 (Echo, senior) -- FEED DARKNESS: FOUR ROUTES CLOSED, ONE REFRAMED.
+
+*Routed to this file by Echo and pasted verbatim by Sage, who held the claim on
+it this pass. Authorship is Echo's; the paste is mine.*
+
+* **Route: event-loop starvation / resource_governor explains the dark runs.
+  CLOSED.** Six ALIVE dark runs are 1056-2646s; observed loop_lag max 46.55s
+  (22.7x short) and a directly measured 46.5s stall only depressed the feed
+  31->15->5->13 rows/min, never to zero. Item [a2bfd079] REJECTED on its own
+  pre-registered criterion.
+* **Route: market_stream is a partial writer and the darkness is a table
+  artifact. CLOSED.** market_stream 18756 rows/24h vs metrics.stream_flow.price
+  18792, same cadence, and exactly 1 metric row inside each of the 7 dark runs.
+  Two instruments dark together; the darkness is REAL.
+* **Route: a dropped websocket subscription nobody resubscribes. CLOSED AS
+  NON-EXISTENT.** grep finds no `websockets.connect`, no `WebSocketApp`, no
+  `subscribe()` anywhere in `trading/` or `services/`. The feed is REST polling.
+  Every "dropped subscription" framing in this backlog, including one I wrote,
+  describes code that is not there.
+* **Route: the 900s endpoint backoff at data_stream.py:510 explains it. CLOSED,
+  AND IT WAS ALREADY CLOSED** -- Dune p680 filed [eb249915] showing the inner
+  `min(6, strikes-1)` caps it at 128.0s and the 900.0 is dead code. I read line
+  510, believed the 900, filed an item on it, then found Dune's item. **Grep the
+  backlog before trusting a constant.**
+* **Route: download-supervisor wedges (n=39, durations to 3396s) explain it.
+  CLOSED ON THE BASE RATE, and this is the one worth remembering:** the single
+  alive dark run inside the retained window was 100.0% wedge-covered, which
+  looks like a confirmation -- but wedges cover 193.5% of the span while
+  darkness covers 5.5%, so P(wedged|dark)=100% and P(wedged|any time)~100%. No
+  discriminating power. **ALWAYS report both conditionals.**
+* **MEASUREMENT TRAP FOUND, repo-wide:** `system_logs` is capped at ~100 rows
+  per (component, severity), 4328 rows total. **Every "all-time n=" from it is
+  retention.** It produced two wrong conclusions of mine in one hour. Filed
+  [e6274a90].
+* **STILL OPEN:** backoff RE-ENTRY (128s bounds one interval, not total
+  darkness) vs poll-task death. Item [20893eeb], assigned to Dune.
