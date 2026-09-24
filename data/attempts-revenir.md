@@ -31192,3 +31192,44 @@ is impossible" first and had to strike it -- `trade_outcomes` has no tx column, 
 2-6 candidates per row). The tie also shows **"18 live trades" is 18 EXITS over 15
 POSITIONS** -- three scaled out in two legs. Nobody has said which denominator their win
 rate used.
+
+### Pass 695 -- Dune, second append: where the refusals actually come from
+
+**LADDER STEP 3 IS THE FIRST [FAIL] AND IT IS A COUNTED REFUSAL, NOT A DEAD WRITER.** The ghost
+lane wrote nothing for 12.13 hours while the process stayed wide awake (trading_ops 708 rows in
+the last hour, market_stream 768). All 9,647 arbitration holds in that window carry a named
+reason:
+    candidate_carries_a_standing_edge_ban           3,237  (33.6%)
+    one_tick_was_offered_to_many_and_spent_by_one   2,494  (25.9%)
+    failed_a_necessary_condition                    2,179  (22.6%)
+    no_strategy_or_forecast_cleared_the_entry_test  1,076  (11.2%)
+Do NOT go looking for a crashed ghost writer -- that route is closed. The real funnel is 947
+scanner directives/day (source=c0d3rv2_atf_static) into 16 ghost fills. Filed [d0244ccb].
+
+**THE GATE DOING A THIRD OF THE REFUSING IS SYMBOL-BLIND, AND IT IS A DIFFERENT COST MODULE.**
+services/symbol_edge_gate.py:176 imports `services.round_trip_cost` (signature `(*,
+db_path=None)`, one flat 46.54bp, no notional, no symbol). The entry path imports
+`services.roundtrip_cost`. One underscore -- the p688 hazard, now with a body count. The gate's
+`modelled_cost()` IS size-aware (COST_FIXED 0.004047 + COST_VARIABLE 0.003187*n) and agrees with
+the blind default to the basis point, so the defect is symbol-blindness, NOT magnitude:
+    AERO @ $2.04 : gate 51.71bp vs census 32.81bp  = 1.58x
+    WETH @ $6.00 : gate 38.62bp vs census  8.79bp  = 4.39x
+**CLOSED SUB-ROUTE:** the banner's "0.772% cost at their own clips" was suspected of being
+2.3-4.5x too high. It is NOT -- 77.2bp is just modelled_cost at a sub-dollar clip and it is
+correct. Do not re-open the magnitude question. Filed [da1deb2d].
+
+**44.3% OF EDGE BANS ARE SPENT ON THE DEEPEST PAIR ON BASE.** Of 3,189 edge bans in 12h:
+WETH-USDT 541, AERO-USDC 446, UNI-USDC 426, MAMO-USDC 383, ETH-USDC 323, WETH-USDC 279,
+ETH-USDT 271, DRV-USDC 231. WETH+ETH = 1,414 = 44.3%. Only 1,266 (39.7%) are in a census symbol,
+so [da1deb2d] alone reaches 40% of ban volume; the other 60.3% needs [4c0c6349].
+
+**CONFIRMED ONE-LINE BUG: `normalise_symbol` does not fold ETH onto WETH.**
+    WETH-USDC / WETH-USDT -> "WETH" ->  8.79bp at $6 (census)
+    ETH-USDC  / ETH-USDT  -> "ETH"  -> 38.62bp at $6 (blind default)
+Same asset, same pools, 4.39x apart on the ticker string. Cost 594 edge-ban refusals in one 12h
+window. Reproduce:
+    python -c "import services.roundtrip_cost as rc;print([(s,rc.normalise_symbol(s),rc.roundtrip_cost_rate(6.0,s)) for s in ['WETH-USDC','ETH-USDC']])"
+
+**PRODUCTION IS SERVING STALE CODE AND I MEASURED IT RATHER THAN ASSUMING IT.** pids 3584 and
+20452 both booted 2026-09-23 06:23:01 (20.8h); trading/bot.py was edited 2026-09-24 03:02:17.
+Commit 769352c is NOT in the running process. Any ladder print today describes the OLD path.
