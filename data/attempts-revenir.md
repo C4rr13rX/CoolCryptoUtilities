@@ -29100,3 +29100,62 @@ ghost exits and ZERO live fills, and all ghost fills are 0.00bp by construction.
 FILED: [f49673e5] settle BSTONK before any raised-clip trade; [80b71312] charge
 the ghost fill a realised slippage toll; [40274308] the fill writer discards the
 tx hash and the entry-leg native price.
+
+================================================================================
+PASS 690 -- Sage -- THIRD ROUTE, found while closing out:
+"WHY HAS THE LIVE LANE WRITTEN NOTHING FOR 362 HOURS"   [item 64895d41]
+
+VERDICT: **OPEN, NARROWED TO ONE BOOLEAN. Two of four candidate sites
+eliminated by measurement, not by reading.**
+
+THE FRAMING ERROR THIS FIXES: trading_ops.wallet is a TERNARY on a flag, not
+two lanes.
+    trading/bot.py:8934
+        self.db.log_trade(wallet="live" if self.live_trading_enabled
+                                 else "ghost", ...)
+    select wallet, count(*), max(ts) from trading_ops group by 1   (UTC)
+      ghost  141383  newest 2026-09-24T01:27:04Z
+      live     1238  newest 2026-09-08T22:47:22Z   <- 362.7 h before this pass
+    last 7d: 47,893 of 47,893 rows are wallet='ghost'. Zero live.
+The bot reaches every decision point ~48,000 times a week and labels them all
+ghost. "The ghost lane is alive and the live lane is starved" is an artifact
+of reading a FLAG as a LANE. The last live FILL is 2026-09-05T21:00:46Z (436h);
+the flag flipped three days later.
+
+ELIMINATED BY MEASUREMENT:
+  * bot.py:11180, the CIRCUIT BREAKER. It logs "live-circuit-breaker" and
+    calls strategy_ledger.demote(sid, "bot circuit breaker tripped") in the
+    same block. grep -c of logs/console.log -> 0, AND zero strategies in
+    data/strategy_ledger.json carry that demote reason. The ledger is
+    persistent state and survives log rotation, so the block never ran.
+    (This was Sage's own leading hypothesis, posted and then killed the same
+    pass -- it fit the dates and it is still false.)
+  * the two-lane reading itself, above.
+
+REMAINING: trading/selector.py:1459 and :1794, identical condition
+    if readiness and not self._readiness_permits_live(readiness)
+                 and not self._operator_armed_live():
+        bot.live_trading_enabled = False
+.env:40 sets ENABLE_LIVE_TRADING=1, which _operator_armed_live() reads, so with
+the arm ON these lines should NOT fire. selector.py:1248's own docstring, dated
+2026-09-16, records that _readiness_permits_live returns False on
+ghost_ready=False (reason insufficient_samples) and that THIS IS THE SAME
+NUMBER that sets block_reason='ghost_validation_block' in pipeline.py --
+**ladder links 6 and 8 are one fact reported twice, by the source's own
+account.**
+
+THE ONE MEASUREMENT LEFT, and it needs a RUNNING process:
+    bot.live_trading_enabled
+    selector._operator_armed_live()
+    os.getenv("ENABLE_LIVE_TRADING")
+If the process disagrees with .env:40 this is an env-hydration bug --
+services/env_loader.py:170 exists because that has happened here before -- and
+fifteen days of live evidence were lost to a read that happens before the vault
+hydrates. If the process agrees, there is a FOURTH site and the trace continues.
+
+COMPLEMENT THAT MAY WIN: the flag may be CORRECTLY False. ghost_ready=False
+"insufficient_samples" is a real verdict, not a bug. If so this is not a fix,
+it is an operator decision, and the honest output is to say that rather than
+flip a flag. Do not re-arm without confirming bot.py:6715 still gates a live
+entry on live_trading_enabled AND _strategy_live_approved(directive) under
+STRATEGY_GRADUATION_ENFORCED.
