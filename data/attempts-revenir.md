@@ -28417,3 +28417,88 @@ STILL OPEN:
     route (b) decision, and is a bigger job than this item.
   * Whether the sub-dollar ghost rows carrying ~zero gas are a bug in
     _roundtrip_gas_usd or in gas_share. Not measured.
+
+================================================================================
+PASS 690 -- Sage -- ROUTE: "LIFT THE CHAOS GATE'S HORIZON DEFECT TO RECOVER
+LIVE CANDIDATES"  [item 9991347c]
+
+VERDICT: THE DEFECT IS REAL AND CONFIRMED. THE ROUTE IS **CLOSED** -- fixing
+it would admit a signal that is anti-predictive at every horizon tested.
+
+THE DEFECT (confirmed cold by source, commit 16ac4f3, two functions):
+  trading/strategies/horizons.py:212   directive.horizon = self._label
+  trading/strategies/horizons.py:37-44 HORIZON_SPECS labels are LOOKBACKS
+                                       ("5d", 7200, 66) is commented
+                                       "5.5d of 2h bars"
+  trading/bot.py:2296                  horizon_seconds(label) reads "5d" as
+                                       5 CALENDAR DAYS = 7200 minutes FORWARD
+  => the chaos leg compares a HISTORY WINDOW to an information half-life.
+  bot.py:2301-2325 already carried this diagnosis, measured pass 680, and has
+  sat unacted-on since.
+
+REPRODUCED (7d, ts as unix float):
+  lattice refusals              8864
+  on the chaos leg              8864 / 8864 = 100.0%
+  WETH-USDC + ETH-USDC           662 / 662 chaos
+  WETH+ETH horizon buckets      7200:319  720:185  4320:80  1440:52  300:16
+  partition strategy_id->horizon is ONE-TO-ONE across all 8864 rows.
+
+  TRAP, NEW THIS PASS: 'entry-refused-lattice' is in trading_ops.STATUS, not
+  .ACTION. `where action='entry-refused-lattice'` returns 0 ALL-TIME and
+  raises nothing. The action column on those rows is 'hold'.
+
+OVERSTATEMENT, using the base rules' OWN declared constants (stronger than
+the bar_sec derivation in the item -- these are the authors' numbers):
+  every base strategy declares default_horizon of 10-60 min
+  (donchian_breakout '1h', rsi_reversal '45m', stochastic_reversal '20m',
+   ema_cross '1h', supertrend_follow '45m', money_button '10m', ...)
+  the wrapper substitutes 300-10080 min.
+    donchian_breakout    60 -> 7200  = 120x  (@5d)
+    rsi_reversal         45 -> 7200  = 160x  (@5d)
+    stochastic_reversal  20 -> 10080 = 504x  (@1w)
+  NOT ONE suffixed strategy forecasts more than an hour by its own declaration.
+
+THE NUMBER THAT CLOSES THE ROUTE (the item's open criterion, plus a null
+baseline the item did not ask for):
+  1112 donchian_breakout@5d entry signals, all-time
+  (2026-09-11T12:37Z -> 2026-09-23T01:07Z UTC), 10 symbols, long-only
+  (donchian_breakout.py emits enter/exit only). Forward return from
+  market_stream, nearest tick within 600s. NULL = every 200th tick on the
+  SAME tapes over the SAME window.
+
+                                    SIGNAL                NULL
+    60 min (own default_horizon)  n=962  +0.0047% 42.1%w | n=221  +0.1526% 54.3%w
+    120 min (bar_sec = the fix)   n=946  -0.2174% 34.6%w | n=213  +0.3008% 64.3%w
+    7200 min (the @5d label)      n= 62  -9.6355%  1.6%w | n= 77 +10.5061% 76.6%w
+  WETH-USDC + ETH-USDC only
+    60 min                        n=225  -0.1079% 41.3%w | n= 35  +0.1659% 68.6%w
+    120 min                       n=258  -0.1501% 34.1%w | n= 30  +0.1345% 66.7%w
+
+  THE SIGNAL IS NEGATIVE AT EVERY HORIZON AND THE NULL IS POSITIVE AT EVERY
+  HORIZON. 120 min does beat 7200 min, which is what the item asked -- but
+  "less catastrophic" is not "predictive", and both lose to a random moment
+  on the same tape. The gate's MECHANISM is wrong; its VERDICT on
+  donchian_breakout@5d is right by accident.
+
+CAVEATS, stated rather than buried:
+  * the 7200-min row is n=62 of 1112 -- only the oldest ~6% of signals have a
+    five-day forward window, and both arms there are time-confounded. Do not
+    quote -9.64% as a horizon effect.
+  * null n is 213-221 at the short horizons; sparse.
+  * 60/120 min is where n is real (962/946) and the sign is consistent across
+    both slices. That is the part that is defensible.
+
+NO RECOVERY NUMBER IS QUOTED, per the item's criterion 4. What survives the
+standing edge ban (item 9d4d29c7) and arbitration is UNMEASURED.
+
+STILL OPEN:
+  * 305 of the 8864 refusals are SUFFIX-LESS ids whose horizon is already
+    honest and short (rsi_reversal 45 min n=229, ema_cross 60 n=65,
+    stochastic_reversal 20 n=6, mean_reversion 45 n=3, bollinger_squeeze
+    45 n=2). Those refusals are the gate working as designed and are
+    unaffected by any label fix. Whether THOSE signals have edge is not
+    measured here.
+  * The same null-baseline test has not been run on any other strategy. If
+    the suffixed rules are all anti-predictive the horizon fix is worthless
+    repo-wide; if only donchian is, it is worth running per-id before
+    anyone edits horizons.py.
