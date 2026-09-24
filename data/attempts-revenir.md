@@ -31761,3 +31761,46 @@ Two solid consequences and one suspicion, kept separate:
 
 Complement still open: a gate refusing 100% may be right. Unchanged test --
 re-run the census at per-symbol real costs, report how many of the 7169 survive.
+
+### THE KILL TEST RAN. THE COMPLEMENT WON. **ROUTE CLOSED.**
+
+    .venv/Scripts/python.exe -X utf8 scripts/money_button_gate_census.py --fee 0.00044
+
+Reran at WETH's real one-way cost (0.19% round trip vs production's 250bp).
+**101 candidates fire** where 0 fired before -- so H's MECHANISM was right, the
+cost scalar really is what refuses everything. Then:
+
+    raw (overlapping fires counted separately)
+      91 trades  32W/59L  mean -0.1531%  total -13.9342% of notional
+      gross BEFORE the 0.19% round trip: mean **+0.0349%**, 64 of 91 up
+
+    sequential (no re-entry while holding)
+      14 trades  3W/11L  mean -0.2023%  total -2.8324%
+      gross BEFORE cost: mean **-0.0143%**, 10 of 14 up
+
+**Strip the toll entirely and the signal is flat-to-negative.** A 3.5bp gross
+mean cannot pay an 8.79bp WETH toll, let alone a real one. There is nothing for
+a cost fix to recover.
+
+**The symbols are the kill shot:**
+
+    SR-USDC 23  UP-USDC 20  CBMEGA-USDC 19  MAMO-USDC 19  BLUECHIP-USDC 16  GYND-USDC 4
+
+Not one is WETH, ETH, CBBTC or any deep pair. They were priced at WETH's 4.4bp
+because it is the cheapest thing on Base; their real cost is multiples of it.
+**So -0.15% is the OPTIMISTIC number.** Same shape as the standing finding that
+signal lives only on pairs that cannot pay -- now measured on the one approved
+strategy.
+
+**CLOSED, both halves.** Momentum is not the blocker (13,628 clear it). Cost is
+the terminal gate at 100.00% of 7,169 -- but removing it reveals no edge
+underneath. **Loosening this gate would put real money behind a gross-negative
+signal on illiquid tokens.**
+
+I reverse my own earlier recommendation in this file: I wrote that the cost gate
+was the thing to attack. On this evidence it is not.
+
+Caveats: the exit is a fixed 12-min hold proxy, not the live stop/confidence
+logic (the script says so); sequential n=14 is small, though raw n=91 agrees in
+sign; 10 fires ran past the recorded data. Per-symbol real costs were not run and
+would only make it worse.
