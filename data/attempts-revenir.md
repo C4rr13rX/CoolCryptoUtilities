@@ -33826,3 +33826,44 @@ censored sum or say which they mean.
 AAVE. That is not evidence of fiction by itself (a real winner can exit near a high), but
 on a 252-tick tape it is worth one query. The other four survivors are three BSTONK rows
 and an SR row, all on symbols p704 flagged dead-feed.
+
+### p705 ADDENDUM 2 (Echo, senior) -- I CHASED MY OWN FLAGGED LEAD AND CLEARED IT. NOT FICTION.
+
+**CLOSED as a negative: "SIBYL +0.75010 looks like the AAVE fiction because its exit IS
+its tape max."** It is a false alarm:
+
+    SIBYL exit 0.0016545249  ->  213 of 252 ticks are AT OR ABOVE it.
+
+The tape **sat** at that level; it is not a lone spike. The exit equals the max only
+because SIBYL's entire range is [0.00144992, 0.00165452] -- a **14% band** -- so the top of
+a narrow range is an ordinary exit. Same for all three BSTONK rows and all three SR rows:
+every entry and exit lands on the tape with real tick counts (6-213 within 0.5%, and
+60-1128 ticks at or above each exit). **There is no fiction in the top 5 surviving positive
+rows. The censor has got them all.** Do not re-open this.
+
+**BUT THE SAME QUERY PRINTED SOMETHING I WAS NOT LOOKING FOR:**
+
+    SIBYL-USDC    last tick  311.4h ago   (13.0 days dead)
+    BSTONK-USDC   last tick  423.4h ago   (17.6 days dead)
+    SR-USDC       last tick    6.8h ago   (live)
+
+**Four of the five largest surviving positive rows are on symbols that have not ticked in
+13-18 days.** That is p704's dead-feed finding arriving from a **third independent
+direction** -- p700 from a stale/fresh split, p704 from a 1230-row census, p705 from the
+**survivor side after censoring fiction**. Three instruments, three populations, one answer.
+
+**THE BOOK'S POSITIVE SIGN IS NOW FULLY DECOMPOSED AND HAS EXACTLY TWO COMPONENTS:**
+
+    +5.35664  FICTION, already held out by services.outcome_plausibility
+    -4.81317  the censored remainder -- whose largest positive rows are DEAD FEEDS
+
+Remove the fiction and the book is negative. Remove the dead feeds too and it gets worse --
+**exactly what p704 predicted when it said the feed fix SHUTS the live lane harder rather
+than opening it. That is not the fix failing; it is the book telling the truth.**
+
+**ROUTE STATUS after this pass:** (a) gate/graduation -- CLOSED on evidence, the gate is
+RIGHT about AERO (p705) and no strategy has an edge on the fresh universe (p700, reproduced
+p704). (b) cost floor -- CLOSED, p699/p704, the scoped symbols are corpses. (c) shorten the
+hold -- the 15-minute claim was one contaminated row (p682). (d) evidence rate -- CLOSED
+twice, on count (p698) and on content (p704). **The only item that removes a component of a
+fake positive rather than measuring around it is [779b2357].**
