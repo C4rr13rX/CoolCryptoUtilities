@@ -141,7 +141,7 @@ def main() -> int:
         return ("%g" % x) if x != int(x) else "%d" % int(x)
 
     hdr = "%-22s" % "action (hours ago)" + "".join(
-        "%8s" % ("%s-%s" % (_lab(b * args.buckets), _lab((b + 1) * args.buckets)))
+        "%10s" % ("%s-%s" % (_lab(b * args.buckets), _lab((b + 1) * args.buckets)))
         for b in range(nb))
     print(hdr)
     print("-" * len(hdr))
@@ -149,7 +149,7 @@ def main() -> int:
         buckets = by_action[action]
         total = sum(buckets.values())
         print("%-22s" % action
-              + "".join("%8d" % buckets.get(b, 0) for b in range(nb))
+              + "".join("%10d" % buckets.get(b, 0) for b in range(nb))
               + "   tot %d" % total)
     print()
     print("NEWEST ROW PER ACTION -- 'alive' and 'converting' are different questions")
