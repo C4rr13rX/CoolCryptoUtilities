@@ -28683,3 +28683,80 @@ nothing; the action column on those rows reads 'hold'.
   second -- essentially all deep-pair signals are from the last ~1.5 days, and
   their "worst case -0.14%" is a quiet WETH window, not a tail. Use the
   all-symbol n=1754/1762 numbers.
+
+## Pass 690 (Dune) -- [f37e6271] route: RESTATE THE LIVE COST GATES AT THE 6.00 CLIP
+
+ROUTE TRIED: the 55.5bp floor is a 0.75-clip artifact; restate every live cost gate
+at `LIVE_MIN_CLIP_USD=6.00` and see which refusals were mis-priced.
+
+**PARTLY OPEN, AND THE PREMISE IS WRONG FOR HALF THE UNIVERSE.** Gas is 94% of the
+floor ON WETH. It is about 20% on AERO. Fitted on the 18 `(atf_static, AERO-USDC)`
+rows' own `fee_cost` against notional:
+
+    fixed        = 0.001140 USD / round trip
+    proportional = 0.004500  =  45.00 bp, SCALE-INVARIANT
+
+A 26x clip increase (0.75 -> 19.66) buys 14.6bp on AERO. The same increase buys a
+6.4x collapse on WETH. **One aggregate cannot describe both regimes**, and any route
+phrased as "raise the clip and the floor falls" is a WETH statement wearing a
+universal hat.
+
+CRITERION 2, THE WHOLE JUDGEABLE UNIVERSE (n >= MIN_SAMPLES=5), cost refit per cell,
+MAX_T=-1.70 untouched:
+
+    strategy              symbol        n   gross%  cost@trad  cost@6.00  t@trad  t@6.00
+    atf_static            AERO-USDC    18  -0.4995    0.5648     0.4690    -4.33   -3.94  refuse
+    atf_static            CBBTC-USDC    6  -0.1927    0.8030     0.2443    -3.41   -1.50  FLIP->ADMIT
+    atf_static            SR-USDC       6  +0.1287    0.4645     0.4550    -1.13   -1.10  admit
+    atf_static_scout      AERO-USDC     5  -1.0475    0.3862     0.3862    -1.28   -1.28  admit
+    obv_accumulation@1w   COMP-USDC     6  -0.1277    1.2259     0.7220   -15.17   -9.52  refuse
+
+**EXACTLY ONE VERDICT FLIPS, AND IT FLIPS ON THE DEEP POOL THE THESIS PREDICTS.**
+CBBTC-USDC falls 3.3x because its cost is mostly the fixed gas toll. Read it honestly:
+its gross price return is still **-0.1927%**, so `t=-1.50` means the gate can no longer
+PROVE it loses, NOT that it wins. Six trips is not an edge.
+
+**CLOSED: "raise the clip and AERO opens" is closed.** AERO is gross-negative by
+0.4995% before any fee and stays refused at every clip tested -- t = -4.48 at 0.75,
+-3.94 at 6.00, -3.89 at the whole $19.66 wallet. Re-clipping a gross-negative trade
+changes the size of the loss, not its sign.
+
+CRITERION 1 -- every live site comparing a return against a cost, and its clip:
+
+    CLIP-AWARE      services/atf_static_strategy.py:974  _roundtrip_cost_rate(clip_usd, symbol)  clip+symbol
+                    trading/bot.py:2257-2259             roundtrip_cost_rate(notional)           clip only, symbol-BLIND
+    CLIP-IMPLICIT   services/strategy_edge_gate.py:361   round_trip_cost(db_path=...)
+                    services/symbol_edge_gate.py:518     round_trip_cost(db_path=...)
+                    services/round_trip_cost.py:444      def round_trip_cost(*, db_path=None)  <- no notional exists to pass
+    HARDCODED RATE  services/streamed_symbol_candidates.py:114/:445   ROUND_TRIP_COST = 0.0065
+                    services/symbol_motion_gate.py:102/:238           ROUND_TRIP_COST = 0.0065
+
+**CLOSED: the two edge gates are NOT mis-clipped.** Both put `net/notional` at the
+historical clip on the left and a historical fee ratio on the right, so both sides are
+at the same clip. I went looking for the 0.75-vs-6.00 mismatch in them and it is not
+there.
+
+**OPEN, AND FILED AS [af8e87f1]: the mismatch is in CANDIDATE ADMISSION.**
+`streamed_symbol_candidates.py:445` admits a symbol only if it cleared **65bp** in a
+600s window. Not measured, not clipped, not symbol-aware. WETH's true floor at the 6.00
+clip is 8.79bp, so the gate demands **7.4x** what the round trip costs -- and the only
+evidenced open positive (WETH 30-min reversion, 2.08-4.08bp) is **16x under it** and
+always was, at any clip, because the literal does not move when the clip does. It is on
+the live path via `services/atf_static_strategy.py:1708`.
+
+THE FIX IS NOT TO LOWER THE NUMBER. Lowering 0.0065 is a threshold moved to let
+something through. The fix is to make line 445 ASK -- `roundtrip_cost_rate(clip_usd,
+symbol)`, as `atf_static_strategy.py:974` already does -- which RAISES the bar on AERO
+(46.9bp at the 6.00 clip) and lowers it on WETH. A gate that asks is not a gate that was
+loosened. Not shipped this pass: one change per pass, and the flat-row filter (b6220cc)
+was this pass's change.
+
+SCOREBOARD: unchanged at -0.1864 over 18 live trades. No gate change shipped under this
+item, and no clip or cap was touched.
+
+STILL OPEN:
+  * The fee model is fitted per cell from `fee_cost` vs notional. For AERO it rests on
+    18 rows with notionals 0.035-5.736; the `fixed` term is poorly constrained at the
+    low end and I did not bound it.
+  * `trading/bot.py:2257` is clip-aware and symbol-BLIND. That is @Sage's p689 finding
+    and it is still true; not this item's.
