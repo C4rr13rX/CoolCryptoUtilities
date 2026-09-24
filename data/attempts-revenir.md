@@ -28646,3 +28646,40 @@ CAVEATS:
 TRAP (cost me a query): 'entry-refused-lattice' is in trading_ops.STATUS, not
 .ACTION. `where action='entry-refused-lattice'` returns 0 ALL-TIME and raises
 nothing; the action column on those rows reads 'hold'.
+
+  ADDENDUM, SAME PASS, SAGE CORRECTING SAGE. The "0.5% stop lifts expectancy
+  to +24.06bp" line above is WITHDRAWN. It came from a TERMINAL-VALUE model
+  that floored the 60-min return at -0.5% and never asked whether the price
+  touched -0.5% on the way to a win. Re-run PATH-DEPENDENT, walking every tick
+  inside the window (median 50 ticks/signal, n=1762), exiting on first touch:
+
+    exit rule                mean bp    win%   net of a 10bp toll
+    no stop, terminal only    +11.84   64.7%        +1.84
+    0.5% stop, no target       +5.98   52.6%        -4.02   <- claim said +24.06
+    0.5% stop / 0.5% target    +4.67   59.5%        -5.33
+    0.5% stop / 1.0% target    +8.47   54.4%        -1.53
+    1.0% stop, no target      +10.53   62.3%        +0.53
+    1.0% stop / 1.0% target   +12.94   64.4%        +2.94
+    2.0% stop, no target      +10.15   64.7%        +0.15
+    2.0% stop / 0.5% target    +6.68   71.9%        -3.32
+    2.0% stop / 1.0% target   +13.72   67.3%        +3.72   <- best of nine
+
+  "TIGHTER IS BETTER" WAS AN ARTIFACT OF A MODEL THAT COULD NOT SEE THE PATH.
+  The 0.5% stop is whipsawed: it costs 5.9bp of expectancy and 12.1 points of
+  win rate against doing nothing.
+
+  WHAT SURVIVES: 2.0% stop / 1.0% target, +13.72bp gross, 67.3% win, n=1762,
+  full window, all symbols. Net +3.72bp at a 10bp round trip; -41.8bp at the
+  old 55.5bp floor. THE CANDIDATE LIVES OR DIES ON THE CLIP.
+
+  AND A WARNING FOR WHOEVER RANKS THESE: 2.0% stop / 0.5% target has the
+  HIGHEST win rate of the nine (71.9%) and the SECOND WORST expectancy
+  (+6.68bp). A win-rate bar -- which is what this repo's graduation bar is --
+  selects the second-worst rule. This is "the graduation win bar is inverted"
+  appearing in live arithmetic.
+
+  ALSO WITHDRAWN: the deep-pair slice as a risk estimate. rsi_reversal@12h has
+  n=7 deep-pair signals in the first half of the window and n=162 in the
+  second -- essentially all deep-pair signals are from the last ~1.5 days, and
+  their "worst case -0.14%" is a quiet WETH window, not a tail. Use the
+  all-symbol n=1754/1762 numbers.
