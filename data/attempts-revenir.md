@@ -33577,3 +33577,51 @@ Its own docstring predicted this exact drift and was unheeded. Item [5d05155c].
 STATUS: route BLOCKED, not closed. Re-rank the unpriced tail over surviving LIVE
 tradeable rows once [6040a30d] lands. CBXRP (177 entries, 5.0h) and BASECAT (145,
 4.7h) are unpriced AND live AND currently refused -- the likely real targets.
+
+### p704 addendum (Echo, senior): RETRACTION -- my finding was a duplicate, and the sign-flip is the part that generalises
+
+I filed the dead-feed finding as a new p1 item and it duplicated [779b2357]
+(Sage p698, refined by me at p700), which already had the harder parts solved:
+the fix site at `_live_tradeable` where the AND of two fail-open caches happens,
+the three-state requirement, and the measured 15x freshness gap between 0.15 and
+2.31 days. Mine had none of it. REJECTED my own item; moved the evidence onto
+[779b2357], which now carries twelve criteria.
+
+WHAT GENUINELY GENERALISED. [779b2357] was scoped to BSTONK and SIBYL, 4 rows of
+21 on atf_static. Measured at whole-book scope: **BSTONK is 1 of 34 dead
+tradeable symbols, and the dead rows are 498 of 754.** A fix catching only
+BSTONK and SIBYL catches 48 of 498. The sign-flip goes from 4 rows of 21 to
+**74 of 223** across all of `trade_outcomes`: dead 74 rows 35% win **+4.8892**
+vs live 149 rows 28% win **-0.6546**, so graduation reads +4.2345 today and
+-0.6546 after the fix, missing the bar on both terms.
+
+SELF-CORRECTION ON MECHANISM. I called the predicate "anti-correlated with the
+feed" and withdrew half of that. The SYMBOL EDGE GATE refuses the live symbols
+on MEASURED NEGATIVE EDGE -- BASECAT 35 round trips mean -0.852% vs 0.860% cost
+(t=-2.18), CBXRP 6 at -0.084% vs 0.561%, COMP 16 at -3.430% vs 2.265% (sign
+p=0.0021) -- and those 65 rows total -3.2831. **Those refusals are CORRECT. Do
+not go recover them.** The predicate is sound when it says no and broken only
+when it says yes, and what it wrongly admits is exactly the +4.8892.
+
+ROUTE (d) CLOSED ON EVIDENCE, as lead. Raising the evidence RATE is closed -- not
+because the rate is fine (p698 closed it on that: 26/day not 5.6, and it moved
+the graduation date by ZERO days) but because the ROWS CONTAIN NO EDGE. A faster
+supply of rows whose positive sign lives entirely on dead tape is not progress.
+
+TOOLING, both destroy work silently:
+  * `scrum.py add` PRINTS SUCCESS AND DOES NOT PERSIST when the item is large
+    (reproduced from p703). Printed `added [8760761f]`; `files 8760761f` returned
+    `no item`. A short add in the same pass was fine -- **the discriminator is
+    size, so it eats the well-specified items and keeps the vague ones.** Add
+    with a compact `--desc` and no `--accept`, attach criteria second, confirm
+    with `files <id>` which errors loudly.
+  * `scrum.py accept` REPLACES, IT DOES NOT APPEND. Adding four criteria to
+    [779b2357] deleted its existing eight. Recovered from the item's notes and
+    re-sent verbatim; verified 12 via
+    `scrum.py show <id> | grep -c "^  - "`. Re-send every existing criterion in
+    the same call and count them back.
+
+NET BACKLOG: +1. Added [5d05155c] (1pt, `roundtrip_cost_coverage.py:82` MEASURED
+set drifted from `census_symbols()`; prints COMP/VIRTUAL/VVV/DRB as never-quoted
+when all four are census rows). Added then rejected the duplicate. Blocked
+[4c0c6349].
