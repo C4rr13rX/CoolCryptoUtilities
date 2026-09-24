@@ -114,6 +114,7 @@ import os
 import sqlite3
 import statistics
 import sys
+import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -881,6 +882,19 @@ def feed_quality(
     for sym, _ts, price in conn.execute(sql, (*symbols, t0)):
         series.setdefault(str(sym), []).append(float(price))
 
+    # THIN over a WINDOW is not THIN over the history. BSTONK-USDC has 3068
+    # all-time ticks and ZERO in the trailing 14 days, because the feed DROPPED
+    # it on 2026-09-06T23:26Z -- its rows are corroborable against the window in
+    # which they traded. Reporting the window count alone reads as "never had a
+    # tape" and is how Echo nearly rejected [efe669fc] at p691. So carry the
+    # all-time count next to it and let the reader see the difference.
+    alltime: Dict[str, Tuple[int, Optional[float]]] = {}
+    for sym in symbols:
+        row = conn.execute(
+            "SELECT COUNT(*), MAX(ts) FROM market_stream WHERE symbol = ?", (sym,)
+        ).fetchone()
+        alltime[sym] = (int(row[0] or 0), row[1])
+
     out: Dict[str, Dict[str, Any]] = {}
     for sym in symbols:
         pts = series.get(sym, [])
@@ -900,8 +914,12 @@ def feed_quality(
             verdict = "DIRTY"
         else:
             verdict = "CLEAN"
+        n_all, last_ts = alltime.get(sym, (0, None))
         out[sym] = {
             "ticks": len(pts),
+            "ticks_all_time": n_all,
+            "last_tick_ts": last_ts,
+            "dropped_from_feed": verdict == "THIN" and n_all >= min_ticks,
             "max_jump_pct": worst * 100.0,
             "jumps_over_bar": jumps,
             "verdict": verdict,
@@ -1055,17 +1073,33 @@ def strategy_main(argv: Optional[Sequence[str]] = None) -> int:
 
     print(f"\nFEED CENSUS over the trailing {args.days:g} days, "
           f"{len(symbols)} traded symbols")
-    print(f"  {'symbol':<18} {'ticks':>7} {'max jump%':>10} {'>bar':>5}  verdict   rows")
+    print("  THIN means no tape IN THE WINDOW. A symbol with all-time ticks is "
+          "DROPPED, not untaped --\n  its rows stay auditable against the window "
+          "in which they traded. Check all-time before\n  calling anything "
+          "uncorroborable.")
+    print(f"  {'symbol':<18} {'ticks':>7} {'all-time':>9} {'max jump%':>10} "
+          f"{'>bar':>5}  verdict   rows  note")
     counts: Dict[str, int] = {}
+    dropped_syms = 0
     for sym in sorted(symbols, key=lambda s: -feed[s]["ticks"]):
         d = feed[sym]
         counts[d["verdict"]] = counts.get(d["verdict"], 0) + 1
         nrows = sum(1 for r in priced if str(r.get("symbol")) == sym)
+        note = ""
+        if d["dropped_from_feed"]:
+            dropped_syms += 1
+            when = d["last_tick_ts"]
+            stamp = ""
+            if when:
+                stamp = time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime(float(when)))
+            note = f"DROPPED {stamp}"
         sym = sym.encode("ascii", "replace").decode("ascii")
-        print(f"  {sym:<18} {d['ticks']:>7} {d['max_jump_pct']:>10.2f} "
-              f"{d['jumps_over_bar']:>5}  {d['verdict']:<8} {nrows:>5}")
+        print(f"  {sym:<18} {d['ticks']:>7} {d['ticks_all_time']:>9} "
+              f"{d['max_jump_pct']:>10.2f} "
+              f"{d['jumps_over_bar']:>5}  {d['verdict']:<8} {nrows:>5}  {note}")
     print(f"  -> {counts.get('CLEAN', 0)} CLEAN, {counts.get('DIRTY', 0)} DIRTY, "
-          f"{counts.get('THIN', 0)} THIN")
+          f"{counts.get('THIN', 0)} THIN -- of the THIN, {dropped_syms} were "
+          "DROPPED from a feed that once carried them")
 
     payload: Dict[str, Any] = {"trace": trace, "feed": feed, "arms": {}}
     for censor in (True, False):
