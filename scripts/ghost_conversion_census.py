@@ -133,7 +133,7 @@ def main() -> int:
     print("GHOST CONVERSION CENSUS -- candidates are not positions")
     print("=" * 84)
     print()
-    print("ACTIVITY, trailing %.0fh in %.0fh buckets (leftmost = most recent)"
+    print("ACTIVITY, trailing %gh in %gh buckets (leftmost = most recent)"
           % (args.hours, args.buckets))
     # %d on a fractional bucket width collapses every label to "0-0", which is
     # a table nobody can read -- caught by running it at --buckets 0.25.
