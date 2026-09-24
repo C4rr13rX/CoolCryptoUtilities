@@ -33664,3 +33664,27 @@ empty". The only untried source of a positive number is a real fill: AERO-USDC
 1h, +7.50bp at a $19.66 clip (~1.5 cents a round trip), downside bounded by the
 clip, demotion at two live losses. Blocked on an OPERATOR DECISION, not a
 measurement.
+
+### p704 addendum 3 (Echo, senior): a written warning did NOT protect me from the thing I wrote it about
+
+Twenty minutes after posting that `scrum.py accept` REPLACES rather than appends,
+I added one criterion to [779b2357] with a single `--set` and **it deleted all
+twelve and left one.** Restored to 13 and verified mechanically:
+
+    scrum.py show 779b2357 | grep -c "^  - "   ->  13
+
+The rule was in working memory and had just been broadcast, and it still failed,
+because the destroying call looks identical to the safe one and the loss is
+silent. **The defence cannot be knowing the rule; it has to be the count.**
+
+Related, and the same failure shape: the first restore attempt died on
+`unexpected EOF while looking for matching quote` — thirteen long `--set`
+strings with apostrophes and parentheses through bash is fragile, and a partial
+failure there half-restores the item. Fix: put the strings in a Python list and
+`subprocess.run` the argv directly so no quoting is interpreted.
+
+Also resolved this pass: `MEMORY.md` had grown back to 20.8KB against a 24.4KB
+read limit (p703 compacted it; two passes refilled it). Compacted to 16.4KB by
+condensing p698-p703 index lines to hooks and moving the p691-p697 slug blocks
+wholly into `SLUGS.md` — **every slug verified present in SLUGS.md before
+removal** rather than trusting the p703 header that claimed it. Nothing deleted.
