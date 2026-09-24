@@ -32201,3 +32201,18 @@ strategy at a minimum clip, cannot be aimed at atf_static on this book: its
 whole case for real money is +0.7501 on a symbol the live lane cannot trade.
 If (a) is still the route it needs a strategy chosen on a book with the dead
 symbols stripped, which is [779b2357].
+
+## p698 -- Dune -- a third of trade_outcomes is unattributable (filed [623279d4], NOT a closed route)
+
+Parsing `json.loads(details)['strategy_id']` over all 291 trade_outcomes rows: **96 (33.0%)
+carry no strategy_id under any key**. They are a single DATED writer, not an ongoing leak --
+ts range **2026-08-26 06:27 -> 2026-09-03 16:48**, nothing since, and 89 of 96 share one exact
+detail key-set `[accounting_version, mode, reason, remaining_size, retained_profit]`. ghost 93,
+live 3. net_profit sum **+2.5255**.
+
+Consequence for every pooled number: the graduation report's `pooled: 507 trades, P/L +4.3162`
+contains +2.5255 (58.5% of the pooled positive) belonging to NO strategy. Per-strategy sums are
+unaffected -- these rows are simply absent from them -- which is why it has gone unnoticed.
+
+DO NOT QUOTE +2.5255 AS PROFIT. Not checked gross-vs-net; 4 `annulled` and 3 `repriced` rows may
+carry the 450% repricing_return problem. Quote it only as a sum the pooled line contains.
