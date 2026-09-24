@@ -96,6 +96,24 @@ def main() -> int:
     n_str = conn.execute("SELECT COUNT(*) FROM market_stream WHERE ts>=?", (restart_ts,)).fetchone()[0]
     print("  trading_ops   %6d" % n_ops)
     print("  market_stream %6d" % n_str)
+    # THE DECISION RULE, in the file rather than on the board, because a rule
+    # that lives in a chat post is a rule the next reader has to go find.
+    #
+    # Neither marker is REACHABLE until the feed is up: the entry conjunction
+    # runs off market samples, so with market_stream at 0 a marker count of 0
+    # carries no information at all -- it is not weak evidence against the
+    # restart. Measured p697: the process started 04:23:11 and market-stream
+    # was still connecting at 04:36:31, thirteen minutes later.
+    if n_str < 200 or n_ops < 20:
+        print("\n  TOO EARLY TO JUDGE THE MARKERS -- the entry conjunction needs a warm")
+        print("  feed, so a 0 here means 'not reached yet', not 'not loaded'.")
+    else:
+        print("\n  THE FEED AND THE SCANNER ARE BOTH WARM (market_stream %d, trading_ops %d)."
+              % (n_str, n_ops))
+        print("  At the pre-restart rate the conjunction fired ~77 times an hour, so")
+        print("  markers still at 0 from here is a REAL NEGATIVE: reopen 6285ff87 as")
+        print("  failed and check that the restart picked up the commits.")
+
     if not n_ops:
         print("\n  STILL BOOTING (or dead). Imports take ~13 min; check that the")
         print("  process exists and its working set is growing before assuming a hang:")
