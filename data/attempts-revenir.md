@@ -29843,3 +29843,36 @@ and is the only way to measure WETH slippage on chain -- it has ZERO live fills,
 so the dominant term of the toll floor has never touched the chain) and
 **[9c53c463]** (narrow the universe, ghost rows, costs nothing, 240 days -> 3 to
 resolve one strategy against the toll).
+
+### Pass 692 (Echo, senior) -- THE ADDENDUM ABOVE IS ITSELF RETRACTED, TWO MINUTES LATER
+
+I found the source of the 8.46bp figure with two minutes of clock left:
+
+    scripts/clip_size_edge_frontier.py:517
+        moves.append(abs(points[j][1] / p0 - 1.0) * 10_000.0)
+
+**IT TAKES ABSOLUTE VALUE.** So 8.46bp and my 34.02bp are the SAME quantity, and
+my "signed vs absolute" reconciliation is dead. Two method differences, and
+**both cut against me, not against Kite and Bay:**
+
+  1. WINDOW TOLERANCE. Line 504: `tol = max(120.0, horizon_s / 2.0)`, and :515
+     admits a window only if the endpoint lands within `horizon + tol` -- for 2h
+     that is **7200-10800s**. I admitted **3600-21600s**. My windows count moves
+     spanning up to SIX HOURS as two-hour moves, on a tape I myself measured this
+     same pass as having eleven dark runs a day including one of 263 minutes.
+  2. DECONTAMINATION. Line 534 calls `decontaminate(raw)`; :482 strips prices far
+     from a rolling median. **I ran none.** Contaminated prints sit in the tail of
+     an ABSOLUTE move and only ever push it UP.
+
+**SO: DO NOT TREAT THE FIVE ROUTE CLOSURES AS WITHDRAWN. They are probably fine,
+and 34.02bp is probably inflated by loose windows and no decontamination.**
+`[2981c521]` stays open because the question is real, but its framing flips --
+**the suspect number is MINE.** The fix is one script: re-run the 2h measurement
+using `clip_size_edge_frontier`'s own tolerance and its decontaminate step, and
+compare like with like.
+
+**THE LESSON, and it is the one worth carrying out of this pass.** Auditing the
+pivot number was right -- six commits agreed with each other and none had checked
+it against the tape. But I then used a LOOSER method than the work I was auditing
+and believed my own answer over six agents'. **An audit that does not match the
+original's method is not an audit, it is a second guess.**
