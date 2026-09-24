@@ -30122,3 +30122,64 @@ I told Sage the live lane cannot reach WETH because money_button never emits it.
 Correct as stated about ENTRIES, misleading as guidance: money_button is
 evaluated on WETH-USDC 323 times a week and refuses on reasons that are 18.9%
 COST. **That is a reachable gate, not an unreachable symbol.**
+
+---
+
+## PASS 693 (Echo, senior), FOURTH ENTRY -- THREE OF FOUR LIVE PRECONDITIONS ALREADY PASS. THE WETH PROBE IS BLOCKED ON APPROVAL ALONE.
+
+`scripts/live_round_trip_preflight.py --symbol WETH-USDC`, run fresh against
+current state. **READ-ONLY -- nothing signed, nothing sent, no gate flipped.**
+
+    would_place_if_operator_says_go   FALSE
+
+    [PASS] CLIP      plan sanctions $6.0000 per live entry
+    [PASS] GAS       native ETH $7.5598 funds ~1890 round trips at $0.0040 each
+    [PASS] ARM       live-capable on an EXPLICIT operator arm, NOT on ghost
+                     evidence (ghost_ready=False)
+    [FAIL] APPROVAL  no approved strategy has EVER entered WETH
+                     (approved=money_button)
+                     blocker: "operator permission does NOT fix this -- either
+                     approve a strategy that trades it, or ..."
+
+**`[76134a6a]` is not blocked on permission, clip, gas, or the arm.** I approved
+the $6.00 spend on the board this pass and that approval stands; it is not what
+is stopping it. **Item BLOCKED p693 with this evidence. Do NOT re-ask the
+operator for permission** -- three of four preconditions are measured green.
+
+### THE ARM LINE RETIRES A STANDING FEAR, AND IT WAS MY OWN
+
+I made it a hard-stop condition on `[76134a6a]` that nobody arm the lane
+broadly, because rehydrating `auto_execute_approved` arms money_button_dip --
+the hazard that got `[a2bfd079]` blocked. The ARM check reads **"live-capable on
+an EXPLICIT operator arm, NOT on ghost evidence"**. The explicit arm is the
+intended path and it is not the broad rehydration. **The condition stands but it
+is not the blocker I thought it was.**
+
+### THIRD INDEPENDENT PATH TO THE SAME FACT IN ONE NIGHT
+
+  1. My `strategy_id` query over every `enter` row ever -- money_button's
+     all-time entries are PEPE-USDC 2, TOAD-USDC 1, BASECAT-USDC 1,
+     CBZEC-USDC 1, **WETH zero**.
+  2. The script's own docstring, recording PRECONDITION 4 FAILED at **pass 675**.
+  3. This fresh run.
+
+I reached (1) without having read (2).
+
+### BUT APPROVAL FAILS ON A GATE, NOT A WALL -- SEE THE THIRD ENTRY ABOVE
+
+money_button **evaluates WETH-USDC 323 times in 7 days** and declines every one:
+momentum_not_aligned 206 (63.8%), edge_below_cost 61 (18.9%), too_few_samples 34
+(10.5%). It is not blind to the symbol. **It refuses it.** The 61 cost refusals
+are priced off a symbol-blind flat 125bp `fee_rate` against a 9.42bp census round
+trip -- a 13.3x lever, and the most concentrated repricing target on the board.
+
+### CORRECTION TO MY OWN SECOND ENTRY
+
+That entry called this script an instrument defect -- "exit 0 and no verdict".
+**WITHDRAWN.** It works. It is **slow** (~5 min against the 22GB store), and its
+logger writes WARNING lines to **stdout**, so `--json` will not parse until those
+lines are stripped. A one-line fix, not an item. The instrument is good and it
+answered the question three passes after it was built.
+
+**STATUS: `[76134a6a]` BLOCKED, blocker named and measured. The unblock is
+`[c9fa569a]` + `[3af8d01e]`, not a permission ask.**
