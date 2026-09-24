@@ -15,6 +15,7 @@ Usage: python scripts/dune_excursion_verify.py [--days 7]
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import sqlite3
@@ -47,8 +48,11 @@ def main() -> int:
     cutoff = time.time() - args.days * 86400.0
 
     ts_col = "exit_ts" if "exit_ts" in cols else ("ts" if "ts" in cols else "timestamp")
-    reason_col = next((c for c in ("exit_reason", "reason", "close_reason") if c in cols), None)
-    print(f"using exit-time column {ts_col!r}, reason column {reason_col!r}")
+    # There is NO exit_reason column -- the reason lives inside the details JSON.
+    # Filtering on it matters: the 18 non-timed-exit rows carry nearly all the
+    # large excursions, so the unfiltered cohort reads 2.4x too generous.
+    reason_col = "details" if "details" in cols else None
+    print(f"using exit-time column {ts_col!r}, reason read from {reason_col!r} JSON")
 
     sql = (f"SELECT symbol, entry_price, exit_price, {ts_col}"
            + (f", {reason_col}" if reason_col else "")
@@ -57,9 +61,19 @@ def main() -> int:
            f" AND {ts_col}>=? AND entry_price>0 AND exit_price>0")
     rows = conn.execute(sql, (cutoff,)).fetchall()
     print(f"closed ghost rows in {args.days:g}d: {len(rows)}")
-    if reason_col:
-        rows = [r for r in rows if str(r[4]) == args.exit_reason] or rows
-        print(f"after exit_reason={args.exit_reason!r} filter: {len(rows)}")
+    if reason_col and args.exit_reason:
+        def _reason(blob):
+            try:
+                return json.loads(blob).get("reason")
+            except Exception:
+                return None
+        kept = [r for r in rows if _reason(r[4]) == args.exit_reason]
+        print(f"after reason={args.exit_reason!r} filter: {len(kept)} of {len(rows)}")
+        if not kept:
+            print("  filter matched nothing -- falling back to the full cohort, "
+                  "which is NOT the cohort the p691 claim was made on")
+        else:
+            rows = kept
 
     joined: List[dict] = []
     misses = multi = 0
