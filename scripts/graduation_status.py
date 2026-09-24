@@ -618,12 +618,78 @@ def _pipeline_metrics() -> dict:
     return json.loads(text[start:])
 
 
+def _code_staleness() -> str:
+    """One line: is the RUNNING production process serving the CURRENT code?
+
+    Every line below this one describes a process, not a repository. On
+    2026-09-24 that distinction cost three passes: pid 20452 booted
+    2026-09-23 06:23:01, was alive and healthy and writing 18856 trading_ops
+    rows a day, and did not contain four of its own shipped fixes. Each pass
+    measured a fix against the running system, read the old behaviour, and drew
+    a conclusion about the fix.
+
+    Fails to UNKNOWN, never to FRESH. A staleness check that reads clean when
+    its own lookup breaks manufactures exactly the confidence this exists to
+    remove. Touches no trading code and no database, and the one subprocess it
+    runs is hard-timeouted, because this executes inside a script every pass
+    runs and a hang here stops the pass.
+    """
+    import datetime as _dt
+    import subprocess
+
+    def _sh(args, timeout=6.0):
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout).stdout
+
+    try:
+        out = _sh(["powershell", "-NoProfile", "-Command",
+                   "Get-CimInstance Win32_Process | Where-Object "
+                   "{ $_.CommandLine -like '*main.py --action start_production*' } | "
+                   "Sort-Object CreationDate | "
+                   "Select-Object -First 1 -ExpandProperty CreationDate | "
+                   # Formatted HERE, not parsed later: the default rendering of a
+                   # CimInstance datetime is culture-dependent ("Thursday,
+                   # September 24, 2026 4:23:11 AM" on this box) and strptime
+                   # against a guessed pattern fails to UNKNOWN on any machine
+                   # whose locale differs.
+                   "ForEach-Object { $_.ToString('yyyy-MM-dd HH:mm:ss') }"])
+        stamp = (out or "").strip()
+        if not stamp:
+            return "  CODE: UNKNOWN -- no 'start_production' process found (production may be down)"
+        boot = _dt.datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S")
+    except Exception as exc:  # noqa: BLE001
+        return "  CODE: UNKNOWN -- could not read the production process (%s)" % type(exc).__name__
+
+    try:
+        since = boot.strftime("%Y-%m-%dT%H:%M:%S")
+        log = _sh(["git", "log", "--since", since, "--format=%h %s"]).strip()
+        head = _sh(["git", "rev-parse", "--short", "HEAD"]).strip() or "?"
+    except Exception as exc:  # noqa: BLE001
+        return "  CODE: UNKNOWN -- could not read git history (%s)" % type(exc).__name__
+
+    rows = [ln for ln in log.splitlines() if ln.strip()]
+    if not rows:
+        return "  CODE: FRESH -- production booted %s, HEAD %s, nothing committed since" % (
+            boot.strftime("%Y-%m-%d %H:%M:%S"), head)
+
+    shown = rows[:4]
+    tail = ("  ... and %d more" % (len(rows) - len(shown))) if len(rows) > len(shown) else ""
+    lines = ["  CODE: **STALE** -- production booted %s and %d commit(s) landed after it "
+             "(HEAD %s). Every line below describes THAT build, not this tree."
+             % (boot.strftime("%Y-%m-%d %H:%M:%S"), len(rows), head)]
+    lines += ["        %s" % ln[:96] for ln in shown]
+    if tail:
+        lines.append("      %s" % tail)
+    return "\n".join(lines)
+
+
 def render(r: dict) -> str:
     o = []
     A = o.append
     crit = r.get("criteria", {})
     tot = r.get("totals", {})
 
+    A(_code_staleness())
+    A("")
     A("=" * 74)
     A("GRADUATION TO LIVE TRADING -- the only scoreboard for this loop")
     A("=" * 74)
