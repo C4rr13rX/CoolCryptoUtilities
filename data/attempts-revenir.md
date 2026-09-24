@@ -28502,3 +28502,80 @@ STILL OPEN:
     the suffixed rules are all anti-predictive the horizon fix is worthless
     repo-wide; if only donchian is, it is worth running per-id before
     anyone edits horizons.py.
+
+## Pass 690 (Dune) -- [9d4d29c7] route: SAMPLE VALIDITY IN THE STANDING EDGE BAN
+
+ROUTE TRIED: does the strategy edge ban need a minimum-evidence floor, because it
+treats a degenerate sample as infinite confidence?
+
+NUMBER: the three rows `_strategy_edge_refusal('rsi_reversal@5d')` computes over tie
+by outcome_id -- all DRB-USDC, all `timed-exit`, all with
+`entry_price == exit_price == 0.0001663` to the last digit. t reproduces at
+**-92552** (Kite reported -92145; the book window rolled two rows). But the stated
+cause is wrong twice: `details.return_pct` is ABSENT, not 0.0 (the key exists in
+8 of 286 closed rows), and the sample is NOT zero-variance (stdev 1.734e-07, so the
+ordinary t path runs, not the degenerate branch). The real cause is a FLAT PRICE:
+`net_profit` is the fee and nothing else, so `net/notional` is the cost of trading
+rather than a return the strategy earned.
+
+KILL TEST, PRE-REGISTERED: "for every banned pair report n and |t|; if the bans with
+n>=10 already cover the symbols we care about, the complement wins and the degenerate
+ones are cosmetic."
+
+    BANNED (16):  n = 3,3,3,3,3,3,3,3,3,4,4,4,5,5,8,9     MAX n = 9
+    NOT BANNED, n>=10:  rsi_reversal n=13 t=-0.86 | donchian_breakout@5d n=10 t=+0.59
+                        atf_static n=50 t=-0.28
+
+ZERO of 16 standing bans has n>=10, so the complement's own test cannot be satisfied.
+The separation is perfect at the boundary: 16 of 21 judged strategies with n<10 are
+banned, 0 of 3 with n>=10 are.
+
+**CLOSED -- THE MINIMUM-n FLOOR IS CLOSED AND MUST STAY CLOSED.** Derived from the ban
+population's own distribution, ANY floor at n>=10 deletes the ENTIRE ban list. That is
+an unbanning wearing a statistician's hat, and it is the failure mode this repo has
+already shipped. No floor was added and `MIN_SAMPLES`, `MAX_T`, `NEVER_BAN` and the
+ordering are untouched.
+
+OPEN AND SHIPPED INSTEAD: a validity filter in `_load_book` that drops round trips where
+`entry_price == exit_price` (14 of 194 attributed rows), fails OPEN on a null or
+unreadable price. Effect, with every threshold unchanged:
+
+    rsi_reversal@5d        n=3 t=-92552  ->  n=0  UNJUDGED
+    unclassified           n=5 t=-19.94  ->  n=1  UNJUDGED
+    donchian_breakout@12h  n=3 t= -2.93  ->  n=2  UNJUDGED
+    obv_accumulation@1d    n=3 t= -2.24  ->  n=1  UNJUDGED
+    obv_accumulation@1w    n=9 t= -7.72  ->  n=7  t=-22.12    BAN GETS STRONGER
+    obv_accumulation@5d    n=8 t= -2.55  ->  n=7  t= -2.13    ban stands
+    the other 10 bans                    ->  UNCHANGED to the digit
+
+The `obv_accumulation@1w` line settles the "is this an unbanning" question: |t| nearly
+TRIPLES when the flat rows come out, because they were DILUTING a real ban as well as
+manufacturing a fake one. Four strategies become UNJUDGED, not vindicated -- they must
+re-earn a verdict on round trips where the price moved.
+
+DO NOT READ THIS AS A ROUTE TO PROFIT. `rsi_reversal@5d`'s real evidence is ONE non-null
+trip. Lifting its ban buys one thing: its next DRB-USDC round trip gets judged on a price
+that moved. That is a measurement, not an earning.
+
+SEPARATELY, AND IT CLOSES A STANDING WORRY: the null-exit rows are NOT still being
+written, and they are NOT in the table this gate reads.
+
+    trade_outcomes, 286 closed rows:  triple-null (return_pct==profit==expected_delta==0.0) = 0
+    trading_ops,    821 exit rows:    zero-valued = 143
+        max_hold 99 | live_position_cannot_exit_in_simulation 18 | no_fill_detected 14 | stale_underwater 12
+        span 2026-08-21 .. 2026-09-05.   last 7d = 0.   last 24h = 0.
+
+The writer stopped 18 days ago, and `_load_book` reads `trade_outcomes` and never
+`trading_ops` by design, so those rows never reached the t-test and never could.
+TWO writers, and the reasons partition exactly onto them:
+`services/atf_static_strategy.py:1034/:1046` (max_hold, stale_underwater -- 111 of 143)
+and `trading/bot.py:9561/:10379` (no_fill_detected,
+live_position_cannot_exit_in_simulation -- 32 of 143). **CLOSED.**
+
+STILL OPEN:
+  * 14 of 194 attributed rows are flat, and they CONCENTRATE (`rsi_reversal@5d` 3 of 3,
+    `unclassified` 4 of 5, `obv_accumulation@1d` 2 of 3). Whether that concentration is
+    a property of the strategies' hold time or of the symbols they trade is not measured.
+  * The flat rows are a FEED STALL, not an execution fault: DRB-USDC has 2097 distinct
+    prices over 2388 ticks all-time but exactly ONE across the six ticks spanning these
+    three exits. That is [a2bfd079] territory, not this item's.
