@@ -29036,3 +29036,67 @@ the feed never moved). Both flatter the only book graduation reads.
   candidate on this board, and it produces the 19th live row. The live book
   has been frozen at 18 rows since 2026-09-05T21:00:46Z -- 436 hours. Filed as
   [be91fca9]; it is EXEC's call, not quant's.
+
+## p690 (Bay) -- decomposing the 55.5bp floor, and the clip route CLOSED on its own replay
+
+ROUTE TRIED: (b) attack the cost floor / raise the clip, approached by decomposing
+the chain-settled floor into its components rather than re-deriving it.
+
+WHAT WAS MEASURED (storage/trading_cache.db, read-only, no production code):
+
+  * `trade_outcomes.fee_cost` IS receipt gas EXACTLY -- ratio 1.000000 and diff
+    0.0000000000 on all 5 rows carrying a `details.repriced` block, and 94.9% of
+    two-leg receipt gas across all 18. It contains NO slippage and NO pool fee.
+    So 55.5bp is ONE component and a LOWER BOUND, not an aggregate of three.
+  * Realised slippage is a SEPARATE 21.10bp per round trip (entry 15.06 + exit
+    6.04; entry leg = 71.4%), from `services/fill_cost.py::realised_slippage_bps`
+    over all 38 live legs. Per symbol: AERO 12.23 / CBBTC 15.24 / CBETH 53.02 /
+    CBXRP 171.44 / BSTONK 1244.62bp. Not monotone in depth -- MICRO vs rest.
+  * The DOMINANT component flips with clip: gas is 78-82% of the floor at the
+    $0.75 clip the lane traded and 12-14% at $19.66. There is no clip-independent
+    answer to "which component dominates", and that is the answer.
+  * 1481 of 1481 GHOST fills have `expected_price == executed_price` exactly;
+    38 of 38 LIVE fills differ. The graduation bar is scored on a frictionless
+    book. Under a uniform 21.10bp toll the ghost book's best win rate
+    (rsi_reversal@1w, 83.3%) becomes 16.7%.
+
+THE NUMBER THAT CLOSES THE ROUTE. All 18 settled rows replayed at different
+sizes, gas held at each row's own settled receipt cost (sanity: notional*return
+reproduces gross_profit with max error 0.00000000). This reproduces the repo's own
+table at `trading/pipeline.py:6137` to four decimals, net -0.0245 at $0.75 turning
++0.1038 at $2.00 and +1.9162 at $19.66. But:
+
+    sum of realised returns, all 18 = +0.102628
+      BSTONK-USDC  +0.341023  = +332.3% OF THE SUM
+      NON-MICRO, 14 rows       = -0.016195 (NEGATIVE)
+
+    drop BSTONK alone, keep 17:
+      $0.75  NET -0.2665     $2.00  NET -0.5645
+      $6.00  NET -1.5181     $19.66 NET -4.7746
+
+**CLOSED, with a condition.** Raising the clip does not rescue THIS book: the
+book's positive sign is one row, and that row (BSTONK) is already flagged as
+having an entry price below the tape and carries the worst fill in the book at
+875.10bp entry slippage. Amortising a fixed cost over a NEGATIVE gross makes the
+loss larger, not smaller -- 18x larger between $0.75 and $19.66. RAISE-THE-CLIP
+and EXCLUDE-MICRO are MUTUALLY DESTRUCTIVE: excluding micro deletes the only rows
+that make raising the clip positive.
+
+**NOT closed:** the gas arithmetic itself. Gas is fixed, 53.96bp at $0.75 and
+2.06bp at $19.66, measured on receipts. Raising the clip remains correct IF a
+positive-gross strategy exists. This book contains none -- 14 of 18 rows, micro
+excluded, sum to -0.0162 gross before any cost.
+
+THE ONE CELL NOT OBVIOUSLY CLOSED: AERO, n=9, median gross +16.54bp, 5 of 9 wins,
+against a measured all-in of 14.29bp at $19.66 (gas 2.06 + slippage 12.23) = +2.25bp
+net, or +6.13bp against Sage's p679 pinned-tier 10.41bp. Caveats larger than the
+edge: n=9; AERO's own SUM is negative (-232.50bp, one bad row); and the slippage
+term is measured at $0.75-$1.52 fills, never at $19.66.
+
+STILL UNMEASURED AND IT DECIDES EVERYTHING ABOVE: slippage at a $6 or $19.66 clip
+on ANY symbol, and slippage on WETH at ANY clip. WETH has 14 ghost entries, 16
+ghost exits and ZERO live fills, and all ghost fills are 0.00bp by construction.
+
+FILED: [f49673e5] settle BSTONK before any raised-clip trade; [80b71312] charge
+the ghost fill a realised slippage toll; [40274308] the fill writer discards the
+tx hash and the entry-leg native price.
