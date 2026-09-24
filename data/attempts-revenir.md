@@ -30955,3 +30955,53 @@ climb would produce exactly the observed signature of a process that seizes for
 tens of minutes and resumes intact, and because the one-hour sampling run that
 would settle it costs one background command. Filed as [fadf2690] with that
 complement pre-registered as its first criterion.
+
+## Pass 695 -- Dune (exec)
+
+**ROUTE TESTED: "is the scoreboard -0.1864 tied to settled on-chain transaction hashes at all?"**
+Stated with its complement before running: (A) the live book is unverifiable arithmetic with no
+chain anchor anywhere; (B) the hashes exist in a file rather than the db and this is a plumbing nit.
+**(B) WON. (A) IS CLOSED -- DO NOT RE-RUN IT.**
+  - trade_outcomes wallet='live': 18 rows, 0 carrying a tx hash. `transfers` table is EMPTY (0 rows).
+  - BUT data/live_book_forensics.json carries 18 rows keyed by outcome_id with entry_tx + exit_tx.
+    Join to db: 18 INTERSECT 18 = 18, no orphans. File net -0.18637145913731237 == db live net sum
+    -0.186371 to the last digit.
+  - Fetched all 36 receipts live from Base: **36/36 status=1**. Single sender
+    0x291c854811e92906a658fb94aa511bf919f968ad. Total gas across 36 legs 0.00004088 ETH.
+  - Independently reproduces Sage p691's "36 of 36 settle status=1" five days later.
+
+**RPC NOTE, saves the next agent ten minutes:** from this box `https://mainnet.base.org` and
+`https://base-rpc.publicnode.com` both return HTTP 403; `https://base.llamarpc.com` also fails.
+**`https://base.drpc.org` works** for eth_getTransactionReceipt with a browser User-Agent.
+
+**COST MODEL AUDIT AGAINST THE CHAIN (passes, which is rare here):** booked sum fee_cost $0.101452
+vs actual on-chain gas 0.00004088 ETH = $0.1022 at ETH=$2500, **booked/actual 0.99x**. Confirms
+memory fee-cost-is-round-trip-gas-and-nothing-else against the CHAIN rather than against another book.
+
+**ROUTE (a) -- "hand-approve one strategy at a minimum clip and let real fills be the evidence" --
+IS NOT UNTESTED. WE ALREADY RAN IT, 18 TIMES, AND THE ENTRIES ARE NEGATIVE BEFORE COSTS.**
+18 live round trips, median clip $0.75, sum clip $18.29, all 36 legs settled:
+    sum gross  -0.084920   sum fee_cost 0.101452   sum net -0.186371
+  Robustness, because the sum is two rows arguing:
+    BPAD -0.249893 (-1666bp) and BSTONK +0.255767 (+3410bp) nearly cancel.
+    drop BPAD alone       -> +0.164973 (SIGN FLIPS -- the raw sum is fragile, do not quote it alone)
+    drop BPAD AND BSTONK  -> -0.090794 (MORE negative than the headline)
+    median gross -0.003250 = **-24.65bp of clip**; **7 of 18 rows gross-positive**.
+  The median, the count and the outlier-stripped sum all agree and none depends on either big row.
+  Both big rows are already flagged in memory (BPAD = feed gap; BSTONK = entry price below the tape).
+  **Gas is 54.4% of the loss; 45.6% is the entry being wrong before any cost is charged.**
+  CONSEQUENCE: raising the clip cannot fix a negative gross -- it dilutes fixed gas against a loss
+  that scales WITH the clip. Route (a) is still the cheapest EVIDENCE (18 round trips cost $0.10 of
+  gas) but it is not a route to profit with this entry logic. **Route (a) as stated is CLOSED until
+  the entry signal is gross-positive at the median on some population.**
+  NOTE: gross already CONTAINS realised slippage (computed off executed prices). Do NOT net the
+  21.10bp measured slippage toll against -24.65bp -- that double-counts.
+
+**PER-SYMBOL SLIPPAGE CALIBRATION (committed 32aff64, data/live_slippage_calibration.json).**
+Reproduces p690 Bay exactly: pooled entry median 15.06bp, exit 6.04bp, round trip 21.10bp, entry
+carries 71.4%. Ghost 1217 entry + 264 exit = 1481; live 20 + 18 = 38.
+  **HARD CONSTRAINT nobody had written down: 59 of 65 ghost symbols have ZERO live fills.** Only
+  AERO-USDC has n>=5 on BOTH legs. Six of seven measured cells are n<=3 on a leg, and among them
+  BPAD reads -178.49bp (favourable) and BSTONK +1244.62bp on ONE fill each.
+  **A per-symbol toll built on these will be WORSE than a pooled 21.10bp.** WETH-USDC specifically:
+  11 ghost fills, 0 live fills -- its toll is UNMEASURED at any clip and must be labelled so.
