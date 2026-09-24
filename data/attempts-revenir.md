@@ -31727,3 +31727,37 @@ forward-replay the survivors for gross AND net at the live clip. There are no
 fires to score (the script says so itself), so any replay must run over the
 REFUSED population. **Nobody should loosen this gate on the 100.00% alone** --
 a gate refusing everything may simply be right.
+
+### Addendum, same pass -- production's actual `ctx.fee_rate` is 125bp one-way
+
+I said above I had not confirmed it and would not infer it. Now read.
+`trading/scheduler.py:1009` builds the value passed to every strategy:
+
+    fee_rate = self.fee_buffer + self.tax_buffer + self.gas_roundtrip_fee
+               + (self.slippage_bps / 10000.0)
+
+    fee_buffer        0.0020   scheduler.py:351 default
+    tax_buffer        0.0030   scheduler.py:352 default
+    gas_roundtrip_fee 0.0025   :398, SCHEDULER_GAS_ROUNDTRIP_RATIO NOT SET in .env
+    slippage          0.0050   :399, SCHEDULER_SLIPPAGE_BPS NOT SET in .env
+    ---------------------------------------------------------------
+    ctx.fee_rate = 0.0125 = **125.00 bp one-way**
+
+`money_button.py:243` doubles it: `round_trip_cost = 2.0 * ctx.fee_rate +
+slippage` = **250.00bp + slippage**. Against WETH's real 8.79bp round trip that
+is **28.4x**. The census banner ran at `one-way fee 0.0030`, so **production is
+4.2x the census** and the 7169-of-7169 refusal is understated, not overstated.
+
+Two solid consequences and one suspicion, kept separate:
+
+1. **SOLID** -- one scalar for all 185 symbols, assembled from four env
+   defaults, no symbol argument anywhere. Fourth instance of the 769352c defect.
+2. **SOLID** -- none of it is configured. Both env vars are ABSENT from `.env`,
+   so nobody chose 25bp of gas or 50bp of slippage; library defaults are doing
+   the refusing.
+3. **SUSPICION, NOT MEASURED** -- slippage looks double-counted: already inside
+   `fee_rate` at 50bp, then added again at money_button.py:243. I did not trace
+   the second term to its source. Not a bug until someone does.
+
+Complement still open: a gate refusing 100% may be right. Unchanged test --
+re-run the census at per-symbol real costs, report how many of the 7169 survive.
