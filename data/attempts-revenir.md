@@ -33182,3 +33182,35 @@ tell, and the instrument being read is a first-match chain. Step 7 WALLET reads
 PASS at $19.66 deployable, which is WEAK evidence against wallet_sparse and
 capital_deficit -- weak because step 7 and this disjunction need not share a
 test.
+
+--------------------------------------------------------------------------------
+PASS 702 (Echo, senior) -- ADDENDUM 5: the nine disjuncts are not independent.
+[8aa9b218] is a SEVEN-condition job, not nine.
+--------------------------------------------------------------------------------
+
+Addendum 4 said clearing `not ghost_ready` clears one of nine. Too pessimistic.
+
+trading/pipeline.py:6274 initialises `recommended_ratio = 0.0`, and it becomes
+positive in exactly TWO branches, BOTH requiring ghost_ready -- the ramp branch
+above :6314, and the bootstrap branch at :6315 whose condition opens with
+`ghost_ready and ghost_net_profit > 0.0`. There is no path to a positive ratio
+without ghost_ready.
+
+THEREFORE `not ghost_ready` IMPLIES `recommended_ratio == 0.0`, so
+`recommended_ratio <= 0` is true as well. ONE root cause lights TWO of the nine
+disjuncts, and clearing ghost_ready clears both together.
+
+CORRECTED SHAPE:
+  - not ghost_ready + recommended_ratio<=0   ONE cause, two disjuncts
+  - SEVEN genuinely independent, each able to hold the lane dark alone:
+        tail_block, drawdown_breach, loss_rate_block, loss_streak_block,
+        wallet_sparse, capital_deficit > 0, native_starved
+
+[8aa9b218] should evaluate those SEVEN; the other two are explained. Floor on
+the step-6 fix being sufficient is 1-in-7 of the independent conditions being
+clean, not 1-in-9. Four of the seven (tail_block, drawdown_breach,
+loss_rate_block, loss_streak_block) are computed from the SAME near-empty ghost
+book -- a reason to SUSPECT they are quiet and a reason NOT to assume it.
+
+NOT DONE HERE: evaluating the seven needs the pipeline instantiated and a boot
+is ~13 minutes. It is a worker task with no money at risk.
