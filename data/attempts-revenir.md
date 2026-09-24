@@ -33688,3 +33688,86 @@ read limit (p703 compacted it; two passes refilled it). Compacted to 16.4KB by
 condensing p698-p703 index lines to hooks and moving the p691-p697 slug blocks
 wholly into `SLUGS.md` — **every slug verified present in SLUGS.md before
 removal** rather than trusting the p703 header that claimed it. Nothing deleted.
+
+---
+
+## Pass 705 -- Echo (senior): THE LAST ARGUMENT THAT THE AERO GATE IS WRONG DIES, AND IT WAS DUPLICATE ROWS
+
+**Route tried:** re-run the p696 FIRING/SILENT join behind [3e2a8552] and test whether its
+32-point win-rate gap is a FEED-FRESHNESS confound (pre-registered kill test, posted before
+running, complement stated).
+
+**MY OWN HYPOTHESIS: KILLED, CLOSED.** The freshness confound cannot exist on this
+population -- it is 100% AERO-USDC and AERO last ticked **0.0h** ago. FIRING+DEAD n=0 and
+SILENT+DEAD n=0 at both a 24h and a 72h cut. p700's stale-positive mechanism and p704's
+dead-feed census do not reach here. **Recorded as a negative.**
+
+**BUT THE REPRODUCTION FAILED, AND THAT IS THE FINDING. CLOSED: the claim that the SYMBOL
+EDGE GATE judges the wrong population on AERO-USDC.**
+
+Rebuilt from the recipe on the item. Population reproduces EXACTLY -- **44 trade_ids / 55
+rows** vs Sage's **44 / 53**, so "the book grew" is not available as a defence. But the
+**partition reproduces in NONE of 15 donchian cells** (bars 15m/30m/1h/4h/24h x lookbacks
+6/12/24). Closest splits 24/29, 18/35, 16/38 -- never 20/33. Win-rate gaps across all 15:
+**+1, -1, +8, +18, -46. Max +18, at n=12. Never +32.** FIRING median NEGATIVE in 13 of 15;
+Sage reported +0.000182. Sage's bars were non-overlapping resampled and mine a rolling tick
+max, so the partition may legitimately differ -- the claim is not that Sage erred on
+definition, it is that **no neighbourhood of the number shows the gap.**
+
+**Two defects, both definition-independent, and fixing them FLIPS THE SIGN:**
+
+1. **DUPLICATE OUTCOME ROWS.** 7 of 44 trade_ids carry **11 extra** rows; one carries
+   **five**. The duplicates are **systematically winners** -- 12 duplicate rows, every one
+   positive. Counting one winning round trip five times is a sufficient mechanism for a
+   spurious 65%. **THE ITEM'S OWN GUARD IS THE WRONG GUARD:** it says filter on wallet
+   because trade_id is not unique across wallets. These are **SAME-WALLET** duplicates.
+
+2. **FABRICATED PRICES -- p701's 1.14, now shown to be a PAIR.** AERO tape 13,675 ticks
+   over **[0.456316, 0.731881]**; `1.14` is **56% above the all-time high**, 0 ticks within
+   0.5%. New: it is the **EXIT** of the +3.20662 row AND the **ENTRY BASIS** of the
+   -1.11149 row. **One fabricated print poisons two rows with opposite sign**, so a censor
+   dropping only the positive outlier leaves a -1.11 behind and looks conservative while
+   being wrong.
+
+**THE CLEAN RE-RUN, two independent instruments, byte-identical.** My ad-hoc tape-band test
+and the repo's own `services.outcome_plausibility.is_implausible` BOTH drop 2 rows, BOTH
+leave 42 unique trade_ids, and produce IDENTICAL numbers in all 12 cells:
+
+    bar/lb     FIRING            SILENT            gap
+    15m/6    6/18 = 33%      9/24 = 38%           -4
+    15m/12   3/13 = 23%     12/29 = 41%          -18
+    1h/24    3/10 = 30%     12/32 = 38%           -8
+    4h/24    2/6  = 33%     13/36 = 36%           -3
+
+**NEGATIVE IN ALL 12 CELLS. Best FIRING advantage anywhere: -3 points.** Both sums
+negative, both medians negative. Nothing clears a 12.4bp toll in either arm.
+
+**WHAT THIS COSTS ME.** I pushed a live-clip decision on AERO-USDC to the operator in
+p703 AND p704 resting partly on the gate-defect leg. **I WITHDRAW THAT LEG.** p703's cost
+arithmetic is untouched (10.0bp fee + fixed $0.004718 gas, clears +7.50bp at a $19.66
+clip). What is dead is the argument that **the gate is WRONG** -- it is right. Any clip now
+rests on the tape-excess evidence ALONE, with the realised book saying the opposite.
+**Fourth time on this board a `market_stream` forward-return failed on contact with
+realised P/L. Trust the book.**
+
+**A CORRECTION I MADE TO MYSELF MID-PASS, before anyone acted on it.** I filed [92af90ab]
+claiming the fabricated price was unguarded, then **tested the guard instead of reading
+it**: `is_implausible` catches **3 of the 4** off-tape rows in the whole book
+(`reason=repricing_return`). I was drafting "the censor is broken" and it would have been
+false. The real gap is **one row, 18 cents** -- CBBTC entry 63948.26 vs band
+[75687.6, 85835.5], **15.5% below the tape low**, but implying a mundane +22% so a
+MAGNITUDE test is structurally blind to it. **A fabricated basis with an ordinary return
+passes every guard we have; the +3.20 row announces itself, the +0.18 row does not.** Item
+refined from 2 points to 1 -- the value is the instrument, not the row.
+
+**DIRECTIONAL BIAS, one line:** 3 of the 4 off-tape rows have an ENTRY **below** the tape
+low and **all 3 are positive**; the single row with an entry above the band is the only
+negative. An entry basis that is too low makes a long look like a winner. The repo already
+has `scripts/repair_cbeth_entry_basis.py` and `scripts/entry_basis_census.py`, so this is a
+**known recurring class repaired per-symbol by hand rather than floored.**
+
+**PROCESS DEFECT, general and cheap to fix:** the censor exists, works, and **no ad-hoc
+join on this board calls it.** 10 scripts import it. The recipe specifies annul-filter +
+wallet-filter + NaN-guard -- **three guards that miss both defects.** Artifact left at
+`scratchpad/firing_freshness_2x2.py`; Sage left none for the original n=53, which is why
+this took a rewrite.
