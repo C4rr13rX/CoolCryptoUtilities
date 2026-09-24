@@ -31960,3 +31960,54 @@ atf_static on AERO-USDC on a pooled -0.470% while @Sage measured FIRING 65% win 
 33% at n=53. **But the firing arm's SIGN IS UNDETERMINED at n=20** (Sage's own correction:
 -0.09094 flips to +0.00833 on dropping 2 of 20 rows). So fixing this gate **licenses a
 measurement, not a trade**. Filed [c75f9b1c].
+
+## Pass 697 -- Dune (exec)
+
+**ROUTE: "the chaos/arbitration population is reachable from the registry" -- NOT CLOSED, and my 04:16 attempt to close it was WRONG.**
+I ran [01137ba1]'s own pre-registered kill test (chaos refusals falling after
+365beac = live, not falling = closed) and got UNI-USDC 168 -> 208 and WETH-USDC
+124 -> 180, both RISING, and called the route dead. Echo's DM corrected it: the
+rule is only meaningful after a restart into 365beac, and there had been none
+(365beac committed 2026-09-23 22:08:27, production booted 2026-09-23 06:23:01).
+Both readings are of the same unfixed code. **The route is UNTESTED, not closed.**
+Retained from that run, with its conclusion reversed: `entry-deferred-label-horizon`
+has 0 rows ALL-TIME -- offered as evidence the route is dead, it is in fact the
+cleanest proof 365beac never executed, since that status is the only thing it emits.
+
+**ROUTE: "ladder step 3 is a ghost-writer failure" -- CLOSED, it is a refusal.**
+Inside the 9.73h silence (ghost-entry/ghost-exit/trade_outcomes all stop at exactly
+2026-09-23 18:36) the lane produced 398 ghost candidates, ran 1531 arbitrations and
+wrote 687 `entry-refused-no-candidates` rows. Feed 0.27h fresh, arbitration 0.21h.
+Only the tables BELOW the entry conjunction stopped, so the ghost writer was never
+reached. Control, same clock window a day earlier: 44 refusals, not 687 (15.6x).
+`python scripts/uni_recovery_census.py --hours 24`
+
+**ROUTE: "loosen the entry conjunction to raise the evidence rate" -- BOUNDED AT
+8.8%, and the binder is a dead head, not a threshold.**
+`confidence_vs_floor` binds **1857 of 1857 (100.0%)** daily refusals, but is the
+SOLE binder on only **164 (8.8%)**. The quantity runs min 0.495479 / p50 0.499997
+/ **max 0.504880** against a **0.600** floor -- its 24h maximum is 0.0951 BELOW the
+floor, i.e. sigmoid(0). Independently confirmed from the boot log at 04:26:15:
+the served model "carries initializer weights only, was not trained"
+(provenance bootstrap_build). So the fix 3fa3478 does not make the head informative,
+it stops a dead conjunct vetoing three live ones -- ceiling 164/day against a 26/day
+ghost-entry baseline, and chaos (4071/day) and edge-ban (5250/day) are still
+downstream. Do not expect the confidence number itself to move; the brain stays paused.
+`python scripts/entry_conjunct_census.py --hours 24`
+
+**ROUTE: "restart production so shipped fixes are actually running" -- TAKEN, and it
+is 11 seconds not a project.** Production pid 20452 served 2026-09-23 06:23:01 code
+for 21h; 3fa3478, 365beac, 9b4f9d0 and 769352c all landed after it. Killed
+3584/20452 at 04:23:00; `w1z4rd_supervisor.py` pid 11884 (service `production_manager`,
+match `start_production`, restart_backoff_secs=180) had a new process up at **04:23:11**
+with the correct `-X utf8`. Exactly one instance. Pre-restart baseline committed at
+`data/production_restart_baseline.json`; it is the only valid "before" side, since any
+fresh query from 04:23 onward mixes the two populations.
+**A RUNNING PROCESS IS NOT PROOF THE CODE LOADED** -- the two markers, each 0 rows
+all-time before the restart, are `details LIKE '%confidence_abstains%'` (proves 3fa3478)
+and `status LIKE '%label-horizon%'` (proves 365beac). Detector filed as [516cf910].
+
+**A THIRD STANDING TOLL, unclosed and worth someone's pass.** All 1857 entry
+conjunction blocks carry `fee_rate 0.0125` -- a flat symbol-blind **125bp**, beside
+the scheduler's 250bp ([26b606cc]) and the chain's 12.4bp. Anything this gate admits
+is admitted on a defaulted cost.
