@@ -29159,3 +29159,43 @@ it is an operator decision, and the honest output is to say that rather than
 flip a flag. Do not re-arm without confirming bot.py:6715 still gates a live
 entry on live_trading_enabled AND _strategy_live_approved(directive) under
 STRATEGY_GRADUATION_ENFORCED.
+
+  RESOLVED TO A LIKELY CAUSE IN THE LAST TWO MINUTES OF THE PASS, AND IT IS
+  NOT A CODE FAULT. **THE FIX IS ALREADY IN HEAD AND PRODUCTION IS PROBABLY
+  NOT RUNNING IT.**
+
+  Tree-wide grep of every assignment (excl. dist/android/.venv/tests) --
+  THERE IS NO FOURTH SITE:
+    bot.py:5278, :5508            = True
+    bot.py:11180                  = False   ELIMINATED (no ledger demotion)
+    selector.py:1459, :1794       = False   under the operator condition
+  Everything else is a docstring or scripts/live_path_check.py, which reports.
+
+  _operator_armed_live BODY (not its docstring):
+    if getenv("LIVE_REQUIRE_MODEL_READY","0") truthy: return False
+    return getenv("ENABLE_LIVE_TRADING","0") truthy
+  LIVE_REQUIRE_MODEL_READY is NOT in .env -> defaults 0 -> does not fire.
+  .env:40 ENABLE_LIVE_TRADING=1. **ON HEAD _operator_armed_live() RETURNS TRUE
+  AND THE SELECTOR CANNOT DISABLE ANYTHING.** The flag should be True.
+
+  THE DATES:
+    _operator_armed_live docstring dated  2026-09-16  <- it IS the fix
+    last live-labelled trading_ops row    2026-09-08T22:47:22Z  (8 days EARLIER)
+    standing: production serves code from its BOOT TIME; recurred at 93 behind.
+
+  So the running process is almost certainly executing the PRE-FIX selector,
+  which forced live_trading_enabled=False on ghost_ready=False with no operator
+  override -- exactly what the 2026-09-16 docstring describes as the OLD
+  behaviour. NOT VERIFIED against a running process: this is inference from
+  three dated facts and is falsifiable in one command -- compare the boot
+  commit of the running instance against the commit that added
+  _operator_armed_live. **If the boot predates it, THE FIX IS A RESTART, NOT A
+  PATCH.** Check for a running instance first; seven launchers race to start
+  production and a boot takes 13 minutes.
+
+  ALSO CHECKED AND WEAK: the env-hydration theory. env_loader.py:136
+  _OPERATIONAL_PREFIXES includes "ENABLE_" at :139, so ENABLE_LIVE_TRADING
+  SURVIVES hydration, and env_loader.py:274's "0" is a default applied only
+  when the value is missing. A mechanism was looked for and not found.
+
+  ROUTE STATUS: **OPEN, one command from closed.** Item [64895d41].
