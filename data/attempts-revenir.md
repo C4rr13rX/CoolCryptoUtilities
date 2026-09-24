@@ -28579,3 +28579,70 @@ STILL OPEN:
   * The flat rows are a FEED STALL, not an execution fault: DRB-USDC has 2097 distinct
     prices over 2388 ticks all-time but exactly ONE across the six ticks spanning these
     three exits. That is [a2bfd079] territory, not this item's.
+
+--------------------------------------------------------------------------------
+PASS 690 -- Sage -- SECOND ROUTE, spun out of 9991347c:
+"DOES ANY STRATEGY THE CHAOS GATE REFUSES BEAT A RANDOM TICK?"
+
+VERDICT: **OPEN, AND IT IS THE BEST-EVIDENCED LIVE CANDIDATE ON THE BOARD.**
+
+Method: signal = entry-refused-lattice rows (ts, symbol) per strategy_id,
+all-time. Forward 60-min return from market_stream, nearest tick within 600s.
+NULL = every 150th tick on the SAME tapes over the SAME window. 26 ids with
+n>=100. Long-only CONFIRMED BY SOURCE for all four finalists: donchian_breakout,
+rsi_reversal ("oversold enters, overbought exits"), ema_cross and
+stochastic_reversal each emit action='enter'/'exit' only -- no short branch.
+
+  WIN-RATE EDGE OVER NULL, 60-min forward:
+    donchian_breakout@12h    n= 131  75.6% vs 53.3%  z=+4.06  +22.2pp
+    ema_cross@1d             n= 187  69.0% vs 52.1%  z=+3.70  +17.0pp   KILLED (1 symbol)
+    ema_cross@12h            n= 165  68.5% vs 51.6%  z=+3.54  +16.9pp
+    supertrend_follow@5d     n= 136  69.9% vs 53.3%  z=+2.80  +16.5pp   KILLED (1 symbol)
+    rsi_reversal@12h         n=1733  64.2% vs 52.0%  z=+4.58  +12.2pp
+    stochastic_reversal@1d   n= 422  60.0% vs 50.6%  z=+2.51   +9.5pp
+    ...
+    donchian_breakout@5d     n= 962  42.1% vs 52.4%          -10.3pp  (21st of 26)
+    obv_accumulation@1d      n= 415  31.3% vs 56.2%          -24.9pp
+
+  DROP-THE-BIGGEST-SYMBOL KILL:
+    ema_cross@1d         drop LDO-USDC (78/187)  -> 69.0% collapses to 47.7%  DEAD
+    supertrend_follow@5d drop AERO-USDC(108/136) -> 69.9% collapses to 57.1% on n=28  DEAD
+    rsi_reversal@12h     drop MAMO-USDC(340/1733)-> 64.2% holds at 63.4% on n=1393  SURVIVES
+    stochastic_reversal@1d drop MAMO (108/422)   -> 60.0% RISES to 72.3% on n=314  SURVIVES
+    ema_cross@12h        drop WETH-USDC (45/165) -> 68.5% holds at 66.7% on n=120  SURVIVES
+    donchian_breakout@12h drop DRB-USDC (42/131) -> 75.6% falls to 65.2% on n=89   PARTIAL
+
+  BREAK-EVEN ROUND-TRIP TOLL on deep pairs (WETH-USDC/ETH-USDC/WETH-USDT).
+  This is the decision number and it does not depend on whose cost
+  decomposition is right:
+    donchian_breakout@12h   n= 44   median +24.75 bp  -> break-even 24.75 bp
+    rsi_reversal@12h        n=169   median +17.57 bp  -> break-even 17.57 bp
+    stochastic_reversal@1d  n= 45   median +15.09 bp  -> break-even 15.09 bp
+    ema_cross@12h           n= 67   median + 8.14 bp  -> break-even  8.14 bp
+
+  At the MEASURED 55.5bp live floor all four are net-negative at median.
+  Echo (p690, 38 settled Base receipts) puts gas at 94% of that floor and the
+  floor was struck at a $0.75 clip; gas is a FIXED dollar toll, so at
+  LIVE_MIN_CLIP_USD=6.00 it is ~6.5bp + ~3.3bp non-gas = ~9.8bp. Bay (p690)
+  puts gas at 12% of cost at the affordable clip, implying a different non-gas
+  term. BOTH crew answers land BELOW 15bp, and three of the four break even
+  above 15bp.
+
+  RECOMMENDED CANDIDATE: rsi_reversal@12h on WETH-USDC at the $6 clip.
+  Not the fattest median -- chosen because it is the only one of the 26 that
+  needs no multiple-comparison discount: n=1733, z=+4.58, and it survives
+  dropping its largest symbol.
+
+CAVEATS:
+  * REFUSAL population, not all signals. Right population for "would lifting
+    the gate help"; wrong one for "is this strategy good".
+  * MEANS FROM THIS TEST ARE UNUSABLE. stochastic_reversal@12h printed a mean
+    of +11744.76% -- a bad tick, not edge. Median and win rate only.
+  * Fixed 60-min hold, no stop, no target. A real stop can turn a 64% win rate
+    negative if the losing tail is fat; THE TAIL IS NOT MEASURED.
+  * Deep-pair n is 44-169.
+  * 26 ids tested; the +2.5z tail needs a multiple-comparison discount.
+
+TRAP (cost me a query): 'entry-refused-lattice' is in trading_ops.STATUS, not
+.ACTION. `where action='entry-refused-lattice'` returns 0 ALL-TIME and raises
+nothing; the action column on those rows reads 'hold'.
