@@ -29388,3 +29388,121 @@ STRATEGY_GRADUATION_ENFORCED.
   rate cost is the number I did not have and it is the right objection -- a gate
   that buys edge at the price of measurability is exactly backwards while the
   binding constraint is that nothing in the book is measurable at all.
+
+================================================================================
+PASS 691 -- Dune -- ROUTE: "STOP THE CHAOS GATE REFUSING 99.8% OF ENTRIES BY
+FIXING THE ARBITRATOR"  [item b3d087c7]
+
+VERDICT: THE ARBITRATOR HALF IS **SHIPPED** (365beac, 04937b6) AND IS WORTH
+3.9 POINTS, NOT THE 50 THE ITEM ASKED FOR. THE POPULATION HALF IS **CLOSED ON
+17 OF 19 SYMBOLS** AND **OPEN ON TWO**, WHERE IT TURNS OUT NO NEW CODE IS
+NEEDED AT ALL.
+
+THE ITEM'S MECHANISM WAS WRONG AND THE CORRECTION MATTERS:
+  it said the max_score tiebreak prefers long horizons, 577 of 772 ticks.
+  measured 24h: max_score is 1025 of 4429 ticks (23.1%), and of the 963 ticks
+  where a longer-horizon candidate displaced a shorter one, 782 (81.2%) went
+  via TRIDENT and 181 (18.8%) via max_score. A fix inside the fallback buys a
+  fifth of it. The deferral therefore sits BEFORE arbitration.
+
+THE NUMBER THAT MADE IT WORTH SHIPPING (scripts/arbitration_horizon_census.py,
+new, read-only; 24h of trading_ops entry-arbitration):
+  ticks arbitrated                                           4426
+    spent on a SUFFIXLESS candidate                           654
+    spent on a SUFFIXED one, suffixless on the SAME tick       246
+    spent on a SUFFIXED one, nothing else offered            3526  (79.7%)
+  lattice survival by what the tick was spent on:
+    suffixed    12.4%   (3304 of 3773 refused)
+    suffixless  82.1%   ( 117 of  654 refused)
+  28 of 36 OFFERED strategies carry a label horizon above 96s.
+
+  DENOMINATOR TRAP, I FELL IN IT: split the REFUSALS by layer and you get
+  suffixless 117/117 = 100% at chaos and suffixed 3304/3304 = 100%, which
+  reads "both die at chaos, redirecting buys nothing". That is composition,
+  not rate. Divide by ticks SPENT and it is 6.6x the other way.
+
+ROUTES CLOSED THIS PASS, WITH THE NUMBER THAT CLOSED EACH:
+
+(1) "THE CHAOS REFUSALS ARE A STARVED-FEED ARTIFACT" -- **CLOSED**. usable_
+    horizon_sec IS tape-derived (lattice.py:132 -> chaos_profile), so the
+    mechanism existed. Regressing the per-tick decay figure against each
+    symbol's 24h tick count: pearson r(log10 ticks24h, median decay) =
+    **-0.065 over 19 symbols**. A symbol with 1272 ticks and one with 54 get
+    the same limit. Do not discount a gate census on feed grounds. Confirmed
+    from the other side at 22:21: the feed recovered (39.22 -> 2.35 min stale)
+    and the refusals did not stop -- 12 of 19 arbitrated ticks still went to
+    the lattice.
+
+(2) "GET entry-refused-lattice BELOW 25% BY FIXING SELECTION" -- **CLOSED, AND
+    THE CEILING IS 73.4%**. On 3526 of 4426 ticks no real-horizon candidate is
+    offered at all. No tiebreak can pick a candidate that is not there.
+
+(3) "ADD A SHORT HORIZON RUNG TO THE REGISTRY" -- **CLOSED SYSTEM-WIDE, 4.3%**.
+    Every chaos refusal carries the decay limit measured on that tick, so the
+    refusals price the rung. A candidate at rung R clears wherever the limit
+    is >= R:
+        rung   WETH-USDC   UNI-USDC   MAMO-USDC   AERO-USDC        ALL
+          5m   115/124      53/168     41/671      16/565   290 = 8.5%
+         30m   114/124      32/168      0/671       0/565   146 = 4.3%
+         60m    81/124      15/168      0/671       0/565    96 = 2.8%
+        300m     0/124       0/168      0/671       0/565     0 = 0.0%
+    300m (@5h) is the SHORTEST rung the registry offers. Even a FIVE MINUTE
+    rung recovers 8.5%. MAMO-USDC (671 refusals) and AERO-USDC (565) recover
+    ZERO at 15 min -- their tape supports under five minutes of forecast and
+    no strategy proposes one. 114 + 32 = 146 = the ENTIRE 30m recovery: two
+    symbols of nineteen.
+
+(4) "ADMIT THE LONG-HORIZON VARIANTS BY GIVING THEM REAL HORIZONS" -- already
+    CLOSED by Sage p690 (5303168) and CROSS-VERIFIED HERE with an independent
+    query and a different symbol pick. Sage's null reproduces: 60m +0.1526%
+    vs mine +0.0303%, 120m +0.3008% vs +0.3631%, 7200m +10.5061% vs +7.2498%.
+    ONE REFINEMENT: at 60 min the null is NOT positive on the MEDIAN
+    (-0.0022%, 47.4% win) -- the mean is tail-carried. The closure still holds
+    because Sage's signal row is 42.1% win against that 47.4%, but it holds by
+    ~5 win-rate points at 60 min and not by the 3.2x mean ratio.
+
+THE ONE ROUTE LEFT **OPEN**, AND IT NEEDS NO NEW CODE  [item 01137ba1]:
+  trading/strategies/rsi_reversal.py:25   default_horizon = "45m"
+  WETH-USDC measured usable horizon        72.50 min median (max 199.70)
+  45 < 72.5. The suffixless candidate ALREADY clears the chaos layer, and it
+  has NEVER been refused there: of WETH-USDC's 124 chaos refusals in 24h,
+  ZERO are suffixless rsi_reversal -- all 124 are suffixed, each carrying
+  exactly one looks-ahead value equal to its own label (rsi_reversal@12h 72 at
+  720.0, stochastic_reversal@5d 27 at 7200.0, @1d 25 at 1440.0). Same on
+  UNI-USDC: 0 of 168. Zero of 292 across both.
+  THE ARBITRATOR WAS THROWING IT AWAY: WETH-USDC 140 arbitrated ticks/24h,
+  rsi_reversal offered 18 and CHOSEN 2. UNI-USDC 252 ticks, offered 47, chosen
+  0 of the top five. 365beac stops that.
+
+  NOT PROVEN AND NOT CLAIMED: that the recovered ticks become entries. Chaos
+  is layer 1 of 4. And p690 established WETH is on the LIVE watchlist and
+  ABSENT from the ghost one, so recovered ticks may be unbookable as
+  graduating evidence by construction.
+
+  THE ONE MEASUREMENT THAT SETTLES IT, AFTER A RESTART INTO 365beac: count
+  WETH-USDC entry-deferred-label-horizon rows and WETH-USDC chaos refusals
+  over 24h. Deferrals ~16 and refusals falling from 124 = the route is live.
+  Refusals not falling = the suffixless candidate dies somewhere not yet
+  looked at, and the item closes.
+
+BASELINES TO BEAT AFTER THAT RESTART (measured p691, 24h):
+  ghost-entry 26 | ghost-exit 25 | trade_outcomes ghost/closed 25
+  entry-arbitration 4418 | entry-refused-lattice 3421 (77.3% of arbitrated)
+  WETH-USDC chaos refusals 124 | UNI-USDC 168
+  ghost-entry MUST NOT fall below 13/day -- the item forbids buying a lower
+  refusal rate by admitting fewer candidates.
+
+TWO TRAPS FOR THE NEXT READER:
+  - action='hold' IS NOT A HOLD. entry-arbitration (4418/day),
+    entry-predropped-edge-ban (4364), entry-refused-lattice (3421),
+    entry-refused-no-candidates (1497) and now entry-deferred-label-horizon
+    are ALL action='hold'. scripts/entry_conversion_census.py:69 counts that
+    bucket as "holds". Filter on status.
+  - money_button, the ONE live-approved strategy, carries a 30m horizon
+    (MONEY_BUTTON_HORIZON, scheduler.py:2045) = 1800s, well above the 96s
+    deferral threshold. It is safe ONLY because that horizon lives on the
+    directive and not in the strategy_id, and the deferral reads the id.
+    Rename it to money_button@30m, or switch the deferral to read
+    directive.horizon, and the one approved strategy becomes deferrable.
+    tests/test_a_lookback_label_must_not_take_the_tick.py fails loudly if so.
+
