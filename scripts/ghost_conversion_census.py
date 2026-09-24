@@ -135,8 +135,13 @@ def main() -> int:
     print()
     print("ACTIVITY, trailing %.0fh in %.0fh buckets (leftmost = most recent)"
           % (args.hours, args.buckets))
+    # %d on a fractional bucket width collapses every label to "0-0", which is
+    # a table nobody can read -- caught by running it at --buckets 0.25.
+    def _lab(x: float) -> str:
+        return ("%g" % x) if x != int(x) else "%d" % int(x)
+
     hdr = "%-22s" % "action (hours ago)" + "".join(
-        "%8s" % ("%d-%d" % (b * args.buckets, (b + 1) * args.buckets))
+        "%8s" % ("%s-%s" % (_lab(b * args.buckets), _lab((b + 1) * args.buckets)))
         for b in range(nb))
     print(hdr)
     print("-" * len(hdr))
