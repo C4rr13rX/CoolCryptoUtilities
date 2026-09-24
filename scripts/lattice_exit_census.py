@@ -207,8 +207,9 @@ def main() -> int:
                 n for _, _, n in short).items()):
             print("    %3d  %-24s %d" % (length, "#" * min(count, 24), count))
         near = [n for _, _, n in short if 64 - n <= 4]
-        print("    %d of %d missed the threshold by <=4 samples"
-              % (len(near), len(short)))
+        print("    %d of %d are within 4 samples of the threshold -- but see"
+              " --floor: chaos_profile" % (len(near), len(short)))
+        print("    returns None at 60-63 too, so these are NOT a cheap win")
         days = {_fmt(ts)[:5] for ts, _, _ in short}
         print("    spread %s .. %s over %d distinct day(s)"
               % (_fmt(short[0][0]), _fmt(short[-1][0]), len(days)))
