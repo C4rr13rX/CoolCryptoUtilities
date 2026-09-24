@@ -33021,3 +33021,64 @@ now PASSES and bots ARE built live-capable, that chain may no longer describe
 this build, in which case the cause of the 447h silence is UNKNOWN. Not
 resolved here. p703 should re-run the ladder first and believe no file that
 claims to summarise it.
+
+--------------------------------------------------------------------------------
+PASS 702 (Echo, senior) -- ADDENDUM 2: the 447h silence is NOT unknown. Resolved.
+--------------------------------------------------------------------------------
+
+I closed addendum 1 saying the cause of the live silence might be UNKNOWN
+because the documented halt chain predates step 8 passing. I had time left, so
+I read the code instead of leaving it open. WITHDRAW THAT CAVEAT -- the chain
+does still describe this build.
+
+trading/pipeline.py:6747-6759, dated in-source 2026-09-17:
+
+  "WHAT THE CONSUMER DOES WITH THIS, as of 2026-09-17: halt_live DEMOTES the
+   bot to ghost. trading/bot.py routes it through the live_trading_enabled
+   property, so a halted bot KEEPS DECIDING and KEEPS BOOKING GHOST ROWS; it
+   just cannot place a live entry."
+
+trading/bot.py:1993:
+
+  return bool(self._live_trading_armed) and not self._live_halt_active()
+
+THE APPARENT CONTRADICTION IS NOT ONE. Step 8 PASSING means
+_live_trading_armed is True -- the operator arm is on, the build is
+live-capable. The PROPERTY ands that with the halt. So step 8 [PASS] and
+live_trading_enabled==False at every decision are simultaneously true. Step 8
+asks about the arm; the property asks about arm AND halt.
+
+THE MECHANISM PREDICTS THE EXACT SHAPE MEASURED IN ADDENDUM 1. Demotion
+happens at a @property getter, UPSTREAM of every per-trade live guard:
+  - nothing is refused  -> guard-blocked-live silent 469.5h   MATCHES
+  - nothing is placed   -> live-entry silent 448.5h           MATCHES
+  - bot keeps deciding  -> ghost-entry 35 / ghost-exit 33 / 24h  MATCHES
+Three predictions, three matches, and the measurement was made before the
+comment was found -- they are independent.
+
+Same seam as the p696 finding "the live flag dies at a @property getter -- no
+assignment grep can find it". That is why grepping for an assignment never
+explained the silence.
+
+THE TRAP, NAMED IN THE SOURCE ITSELF:
+
+  "not ghost_ready is a disjunct here, published with halt_reason
+   ghost_validation_block. So ARMING THE LIVE LANE WAS WHAT SWITCHED THE BOT
+   OFF, and the halt's own cure was ghost evidence the stopped bot could no
+   longer earn."
+
+Combined with p698/p700 (ghost_validation_block judges ONLY the live-approved
+strategy = money_button = ONE ghost row at -0.021427), the full statement is:
+
+  a ONE-ROW BOOK sets not ghost_ready -> sets halt_live -> makes
+  live_trading_enabled False at the getter -> 447 hours with neither a live
+  trade nor a live refusal.
+
+CLOSED: the cause of the 447h silence. It is step 6, it was always step 6, and
+the ladder has been pointing at it. What was missing is the observable proof
+that the demotion happens ABOVE the per-trade guards -- which is exactly what
+the silent REFUSAL counters are.
+
+FOR p703: [68d58270] and [124eee67] are the same problem from two ends. Merge
+them and work ONE item. The lever is `not ghost_ready` computed over a
+single-row book, not anything downstream of it.
