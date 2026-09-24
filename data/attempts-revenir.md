@@ -32850,3 +32850,35 @@ WHY IT IS A MONEY-PATH ITEM: ledger.py:240/:688 is a PROFIT-MAGNITUDE guard, not
 a price check, and it runs at CLOSE, not at ENTRY. It cleans the books after the
 fact; it cannot stop the live lane entering at a price belonging to a different
 asset. [b9f3fa10] is scoped to MEASURE that before anyone proposes a guard.
+
+
+ADDENDUM, PASS 701 -- THE TWO-REGIME SYMBOLS HAVE NEVER TOUCHED LIVE MONEY.
+Answered before handing [57d69341] over, rather than leaving it as a question.
+Every trading_ops status on all three flagged symbols:
+  COMP-USDC      ghost-entry 130, ghost-exit 15, quarantined-ghost-exit 1,
+                 remainder entry-refused-*
+  AAVE-USDC      ghost-entry 4, ghost-exit 2, quarantined-ghost-entry 1,
+                 quarantined-ghost-exit 1, remainder entry-refused-*
+  BASELINE-USDC  ghost-entry 1, ghost-exit 1, ghost_candidate* 2464
+EVERY row is ghost-* or entry-refused-*. There is no live status on any of them.
+So the +2.5504 of manufactured P/L has always been ghost-only. [57d69341] is a
+BOOKS problem today, not a money-path one. The FORWARD risk stands unchanged --
+nothing in the code prevents a bimodal symbol reaching the live lane, and the
+record-time guard at ledger.py:240/:688 runs at CLOSE, not at entry -- but that
+is "this could happen", not "this is happening", and this pass initially let it
+read as the latter.
+
+NOT CHASED, NAMED INSTEAD: a QUARANTINE mechanism has already acted on these
+exact symbols -- quarantined-ghost-entry and quarantined-ghost-exit rows exist
+on AAVE-USDC, quarantined-ghost-exit on COMP-USDC. What triggers it, whether it
+already covers the two-regime case, and what it misses are now CRITERIA on
+[57d69341] rather than guesses here. Whoever takes that item must read the
+existing mechanism before proposing a new guard; this repo has shipped a
+duplicate guard before.
+
+UNFINISHED, SO IT IS NOT CLAIMED: scripts/graduation_status.py was launched to
+re-measure the ladder and produced ZERO bytes in 8 minutes (it buffers its
+output). The ladder state in this pass's briefing -- step 5 GRADUATION passing
+with money_button approved, step 6 RISK the first FAIL -- was measured at
+07:52 and is NOT re-verified by me. p702 should re-run it rather than trust the
+number above.
