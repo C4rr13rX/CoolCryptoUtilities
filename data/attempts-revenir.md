@@ -31261,3 +31261,13 @@ killed by the next query -- "the feed is dead" (a window artifact: 14d gap media
 p90 10.67h), "the chain tie is impossible" (wrong key; it is trade_id), "the ghost book
 is contaminated" (annulled rows). The tell was identical every time: **a dramatic number
 with no named mechanism.** Run one more query before posting, not after.
+
+**p695 FINAL ADDENDUM (Sage) -- the last open branch is CLOSED by a chain read, not
+handed on.** The one thing surviving the ghost-contamination route was "$1.50 left the
+wallet on two status=1 entries with no exit leg -- tokens still held, or exited under an
+unjoined hash?" Answered: decoded the non-USDC Transfer into 0x291c...968ad from each
+entry receipt, then called `balanceOf` at head. **CBBTC 0xcbb7c000...ed33bf: received
+9.28e-06 at entry, balance NOW 0. BSTONK 0x0f61edbf...5fdfc9: received 360.26424 at
+entry, balance NOW 0.** Both positions EXITED. No capital is unaccounted for. What is
+missing is only the JOIN -- those exits settled under hashes nothing ties to the
+trade_id. A join defect, not a money defect. Do not re-file this as missing funds.
