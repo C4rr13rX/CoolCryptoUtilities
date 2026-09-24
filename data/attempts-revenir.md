@@ -31602,3 +31602,45 @@ with 40-75bp of sampling instability is not a result in either direction.**
 What DOES stand from this pass, because it was measured off receipts rather than off the
 tape: the toll (fee tier + gas, depth unmeasurable) and the scoreboard reconciliation
 (chain -0.136189 vs book -0.136131 on the five symbols whose legs close).
+
+### p696 THIRD ADDENDUM (Sage) -- I ran my own pre-registered discriminator rather than leaving it. **SHORT HORIZONS ARE CLOSED, not unmeasured.**
+
+Pre-registered above: H = the edge lives below 1h where n is largest; COMPLEMENT = there
+is no edge and 1h is the honest zero. Discriminator = 15m/30m horizons on WETH and AERO,
+non-overlapping, >=3 lookbacks; **monotone growth as the horizon shrinks means real,
+scatter means zero.** Ran it. It is neither -- **it is monotone the WRONG WAY.**
+
+    WETH-USDC   LB=6    LB=12   LB=24     n
+      15m      -2.74   -3.40   -4.22    94-151
+      30m      -2.54   -2.61   -8.24    77-115
+      1h       +2.00   -0.18   -0.86    55-79
+    AERO-USDC
+      15m      +3.23   +5.04   +5.02   206-358
+      30m      +5.36   +6.72   +7.13   132-224
+      1h       +8.54  +11.22  +19.90    89-153
+
+**WETH is negative in 6 of 6 cells at 15m and 30m** -- shorter does not help, it hurts.
+**AERO is monotone INCREASING with horizon**, the opposite direction. H refuted on both.
+
+**The refutation is WELL-POWERED, which is what separates it from everything else this
+tape has produced.** AERO 15m/30m is **n=132-358 non-overlapping, 9 cells, all one sign,
+stable across a 4x lookback range**, reading **+3.2 to +7.1bp against a 17.8bp toll --
+short by 11-15bp**. WETH 15m/30m is n=77-151, 6 cells, all negative. No 40-75bp swings
+anywhere in this block; these numbers hold still.
+
+**TWO DIFFERENT EPISTEMIC STATES, and they should be recorded separately:**
+
+* **SHORT HORIZONS (15m - 1h) ON DEEP PAIRS: CLOSED.** Measured, stable, well-powered,
+  negative by 11-16bp against a toll measured off receipts. Not "we could not see it" --
+  we saw it.
+* **LONG HORIZONS (2h - 24h): still UNMEASURED.** n=8-40 and the medians move 40-75bp
+  under a resample or a lookback change. No claim in either direction, including Sage's
+  own p690 table and p694's "closed 1.07bp short".
+
+**Where the arithmetic does still work, and it is CLIP SIZE and not signal.** The toll is
+17.8bp at a $6 clip and **2.4bp gas + 10.0bp fee at the full $19.66 wallet**, because gas
+is a fixed 1.871e-6 ETH. AERO 1h at LB=24 is +19.90bp with n=89, which clears a
+wallet-sized bar by 9.9bp. **NOT a proposal:** n=89 at one lookback, on a pair whose 2h
+cells collapsed to +1.11/+2.23, and whose own ledger row is -0.470% mean over 17 closed
+round trips. Recorded because it is the only cell where the numbers meet, and because the
+lever that makes them meet is the clip, not the indicator.
