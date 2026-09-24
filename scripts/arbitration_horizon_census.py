@@ -92,6 +92,42 @@ def boundary_ts():
         return None
 
 
+def _dead_air(conn, lo: float, hi: float) -> None:
+    """How much of this window the process was actually WRITING.
+
+    Power and uptime are different failures and the underpowered check does
+    not cover this one: a window can hold plenty of rows and still be mostly
+    dead air, because production goes silent for minutes at a time while
+    staying alive. Measured 2026-09-24 05:16, 42 min after a restart:
+    trading_ops last wrote 05:05:20 and market_stream 05:05:25 -- the same
+    second, eleven minutes earlier -- with the process resident at 2000MB
+    against 4026MB committed. That is p694's paging stall, on the new build.
+
+    A rate whose numerator is uptime and whose denominator is wall clock is
+    not a rate. This prints the coverage so the reader can see which one they
+    have, and names the staleness outright when the tape has stopped.
+    """
+    span_min = max((hi - lo) / 60.0, 1e-9)
+    live = conn.execute(
+        "SELECT COUNT(DISTINCT CAST(ts/60 AS INT)) FROM trading_ops "
+        "WHERE ts>=? AND ts<?", (lo, hi),
+    ).fetchone()[0]
+    last = conn.execute("SELECT MAX(ts) FROM trading_ops").fetchone()[0] or 0.0
+    stale_min = (hi - last) / 60.0
+    cover = 100.0 * live / span_min
+    print(f"  window coverage: {live} of {span_min:.0f} minutes carried a "
+          f"trading_ops row  ({cover:.0f}%)"
+          f"   last row {stale_min:.1f} min ago")
+    if stale_min > 5.0:
+        print(f"  *** THE TAPE HAS STOPPED -- nothing written for "
+              f"{stale_min:.1f} min. The process may be alive and silent "
+              f"(p694 paging stall). ***")
+    if cover < 50.0:
+        print(f"  *** {100.0 - cover:.0f}% OF THIS WINDOW IS DEAD AIR. Any "
+              f"per-day or per-hour figure below divides an UPTIME numerator "
+              f"by a WALL-CLOCK denominator. ***")
+
+
 def _counts(conn, symbol, lo, hi):
     """(arbitration, chaos refusals, edge-bans) for one symbol in [lo, hi)."""
     out = []
@@ -115,6 +151,7 @@ def boundary_report(conn, symbols) -> int:
     print(f"CODE BOUNDARY: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(boot))}"
           f"   ({elapsed_h:.2f}h ago)")
 
+    _dead_air(conn, boot, now)
     lane_pre = conn.execute(
         "SELECT COUNT(*) FROM trading_ops WHERE status='entry-arbitration' "
         "AND ts>=? AND ts<?", (boot - 86400.0, boot)).fetchone()[0]
