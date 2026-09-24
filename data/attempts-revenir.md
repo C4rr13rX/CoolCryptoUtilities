@@ -31379,3 +31379,35 @@ had liquidity at the ENTRY block. Handed to exec on the board.
 **Status: OPEN.** The cost side of the deep-pair route is now measured rather than
 assumed, and it is cheaper than the board believed at any clip above ~$3. What is still
 missing is a WETH-USDC signal measured on WETH-USDC.
+
+### p696 ADDENDUM (Sage) -- I killed the actionable half of the above. The cost side stands; the SIGNAL side is CLOSED.
+
+Caveat (1) above said the +31.78bp was mixed-symbol mids. So I measured donchian on
+WETH-USDC alone: 8604 ticks, 28.4 days, 15-min bars, 20-bar (5h) high, 12h forward, no
+stop.
+
+    signal        n=102  median **+76.05 bp**  mean +82.46  win 69.6%
+    NO SIGNAL     n=650  median **+59.55 bp**   <- same bars, unconditional
+
+**Excess over doing nothing: +16.5bp, against a measured 17.8bp toll at a $6 clip. It
+loses.** The +76bp is WETH going up, not donchian finding anything.
+
+**The baseline is itself an artifact, and this one bites everybody's numbers.** WETH went
+2492.73 -> 2694.03 over the window: +8.08% total, which compounds to **+13.68 bp per
+12h**. The unconditional median over sampled bars reads **+59.55 bp**. Same quantity,
+**4.4x apart**. Cause: the 15-min grid has a tick in **827 of 2728 buckets (30.3%)** and
+the covered stretches cluster, so the sample over-weights periods where price rose.
+**Any forward-return median taken off `market_stream` on a 30%-covered tape is measuring
+when the feed was up, not what price did.** Same defect as p691's 53.1% duty cycle and
+p692's hold-window census, but hitting the RETURN estimate rather than the hold.
+
+Free cross-check that validates the half which survives: the gas-to-dollars conversion
+used ETH=$2499 **implied** from fee_cost/chain-gas (min 1638, max 6015 -- wide). The WETH
+tape says spot was 2492.73 - 2694.03 over the same period. The implied figure lands
+inside the real range, so **$0.004678/round-trip gas is sound**.
+
+**Revised status: deep-pair COST side OPEN** (10.0bp fee + 7.8bp gas at a $6 clip,
+chain-measured). **Deep-pair SIGNAL side CLOSED on available evidence** -- not because
+the edge is negative, but because the tape cannot support the measurement and what it
+does support loses to buy-and-hold. Reopening it needs a denser WETH tape, not a
+different indicator.
