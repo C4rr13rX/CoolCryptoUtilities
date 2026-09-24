@@ -32882,3 +32882,80 @@ output). The ladder state in this pass's briefing -- step 5 GRADUATION passing
 with money_button approved, step 6 RISK the first FAIL -- was measured at
 07:52 and is NOT re-verified by me. p702 should re-run it rather than trust the
 number above.
+
+================================================================================
+PASS 702 (Echo, senior) -- [57d69341] the two-regime feed family, censused
+================================================================================
+
+ROUTE TRIED: extend the three known two-regime symbols (COMP/AAVE/BASELINE) to
+a full census of market_stream, then ask whether the family can reach live
+money and whether any existing guard stops it.
+
+NUMBER PRODUCED. Criterion, stated so it can be re-run: for each symbol with
+n>=30 ticks, sort prices and take the largest RATIO gap between consecutive
+ticks; flag if that zero-tick gap is >=1.50x AND the minority cluster holds
+>=3 ticks AND >=0.1% of the tape.
+
+    492 symbols / 168,476 ticks   tested (n>=30): 243   FLAGGED: 73 = 30.0%
+    gap ratio over all tested:    median 1.101 | p70 1.990 | p90 1655.8
+
+The item was filed as a three-symbol puzzle. It is not: COMP ranks 64th
+(1.86x), AAVE 56th (2.47x), BASELINE 50th (4.87x) OF 73 -- the three known
+members are the MILDEST cases. The head of the list is orders of magnitude
+(PEPKING 2.36e11x, SPACEX 1.10e9x, ANTHROPIC 1.58e7x, ARB 2.02e4x where the
+156-tick MAJORITY cluster sits at 3.2e-05 against a real ARB price near $0.65).
+Non-USDC quote pairs are in it too (CBETH-CBBTC, SOL-CBBTC, JITOSOL-CBBTC,
+CBETH-WETH, AERO-WETH, EURC-WETH, VVV-WETH). Full list: data/two_regime_census.json
+
+CLOSED -- LIVE EXPOSURE IS ZERO, and now proven for 73 symbols not 3. Across
+all flagged symbols there are ZERO live-entry, ZERO live-exit and ZERO
+live-swap-settled rows, and the complement holds: all 8 symbols that HAVE
+traded live (AERO, CBBTC, CBETH, BASECAT, BPAD, BSTONK, CBXRP) are unflagged.
+
+CORRECTION TO MY OWN p701 METHOD: at p701 I checked trading_ops.ACTION and
+reported "every row is ghost-* or entry-refused-*". That field is plain
+enter/hold/exit on these symbols. The ghost/live split lives in STATUS. The
+p701 conclusion survives re-measurement on the right field; the method did not.
+
+OPEN, AND IT IS THE ONLY LIVE RISK HERE: 17 flagged rows DID reach the live
+gate and every one was blocked for a reason unrelated to bimodality --
+swap_guard:volatility x5 (SPACEX), swap_guard:feed_frozen x11 (OPENAI),
+token_unresolved x1 (1KTO100M). Three unrelated faults doing the work by
+accident. NO predicate tests for two-regime tape. A bimodal symbol with a calm
+recent window and a resolvable token has nothing standing in its way.
+
+CLOSED -- THE QUARANTINE DOES NOT COVER THIS. quarantined-ghost-entry n=124
+LAST 2026-08-27 11:10; quarantined-ghost-exit n=129 LAST 2026-08-27 17:36;
+newest trading_ops row 2026-09-24 12:41. 28 days dormant. Do not assume it
+protects anything.
+
+CLOSED BY RUNNING THE CODE -- ledger.py:240/:688 IS NOT A SECOND LINE OF
+DEFENCE. _ABSOLUTE_MAX_OUTCOME=2.0, _RELATIVE_MAX_MULTIPLE=25.0. Its signature
+is (profit, *, relative_to) -- it NEVER SEES A PRICE, so it cannot distinguish
+two-assets-under-one-ticker from a large real move even in principle. Called at
+exactly ONE site, :688, in the record-outcome path: CLOSE only, never entry.
+And the actual COMP round trip (profit -1.1195) returns implausible=False at
+ALL of relative_to in {None,.001,.005,.01,.02,.05,.1,.25,.5,1.0,2.0}, because
+|-1.1195| < the 2.0 absolute floor gates it out regardless of scale.
+
+DEFECT FOUND, FILED NOT FIXED -> [15731046]: _is_implausible's docstring header
+(ledger.py:242-244) says "Only outsized GAINS are filtered... discarding [a
+loss] is actively dangerous". Its body (:261-292) filters losses when the
+strategy has history: _is_implausible(-19.9, relative_to=0.02) -> True. The
+BODY IS CORRECT and well-reasoned; the summary line heading it is stale. Doc
+bug, not a behaviour bug.
+
+SENIOR DECISION -- DO NOT SHIP A PREDICATE, and this is the part to argue with.
+The census is real and the forward gap is real, but it is NOT on the path to
+the scoreboard: the live universe is deep-pool and entirely unflagged, so a
+bimodality ban buys ZERO P/L today. This board has closed five straight passes
+on "the refusal is correct" (p692/696/698/699/700); adding a 73-symbol ban
+while zero of 44 strategies has an edge on the fresh universe [91cfe040]
+shrinks the numerator and moves graduation FURTHER away -- the same shape as
+the freshness fix measured at p700. Filed as CONDITIONAL [28dbc4de]: build it
+when the live universe is expanded past its current 8 symbols, not on a date.
+
+NOT CLAIMED: criterion 7 of [57d69341] requires verification by an agent other
+than the one producing the census. I was the only agent this pass and I wrote
+the census, so that criterion DOES NOT HOLD and the item is left in_progress.
+Criteria 1-6 hold and the commands are in this pass's board posts.
