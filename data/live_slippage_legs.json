@@ -1,0 +1,938 @@
+[
+ {
+  "outcome_id": "2:AERO-USDC:aec1a3366848462180392dcbb7abe891:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "entry",
+  "tx": "0x62cafa4ccb0c7a34c7c8a767ac569832f69601f3fb71d396b4813f104acfb0c2",
+  "clip_usd": 0.7499997569815717,
+  "status": 1,
+  "block": 50823048,
+  "gas_wei": 798224907150,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.75,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 750000
+  },
+  "in_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 1539156498724524271
+  },
+  "pool_dev_bp": 4.982353504066062,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:aec1a3366848462180392dcbb7abe891:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "exit",
+  "tx": "0x77f0075e0e6b79e71ba63667efe4aec9a80bb2b6e858400f63305d90ec7a6ed1",
+  "clip_usd": 0.7499997569815717,
+  "status": 1,
+  "block": 50824875,
+  "gas_wei": 930352786326,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 0.75124,
+  "out_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 1539156000000000000
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 751240
+  },
+  "pool_dev_bp": 4.997037716305552,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:CBETH-USDC:bfa397e608c743e7a18c1f4450590080:exit:1",
+  "symbol": "CBETH-USDC",
+  "leg": "entry",
+  "tx": "0x076978740803789cd40564cb150753bc075a5f6600d8422add58a4720822b82b",
+  "clip_usd": 0.4438348469793743,
+  "status": 1,
+  "block": 50823033,
+  "gas_wei": 1098698054806,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.75,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 750000
+  },
+  "in_tokens": {
+   "0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22": 273750474589586
+  },
+  "pool_dev_bp": 28.708547999216627,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:CBETH-USDC:bfa397e608c743e7a18c1f4450590080:exit:1",
+  "symbol": "CBETH-USDC",
+  "leg": "exit",
+  "tx": "0x927834717d12395c1eb3d9148609a2b8142a59403205d1caa4ffd04e68e0e005",
+  "clip_usd": 0.4438348469793743,
+  "status": 1,
+  "block": 50829976,
+  "gas_wei": 1186656422000,
+  "n_transfers": 4,
+  "n_swaps": 2,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 2,
+  "usdc_out": 0.0,
+  "usdc_in": 0.458819,
+  "out_tokens": {
+   "0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22": 162000000000000
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 458819
+  },
+  "pool_dev_bp": 2.0104977160584347,
+  "n_v3": 2
+ },
+ {
+  "outcome_id": "2:CBETH-USDC:34c513c44ff64ee581fe8d673f2d867a:exit:1",
+  "symbol": "CBETH-USDC",
+  "leg": "entry",
+  "tx": "0xee36a71d5b0ff542a66a33782085f33df52252892b1c18b7c92538b4bb89c388",
+  "clip_usd": 0.3157921348768693,
+  "status": 1,
+  "block": 50830238,
+  "gas_wei": 868098445861,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.75,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 750000
+  },
+  "in_tokens": {
+   "0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22": 263622778421825
+  },
+  "pool_dev_bp": 28.734346297403235,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:CBETH-USDC:34c513c44ff64ee581fe8d673f2d867a:exit:1",
+  "symbol": "CBETH-USDC",
+  "leg": "exit",
+  "tx": "0x9ffdd1cfe3f17fbeddb2b3091b49f8f6524b5a0538ae9a2f3aadb56610264e6c",
+  "clip_usd": 0.3157921348768693,
+  "status": 1,
+  "block": 50832309,
+  "gas_wei": 853280292864,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 0.313395,
+  "out_tokens": {
+   "0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22": 111000000000000
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 313395
+  },
+  "pool_dev_bp": 29.442231434442245,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:2269251a5116425b8ce9745cdf189dc8:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "entry",
+  "tx": "0xfce0036c5c9e2e73a5985a5cfb849ed745e55a7b07c2c27bca00cca85d0888b5",
+  "clip_usd": 0.75,
+  "status": 1,
+  "block": 50850214,
+  "gas_wei": 839630190000,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.75,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 750000
+  },
+  "in_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 1494620938000629326
+  },
+  "pool_dev_bp": 29.20538253735505,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:2269251a5116425b8ce9745cdf189dc8:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "exit",
+  "tx": "0x121349488665874b2259c283d268cda7220663d11b146d2651983a0566316bb5",
+  "clip_usd": 0.75,
+  "status": 1,
+  "block": 50852568,
+  "gas_wei": 709833000000,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 0.748955,
+  "out_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 1494620938000629200
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 748955
+  },
+  "pool_dev_bp": 4.989537616730821,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:CBBTC-USDC:f235437c56b646618cbf19ab5ba152f6:exit:1",
+  "symbol": "CBBTC-USDC",
+  "leg": "entry",
+  "tx": "0x0dfedf3a7c4f77a35706ddca6813f9ec93455c0a5d7e5d3c7b9d2760ab8f0959",
+  "clip_usd": 3.0,
+  "status": 1,
+  "block": 50832088,
+  "gas_wei": 909617280000,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.75,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 750000
+  },
+  "in_tokens": {
+   "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": 928
+  },
+  "pool_dev_bp": -0.5926062228245321,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:CBBTC-USDC:f235437c56b646618cbf19ab5ba152f6:exit:1",
+  "symbol": "CBBTC-USDC",
+  "leg": "exit",
+  "tx": "0x340034967fb6145db692f039f7a95108295249aa2f0f2f987d17aa69e061705e",
+  "clip_usd": 3.0,
+  "status": 1,
+  "block": 50852679,
+  "gas_wei": 1214501750000,
+  "n_transfers": 4,
+  "n_swaps": 2,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 2,
+  "usdc_out": 0.0,
+  "usdc_in": 2.995898,
+  "out_tokens": {
+   "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": 3709
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 2995898
+  },
+  "pool_dev_bp": 6.388637501401062,
+  "n_v3": 2
+ },
+ {
+  "outcome_id": "2:BSTONK-USDC:38c01e7f2dd04455b8c4781ac1ef5f3f:exit:1",
+  "symbol": "BSTONK-USDC",
+  "leg": "entry",
+  "tx": "0xcd6fb05c92af5077f9be707727c1d57e0ac1dfedd54d9f87e860376b96ea560b",
+  "clip_usd": 0.7499999999999999,
+  "status": 1,
+  "block": 50832794,
+  "gas_wei": 2628112451250,
+  "n_transfers": 4,
+  "n_swaps": 2,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 2,
+  "usdc_out": 0.75,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 750000
+  },
+  "in_tokens": {
+   "0x0f61edbfe6cd86024c0f210c0695b08df55fdfc9": 360264243225392976659
+  },
+  "pool_dev_bp": 191.21506748164705,
+  "n_v3": 2
+ },
+ {
+  "outcome_id": "2:BSTONK-USDC:38c01e7f2dd04455b8c4781ac1ef5f3f:exit:1",
+  "symbol": "BSTONK-USDC",
+  "leg": "exit",
+  "tx": "0x6a644ba16d9267485dcc9bb3cbad76a0baa2e376ea0fef4a418b9c703bf5bea1",
+  "clip_usd": 0.7499999999999999,
+  "status": 1,
+  "block": 50860696,
+  "gas_wei": 2869818750000,
+  "n_transfers": 4,
+  "n_swaps": 2,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 2,
+  "usdc_out": 0.0,
+  "usdc_in": 1.005767,
+  "out_tokens": {
+   "0x0f61edbfe6cd86024c0f210c0695b08df55fdfc9": 360264243225392976659
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1005767
+  },
+  "pool_dev_bp": 82.2102970714933,
+  "n_v3": 2
+ },
+ {
+  "outcome_id": "2:BASECAT-USDC:e3801c347b034648a96f4e76bfac5116:exit:1",
+  "symbol": "BASECAT-USDC",
+  "leg": "entry",
+  "tx": "0xd7bc9d975ee2dc0983d323ce3ef06aba81d2ca44c876e29a68c1353fe354709f",
+  "clip_usd": 0.75,
+  "status": 1,
+  "block": 50866503,
+  "gas_wei": 891667000000,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.75,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 750000
+  },
+  "in_tokens": {
+   "0xb2000000000000000000004c27f6523082f41d01": 14320993046099010906
+  },
+  "pool_dev_bp": 29.92134067965391,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:BASECAT-USDC:e3801c347b034648a96f4e76bfac5116:exit:1",
+  "symbol": "BASECAT-USDC",
+  "leg": "exit",
+  "tx": "0x97c872e7e184c63b4e4e6278ce045c3bb4a260333f9e920c5d67675fd6c513d0",
+  "clip_usd": 0.75,
+  "status": 1,
+  "block": 50867252,
+  "gas_wei": 760873100000,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 0.720889,
+  "out_tokens": {
+   "0xb2000000000000000000004c27f6523082f41d01": 14320993046099012000
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 720889
+  },
+  "pool_dev_bp": 30.035428766173045,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:CBBTC-USDC:2d0a46dd2fd4430db10adb5c065f9095:exit:1",
+  "symbol": "CBBTC-USDC",
+  "leg": "entry",
+  "tx": "0x0646aa0230c983d791ceed26a7f0197490fd3c3609c64a461e721466581eaae3",
+  "clip_usd": 0.874793,
+  "status": 1,
+  "block": 50865215,
+  "gas_wei": 1001896500000,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.874793,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 874793
+  },
+  "in_tokens": {
+   "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": 1078
+  },
+  "pool_dev_bp": -2.271766974522027,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:CBBTC-USDC:2d0a46dd2fd4430db10adb5c065f9095:exit:1",
+  "symbol": "CBBTC-USDC",
+  "leg": "exit",
+  "tx": "0xdcb66432afbfc58f8577a22c167091a159f11fc33240d1a878432e4f4ba2b2c0",
+  "clip_usd": 0.874793,
+  "status": 1,
+  "block": 50867949,
+  "gas_wei": 4082772214101,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 0.862361,
+  "out_tokens": {
+   "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": 1078
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 862361
+  },
+  "pool_dev_bp": 4.520901646667408,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:e8954fd5a8c84ce281b1f90ca08f4ce3:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "entry",
+  "tx": "0x1ba066c1f1a4d87349077e0f720c6abd4a4b2e70a1aab5d874536b6139ba5c25",
+  "clip_usd": 0.75,
+  "status": 1,
+  "block": 50865265,
+  "gas_wei": 771850200000,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.75,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 750000
+  },
+  "in_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 1473004744877722273
+  },
+  "pool_dev_bp": 4.982784683709163,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:e8954fd5a8c84ce281b1f90ca08f4ce3:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "exit",
+  "tx": "0x50f3ee13c2a4ca257752e36e1761d52bf8cc98cb515f9f1dedf1550a2a36e422",
+  "clip_usd": 0.75,
+  "status": 1,
+  "block": 50869781,
+  "gas_wei": 814800000000,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 0.73254,
+  "out_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 1473004744877722400
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 732540
+  },
+  "pool_dev_bp": 4.997387937479836,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:CBBTC-USDC:30795ab0f5c84b72899f341acb2e9711:exit:1",
+  "symbol": "CBBTC-USDC",
+  "leg": "entry",
+  "tx": "0xabcace1328c0463fc8b0f234c10cb56b59157ac794f638d20e2069f416410174",
+  "clip_usd": 1.7492319999999997,
+  "status": 1,
+  "block": 50876114,
+  "gas_wei": 935698968166,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.874616,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 874616
+  },
+  "in_tokens": {
+   "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": 1094
+  },
+  "pool_dev_bp": 36.8878291968866,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:CBBTC-USDC:30795ab0f5c84b72899f341acb2e9711:exit:1",
+  "symbol": "CBBTC-USDC",
+  "leg": "exit",
+  "tx": "0xd17c00969d20ddcbb3dc8d6cba585e01a80421fa43c728b0c43dcc9e79cfa31d",
+  "clip_usd": 1.7492319999999997,
+  "status": 1,
+  "block": 50913489,
+  "gas_wei": 827212887000,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 1.743046,
+  "out_tokens": {
+   "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": 2189
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1743046
+  },
+  "pool_dev_bp": -2.949496897500792,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:CBXRP-USDC:c5785681c8f34c8ab881c605d534dab1:exit:1",
+  "symbol": "CBXRP-USDC",
+  "leg": "entry",
+  "tx": "0xe34cd94eb86f71e0921a16ee81b2e123f1ea5081be5d44eda3c6d58e92891fe5",
+  "clip_usd": 0.7500000000000001,
+  "status": 1,
+  "block": 50877209,
+  "gas_wei": 1172040988960,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.75,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 750000
+  },
+  "in_tokens": {
+   "0xcb585250f852c6c6bf90434ab21a00f02833a4af": 531701
+  },
+  "pool_dev_bp": 99.92738471332973,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:CBXRP-USDC:c5785681c8f34c8ab881c605d534dab1:exit:1",
+  "symbol": "CBXRP-USDC",
+  "leg": "exit",
+  "tx": "0xae45566559099a4c4f92863783a5e3a0e538b9570fea89126402d2e3d08f3f9b",
+  "clip_usd": 0.7500000000000001,
+  "status": 1,
+  "block": 50914305,
+  "gas_wei": 1423429300000,
+  "n_transfers": 4,
+  "n_swaps": 2,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 2,
+  "usdc_out": 0.0,
+  "usdc_in": 0.737408,
+  "out_tokens": {
+   "0xcb585250f852c6c6bf90434ab21a00f02833a4af": 531701
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 737408
+  },
+  "pool_dev_bp": 105.99702968691948,
+  "n_v3": 2
+ },
+ {
+  "outcome_id": "2:AERO-USDC:85a11f8d0e3d40fbb8bda71e15f47e85:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "entry",
+  "tx": "0x519cf7b627900d585a686e96b5a980ed3603eef87eee5eb661794c05bf4affb8",
+  "clip_usd": 0.8096829321281347,
+  "status": 1,
+  "block": 50916898,
+  "gas_wei": 1313598628750,
+  "n_transfers": 4,
+  "n_swaps": 2,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 2,
+  "usdc_out": 1.5,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1500000
+  },
+  "in_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 2879009029542749853
+  },
+  "pool_dev_bp": 34.9966065252183,
+  "n_v3": 2
+ },
+ {
+  "outcome_id": "2:AERO-USDC:85a11f8d0e3d40fbb8bda71e15f47e85:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "exit",
+  "tx": "0x4ea92aaafb8d1b9f06cbf4ccccc6cee5e90f63dd7129f5f39504dc4c35fb8f43",
+  "clip_usd": 0.8096829321281347,
+  "status": 1,
+  "block": 50919654,
+  "gas_wei": 796472645150,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 0.811542,
+  "out_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 1554056315109032453
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 811542
+  },
+  "pool_dev_bp": 4.9892192878187025,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:85a11f8d0e3d40fbb8bda71e15f47e85:exit:2",
+  "symbol": "AERO-USDC",
+  "leg": "entry",
+  "tx": "0x519cf7b627900d585a686e96b5a980ed3603eef87eee5eb661794c05bf4affb8",
+  "clip_usd": 0.6903170678718656,
+  "status": 1,
+  "block": 50916898,
+  "gas_wei": 1313598628750,
+  "n_transfers": 4,
+  "n_swaps": 2,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 2,
+  "usdc_out": 1.5,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1500000
+  },
+  "in_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 2879009029542749853
+  },
+  "pool_dev_bp": 34.9966065252183,
+  "n_v3": 2
+ },
+ {
+  "outcome_id": "2:AERO-USDC:85a11f8d0e3d40fbb8bda71e15f47e85:exit:2",
+  "symbol": "AERO-USDC",
+  "leg": "exit",
+  "tx": "0x409346ae1f26cc3cf7e8f42296e3582f9ca5dc5b8bdb2a2d2eea7eb1dbec2fce",
+  "clip_usd": 0.6903170678718656,
+  "status": 1,
+  "block": 50919910,
+  "gas_wei": 758703200000,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 0.695838,
+  "out_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 1324952714433717400
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 695838
+  },
+  "pool_dev_bp": 4.996919945063905,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:c45e394510af40ee813868b5950d482c:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "entry",
+  "tx": "0xd3aefd192200ffe77da8bf78c0f287d1a8bdf6b361a12af5a6a42ffc1d00e53a",
+  "clip_usd": 0.860157288295217,
+  "status": 1,
+  "block": 50919952,
+  "gas_wei": 1042814413960,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 1.5,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1500000
+  },
+  "in_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 2848195683623783162
+  },
+  "pool_dev_bp": 4.965149371476407,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:c45e394510af40ee813868b5950d482c:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "exit",
+  "tx": "0x7981f22e879c46afed8d0d2cb93f19ace624db49d054cbf09c336d58219e33fd",
+  "clip_usd": 0.860157288295217,
+  "status": 1,
+  "block": 50921453,
+  "gas_wei": 937047052416,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 0.871833,
+  "out_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 1633264183839983262
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 871833
+  },
+  "pool_dev_bp": 4.982278874787749,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:BPAD-USDC:83190a5cb58046348d8f327f4736d987:exit:1",
+  "symbol": "BPAD-USDC",
+  "leg": "entry",
+  "tx": "0x15d7a40c56ea57f371b589cad7d08f36b3e354f551ac49605cec1b76ce00cdf2",
+  "clip_usd": 1.5,
+  "status": 1,
+  "block": 50920513,
+  "gas_wei": 1115523521182,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 1.5,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1500000
+  },
+  "in_tokens": {
+   "0xf5f11bc9be9d6690f795d04d2fc9bdd097008a2b": 5438340323561341944902
+  },
+  "pool_dev_bp": 99.49076730211503,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:BPAD-USDC:83190a5cb58046348d8f327f4736d987:exit:1",
+  "symbol": "BPAD-USDC",
+  "leg": "exit",
+  "tx": "0x3298e2d039dd218f6a581e5364619c58dc46a4b8bc32271f061a8b4b03039f2e",
+  "clip_usd": 1.5,
+  "status": 1,
+  "block": 50921564,
+  "gas_wei": 898906853120,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 1.250107,
+  "out_tokens": {
+   "0xf5f11bc9be9d6690f795d04d2fc9bdd097008a2b": 5438340323561341944902
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1250107
+  },
+  "pool_dev_bp": 100.54002566065367,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:c45e394510af40ee813868b5950d482c:exit:2",
+  "symbol": "AERO-USDC",
+  "leg": "entry",
+  "tx": "0xd3aefd192200ffe77da8bf78c0f287d1a8bdf6b361a12af5a6a42ffc1d00e53a",
+  "clip_usd": 0.639842711704783,
+  "status": 1,
+  "block": 50919952,
+  "gas_wei": 1042814413960,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 1.5,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1500000
+  },
+  "in_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 2848195683623783162
+  },
+  "pool_dev_bp": 4.965149371476407,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:c45e394510af40ee813868b5950d482c:exit:2",
+  "symbol": "AERO-USDC",
+  "leg": "exit",
+  "tx": "0x4c53ee96e5d7a4fb006e8e1d22d2d839c6e4b20bb4e5a89da1457dc2cac270fa",
+  "clip_usd": 0.639842711704783,
+  "status": 1,
+  "block": 50922538,
+  "gas_wei": 692392736596,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 0.644553,
+  "out_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 1214931499783799900
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 644553
+  },
+  "pool_dev_bp": 4.9893386313693,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:c083a4c7d385413a901daef071897eb8:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "entry",
+  "tx": "0x444b9563b43985212fe0824031b0e436d0d805710d4e31b4590fd9d0ab3338ea",
+  "clip_usd": 1.5154967323129749,
+  "status": 1,
+  "block": 50924698,
+  "gas_wei": 977085997212,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 2.907391,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 2907391
+  },
+  "in_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 5345871237736760112
+  },
+  "pool_dev_bp": 4.931812031235827,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:c083a4c7d385413a901daef071897eb8:exit:1",
+  "symbol": "AERO-USDC",
+  "leg": "exit",
+  "tx": "0x52135c2073523f601b827f181595cbc8ba7b4b5ed3d4a4da75d33bd6a374bdd0",
+  "clip_usd": 1.5154967323129749,
+  "status": 1,
+  "block": 50926152,
+  "gas_wei": 715862421092,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 1.495012,
+  "out_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 2786570637439539000
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1495012
+  },
+  "pool_dev_bp": 4.968310010662336,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:c083a4c7d385413a901daef071897eb8:exit:2",
+  "symbol": "AERO-USDC",
+  "leg": "entry",
+  "tx": "0x444b9563b43985212fe0824031b0e436d0d805710d4e31b4590fd9d0ab3338ea",
+  "clip_usd": 1.391894267687025,
+  "status": 1,
+  "block": 50924698,
+  "gas_wei": 977085997212,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 2.907391,
+  "usdc_in": 0.0,
+  "out_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 2907391
+  },
+  "in_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 5345871237736760112
+  },
+  "pool_dev_bp": 4.931812031235827,
+  "n_v3": 1
+ },
+ {
+  "outcome_id": "2:AERO-USDC:c083a4c7d385413a901daef071897eb8:exit:2",
+  "symbol": "AERO-USDC",
+  "leg": "exit",
+  "tx": "0x9fa318ce9234764b8a2fe9b74fd59e084b12524b7f716f9adbc12efaee1df428",
+  "clip_usd": 1.391894267687025,
+  "status": 1,
+  "block": 50926415,
+  "gas_wei": 711555941800,
+  "n_transfers": 2,
+  "n_swaps": 1,
+  "swap_kinds": [
+   "v3"
+  ],
+  "hops": 1,
+  "usdc_out": 0.0,
+  "usdc_in": 1.36692,
+  "out_tokens": {
+   "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 2559300600297221112
+  },
+  "in_tokens": {
+   "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1366920
+  },
+  "pool_dev_bp": 4.976876426798782,
+  "n_v3": 1
+ }
+]
