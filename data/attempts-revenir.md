@@ -32286,3 +32286,51 @@ in toll (0.46% of the wallet), or $0.4634 if the gate keeps overcharging (2.00%)
 **NOTHING WAS ARMED.** This is a costing. The decision a human is being asked to take: spend ~$0.11
 of a $23.18 wallet to replace a modelled cost floor with a measured one.
 
+
+### p699 CORRECTION TO THE ENTRY ABOVE, BY ITS OWN AUTHOR, BECAUSE IT CHANGES THE CONCLUSION
+
+The entry above claims the live entry gate charges WETH 38.62bp symbol-blind, citing blocked item
+[4a3b3902]. **THAT IS FALSE. [4a3b3902] WAS ALREADY FIXED IN p695.** I audited the call site instead
+of trusting the item title:
+
+    trading/bot.py:2276   return roundtrip_cost_rate(notional, symbol)
+
+with a p695 docstring above it reading "SYMBOL MATTERS AT LEAST AS MUCH AS SIZE, and until p695 this
+lane threw it away." Sweep of every caller: the only remaining symbol-blind ones are SCRIPTS
+(`scripts/directive_path_census.py:112`, `scripts/weth_moneybutton_direction.py:278`), not the
+production lane. `services/atf_static_strategy.py:974` passes the symbol too. **Production is clean.**
+
+The 38.62bp column is still worth printing -- it is what an UNPRICED symbol gets, and
+`census_symbols()` holds only 9 -- but **it is not WETH's price and there is no 4.4x overcharge on
+the pair route (a) would use.**
+
+**THE TOLL CURVE IS UNCHANGED; ONLY MY ATTRIBUTION OF IT WAS WRONG. AND THE CORRECTED FINDING IS THE
+BETTER ONE:**
+
+    WETH-USDC, charged its real census rate   vs the item's 8.46bp best move
+      $ 6.00   8.79 bp   -0.33 bp   MISSES BY A THIRD OF A BASIS POINT
+      $20.00   4.10 bp   +4.36 bp   CLEARS
+      $100     2.49 bp   +5.97 bp   CLEARS
+
+    and the whole of that slope is fixed gas diluting, nothing else:
+      gas at $6.00   6.75 bp     pool 2.05 bp (flat)
+      gas at $20.00  2.02 bp     pool 2.08 bp (flat)
+
+**So route (a) is not closed on cost, and it is not blocked by a bug either. IT IS BOUNDED BY THE
+SIZE OF THE WALLET.** A $20 clip is **86.3% of the $23.18 deployable stable** in one round trip. The
+clip that clears the toll is a clip this wallet can hold ONE of at a time. That is a capital-size
+finding: no gate fix, no signal work and no cost rewrite moves it.
+
+The amendment was RIGHT that the clip lever has a floor and WRONG about where it is -- the floor is
+the pool fee (2.05bp on WETH), not 17.58bp -- and wrong that no clip clears.
+
+**EVERY CAVEAT IN THE ENTRY ABOVE STILL STANDS AND IS UNAFFECTED BY THIS CORRECTION:** the model has
+no slippage term at all (gas+pool only); WETH has ZERO live fills so its slippage is unmeasured at
+any clip; the census is `quotes_not_fills: true` dated 20260917. If the amendment's 13.5bp slippage
+is real on WETH, the $20 toll is 17.60bp and nothing clears at any size.
+
+**WHAT AN OPERATOR IS BEING ASKED TO DECIDE IS TWO THINGS, NOT ONE:** (1) spend ~$0.11 of toll on 20
+settled WETH round trips to replace a modelled cost floor with a measured one; and (2) whether a
+$23.18 wallet can carry the ~$20 clip the arithmetic wants, or whether this loop needs more capital
+before any route can clear. Nothing was armed.
+

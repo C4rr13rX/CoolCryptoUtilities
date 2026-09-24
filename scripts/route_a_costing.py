@@ -17,7 +17,22 @@ span 15x:
               -- the census entry for WETH, symbol-AWARE
    17.58 bp   the item's amendment (pool 4.08 + a 13.5bp slippage term)
    31.87 bp   roundtrip_cost_rate(n) with NO symbol -- source
-              "unpriced_default", and this is the call the live entry gate makes
+              "unpriced_default"
+
+A CORRECTION THIS SCRIPT MADE TO ITSELF, LEFT IN BECAUSE IT CHANGES THE ANSWER.
+An earlier version of this file claimed the 31.87bp blind default is what the
+live entry gate charges WETH, citing blocked item [4a3b3902]. That is FALSE and
+the call site says so:
+
+    trading/bot.py:2276   return roundtrip_cost_rate(notional, symbol)
+
+[4a3b3902] was fixed in p695; the docstring above that line says "SYMBOL MATTERS
+AT LEAST AS MUCH AS SIZE, and until p695 this lane threw it away." Sweeping every
+caller, the only remaining symbol-blind ones are scripts (directive_path_census,
+weth_moneybutton_direction), not the production lane. WETH is in
+``census_symbols()``, so the gate charges WETH its REAL rate. The blind column
+below is kept because it is what an UNPRICED symbol still gets -- the census
+holds 9 symbols and the book trades many more -- but it is NOT WETH's price.
 
 The shipped cost function has NO slippage term at all. Its breakdown is
 ``gas_rate + pool_rate`` and nothing else, so the amendment's 13.5bp is not in
@@ -26,9 +41,9 @@ zero live fills, and the census backing every number here is flagged
 ``quotes_not_fills: true``.
 
 So this script does not report "route (a) is open" or "route (a) is closed".
-It reports the gap TWICE -- once against the toll the lane would CHARGE, once
-against the toll the pair actually PAYS -- because those two have opposite
-signs, and the difference between them is a missing function argument.
+It reports the gap against the toll WETH actually pays, and finds that the
+binding constraint is neither cost accuracy nor signal but CLIP SIZE against a
+$23.18 wallet.
 
 Run:  python scripts/route_a_costing.py
 """
@@ -154,7 +169,8 @@ def the_gap(clip: float) -> None:
     section("3. DOES THE BEST MEASURED MOVE CLEAR ITS OWN TOLL?")
     print(f"  best measured move: {BEST_MEASURED_MOVE_BP:.2f} bp   [{BEST_MOVE_LABEL}]")
     print()
-    print("  a) AGAINST THE TOLL THE LIVE ENTRY GATE WOULD CHARGE (symbol-blind):")
+    print("  a) AGAINST THE SYMBOL-BLIND DEFAULT -- this is what an UNPRICED symbol")
+    print("     gets. It is NOT WETH's price: bot.py:2276 passes the symbol (fixed p695).")
     print()
     print("     clip".ljust(20) + "charged".rjust(11) + "move".rjust(10) + "gap".rjust(11) + "   verdict")
     any_clears_blind = False
@@ -168,7 +184,7 @@ def the_gap(clip: float) -> None:
     print(f"     ==> {'some clip clears' if any_clears_blind else 'NO CLIP CLEARS. The amendment is RIGHT here.'}")
 
     print()
-    print("  b) AGAINST THE TOLL WETH-USDC ACTUALLY PAYS (symbol-aware census):")
+    print("  b) AGAINST THE TOLL WETH-USDC ACTUALLY PAYS -- AND IS ACTUALLY CHARGED:")
     print()
     print("     clip".ljust(20) + "real".rjust(11) + "move".rjust(10) + "gap".rjust(11) + "   verdict")
     first_clearing = None
@@ -184,12 +200,16 @@ def the_gap(clip: float) -> None:
         print("     ==> NO CLIP CLEARS even on the real toll. Route (a) is closed on cost.")
     else:
         print(f"     ==> CLEARS FROM ${first_clearing:,.2f} UPWARD. The amendment's "
-              f"'no clip clears' is FALSE\n"
-              f"         against the symbol-aware census. It is TRUE only against the\n"
-              f"         symbol-blind default the gate actually uses.")
+              f"'there is no clip -- not $6,\n"
+              f"         not $20, not $1000 -- at which the cheapest pair's best horizon\n"
+              f"         clears its own toll' is FALSE on this repo's own cost model.")
     print()
-    print("  THE TWO ROWS DISAGREE BECAUSE OF A MISSING FUNCTION ARGUMENT, NOT BECAUSE")
-    print("  OF A MARKET FACT. Same function, same clip; one call passes the symbol.")
+    print("  THE WHOLE OF ROW (b)'s SLOPE IS FIXED GAS DILUTING, AND NOTHING ELSE.")
+    print(f"    gas at $6.00  {_bp(roundtrip_cost_breakdown(6.0, 'WETH-USDC')['gas_rate']):>6.2f} bp"
+          f"   pool {_bp(roundtrip_cost_breakdown(6.0, 'WETH-USDC')['pool_rate']):>5.2f} bp (flat)")
+    print(f"    gas at $20.00 {_bp(roundtrip_cost_breakdown(20.0, 'WETH-USDC')['gas_rate']):>6.2f} bp"
+          f"   pool {_bp(roundtrip_cost_breakdown(20.0, 'WETH-USDC')['pool_rate']):>5.2f} bp (flat)")
+    print("  So the clip is the only lever, and it has a floor at the pool fee.")
 
 
 def the_dollars(clip: float) -> None:
@@ -203,66 +223,86 @@ def the_dollars(clip: float) -> None:
     print(f"  binding clip                      ${clip:>10.2f}   "
           f"({clip / wallet * 100:.1f}% of the wallet per round trip)")
     print()
-    print(f"  cost per round trip, CHARGED      ${clip * charged:>10.4f}   ({_bp(charged):.2f} bp)")
-    print(f"  cost per round trip, WETH REAL    ${clip * real:>10.4f}   ({_bp(real):.2f} bp)")
-    print(f"  overcharge per round trip         ${clip * (charged - real):>10.4f}   "
-          f"({_bp(charged - real):.2f} bp, {charged / real:.1f}x)")
+    print(f"  cost per WETH round trip          ${clip * real:>10.4f}   ({_bp(real):.2f} bp)")
+    print(f"  the same trade at $20             ${20.0 * roundtrip_cost_rate(20.0, 'WETH-USDC'):>10.4f}   "
+          f"({_bp(roundtrip_cost_rate(20.0, 'WETH-USDC')):.2f} bp)   "
+          f"-- but {20.0 / wallet * 100:.1f}% of the wallet")
+    print(f"  an UNPRICED symbol at this clip    ${clip * charged:>10.4f}   ({_bp(charged):.2f} bp)"
+          f"  <- not WETH; the census holds 9 symbols")
     print()
-    print("  WHAT 20 SETTLED WETH ROUND TRIPS WOULD COST TO BUY:")
+    print("  WHAT SETTLED WETH ROUND TRIPS COST TO BUY, at the binding clip:")
     for n_trades in (10, 20, 40):
         c_real = n_trades * clip * real
-        c_chg = n_trades * clip * charged
-        print(f"    {n_trades:>3} round trips   real ${c_real:>7.4f}   "
-              f"charged ${c_chg:>7.4f}   ({c_chg / wallet * 100:>5.2f}% of wallet)")
+        print(f"    {n_trades:>3} round trips   toll ${c_real:>7.4f}   "
+              f"({c_real / wallet * 100:>5.2f}% of wallet in toll)")
     print()
-    print("  THE PRICE OF THE ANSWER IS CENTS. That is the whole case for route (a),")
-    print("  and it survives every finding above: 20 settled WETH round trips at the")
-    print(f"  binding clip cost ${20 * clip * real:.4f} in toll to buy the FIRST live")
-    print("  measurement of WETH slippage this repo has ever had -- the dominant")
-    print("  unmeasured term in every cost claim on the board.")
+    print("  THE PRICE OF THE ANSWER IS CENTS, AND THAT IS THE WHOLE CASE FOR ROUTE (a).")
+    print(f"  20 settled WETH round trips cost ${20 * clip * real:.4f} in toll and would be the")
+    print("  FIRST live measurement of WETH slippage this repo has ever had -- the")
+    print("  dominant unmeasured term in every cost claim on the board.")
+    print()
+    print("  WHAT IS NOT CENTS: the clip that actually clears. Each open position at")
+    print(f"  $20 is {20.0 / wallet * 100:.1f}% of capital, so this wallet supports ONE at a time.")
 
 
 def the_verdict(clip: float) -> None:
     section("5. VERDICT -- STATED THE WAY THE ITEM DEMANDED IT BE STATED")
     real20 = roundtrip_cost_rate(20.0, "WETH-USDC")
+    wallet = 23.18
     print("""
   THE ITEM SAID: if the answer is 'no route is open', say it in those words and
-  do not soften it. I am not able to say those words honestly, and the reason is
-  a measurement, not optimism.
+  do not soften it. I cannot say them honestly, and the reason is a measurement.
 
-  ROUTE (a) IS NOT CLOSED ON THE COST AXIS. It is BLOCKED ON A MISPRICING.
+  ROUTE (a) IS NOT CLOSED ON THE COST AXIS, AND IT IS NOT BLOCKED BY A BUG
+  EITHER. IT IS BOUNDED BY THE SIZE OF THE WALLET.
 
-    * The live entry gate prices WETH at {chg:.2f} bp at the binding clip.
-    * WETH's own census entry says {rl:.2f} bp at that clip and {r20:.2f} bp at $20.
-    * That is a {ratio:.1f}x overcharge, and it comes from calling
-      roundtrip_cost_rate(notional) instead of roundtrip_cost_rate(notional, symbol).
-    * Against the charged toll, no clip clears. Against the real one, WETH clears
-      from $20 upward. The amendment's conclusion holds ONLY under the bug.
+    * WETH is charged its real census rate -- bot.py:2276 passes the symbol.
+    * At the ${clip:.2f} binding clip WETH costs {rl:.2f} bp against a {mv:.2f} bp best
+      measured move. IT MISSES BY {miss:.2f} bp. A third of a basis point.
+    * At $20 it costs {r20:.2f} bp and CLEARS BY {gain:.2f} bp.
+    * The entire difference is the fixed gas term diluting. Nothing else in the
+      model varies with size.
+    * But $20 is {pct:.1f}% OF THE ${wal:.2f} DEPLOYABLE WALLET in a single round
+      trip. The clip that clears the toll is a clip this wallet cannot
+      diversify across even three open positions.
+
+  THAT IS A CAPITAL-SIZE FINDING, NOT A CODE FINDING. No gate fix, no signal
+  work and no cost rewrite moves it. The amendment was right that the clip lever
+  has a floor; it was wrong about where the floor is (the pool fee, {pool:.2f} bp on
+  WETH, not 17.58 bp) and wrong that no clip clears.
 
   WHAT I CANNOT CLAIM, AND WILL NOT:
 
-    * That route (a) would be PROFITABLE. The move side (8.46bp) is the item's
+    * That route (a) would be PROFITABLE. The move side ({mv:.2f} bp) is the item's
       number and p696 measured that estimator ~48bp biased POSITIVE. The cost
-      side is a QUOTE census, not fills. A gap computed from a biased move and a
-      quoted cost is not an edge -- it is two error bars overlapping.
+      side is a QUOTE census, not fills. A gap between a biased move and a
+      quoted cost is two error bars overlapping, not an edge.
     * That the amendment's 13.5bp slippage is wrong. It is ABSENT from the model,
       which is not the same as refuted. WETH has zero live fills. If it is real
-      and it applies to WETH, the real toll at $20 is {rl20_slip:.2f} bp and nothing clears.
+      and applies to WETH, the toll at $20 is {slip:.2f} bp and NOTHING clears at
+      any size.
 
   SO THE HONEST STATE IS: route (a)'s cost case turns entirely on ONE unmeasured
   number -- WETH slippage at a real fill -- and route (a) is the only instrument
-  that can measure it. The 20 round trips that would settle the question cost
-  ${cost20:.4f} in toll. The question has been open for 8 passes and costs cents to close.
+  in this repo that can measure it. 20 settled WETH round trips at the binding
+  clip cost ${cost20:.4f} in toll.
 
   THE DECISION IS NOT MINE. This is a costing, not an approval, and I armed
-  nothing. What a human is being asked to decide: spend ~${cost20:.2f} of a $23.18
-  wallet to replace a modelled cost floor with a measured one.
+  nothing. What a human is being asked to decide is TWO things, not one:
+    (1) spend ~${cost20:.2f} to replace a modelled cost floor with a measured one; and
+    (2) whether a ${wal:.2f} wallet can carry the ~$20 clip the arithmetic wants,
+        or whether this loop needs more capital before any route can clear.
 """.format(
-        chg=_bp(roundtrip_cost_rate(clip)),
+        clip=clip,
         rl=_bp(roundtrip_cost_rate(clip, "WETH-USDC")),
+        mv=BEST_MEASURED_MOVE_BP,
+        miss=_bp(roundtrip_cost_rate(clip, "WETH-USDC")) - BEST_MEASURED_MOVE_BP,
         r20=_bp(real20),
-        ratio=roundtrip_cost_rate(clip) / roundtrip_cost_rate(clip, "WETH-USDC"),
-        rl20_slip=_bp(real20) + 13.5,
+        gain=BEST_MEASURED_MOVE_BP - _bp(real20),
+        pct=20.0 / wallet * 100.0,
+        wal=wallet,
+        pool=_bp(roundtrip_cost_breakdown(20.0, "WETH-USDC")["pool_rate"]),
+        slip=_bp(real20) + 13.5,
         cost20=20 * clip * roundtrip_cost_rate(clip, "WETH-USDC"),
     ))
 
