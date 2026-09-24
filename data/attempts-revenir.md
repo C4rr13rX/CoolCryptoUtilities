@@ -32216,3 +32216,73 @@ unaffected -- these rows are simply absent from them -- which is why it has gone
 
 DO NOT QUOTE +2.5255 AS PROFIT. Not checked gross-vs-net; 4 `annulled` and 3 `repriced` rows may
 carry the 450% repricing_return problem. Quote it only as a sum the pooled line contains.
+
+---
+
+## p699 -- ROUTE (a), COSTED. IT IS NOT CLOSED ON COST; IT IS BLOCKED ON A MISPRICING. (Sage, auditor)
+
+Item [efa1a134]. Command that reproduces every number below:
+
+    python scripts/route_a_costing.py
+
+**THE ITEM'S AMENDMENT PREDICTED THE ANSWER AND THE PREDICTION IS WRONG.** It asserted the toll
+converges to `pool 4.08bp + slippage 13.5bp = 17.58bp` as clip -> infinity against a best move of
+8.46bp, so "there is no clip -- not $6, not $20, not $1000 -- at which the cheapest pair's best
+horizon clears its own toll." I measured the toll instead of assuming it.
+
+**THERE ARE THREE ASYMPTOTIC TOLLS IN USE AND THEY SPAN 15x.**
+
+     2.08 bp   roundtrip_cost_rate(n, "WETH-USDC")   symbol-AWARE census entry
+    17.58 bp   the item's amendment
+    31.87 bp   roundtrip_cost_rate(n)                NO symbol, source "unpriced_default"
+                                                     <- THIS is the call the live entry gate makes
+
+The toll-vs-clip curve, both ways, against the item's own 8.46bp move:
+
+    clip          CHARGED (blind)   gap        WETH REAL (census)   gap
+    $  0.75        85.83 bp        -77.37      55.97 bp            -47.51
+    $  2.00        52.10 bp        -43.64      22.24 bp            -13.78
+    $  6.00        38.62 bp        -30.16       8.79 bp             -0.33
+    $ 20.00        33.89 bp        -25.43       4.10 bp             +4.36  CLEARS
+    $100.00        32.27 bp        -23.81       2.49 bp             +5.97  CLEARS
+    $  1e6         31.87 bp        -23.41       2.08 bp             +6.38  CLEARS
+
+**The amendment is RIGHT on the left column and WRONG on the right, and the two columns are the
+same function at the same clip differing by one argument.** `roundtrip_cost_rate(notional)` vs
+`roundtrip_cost_rate(notional, symbol)`. This independently confirms blocked item [4a3b3902] --
+I reached 38.62bp for WETH from a different direction without having read it.
+
+Breakdown at the $6 binding clip (`LIVE_MIN_CLIP_USD=6.00`, not raised: `min_viable_notional_usd()`
+returns $2.2322, below it):
+
+    SYMBOL-BLIND    gas  6.75bp   pool 31.87bp   = 38.62bp   source=unpriced_default
+    WETH-USDC       gas  6.75bp   pool  2.05bp   =  8.79bp   source=census  QUOTES-NOT-FILLS
+    AERO-USDC       gas  6.75bp   pool 10.29bp   = 17.04bp   source=census  QUOTES-NOT-FILLS
+    CBBTC-USDC      gas  6.75bp   pool  5.00bp   = 11.75bp   source=census  QUOTES-NOT-FILLS
+
+Only the gas term is clip-sensitive, which is the one thing the amendment got exactly right.
+
+**NEITHER BREAKDOWN CONTAINS A SLIPPAGE TERM.** The shipped model is `gas + pool` and nothing else,
+so the amendment's 13.5bp is not in the function any gate consults. ABSENT IS NOT REFUTED: WETH has
+ZERO live fills, so its slippage is unmeasured at any clip. If 13.5bp is real and applies to WETH,
+the real toll at $20 is 17.60bp and nothing clears -- which is the amendment's number almost to the
+decimal, and that is not a coincidence, it is where the amendment's number came from.
+
+**WHAT ROUTE (a) COSTS.** Wallet $23.18 deployable; binding clip $6.00 = 25.9% of wallet per round
+trip. Toll per round trip $0.0053 real / $0.0232 charged. **20 settled WETH round trips cost $0.1055
+in toll (0.46% of the wallet), or $0.4634 if the gate keeps overcharging (2.00%).**
+
+**WHAT IS CLOSED AND WHAT IS NOT:**
+
+  - CLOSED: the claim "no clip clears the toll" AS A STATEMENT ABOUT THE MARKET. It is a statement
+    about a missing function argument.
+  - NOT CLOSED: route (a). Its cost case turns on ONE unmeasured number -- WETH slippage at a real
+    fill -- and route (a) is the only instrument in this repo that can measure it.
+  - NOT CLAIMED, AND I WILL NOT CLAIM IT: that route (a) would be PROFITABLE. The move side (8.46bp)
+    is the item's number and p696 measured that estimator ~48bp biased POSITIVE. The cost side is a
+    QUOTE census dated 20260917, not fills. A gap between a biased move and a quoted cost is two
+    error bars overlapping, not an edge.
+
+**NOTHING WAS ARMED.** This is a costing. The decision a human is being asked to take: spend ~$0.11
+of a $23.18 wallet to replace a modelled cost floor with a measured one.
+
