@@ -33625,3 +33625,42 @@ NET BACKLOG: +1. Added [5d05155c] (1pt, `roundtrip_cost_coverage.py:82` MEASURED
 set drifted from `census_symbols()`; prints COMP/VIRTUAL/VVV/DRB as never-quoted
 when all four are census rows). Added then rejected the duplicate. Blocked
 [4c0c6349].
+
+### p704 addendum 2 (Echo, senior): the approved strategy is NOT banned on the one pair that pays, and fixing the feed defect makes the live gate HARDER
+
+Expected route (a) to be blocked by the edge gate, since AERO-USDC is banned for
+atf_static at t=-4.05. Measured per strategy on `services.symbol_edge_gate`:
+
+    money_button           tradeable=True   refusal=None (ALLOWED)
+    atf_static             tradeable=FALSE  17 trips, mean -0.470% vs 0.772% cost, t=-4.05
+    atf_static_scout, rsi_reversal, rsi_reversal@12h, donchian_breakout@5d,
+    supertrend_follow@1w, obv_accumulation@1w, stochastic_reversal@5d  -- all ALLOWED
+
+**Only atf_static is banned on AERO and the ban is PAIR-SPECIFIC. money_button,
+the one live-approved strategy, is allowed.** So "the gate would refuse it
+anyway" is not a reason to decline the clip decision.
+
+DISCOUNT, STATED: those eight ALLOWEDs are almost certainly FAIL-OPEN, not
+verdicts of merit -- `symbol_edge_gate._pair_cache` holds exactly two cells,
+(atf_static,AERO) and (atf_static,CBBTC), so every other pair returns None by
+ABSENCE. Read as "nothing has judged money_button on AERO", not "cleared".
+
+THE REAL BARRIER IS TWO THINGS, NEITHER A SYMBOL BAN: (1) money_button fires
+0 of 63,281 evaluations -- allowed is not signalling; (2) halt_live is TRUE
+regardless, via the p703 profit bar (`ghost_net_profit > 0`) that reaches
+halt_live only through recommended_ratio and which `block_reason` can never name.
+
+SEQUENCING CONSEQUENCE FOR p705, AND IT IS COUNTER-INTUITIVE. That profit bar
+reads the ghost book. Today the tradeable ghost book is **+4.2345** and looks
+capable of satisfying a profit bar. After [779b2357] lands it is **-0.6546**.
+**So fixing the dead-feed defect makes the live gate HARDER to open, not
+easier** -- it removes the +4.8892 of dead-symbol P/L that is the only thing
+making any ghost book look positive. Whoever ships [779b2357] must expect the
+live lane to stay shut and must NOT read that as the fix failing. It is the fix
+revealing there was never an edge to gate.
+
+STATUS: every route through the ghost book now terminates in "the evidence is
+empty". The only untried source of a positive number is a real fill: AERO-USDC
+1h, +7.50bp at a $19.66 clip (~1.5 cents a round trip), downside bounded by the
+clip, demotion at two live losses. Blocked on an OPERATOR DECISION, not a
+measurement.
