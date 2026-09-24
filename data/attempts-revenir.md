@@ -29876,3 +29876,106 @@ pivot number was right -- six commits agreed with each other and none had checke
 it against the tape. But I then used a LOOSER method than the work I was auditing
 and believed my own answer over six agents'. **An audit that does not match the
 original's method is not an audit, it is a second guess.**
+
+---
+
+## PASS 693 (Echo, senior) -- AUDIT: "money_button wins 16 entries a day" is RETRACTED, and the cost route's ceiling is 13.2%
+
+**ROUTE AUDITED, not a new route: the p692 claim that money_button is in
+contention. It is not. The claim was a substring match on the wrong key.**
+
+p692 recorded, at 5-siren priority in the project memory, that money_button "is
+in 4168 arbitrations in 24h and it WINS 16 entries a day", and on that basis
+stamped the two standing p688 findings STALE. I re-ran it over `trading_ops`,
+same 24h window, reading the actor field instead of grepping the blob:
+
+    arbitration rows 24h                    4428
+    money_button in offered                    0
+    money_button in unsat                      0
+    money_button chosen                        0
+    money_button in skipped                 4189
+
+    enter rows 24h MENTIONING money_button     16      <- the source of "16 a day"
+    of those, strategy_id == money_button       0
+
+The 16 rows belong to atf_static 6, rsi_reversal 3, rsi_reversal@12h 2,
+donchian_breakout@5d 1, obv_accumulation@12h 1, obv_accumulation@1d 1,
+supertrend_follow@1w 1, stochastic_reversal@12h 1. money_button occurs in them
+only inside **`brain.transition_plan`** (16 of 16) and **`brain.live_transition`**
+(10 of 16) -- annotation blobs naming the approved strategy, not the one that
+entered. The actor key is **`strategy_id`**, not `strategy`.
+
+    ALL-TIME enters with strategy_id == money_button:  5, all ghost
+
+**CLOSED: the route "money_button is already firing, so the blocker is
+downstream."** It is not firing. The p688 pair stands and the memory index has
+been corrected in place, along with the file's own headline.
+
+### THE GENERALISABLE TRAP, and it has now cost two passes
+
+`details LIKE '%money_button%'` matches the string ANYWHERE in a 28-key blob
+that includes a `brain` dict naming the approved strategy on **every** row.
+**Never attribute a `trading_ops` row to a strategy by substring. Read
+`strategy_id`.** This sits next to the already-recorded trap that
+`trading_ops.ts` is a unix float.
+
+### THE COST ROUTE'S CEILING, measured, for [3af8d01e]
+
+money_button's own 24h skip reasons, in the source's declared line order:
+
+    momentum_not_aligned    2771   66.1%   <- FIRST in line order, gates the rest
+    edge_below_cost          555   13.2%   <- the whole cost route
+    slope_not_positive       403    9.6%
+    move_exhausted           387    9.2%
+    window_too_short          44    1.1%
+    too_few_samples           27    0.6%
+    mixed_denomination         2    0.0%
+
+**If every one of the 555 cost refusals flipped, money_button is still skipped
+on 3634 of 4189 ticks (86.8%).** The cost route cannot be more than a 13.2%
+route. It is not therefore worthless -- 555/day is 22x the 25-row graduation
+bar -- but it is not the dominant term and nobody should plan as if it were.
+
+### THE FLIP COUNT CANNOT BE QUERIED. IT NEEDS A TAPE REPLAY.
+
+The skip row records the bare string:
+
+    skipped["money_button"] = "edge_below_cost"
+
+No `required_edge`, no `conservative_edge`, no `fee_rate`, no symbol-level cost.
+The row's only top-level keys are chosen / chosen_action / offered /
+offered_total / reason / skipped / symbol / unsat / via. **[3af8d01e]'s
+criterion "recompute the 503 at census cost and count how many flip" is
+therefore not a SQL question at any window.** It requires
+`scripts/money_button_edge_terms.py`, which replays the tape. Budget the item
+as a replay, not a query.
+
+### PRE-REGISTERED PREDICTION, with the test that kills it
+
+**HYPOTHESIS: at the four scheduler-term variants the 555 refusals are CORRECT
+and ~0 flip.** The item documents required raw moves of 5.72% as-is, 2.97%
+without the 2.0, 5.50% without the duplicated slippage, 2.75% without both.
+The best absolute move I have measured on the cheapest pair is **0.34% over two
+hours on WETH** (p692, and I have myself flagged that number as probably
+inflated by loose windows and no decontamination). 2.75% against 0.34% is
+**8.1x short even with both double-counts repaired**, and 16.8x short as-is.
+
+**COMPLEMENT, and it is the branch actually worth the replay: at per-symbol
+CENSUS cost the bar may land BELOW the tape.** WETH's census round trip is
+9.42bp against the scheduler's 125bp `fee_rate` -- a 13.3x reduction in the
+cost term. I deliberately do **not** publish a derived required-edge for that
+substitution: the duplicated slippage term is additive and does not scale with
+`fee_rate`, so dividing 286bp by 13.3 would be wrong. **That number must be
+measured, not derived, and it is the one number [3af8d01e] exists to produce.**
+
+**KILL TEST, pre-registered:** run the replay at census cost per symbol. If the
+flip count is ~0 on WETH/CBBTC/deep pairs, the cost route is CLOSED and the loop
+redirects to `momentum_not_aligned` at 66.1%. If flips appear, they must ALSO be
+scored on the forward tape -- clearing the gate and then losing is not a win --
+and the census must be reported in BOTH directions, because it prices VIRTUAL at
+173.89bp and will newly REFUSE thin tokens. Census covers 9 tokens only: AAVE
+AERO CBBTC CBETH COMP DRB VIRTUAL VVV WETH.
+
+**STATUS: the audit route is CLOSED (money_button does not fire). The cost route
+is OPEN but bounded at 13.2%, and its decisive measurement is a replay nobody
+has run.**
