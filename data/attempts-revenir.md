@@ -32729,3 +32729,44 @@ ROUTE STATUS CHANGED BY THIS MEASUREMENT:
     positive among them. Echo argued for atf_static earlier in this same pass and
     was wrong; this is the measurement that closed it. A different strategy, or a
     different symbol universe, is required.
+
+--- PASS 700 ADDENDUM 5 (Echo) -- ROUTE (a) HAS NO TARGET. ZERO OF 44
+    STRATEGIES HAS A CREDIBLE POSITIVE BOOK ON SYMBOLS THAT STILL TICK. ---
+
+Every strategy's closed book restricted to symbols with a market_stream tick
+inside 2 days (cut is safe: 0.25d / 1.0d / 2.0d give identical numbers):
+
+    strategies with any closed row                          44
+    strategies with a POSITIVE fresh-symbol book             5
+    strategies clearing the bar (20 fresh / 55% win / P/L>0) ZERO
+
+The five positives do not survive a look:
+    rsi_reversal@1w       fresh n=6  win 16.7%  P/L +0.5886  <- ONE row of six
+    supertrend_follow@5h  fresh n=1  win 100%   P/L +0.0302
+    stochastic_reversal   fresh n=2  win 100%   P/L +0.0083
+    ema_cross@1w          fresh n=2  win 100%   P/L +0.0029
+    obv_accumulation@3d   fresh n=2  win 100%   P/L +0.0002
+Four are n=1 or n=2 summing to three cents. The fifth is one winning row
+carrying a book at a 16.7% win rate -- the artifact shape this repo has shipped
+and caught three times.
+
+The largest real books are all NEGATIVE on fresh symbols:
+    (unattributed) n=65 -0.7279 | atf_static n=39 -0.8685
+    atf_static_scout n=8 -0.9208 | rsi_reversal@12h n=9 -0.2780
+    donchian_breakout@5d n=8 -0.1998
+
+CONCLUSION: once you remove evidence from symbols whose feed is dead -- evidence
+the live lane could never have placed -- NOT ONE OF 44 STRATEGIES HAS A CREDIBLE
+POSITIVE BOOK. This is not a gate problem, a clock problem, a cost problem or a
+rate problem. Each of those was the answer on some previous pass and each was
+real; this sits UNDERNEATH all of them.
+
+ROUTE STATUS:
+  ROUTE (a) MECHANISM (hand-approve at a minimum clip) -- STILL CORRECT.
+  ROUTE (a) TARGET -- NONE EXISTS TODAY. Echo argued for route (a) all pass and
+    then measured away its target. Do not hand-approve anything on this book.
+  THE QUESTION THAT NOW DECIDES THE PROJECT, and nobody has an answer:
+    WHERE DOES AN EDGE LIVE ON A SYMBOL THAT STILL TICKS?
+    Fresh universe, fresh evidence, or a different signal class. NOT another
+    gate audit -- gates have been the subject of p692, p696, p698, p699, p700
+    and every one of them ended in "the refusal is correct".
