@@ -33513,3 +33513,67 @@ Base gas".
 NOT CLOSED: the route still crosses at +7.50/+7.86bp. What blocks it is
 criterion 3, a DECISION and not a measurement -- the largest single-trade clip
 the operator will accept, put to them on the board this pass with this curve.
+
+## Pass 704 (Echo, senior) -- the cost-census route is BLOCKED by a dead-symbol finding underneath it
+
+ROUTE TRIED: widen `services/roundtrip_cost.py`'s 9-symbol census so the 71.9%
+of the ghost book billed a symbol-blind default gets a witnessed price.
+Item [4c0c6349].
+
+NUMBERS PRODUCED.
+
+1. THE FILED CLAIM REPRODUCES. By the identity test (a symbol bought nothing iff
+   `roundtrip_cost_rate(n,sym) == roundtrip_cost_rate(n)`, which measures what the
+   code CHARGES rather than what a symbol list claims): **881 of 1230 ghost_entry
+   fills = 71.63%**, against the filed 875/1217 = 71.9%. Could not break it.
+
+2. THE POST-BOOT RETAKE IS UNDERPOWERED, NOT A DROP. Window from the 2026-09-24
+   04:23:11 restart: **6 of 13 = 46.2%**. n=13 cannot distinguish 46 from 72.
+   Anyone quoting 46.2% as evidence 769352c worked is quoting noise. Criterion
+   retired rather than passed.
+
+3. THE TRADEABLE FILTER BUYS GRADUATION NOTHING. Of 754 ghost entries in symbols
+   `ledger._live_tradeable` admits, **546 = 72.4%** are billed the default -- the
+   same rate as the book graduation ignores. So the mis-pricing is NOT confined
+   to rows graduation never reads. My pre-registered hypothesis was that it WAS,
+   which would have made the item rejectable. **KILLED.**
+
+4. CLOSED, AND THIS IS WHY THE ROUTE IS BLOCKED. The item's whole scope was the
+   four unpriced symbols carrying the tradeable book -- CP 156 entries, TYBG 100,
+   BASEPEPE 54, BSTONK 45 = 355 of the 546 mis-priced rows. Last tick from
+   `market_stream`: **CP 487h, TYBG 454h, BASEPEPE 492h, BSTONK 423h -- 18 to 20
+   days dead.** Quoting them writes a census row for a token the live lane can
+   never touch, and it would have read as progress. The cost finding STANDS; the
+   SCOPE is void. [4c0c6349] blocked on [6040a30d].
+
+5. THE FINDING UNDERNEATH IT (new item [6040a30d], p1). 2x2 over all 1230 fills
+   against `market_stream`, DEAD = no tick in 48h:
+       tradeable=TRUE  + DEAD  498     <-- graduation counts these
+       tradeable=TRUE  + LIVE  256
+       tradeable=FALSE + DEAD   17
+       tradeable=FALSE + LIVE  459     <-- graduation discards these
+   **66.0% of the tradeable book is dead-feed; 96.4% of what the predicate
+   refuses is ticking now.** Admissions are 9-for-9 on symbols that ONCE TICKED
+   AND STOPPED (CP 737 historical ticks, TYBG 1141, BSTONK 3068), which refutes
+   p698's "never on the watchlist" mechanism for these and leaves the cache-
+   absence one: the feed died, nothing invalidated the refusal cache, absence
+   became permission.
+
+INSTRUMENT FAULT WORTH RECORDING. My first freshness query used the `prices`
+table and returned NO ROWS for CP, TYBG **and for AERO and COMP**. AERO is
+provably live. That zero was a disconnected instrument and was discarded.
+`prices` is a small consensus cache (`chain, token, usd, source, ts`) -- use
+`market_stream` and always print AERO/WETH/VIRTUAL as controls.
+
+AUDIT OF EXISTING WORK. `scripts/roundtrip_cost_coverage.py` already answers the
+coverage question, and I ran it rather than re-deriving it. Its line 82
+hardcodes `MEASURED = {WETH, ETH, CBETH, USDC, AERO, KTA, CBBTC, SOL}`, which has
+DRIFTED from `census_symbols()` in both directions: it credits ETH, KTA and SOL
+as measured when the model charges them the default, and prints COMP, VIRTUAL,
+VVV and DRB under the heading "no on-chain quote has ever been taken for any of
+them" when all four are census rows -- 38 of the 198 rows its headline rests on.
+Its own docstring predicted this exact drift and was unheeded. Item [5d05155c].
+
+STATUS: route BLOCKED, not closed. Re-rank the unpriced tail over surviving LIVE
+tradeable rows once [6040a30d] lands. CBXRP (177 entries, 5.0h) and BASECAT (145,
+4.7h) are unpriced AND live AND currently refused -- the likely real targets.
