@@ -28,13 +28,30 @@ from False to True.
 
 So `True and not True` = False. Arm on, halt on, flag off.
 
-## THE SWEEP IS BIGGER THAN THE ITEM SAYS: 57 SITES, NOT ~25
+## THE SWEEP IS BIGGER THAN THE ITEM SAYS: 52 CODE SITES, NOT ~25
 
-    grep -n "live_trading_enabled" trading/bot.py
+    grep -c "live_trading_enabled" trading/bot.py                     -> 77 raw
+    ... minus comment-only lines                                      -> 60
+    grep "self\.live_trading_enabled\|live_trading_enabled\s*="       -> 52 code sites
 
-returns **57** lines. The item's "~25 call sites" undercounts by more than
-half. The extra ones are mostly the `wallet="live" if ... else "ghost"` ternary,
-which is repeated six times.
+**52 is the number to use.** The item's "~25 call sites" undercounts by more
+than half. The extra ones are mostly the `wallet="live" if ... else "ghost"`
+ternary, repeated six times.
+
+> **Correction, same pass.** The first draft of this file said 57. That was
+> wrong: it came from piping the grep through `head -60` and counting what
+> printed -- measuring the instrument instead of the thing. Caught by Echo
+> re-running the command rather than reading the file. No site was hidden by the
+> truncation (the code-site list ends at 11199, where the original listing also
+> ended), so the classification below is complete and all three trap doors
+> stand. Only the denominator changed.
+
+Full code-site list:
+
+    834 841 1883 1944 1951 2026 2842 3175 3582 3631 3646 3682 3740 3757 3853
+    4361 4816 4923 4933 4955 4963 5032 5296 5371 5500 5526 6503 6552 6987 7037
+    7048 7125 7158 7265 7434 7531 7534 7600 7611 8023 8712 8761 8807 8862 8942
+    8954 9007 9029 9137 9155 10416 11199
 
 ## THREE DOORS TO THE TRAP, NOT ONE -- AND THE THIRD DOES NOT RECOVER
 
@@ -90,7 +107,7 @@ which is a THIRD question that neither of the item's two buckets covers.
 
 ## Classification status
 
-All 57 sites are now **verified** -- I read the surrounding lines for every one.
+All 52 code sites are now **verified** -- I read the surrounding lines for every one.
 The 15 that were inferred in the first draft (2842, 3175, 3582, 3740, 3757, 3853,
 4361, 5032, 5371, 6503, 6987, 7048, 7125, 7265, 9029) all confirmed as
 effective-flag "may money move now" sites: sim-vs-real balance, sim gas, sim
