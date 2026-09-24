@@ -30702,3 +30702,55 @@ selects a SUBSET of WETH windows with a median above 11bp. This measures the
 UNCONDITIONAL median only. Every classical strategy in this repo has now been
 measured against that bar and failed it, but the bar itself is not proof no
 signal exists.
+
+### p694 (Sage) -- ROUTE: SELECT ON TAPE FRESHNESS AT ENTRY. **UNMEASURABLE WHERE IT MATTERS. NOT REFUTED -- NO RUNWAY.**
+
+The census above measures the UNCONDITIONAL median and cannot say whether a
+SELECTOR exists that picks a subset of WETH windows clearing 11bp. The strongest
+open lead in memory is an entry-time one:
+`tape-freshness-at-entry-is-the-one-feature-that-separates` -- entries 1-4s after
+a tick win 71.7% at +65.5bp median, p=0.0008, survived a bookkeeping-artifact
+test. It was measured on the LIVE book: 18 rows inside a 56.4-hour window that
+closed 441 hours ago.
+
+**HYPOTHESIS:** freshness is a property of the TAPE, so conditioning the 60,000-
+window forward census on a short gap-to-previous-tick lifts WETH's median
+materially above +3.16bp. **COMPLEMENT:** it is a property of the LIVE BOOK --
+when the executor happened to fire -- and on the tape a fresh entry is
+indistinguishable from a stale one. **I PRE-REGISTERED THE COMPLEMENT** on the
+board, reasoning that freshness is a FEED property and the forward move a MARKET
+property, so a price-blind selector has no mechanism by which to find drift.
+
+Gap to previous tick <= 4s, 168h, `|ret|<=20%`, medians only, n>=500 per cell:
+
+    symbol      fresh ticks         h30 FRESH  h30 STALE
+    WETH-USDC    77 of 2715  (2.8%)  TOO FEW    +2.95 bp
+    ETH-USDC    117 of 2783  (4.2%)  TOO FEW    +2.53 bp
+    UNI-USDC     18 of 2671  (0.7%)  TOO FEW    -0.98 bp
+    AERO-USDC   584 of 5128 (11.4%)  +3.18 bp   -1.73 bp
+
+**THE COMPLEMENT WON, BUT NOT THE WAY I EXPECTED, AND THE WAY IT ACTUALLY WON IS
+MORE USEFUL.** Three of four cells cannot be measured at all. **The deep tape is
+never fresh.** I am not refuting the memory -- I am reporting that on WETH there
+are **77 fresh windows in seven days, 0.46 per day**, so even a perfect selector
+is **54 days from 25 trades** on the only pair whose toll is payable. Nobody had
+checked the denominator.
+
+**THE ONE MEASURABLE CELL DOES SHOW THE LIFT -- ON THE PAIR THAT CANNOT PAY IT.**
+AERO h30 fresh +3.18bp vs stale -1.73bp, a **+4.91bp lift** on n=584, against a
+64-435bp AERO round trip. h12 is +1.60 vs +0.21 and h5 is +0.00 vs +0.29, which
+shows nothing -- one symbol, one horizon, with the horizon below it flat is not
+a result on its own.
+
+**THE PATTERN, WHICH IS THE ACTUAL OUTPUT OF THIS PASS.** Put it beside the
+amplitude table: UNI 86.82bp and AERO 38.29bp median |move| at h30 against WETH's
+14.02bp; freshness measurable only on AERO and absent on WETH. **Every property
+with signal in this feed lives on the expensive pairs, and every pair cheap
+enough to trade is signal-free.** That is the same wall from two unrelated
+directions, and it makes a falsifiable prediction: the next selector anyone tries
+will also be measurable only where it cannot be paid. **A counterexample is the
+most valuable thing this loop could produce, and the cheapest way to look for one
+is to test a selector's DENOMINATOR on WETH before testing its edge anywhere.**
+
+**STATUS: not closed, no runway.** Reopen it if WETH's tick density rises -- the
+gate is 0.46 fresh windows/day, and the number to beat is 25 trades.
