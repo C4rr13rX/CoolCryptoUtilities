@@ -824,5 +824,277 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# [227051f1] PER-STRATEGY GROSS EDGE ON CLEAN-FEED SYMBOLS
+#
+# A separate question from the cell census above, and deliberately a separate
+# entrypoint (``python -m scripts.cell_edge_census strategies``) so neither can
+# borrow the other's population by accident.
+#
+# THE QUESTION. The clean-feed live book is GROSS-negative at -33.76bp BEFORE
+# any fee, gas or slippage (p685). If that holds per strategy as well as in
+# aggregate, no cost fix can rescue it -- there is no edge to keep. So: per
+# strategy, over clean-feed symbols only, what is the mean GROSS return, with
+# n, win rate and a t-statistic, ghost and live reported SEPARATELY?
+#
+# GROSS means exit/entry - 1, which this store makes exact: for every closed
+# row, ``gross_profit / (entry_price * quantity)`` equals ``exit_price /
+# entry_price - 1`` to machine precision, so no cost term has leaked into the
+# gross column and no direction sign is being assumed (all rows are long).
+#
+# CLEAN FEED is recomputed here from ``market_stream`` rather than imported,
+# because [b576f923] owns that predicate and is being edited in the same tree.
+# The definition is the p685 one, stated so it can be argued with: over the
+# trailing ``--days`` window, a symbol is CLEAN when it has at least
+# ``--min-ticks`` ticks and ZERO inter-tick moves above ``--jump`` (10%).
+# Symbols with too few ticks are NOT clean by vacuum -- they are reported as
+# THIN, which is a different failure from DIRTY and must not be pooled with it.
+# --------------------------------------------------------------------------
+
+JUMP_PCT = 0.10
+MIN_TICKS = 100
+FEED_DAYS = 14.0
+
+
+def feed_quality(
+    conn: sqlite3.Connection,
+    symbols: Sequence[str],
+    *,
+    days: float = FEED_DAYS,
+    jump: float = JUMP_PCT,
+    min_ticks: int = MIN_TICKS,
+) -> Dict[str, Dict[str, Any]]:
+    """Per-symbol tape census over the trailing window. CLEAN / DIRTY / THIN."""
+    if not symbols:
+        return {}
+    cur = conn.execute("SELECT MAX(ts) FROM market_stream")
+    row = cur.fetchone()
+    t_end = float(row[0]) if row and row[0] is not None else 0.0
+    t0 = t_end - days * 86_400.0
+    marks = ",".join("?" for _ in symbols)
+    sql = (
+        f"SELECT symbol, ts, price FROM market_stream "
+        f"WHERE symbol IN ({marks}) AND ts >= ? AND price IS NOT NULL AND price > 0 "
+        f"ORDER BY symbol, ts"
+    )
+    series: Dict[str, List[float]] = {}
+    for sym, _ts, price in conn.execute(sql, (*symbols, t0)):
+        series.setdefault(str(sym), []).append(float(price))
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for sym in symbols:
+        pts = series.get(sym, [])
+        jumps = 0
+        worst = 0.0
+        for i in range(1, len(pts)):
+            prev = pts[i - 1]
+            if prev <= 0:
+                continue
+            move = abs(pts[i] / prev - 1.0)
+            worst = max(worst, move)
+            if move > jump:
+                jumps += 1
+        if len(pts) < min_ticks:
+            verdict = "THIN"
+        elif jumps:
+            verdict = "DIRTY"
+        else:
+            verdict = "CLEAN"
+        out[sym] = {
+            "ticks": len(pts),
+            "max_jump_pct": worst * 100.0,
+            "jumps_over_bar": jumps,
+            "verdict": verdict,
+        }
+    return out
+
+
+def _tstat(values: Sequence[float]) -> Tuple[float, float, float, Optional[float]]:
+    """(mean, sd, se, t) over a sample. t is None below n=2 or at zero spread."""
+    n = len(values)
+    if n == 0:
+        return 0.0, 0.0, 0.0, None
+    mean = sum(values) / n
+    if n < 2:
+        return mean, 0.0, 0.0, None
+    sd = statistics.stdev(values)
+    if sd <= 0:
+        return mean, 0.0, 0.0, None
+    se = sd / math.sqrt(n)
+    return mean, sd, se, mean / se
+
+
+def load_closed_rows(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
+    sql = (
+        "SELECT outcome_id, ts, wallet, symbol, entry_price, exit_price, "
+        "quantity, gross_profit, fee_cost, net_profit, status, details "
+        "FROM trade_outcomes"
+    )
+    cols = [
+        "outcome_id", "ts", "wallet", "symbol", "entry_price", "exit_price",
+        "quantity", "gross_profit", "fee_cost", "net_profit", "status", "details",
+    ]
+    rows: List[Dict[str, Any]] = []
+    for rec in conn.execute(sql):
+        row = dict(zip(cols, rec))
+        try:
+            det = json.loads(row["details"]) if row["details"] else {}
+        except Exception:
+            det = {}
+        row["_details"] = det if isinstance(det, dict) else {}
+        row["strategy_id"] = row["_details"].get("strategy_id")
+        rows.append(row)
+    return rows
+
+
+def strategy_cells(
+    rows: Sequence[Dict[str, Any]], censor: bool
+) -> Tuple[Dict[Tuple[str, str], List[float]], int]:
+    """(wallet, strategy) -> list of gross returns in bp. Returns censored count."""
+    try:
+        from services import outcome_plausibility as _op
+    except Exception:  # pragma: no cover
+        _op = None
+    cells: Dict[Tuple[str, str], List[float]] = {}
+    dropped = 0
+    for row in rows:
+        ret = None
+        entry = float(row.get("entry_price") or 0.0)
+        exit_px = float(row.get("exit_price") or 0.0)
+        if entry > 0 and exit_px > 0:
+            ret = exit_px / entry - 1.0
+        if ret is None:
+            dropped += 1
+            continue
+        if censor and _op is not None and _op.is_implausible(row):
+            dropped += 1
+            continue
+        key = (str(row.get("wallet") or "?"), str(row.get("strategy_id") or "<none>"))
+        cells.setdefault(key, []).append(ret * 10_000.0)
+    return cells, dropped
+
+
+def _print_table(cells: Dict[Tuple[str, str], List[float]], wallet: str, min_n: int) -> None:
+    sel = {k[1]: v for k, v in cells.items() if k[0] == wallet}
+    if not sel:
+        print(f"  ({wallet}: no rows)")
+        return
+    ranked = sorted(sel.items(), key=lambda kv: -(sum(kv[1]) / len(kv[1])))
+    print(f"  {'strategy':<32} {'n':>4} {'gross bp':>10} {'win%':>6} {'sd bp':>9} {'t':>7}")
+    shown = 0
+    for name, vals in ranked:
+        if len(vals) < min_n:
+            continue
+        mean, sd, _se, t = _tstat(vals)
+        wins = sum(1 for v in vals if v > 0)
+        tstr = "  n/a" if t is None else f"{t:7.2f}"
+        print(f"  {name:<32} {len(vals):>4} {mean:>10.1f} "
+              f"{100.0 * wins / len(vals):>6.1f} {sd:>9.1f} {tstr}")
+        shown += 1
+    if not shown:
+        print(f"  (no {wallet} strategy reaches n>={min_n})")
+    tail = [(k, v) for k, v in ranked if len(v) < min_n]
+    if tail:
+        n_rows = sum(len(v) for _k, v in tail)
+        print(f"  BELOW n={min_n}: {len(tail)} strategies, {n_rows} rows -- "
+              + ", ".join(f"{k}({len(v)})" for k, v in tail[:12])
+              + (" ..." if len(tail) > 12 else ""))
+
+
+def strategy_main(argv: Optional[Sequence[str]] = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="cell_edge_census strategies",
+        description="Per-strategy GROSS edge on clean-feed symbols [227051f1]",
+    )
+    ap.add_argument("--db", default=db_path())
+    ap.add_argument("--days", type=float, default=FEED_DAYS)
+    ap.add_argument("--jump", type=float, default=JUMP_PCT)
+    ap.add_argument("--min-ticks", type=int, default=MIN_TICKS)
+    ap.add_argument("--min-n", type=int, default=5)
+    ap.add_argument("--json", default=None)
+    args = ap.parse_args(list(argv or []))
+
+    conn = connect(args.db)
+    print("=" * 74)
+    print("PER-STRATEGY GROSS EDGE ON CLEAN-FEED SYMBOLS  [227051f1]")
+    print("gross = exit/entry - 1, BEFORE fee, gas and slippage. bp = 1e-4.")
+    print("=" * 74)
+
+    all_rows = load_closed_rows(conn)
+    trace: List[Tuple[str, int]] = [("all trade_outcomes rows", len(all_rows))]
+
+    closed = [r for r in all_rows if str(r.get("status")) == "closed"]
+    trace.append(("status='closed'", len(closed)))
+
+    priced = [r for r in closed
+              if float(r.get("entry_price") or 0) > 0 and float(r.get("exit_price") or 0) > 0]
+    trace.append(("both legs priced (>0)", len(priced)))
+
+    symbols = sorted({str(r.get("symbol")) for r in priced if r.get("symbol")})
+    feed = feed_quality(conn, symbols, days=args.days, jump=args.jump,
+                        min_ticks=args.min_ticks)
+    clean = {s for s, d in feed.items() if d["verdict"] == "CLEAN"}
+
+    on_clean = [r for r in priced if str(r.get("symbol")) in clean]
+    trace.append((f"symbol CLEAN over {args.days:g}d "
+                  f"(>={args.min_ticks} ticks, 0 jumps >{args.jump * 100:g}%)", len(on_clean)))
+
+    attributed = [r for r in on_clean if r.get("strategy_id")]
+    trace.append(("carries details.strategy_id", len(attributed)))
+
+    print("\nPOPULATION TRACE -- every row that fell out, and where")
+    prev = None
+    for label, n in trace:
+        delta = "" if prev is None else f"   (-{prev - n})"
+        print(f"  {n:>5}  {label}{delta}")
+        prev = n
+    print(f"  {sum(1 for r in attributed if r['wallet'] == 'ghost'):>5}  "
+          f"...of which wallet='ghost'")
+    print(f"  {sum(1 for r in attributed if r['wallet'] == 'live'):>5}  "
+          f"...of which wallet='live'")
+
+    print(f"\nFEED CENSUS over the trailing {args.days:g} days, "
+          f"{len(symbols)} traded symbols")
+    print(f"  {'symbol':<18} {'ticks':>7} {'max jump%':>10} {'>bar':>5}  verdict   rows")
+    counts: Dict[str, int] = {}
+    for sym in sorted(symbols, key=lambda s: -feed[s]["ticks"]):
+        d = feed[sym]
+        counts[d["verdict"]] = counts.get(d["verdict"], 0) + 1
+        nrows = sum(1 for r in priced if str(r.get("symbol")) == sym)
+        sym = sym.encode("ascii", "replace").decode("ascii")
+        print(f"  {sym:<18} {d['ticks']:>7} {d['max_jump_pct']:>10.2f} "
+              f"{d['jumps_over_bar']:>5}  {d['verdict']:<8} {nrows:>5}")
+    print(f"  -> {counts.get('CLEAN', 0)} CLEAN, {counts.get('DIRTY', 0)} DIRTY, "
+          f"{counts.get('THIN', 0)} THIN")
+
+    payload: Dict[str, Any] = {"trace": trace, "feed": feed, "arms": {}}
+    for censor in (True, False):
+        label = "CENSORED via services.outcome_plausibility" if censor else "UNCENSORED"
+        cells, dropped = strategy_cells(attributed, censor)
+        print(f"\n{'=' * 74}\n{label} -- {dropped} row(s) dropped\n{'=' * 74}")
+        for wallet in ("ghost", "live"):
+            vals = [v for k, vv in cells.items() if k[0] == wallet for v in vv]
+            mean, _sd, _se, t = _tstat(vals)
+            wins = sum(1 for v in vals if v > 0)
+            tstr = "n/a" if t is None else f"{t:.2f}"
+            print(f"\n{wallet.upper()}  (all clean-feed attributed rows pooled ACROSS "
+                  f"strategies for the header only: n={len(vals)}, "
+                  f"gross {mean:.1f}bp, win "
+                  f"{(100.0 * wins / len(vals)) if vals else 0.0:.1f}%, t={tstr})")
+            _print_table(cells, wallet, args.min_n)
+            payload["arms"].setdefault(label, {})[wallet] = {
+                "n": len(vals), "mean_bp": mean, "t": t,
+                "by_strategy": {k[1]: vv for k, vv in cells.items() if k[0] == wallet},
+            }
+
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=1, default=str)
+        print(f"\nwrote {args.json}")
+    return 0
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "strategies":
+        raise SystemExit(strategy_main(sys.argv[2:]))
     raise SystemExit(main())
