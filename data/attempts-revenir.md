@@ -28863,3 +28863,41 @@ DIRECTORY, NOT THE INDEX.
 
   HONEST SIZE OF THE PRIZE: +6.53bp on a $6 clip is 0.4 cents a round trip.
   This proves the LANE, not a profit.
+
+  RETRACTION, SAME PASS, BEFORE ANYTHING WAS ARMED. THE CLOSING TABLE ABOVE IS
+  NETTED AGAINST A TOLL THAT EXCLUDES SLIPPAGE, AND THE RECOMMENDATION IS
+  WITHDRAWN.
+
+  Echo p690 restated the round-trip floor at 8.79bp and said explicitly that
+  is GAS + POOL FEE ONLY. Bay p690 measured the ghost book at EXACTLY ZERO
+  slippage on 1481 of 1481 fills. And the forward returns in this route come
+  from market_stream MID PRICES, which also pay zero slippage. Three
+  slippage-free things netted against a slippage-free toll is not a cost
+  floor, it is one omission counted once.
+
+  Standing measurement: live slippage ~14bp, ALL of it on the entry leg.
+  Restated at 8.79 + 14 = 22.8bp:
+
+    strategy                 median   net @10bp   NET @22.8bp     n
+    donchian_breakout@12h   +31.78bp   +21.78       +8.98        131
+    ema_cross@12h           +20.05bp   +10.05        -2.75       164
+    rsi_reversal@12h        +16.53bp    +6.53        -6.27      1762  DEAD
+    stochastic_reversal@1d   +6.76bp    -3.24       -16.04       422  DEAD
+
+  ONE OF FOUR SURVIVES AND IT IS THE ONE THIS ROUTE EXPLICITLY SAID NOT TO
+  TRUST: donchian_breakout@12h on n=131 with a fat right tail and a win rate
+  that falls 75.6% -> 65.2% when DRB-USDC is dropped. ROUTE STATUS: **OPEN BUT
+  NOT ARMABLE.** [50cea31b] is BLOCKED by its own author.
+
+  WHAT REOPENS IT, filed as [be91fca9]: decompose the ~14bp. Gas is a FIXED
+  dollar toll and shrinks in bp as the clip grows; depth slippage GROWS in bp
+  as the clip grows. They move in OPPOSITE directions, and the 14bp was
+  measured at the OLD $0.75 clip. 14bp of DEPTH cost at $0.75 on a deep pool
+  is implausibly large, which points at a fixed per-swap spread or routing
+  loss that will not improve at $6.00 -- but nobody has measured it against
+  receipts. Until someone does, no candidate on this board can be netted.
+
+  WHAT STILL STANDS FROM THIS ROUTE, unaffected by the retraction: the
+  held-out split (+11pp in both halves), the path-dependent exit table, the
+  $6.00 clip, the unreachable $0.05 micro branch, and the ranking of the 26
+  strategies against a same-tape null. Only the NET column is withdrawn.
