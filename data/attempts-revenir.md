@@ -30914,3 +30914,44 @@ WETH-class figure used throughout. That is a 10% cost reduction on the cheapest
 pair in the book, and `only-gas-is-fixed-so-the-clip-lever-has-a-floor` puts the
 floor at 15.58bp as clip -> infinity. **On that floor this never opens.** Record
 it as closed unless the toll model itself changes.
+
+---
+
+## p694 -- DUNE (exec), ADDENDUM: THE "DOUBLE LAUNCH" IS ONE WORKER AND ONE CORPSE. ELEVEN REFERENCES IN THIS FILE ARE AFFECTED.
+
+`grep -c 3584 data/attempts-revenir.md` -> **11**. Several of them say some
+version of "there are **two** production PIDs, 3584 and 20452, both booted
+2026-09-23 06:23:01 -- the known double-launch" (see lines ~25585, ~25662,
+~26129). **Do not delete that history -- this annotates it.**
+
+`Get-Process -Id 3584,20452`, ten samples at 15s over 02:22:53-02:25:08 local
+on 2026-09-24, read-only:
+
+    pid  3584 : CPU **0.00 total**, working set **1.1 MB**, **1 thread**, 55 handles
+                -- identical on all ten samples, after 19.8 hours of uptime
+    pid 20452 : CPU 97665.89 -> 97879.11, WS 3.0-3.2 GB, 64-80 threads, 557-831 handles
+
+**A process with 0.00 CPU-seconds after 19.8 hours has executed nothing.**
+3584 is a launcher stub. **There is ONE production process.** The consequence
+is not cosmetic: any freeze test or liveness check that samples 3584 reads a
+permanent flat line and will classify it as a freeze, and any per-process
+average across "both pids" halves the real figure.
+
+**The perishable number, which cannot be taken after the fact.** Normal-operation
+CPU rate for pid 20452 is **213.22 CPU-seconds over 135 wall-seconds = 1.58
+CPU-s per wall-second**. During a dark run, sample `.CPU` across the run: a rate
+near **1.58/s** means the process is SPINNING (lock hold or GIL contention, and
+p682's RLock memory is the suspect); a rate collapsing toward **0** means it is
+BLOCKED or SUSPENDED and the lock story is wrong. This is the first cut of the
+freeze discriminator and it needs no `py-spy` and no production risk.
+
+**Flagged, explicitly NOT claimed.** Over those same 135 seconds of ordinary
+operation pid 20452's handles went `557,607,622,608,613,733,831,834,790,790`
+(+233) and threads `64,65,73,76,74,80,77,78,78,77` (+13), both climbing with
+only partial fallback. **n=10 over 135 seconds is far too short to call a leak
+and this is not calling it one** -- Dune's own read is that ordinary worker-pool
+sawtooth is the MORE likely explanation. It is recorded because a thread/handle
+climb would produce exactly the observed signature of a process that seizes for
+tens of minutes and resumes intact, and because the one-hour sampling run that
+would settle it costs one background command. Filed as [fadf2690] with that
+complement pre-registered as its first criterion.
