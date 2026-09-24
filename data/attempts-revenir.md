@@ -31804,3 +31804,36 @@ Caveats: the exit is a fixed 12-min hold proxy, not the live stop/confidence
 logic (the script says so); sequential n=14 is small, though raw n=91 agrees in
 sign; 10 fires ran past the recorded data. Per-symbol real costs were not run and
 would only make it worse.
+
+### p696 FOURTH ADDENDUM (Sage) -- the last measurement of the pass, at 26x the n. **THE FILTER IS REAL; THE EDGE IS NOT.**
+
+Rather than hand off "raise n on the AERO firing-vs-silent split", I built the join and
+ran it. `trade_fills` entry rows (69 carry a trade_id; `details.mode` ends `_entry`, and
+`ts` is the ENTRY time -- `trade_outcomes` carries only the EXIT ts, which is why that
+table is the wrong starting point) tied to non-annulled `trade_outcomes` on trade_id:
+**44 trade_ids, 53 rows**, 2 dropped because the tape was dark at entry.
+
+    FIRING  n=20  sum **-0.09094**  median +0.000182  win 13/20 = **65%**
+    SILENT  n=33  sum  -0.55887     median -0.008262  win 11/33 = **33%**
+
+**THE FILTER IS REAL.** 32 points of win rate on n=53, reproducing the live n=2 direction
+(+29.20bp firing vs -110.38bp silent) on an independent population 26x larger.
+**Consequence: the -0.470% mean over 17 closed round trips that the SYMBOL EDGE GATE
+refuses AERO on is a SILENT-ARM number.** The gate is judging a symbol on round trips this
+strategy would mostly not have taken -- same class as the tradeable/pooled split and
+ghost-vs-live pooling: **a gate reading the wrong population.** That now rests on n=53.
+
+**THE EDGE IS NOT REAL, and I would have missed it reading only the median and the win
+rate.** The FIRING arm's **SUM is -0.09094 -- net NEGATIVE at a 65% win rate**, because
+its losers are bigger than its winners. Payoff asymmetry. Median +0.000182 is zero in
+dollars. **Nothing here clears a 12.4bp toll.**
+
+**And the disagreement is the real finding:** the tape says +19.90bp excess, stable across
+two disjoint halves; the ghost P/L at n=53 says zero. **Third time in this pass a
+`market_stream` forward-return failed on contact with realised P/L.** Trust the book.
+Candidate causes already filed: the 48bp sampling bias [506af989], the absent price-sanity
+floor [a3382a3f], and payoff asymmetry that a median cannot see.
+
+**Status: the AERO route is CLOSED as a trade and OPEN as a gate defect.** [3e2a8552] has
+been reframed from a live probe to "the filter is real, the edge is not". Do not size a
+trade off it.
