@@ -206,6 +206,31 @@ def _t_statistic(values: List[float]) -> float:
     return mean / (stdev / math.sqrt(len(values)))
 
 
+def _is_flat(entry_price, exit_price) -> bool:
+    """Did the price fail to move across this round trip?
+
+    A round trip that opens and closes at the same price earns exactly the
+    negative of its fee, whoever opened it. It is a receipt for the venue, not
+    an observation of a strategy's edge, and ``_load_book`` must not put it in
+    a sample that a t-statistic will then read as a consistent loss.
+
+    Fails OPEN in both directions this module cares about: an unreadable or
+    missing price returns False, so the row is KEPT. A gate that cannot read a
+    price has no grounds to discard the row, and silently shrinking the sample
+    is how a gate stops firing without anyone noticing.
+    """
+    if entry_price is None or exit_price is None:
+        return False
+    try:
+        entry = float(entry_price)
+        exit_ = float(exit_price)
+    except (TypeError, ValueError):
+        return False
+    if entry != entry or exit_ != exit_:  # NaN
+        return False
+    return entry == exit_
+
+
 def _strategy_of(details: Optional[str]) -> str:
     """Which strategy opened this round trip.
 
@@ -242,6 +267,49 @@ def _load_book(limit: int = 500) -> Dict[str, List[float]]:
     Reads trade_outcomes, never trading_ops: the latter is an append-only log
     that keeps pre-fix artifacts forever and would ban whichever strategy was
     running during an old bug.
+
+    A FLAT ROUND TRIP IS NOT EVIDENCE ABOUT A STRATEGY
+    --------------------------------------------------
+    Measured 2026-09-23, pass 689, cross-verifying a claim that this gate was
+    banning ``rsi_reversal@5d`` on "three rows that are not trades". The rows
+    tie by outcome_id and the t is real -- I reproduced ``t=-92,555`` -- but
+    the stated cause was wrong twice over, and the true one is worse::
+
+        2:DRB-USDC:8e1bae1c...:exit:1  entry=0.0001663 exit=0.0001663 net=-0.02533
+        2:DRB-USDC:7b8f7705...:exit:1  entry=0.0001663 exit=0.0001663 net=-0.02534
+        2:DRB-USDC:878e2d64...:exit:1  entry=0.0001663 exit=0.0001663 net=-0.02534
+
+    It is not the ``stdev <= 0`` branch in ``_t_statistic``: the stdev is
+    1.734e-07, finite and positive, so the ordinary t path runs. And
+    ``details.return_pct`` is not 0.0, it is ABSENT (the key exists in 6 of
+    284 closed rows).
+
+    What is actually true is that ENTRY PRICE EQUALS EXIT PRICE to the last
+    digit. The price did not move, so ``net_profit`` is the fee and nothing
+    else, and ``net_profit / notional`` is the COST OF TRADING rather than a
+    return the strategy earned. The tape confirms the mechanism: DRB-USDC has
+    2097 distinct prices over 2388 ticks all-time, but exactly ONE distinct
+    price across the six ticks spanning these three exits. A feed stall.
+
+    Charging that to the strategy is a category error, and the t-statistic
+    makes it catastrophic rather than merely wrong: three receipts of the same
+    fee differ only by quantity dust, so the dispersion collapses to ~4 orders
+    of magnitude below the mean and the gate reports a confidence no sample of
+    three can carry. 14 of 192 attributed rows in the window are flat, and
+    they concentrate -- ``rsi_reversal@5d`` 3 of 3, ``ema_cross@3d`` 1 of 1,
+    ``unclassified`` 4 of 5, ``obv_accumulation@1d`` 2 of 3.
+
+    THIS IS A SAMPLE-VALIDITY FIX AND IT IS NOT AN UNBANNING. Dropping flat
+    rows makes four strategies UNJUDGED (they fall under ``MIN_SAMPLES``), not
+    vindicated: they must re-earn a verdict on round trips where the price
+    actually moved, and every downstream gate and the 20-trade graduation bar
+    are untouched. ``MAX_T``, ``MIN_SAMPLES``, ``NEVER_BAN`` and the ordering
+    are all unchanged -- no threshold is moved to let anything through. The
+    bans resting on real dispersion stand: ``obv_accumulation@1w`` n=9 t=-7.73
+    keeps 7 of its rows, ``obv_accumulation@5d`` n=8 t=-2.55 keeps 7.
+
+    A NULL exit price is KEPT, not dropped: it means the flatness cannot be
+    read, and this module fails open on everything it cannot read.
     """
     book: Dict[str, List[float]] = collections.defaultdict(list)
     try:
@@ -250,14 +318,17 @@ def _load_book(limit: int = 500) -> Dict[str, List[float]]:
         return {}
     try:
         rows = conn.execute(
-            "SELECT net_profit, entry_price, quantity, details FROM trade_outcomes "
+            "SELECT net_profit, entry_price, exit_price, quantity, details "
+            "FROM trade_outcomes "
             "WHERE status = 'closed' AND net_profit IS NOT NULL "
             "ORDER BY ts DESC LIMIT ?",
             (int(limit),),
         )
-        for net, entry_price, quantity, details in rows:
+        for net, entry_price, exit_price, quantity, details in rows:
             strategy = _strategy_of(details)
             if not strategy:
+                continue
+            if _is_flat(entry_price, exit_price):
                 continue
             try:
                 notional = float(entry_price) * float(quantity)
