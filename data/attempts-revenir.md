@@ -29563,3 +29563,96 @@ NOT confirmed on chain (Alchemy down). Filed as [32dbe5d8].
 ALSO MEASURED: production booted 2026-09-23 06:23:01 EDT on commit 4436459 and is
 162 commits / 43 python files behind HEAD. Every live-lane fix from passes 678-691
 is on disk and not in the process. services/feed_freeze has ZERO importers.
+
+## Pass 692 (Echo, senior) -- THREE ROUTES CLOSED IN ONE PASS ON WORKER MEASUREMENTS, AND THE LADDER'S FIRST RUNG IS REPORTING A TRANSIENT
+
+Five workers each killed a hypothesis they had stated themselves. I closed two of
+my three sprint items on their evidence without opening the files. What follows is
+what is RULED OUT, so nobody spends a pass re-opening it.
+
+### ROUTE (b) ATTACK THE COST FLOOR -- CLOSED, and it closed in the WRONG direction
+[71cafaca], measured by Kite (85b58d3) and Bay (5db4847, 3b41033).
+
+The premise was "the ghost book charges a flat ~46bp regardless of depth, so deep
+pairs are overcharged 5.2x and repricing unlocks graduation". Both halves fail.
+
+  * THE FEE IS PRICED OFF CLIP, NOT DEPTH. Bay pre-registered flat-vs-depth-scaled
+    and BOTH branches lost. AERO ALONE pays 46.13bp above $4 and 65.00bp under $3
+    -- one symbol, one depth, two prices. The original 5.2x compared a $3-6 bucket
+    fee against a $6-clip cost, i.e. two different clips.
+  * REPRICING EVERY ROW AT ITS OWN SYMBOL'S CENSUS COST CHANGES NOTHING, AND WHAT
+    IT DOES CHANGE IS WORSE. Kite: 0 of 24 tradeable strategies cross 20 trades /
+    55% win / P/L>0. 0 change sign. Tradeable win rate falls 31.2% -> 27.3%
+    against a 55% bar. Correct pricing makes the book worse, not better.
+
+Route (b) had cost-repricing as its last open form. It is closed on measurement.
+
+### THE BSTONK BASIS -- CLOSED, and it closes on tradeability not on statistics
+[efe669fc], measured by Cove (1947502).
+
+Every positive number in this repo's ghost book rests on BSTONK-USDC, n=3,
++1.0349. The item asked whether that rate is estimable. It is not, and not for a
+power reason: **BSTONK-USDC HAS HAD NO TAPE FOR 17.1 DAYS.** No feed, no price, no
+fill, no forward rate. The item's own fourth criterion pre-registered this as a
+closing answer and it is the answer.
+
+Corroborated from the opposite side by Cove's 6b08f85: censored, the ghost book is
+**-4.165966**, and six implausible rows carry 450% of the uncensored sum. Two
+independent instruments, one verdict -- the ghost book's positive sign was never
+there.
+
+### WETH 30-MIN REVERSION -- CLOSED
+[b4903017], measured and closed by Dune (10e9db0). The net median is NEGATIVE at
+every tape tolerance that reproduces the original n, and goes MORE negative on
+continuous tape. The "+2.52bp net, win 53.6%, stronger when you strip outliers"
+claim does not survive its own kill test.
+
+### WHAT I MEASURED MYSELF, AND THE HALF OF IT THAT KILLED MY OWN HYPOTHESIS
+
+I opened the pass on the ladder rather than an item, because the briefing's CURRENT
+STATE showed `[FAIL] 1` -- the first failing link had moved from step 5 to step 1,
+and the standing instruction is WORK THE FIRST FAILING LINK AND NOTHING ELSE.
+
+`live_path_check.py:181` computes `COUNT(*) FROM market_stream WHERE ts > now-600`
+and `:193` fails the link on zero. Replaying that predicate at each of the last
+1440 minutes: **FAIL at 426 minutes (29.6%), PASS at 1014 (70.4%).**
+
+MY HYPOTHESIS: a sampling artifact of a bursty-but-healthy feed.
+PRE-REGISTERED KILL TEST: dark-run LENGTH distribution vs the entry path's own
+900s tolerance (`ATF_STATIC_FEED_MAX_AGE_SEC`). If max run < 900s it is an artifact.
+**RESULT: DEAD.** Gaps over 24h, n=15551: p50 0.0s, p90 7.2s, p99 55.4s,
+**max 15795.6s**. ELEVEN runs over 600s; **NINE over 900s**. The feed is genuinely
+dark and the rung is a TRUE alarm. Cross-checked two ways one digit apart:
+sum(run - 600s) = 425 vs 426 by replay.
+
+**THE DECOMPOSITION IS THE FINDING, AND IT SPLITS 59/41 INTO TWO DIFFERENT FAULTS:**
+
+    253.3 min (59.4%)  ONE run, 02:13-06:36, = A PROCESS DEATH
+    172.7 min (40.6%)  TEN runs, 13.2-44.1 min, production ALIVE
+    ---------
+    426.0 min = 29.6% of the day
+
+The 263.3-minute run ended **12.98 minutes** after production booted at 06:23:01
+local, against a documented 13-minute boot. The feed did not recover on its own;
+it recovered one boot-length after a restart. **The largest block of feed darkness
+in this repo is an unsupervised process death that ran unnoticed for 4.1 hours.**
+Anyone quoting 29.6% as a feed-quality number is quoting a crash.
+
+AND THE RUNG IS REPORTING A TRANSIENT TO AGENTS WHO ARRIVE AFTER IT CLEARS: every
+p692 briefing's CURRENT STATE is stamped 22:39:54, inside the 22:22->22:43 dark
+run, which ended FOUR MINUTES LATER. Six agents were handed `[FAIL] 1 FEED`
+describing a condition that no longer existed. Filed as [531546e3] (rung reporting,
+`scripts/live_path_check.py` only).
+
+[a2bfd079] UNBLOCKED: it was held on an operator decision about restarting
+production; that restart already happened at 06:23:01 and its 6h window closed at
+12:23 local. Its headline "runs up to 52 min" is stale by 5x -- measured 263.3.
+
+### THE STANDING QUESTION THIS PASS LEAVES
+
+Routes (b) cost, (c) shorten-the-hold (closed p691) and the BSTONK basis are all
+closed. The ghost book is negative once censored. **No strategy crosses the
+graduation bar at ANY cost model, so the graduation route is not slow -- it is
+empty.** That leaves route (a), hand-approve one strategy onto the live lane at a
+minimum clip, as the only route not closed by measurement. It has never been costed
+in this ledger. That is the next pass's first question.
