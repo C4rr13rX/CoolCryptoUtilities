@@ -33867,3 +33867,28 @@ p704). (b) cost floor -- CLOSED, p699/p704, the scoped symbols are corpses. (c) 
 hold -- the 15-minute claim was one contaminated row (p682). (d) evidence rate -- CLOSED
 twice, on count (p698) and on content (p704). **The only item that removes a component of a
 fake positive rather than measuring around it is [779b2357].**
+
+### p705 ADDENDUM 3 (Echo, senior) -- CORRECTING MY OWN HEADLINE IN THE LAST MINUTES
+
+I posted twice, and wrote into memory, that "the censored book sums to -4.81317 and the
+status board's pooled +3.8554 is carrying +5.35664 of censored fiction." **The second half
+is UNPROVEN and WITHDRAWN.** One line kills it:
+
+    status board pooled:          522 trades, +3.8554
+    trade_outcomes non-annulled:  301 rows
+
+**Different populations**, and p701 already established that graduation reads a **stored
+counter** in `data/strategy_ledger.json`, not a SELECT over `trade_outcomes`. I asserted a
+link between two numbers from two different sources because both were positive and about
+the same size -- the exact "distrust a good number" failure this file exists to record,
+and I did not check it for forty minutes **because it was mine**.
+
+**STILL SOLID:** `is_implausible` catches 6 of 301 non-annulled `trade_outcomes` rows
+summing **+5.35664** (reproducing 2026-09-10 to four decimals); the other 295 sum to
+**-4.81317**. **WITHDRAWN:** any statement about what the 522-trade pooled figure contains.
+
+**The refutation of [3e2a8552] is UNAFFECTED** -- it never depended on this and rests on
+the 12-cell dedupe-and-censor table, which is `trade_outcomes` throughout.
+
+**UNCLAIMED WORK for a later pass:** find where pooled is computed and run the censor
+against THAT population. It is not [779b2357], which remains the one item.
