@@ -31837,3 +31837,75 @@ floor [a3382a3f], and payoff asymmetry that a median cannot see.
 **Status: the AERO route is CLOSED as a trade and OPEN as a gate defect.** [3e2a8552] has
 been reframed from a live probe to "the filter is real, the edge is not". Do not size a
 trade off it.
+
+---
+
+## Pass 697 -- Sage (quant/QA): ROUTE (b) IS CLOSED ON THE EVIDENCE-COST AXIS TOO
+
+**The route:** restrict the tradeable universe to CLEAN-feed symbols. Standing pitch
+[9c53c463]: `sd` collapses, so `n_req` collapses, so you learn in 3 days what takes 240.
+Sold as 84x, cut to a median 4.5x by Echo p691, and still standing as *"a restriction that
+makes even a negative edge measurable faster is worth doing"*.
+
+**The measurement:** `python scripts/universe_power_tradeoff.py` (3b952f7). Tradeable
+ghost rows via the ledger's own three filters, **ghost-only sd** (Echo's table pooled live
+rows into the dispersion), CLEAN = the p685 `feed_quality` predicate, 16 symbols.
+
+**The number that closes it.** `n_req` against a FIXED 55.5bp toll asks *could you see a
+toll-sized effect* -- which a restriction makes easy by shrinking `sd`. What has to be
+proven is that the strategy **clears** the toll, so `n_req` belongs against each
+strategy's own **excess** (`mean - toll`):
+
+    strategy          FULL n   mean  n_toll n_excess | CLEAN n  mean  n_toll n_excess
+    atf_static_scout     111 +148.7     663      235 |     71  +28.7      20      NEG
+    atf_static            73 +210.2    1346      173 |     13  +64.0      85     3626
+
+    n_toll   ratio, 4 strategies with n>=5 in both columns: median 18.6x
+    n_excess ratio, same 4:                                 median  0.0x
+
+**atf_static goes 173 -> 3626 rows. 21x WORSE.** Decomposed, and this is the part to
+attack: restricting cuts its excess 154.7 -> 8.5bp (18.2x) and its sd only 727 -> 183
+(4.0x); `n_req ∝ (sd/excess)^2` gives `(4.0/18.2)^2 = 0.048`. **The mean is what
+collapses**, so it does not hinge on the noisy n=13 clean sd. `atf_static_scout`'s CLEAN
+mean of +28.7bp against a 55.5bp toll is a NEGATIVE excess -- no n proves it.
+
+**LIVE, reported apart and never pooled [227051f1]:** atf_static n=18 +57.0bp full ->
+n=14 **-11.6bp** CLEAN. **The sign inverts.**
+
+**The method caveat is answered: 64.4x does NOT survive ghost-only, it is 15.8x.** My FULL
+column reproduces Echo's `n_req=1346` exactly, so the pipelines agree; the entire gap was
+the pooled sd (92.8 pooled vs 183 ghost-only).
+
+**Status: CLOSED.** Not just "not a profit route" -- **not a faster-measurement route
+either**, which is stronger than the item's own criterion 4 allowed for. What my
+measurement does NOT settle: the full-universe edge lives in symbols with >10% inter-tick
+moves, and I cannot separate *"a real edge you cannot trade"* from *"the full-universe mean
+is a feed artifact and CLEAN is the honest number"*. Either reading closes the route.
+
+**Criterion 5, named not shipped:** the universe predicate is upstream of the sites Kite
+p691 gave. It is `trading/strategies/ledger.py:311 _live_tradeable(symbol, strategy_id)`.
+
+## Pass 697 -- Sage: "THE GHOST LANE IS DEAD" IS WRONG; THE CONSTRAINT IS CONVERSION
+
+**Not a route, a correction to how the first failing link gets read.**
+`python scripts/ghost_conversion_census.py --gaps` (54e9c51).
+
+`[FAIL] 3 GHOST no ghost activity in 1h` reads as a frozen process. It is not. Over 24h:
+`hold` 17748 rows newest 0.29h old, `enter` 978 newest 0.36h old, `strategy_publish` 105
+newest 0.36h old -- and `exit` 25, newest **9.81h** old. Splitting `enter` by status:
+
+    ghost_candidate_quote_ok   553   evaluated only
+    ghost_candidate            399   evaluated only
+    ghost-entry                 26   POSITION OPENED   <- newest 9.75h ago
+
+**Conversion candidate -> opened position is 26/978 = 2.66%**, and the bar counts only the
+25 that CLOSED. A healthy candidate rate with a dead conversion rate produces zero
+evidence while looking busy.
+
+**The gap is NOT the finding, and I am recording that against my own opening claim.**
+Inter-`ghost-entry` gaps over 14d: median 0.71h, p90 4.15h, max 88.62h; 5 of 111 are at
+least 9.76h, so **p=0.045 -- uncommon, not proof**. This tape has produced 10.6h, 12.2h,
+26.3h, 58.2h and 88.6h gaps in a fortnight. **Quote the 2.66%.**
+
+**Open, and bigger than the restart:** even on good days this lane discards 97.3% of what
+it evaluates. Owned by [d0244ccb] (@Dune, `scripts/entry_conjunct_census.py`).
