@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import time
 import sys
 from collections import deque
@@ -28,6 +29,25 @@ try:
 except Exception:  # noqa: BLE001 - a missing gate must not narrow the funnel
     def _strategy_edge_refusal(_strategy_id: str):  # type: ignore[misc]
         return None
+
+#: A strategy id's trailing ``@5h`` / ``@1w`` is a LOOKBACK label, but the
+#: chaos layer reads it as the proposed FORECAST horizon. See
+#: ``_defer_label_horizon_candidates``.
+_HORIZON_SUFFIX = re.compile(r"@(\d+)\s*([mhdw])\b")
+_HORIZON_UNIT_SEC = {"m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+#: The widest usable horizon the chaos profiler has ever reported on this
+#: feed is 1.6 min (96 s); the working range is 0.5-1.6 min. A label above it
+#: cannot clear the chaos layer on any tape this repo has measured. Override
+#: with ``MAX_USABLE_HORIZON_SEC`` if the feed ever gets deep enough to move
+#: the decay limit -- the deferral should follow the measurement, not outlive
+#: it.
+try:
+    _MAX_USABLE_HORIZON_SEC = min(
+        86400.0, max(1.0, float(os.getenv("MAX_USABLE_HORIZON_SEC", "96")))
+    )
+except (TypeError, ValueError):  # a bad env var must not narrow the funnel
+    _MAX_USABLE_HORIZON_SEC = 96.0
 
 #: Ledger identity for the BUY-THE-DIP rule implemented by
 #: ``_money_button_candidate`` below.
@@ -563,6 +583,109 @@ class BusScheduler:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def _defer_label_horizon_candidates(
+        self, candidates: List[Dict[str, Any]]
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """Hide horizon-labelled enter candidates when a real-horizon one exists.
+
+        A tick produces many candidates and spends exactly ONE. The chaos layer
+        of ``web/tradingagent/lattice.py`` refuses a candidate whose proposed
+        horizon exceeds the measured decay limit, and for a suffixed strategy
+        that "proposed horizon" is not a forecast at all -- it is the id's
+        LOOKBACK label parsed to seconds (p674: six of six suffixes collapse to
+        a single value equal to their own label). The widest decay limit ever
+        measured on this feed is 1.6 min, so every suffix from ``@5h`` up is
+        refused on arrival, every time, on any feed.
+
+        Measured over 24h of ``entry-arbitration`` rows
+        (``scripts/arbitration_horizon_census.py``):
+
+            ticks arbitrated                                        4426
+              tick spent on a SUFFIXLESS candidate                   654
+              tick spent on a SUFFIXED one while a suffixless
+                candidate was standing on the SAME tick              246   <-- this
+              tick spent on a SUFFIXED one, none other offered      3526
+
+            lattice survival, by what the tick was spent on:
+              suffixed    12.4%   (3304 of 3773 refused)
+              suffixless  82.1%   ( 117 of  654 refused)
+
+        So those 246 ticks a day are handed to a candidate with a 12.4% chance
+        of clearing the lattice while one with an 82.1% chance is discarded
+        beside it. Redirecting them is worth ~171 additional surviving ticks a
+        day against a live lane that currently converts about one an hour.
+
+        THIS IS DELIBERATELY BOUNDED AND CANNOT REDUCE CANDIDATE COUNT. The
+        deferral fires only when a real-horizon candidate remains to take the
+        tick; on the 3526 ticks that offer nothing else, every candidate is
+        kept and the tick proceeds exactly as before. The ceiling is therefore
+        3.9 points of the arbitrated refusal rate (77.3% -> 73.4%), NOT the
+        25% some earlier framing of this hoped for -- 79.7% of ticks offer no
+        alternative, and no tiebreak can pick a candidate that is not there.
+        Fixing that needs a change to the strategy population, and admitting
+        the suffixed variants instead is closed: p690 measured
+        ``donchian_breakout@5d`` anti-predictive at 60/120/7200 min.
+
+        Returns the surviving candidates and the ids that were deferred.
+        """
+        enters = [
+            cand for cand in candidates
+            if str(getattr(cand.get("directive"), "action", "") or "") == "enter"
+        ]
+        if len(enters) < 2:
+            return candidates, []
+
+        def _labelled(cand: Dict[str, Any]) -> bool:
+            sid = str(getattr(cand.get("directive"), "strategy_id", "") or "")
+            match = _HORIZON_SUFFIX.search(sid)
+            if not match:
+                return False
+            seconds = int(match.group(1)) * _HORIZON_UNIT_SEC[match.group(2)]
+            return seconds > _MAX_USABLE_HORIZON_SEC
+
+        keepers = [cand for cand in enters if not _labelled(cand)]
+        if not keepers:
+            # Nothing real to hand the tick to. Withholding here would only
+            # turn a lattice refusal into a no-candidate one, which buys no
+            # entry and hides the refusal from the census that found it.
+            return candidates, []
+
+        deferred = [
+            str(getattr(cand.get("directive"), "strategy_id", "") or "unattributed")
+            for cand in enters if _labelled(cand)
+        ]
+        if not deferred:
+            return candidates, []
+        drop = {id(cand) for cand in enters if _labelled(cand)}
+        return [cand for cand in candidates if id(cand) not in drop], deferred
+
+    def _log_horizon_deferred(self, symbol: str, chain: str,
+                              deferred: List[str], kept: int) -> None:
+        """Record what the horizon deferral withheld, so it stays auditable.
+
+        Without a row this change is invisible: the candidate simply never
+        appears, and a later census cannot tell a deferral from a strategy
+        that had nothing to say. Diagnostics must never stop a tick.
+        """
+        try:
+            self.db.log_trade(
+                wallet="ghost",
+                chain=str(chain or PRIMARY_CHAIN),
+                symbol=str(symbol or ""),
+                action="hold",
+                status="entry-deferred-label-horizon",
+                details={
+                    "symbol": str(symbol or ""),
+                    "reason": "a_lookback_label_is_not_a_forecast_horizon",
+                    "deferred": sorted(set(deferred)),
+                    "deferred_total": len(deferred),
+                    "kept_real_horizon_candidates": int(kept),
+                    "max_usable_horizon_sec": _MAX_USABLE_HORIZON_SEC,
+                },
+            )
+        except Exception:  # noqa: BLE001 - diagnostics must never stop a tick
+            pass
 
     def _drop_banned_enters(
         self, candidates: List[Dict[str, Any]], symbol: str
@@ -1200,6 +1323,14 @@ class BusScheduler:
         # sell-high exit, so a banned pair left in it would be re-proposed on
         # the rotation path too, where no entry gate has yet had a say.
         candidates, predropped = self._drop_banned_enters(candidates, state.symbol)
+        # And AFTER the ban drop, for the same reason it sits before the
+        # trident: the tick is spent once. A lookback-labelled candidate that
+        # the chaos layer refuses on sight must not take the tick off a
+        # real-horizon candidate standing beside it. Fires only when one is
+        # standing beside it, so it cannot reduce the candidate count to zero.
+        candidates, horizon_deferred = self._defer_label_horizon_candidates(
+            candidates
+        )
         enter_candidates = [
             cand for cand in candidates
             if getattr(cand.get("directive"), "action", "") == "enter"
@@ -1207,6 +1338,10 @@ class BusScheduler:
         if predropped:
             self._log_predropped(
                 state.symbol, chain_name, predropped, len(enter_candidates)
+            )
+        if horizon_deferred:
+            self._log_horizon_deferred(
+                state.symbol, chain_name, horizon_deferred, len(enter_candidates)
             )
         if enter_candidates:
             self.last_enter_candidates[state.symbol] = {
