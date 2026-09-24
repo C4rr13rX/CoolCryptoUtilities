@@ -2226,7 +2226,8 @@ class TradingBot:
         except Exception:
             return 75
 
-    def _roundtrip_fee_rate(self, *, notional_hint: Optional[float] = None) -> float:
+    def _roundtrip_fee_rate(self, *, notional_hint: Optional[float] = None,
+                            symbol: Optional[str] = None) -> float:
         """Round-trip cost as a FRACTION of notional, for a given trade size.
 
         Measured from this account's settled receipts rather than assumed:
@@ -2240,6 +2241,22 @@ class TradingBot:
 
         With no size to go on, falls back to the rate at the current live
         clip, which is the size a real trade would actually be.
+
+        SYMBOL MATTERS AT LEAST AS MUCH AS SIZE, and until p695 this lane
+        threw it away. roundtrip_cost_rate has taken a `symbol` argument all
+        along; every ghost fill ever written here passed only the notional and
+        fell through to the symbol-blind default, so a WETH round trip and a
+        COMP round trip were billed the SAME rate. Measured at the median
+        ghost notional of $2.04, symbol-blind charges 51.71bp to everything,
+        while the census says WETH is 21.85bp and COMP is 3372.27bp -- a 65x
+        spread that was being averaged away. Note the direction is NOT uniform:
+        passing the symbol makes the deep pairs CHEAPER and the thin ones very
+        much more expensive.
+
+        A symbol the census does not carry still gets the blind default, which
+        is correct -- an unmeasured symbol must not be silently handed a
+        neighbour's price. services.roundtrip_cost.census_symbols() is the set
+        that actually moves; today it holds 9.
         """
         notional = notional_hint
         if notional is None or not (notional > 0):
@@ -2256,7 +2273,7 @@ class TradingBot:
         # services/roundtrip_cost.py.
         from services.roundtrip_cost import roundtrip_cost_rate
 
-        return roundtrip_cost_rate(notional)
+        return roundtrip_cost_rate(notional, symbol)
 
     def _lattice_refusal(self, symbol: str, directive: Any,
                          sample: Dict[str, Any]) -> Optional[str]:
@@ -2405,7 +2422,8 @@ class TradingBot:
                 bar_sec=self._median_tick_gap_sec(history),
                 proposed_horizon_sec=horizon_sec,
                 expected_return=expected,
-                round_trip_cost=self._roundtrip_fee_rate(notional_hint=notional),
+                round_trip_cost=self._roundtrip_fee_rate(notional_hint=notional,
+                                                         symbol=symbol),
                 notional_usd=notional,
             )
             # A CLAMPED JUDGEMENT AND AN UNCLAMPED ONE ARE NOT THE SAME
@@ -6861,7 +6879,7 @@ class TradingBot:
         # Keeping the fixed and rate parts separate is the point. A single
         # percentage cannot express "gas costs the same whether you trade
         # $0.75 or $3.00", and that is the whole reason clip size matters.
-        fees = self._roundtrip_fee_rate(notional_hint=None)
+        fees = self._roundtrip_fee_rate(notional_hint=None, symbol=symbol)
         brain_payload = {}
         if brain:
             brain_payload = {
@@ -7482,7 +7500,8 @@ class TradingBot:
         # and falls for the large ones that were being refused for it.
         entry_fees = fees
         if trade_notional_usd > 0.0:
-            entry_fees = self._roundtrip_fee_rate(notional_hint=trade_notional_usd)
+            entry_fees = self._roundtrip_fee_rate(notional_hint=trade_notional_usd,
+                                                  symbol=symbol)
             decision["entry_fee_rate"] = float(entry_fees)
             decision["entry_fee_rate_at_clip"] = float(fees)
         min_margin_required = max(entry_fees * 1.5, MIN_NET_MARGIN)
