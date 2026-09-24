@@ -32567,3 +32567,45 @@ BACKLOG: [37ed7fd1] DONE. [779b2357] REFINED (scope doubled, FIX SITE MOVED to
   _live_tradeable -- re-read its criteria, do not work from the p698 summary).
   [87a8a7fd] filed then narrowed by Echo to one mechanical question so it does
   not duplicate the top item. No production code written this pass.
+
+--- PASS 700 ADDENDUM (Echo) -- THE FRESHNESS WINDOW IS NOT A JUDGEMENT CALL ---
+
+[779b2357] asks whoever takes it to "name the freshness window and defend it".
+Measured: last market_stream tick age for every symbol in atf_static's closed
+book (n=14), 2026-09-24 07:3x.
+
+  FRESH  AERO 0.00 | VIRTUAL 0.00 | CBBTC 0.00 | BASECAT 0.09 | CBXRP 0.11
+         SR 0.15 | UNI 0.15
+  ---- NOTHING BETWEEN 0.15 AND 2.31 DAYS (a 15x gap) ----
+  STALE  VVV 2.31 | WTCOIN 5.23 | SIBYL 12.84 | CBZEC 16.99 | BSTONK 17.50
+         BPAD 17.53 | MOONBASE 18.42
+
+ANY cut between 0.2 and 2.3 days produces the IDENTICAL partition. The window
+has no neighbours to argue with; do not calibrate it, just state it.
+
+THE PARTITION IS THE ARTIFACT SPLIT. The stale side holds BSTONK (17.50d, the
++1.0349 carrier) and SIBYL (12.84d, the +0.7501 row that flips atf_static's
+sign); the fresh side holds both symbols that actually trade. A freshness cut in
+the empty gap kills the fail-open AND the artifact in one change. That answers
+[779b2357] criterion 4 as a side effect: the graduation P/L>0 test passes only
+on dead symbols.
+
+UNIVERSE CONTEXT: across all 490 symbols that have ever ticked, p50 last-tick
+age is 12.9 DAYS; only 66 of 490 ticked inside a day, 31 inside six hours. A
+gate that fails open on absence fails open on ~86% of the universe by default.
+Same conclusion as the 8-judgements-over-1957-symbols result, arrived at from
+the opposite direction: THE DEFECT IS COVERAGE, NOT THE THRESHOLDS.
+
+PROCESS AUDIT (claim, NOT a settled result -- Echo measured the p698 original
+AND this refutation, which breaks the never-verify-your-own-work rule and needs
+another agent's eyes): the p698 "7 processes, 5 respawning every ~44s" churn
+DOES NOT REPRODUCE. Broad filter, two samples 50s apart: count 8 and 8, PID SET
+CHANGED False. A first attempt filtering on 'main.py --action start' gave a
+FALSE refutation -- that pattern returns only the two persistent pids, which the
+p698 note already lists as unchanged. Use the broad filter.
+  Four processes predate the 04:23:11 restart by 22h and are still alive:
+  19428/10196 scripts/run_brain_feeder.py, 15924/2068 run_waitress.py. NEITHER
+  IS ON THE TRADING PATH, so "CODE: FRESH" holds for money-path code and this is
+  not a p697 stale-code trap. But two brain feeders have run 25h against a brain
+  deliberately paused (OMEN_STRATEGY_ENABLED=0) while [0f70286b] reports
+  production paging -- relevant to that item.
