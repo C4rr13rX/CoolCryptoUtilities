@@ -23,8 +23,13 @@ over the strategy's own holding period and records what the trade WOULD have
 returned, gross and net of the round trip. The verdict on each threshold is
 then arithmetic, not taste:
 
-    refused candidates with a POSITIVE mean net  -> the gate is costing money
-    refused candidates with a NEGATIVE mean net  -> the gate is earning its keep
+    refused candidates with a POSITIVE net MEDIAN -> the gate is costing money
+    refused candidates with a NEGATIVE net MEDIAN -> the gate is earning its keep
+
+The verdict is read off the MEDIAN and the censored mean, never the raw mean.
+A handful of price-scale artifacts is enough to make a losing population report
+a +81% mean, and that is not hypothetical -- it is what this script printed for
+`momentum_not_aligned` before p694. See `_summarise`.
 
 No gate is re-implemented here. It calls MoneyButtonStrategy.evaluate and
 reads the reason the strategy recorded, exactly as the census does, so this
@@ -97,23 +102,59 @@ def _forward_return(
     return None
 
 
+# Same plausibility bar the dip section already applies below: a forward return
+# of more than 20% over a 2-90 minute horizon is a price-scale artifact, not a
+# move. It lives up here because the verdict table needs it FIRST -- see the
+# note in `_summarise`.
+PLAUSIBLE_ABS = 0.20
+
+
 def _summarise(rows: List[float], label: str, round_trip: float) -> None:
-    """Print win rate and mean for one population, gross and net."""
+    """Print win rate, median and mean for one population, gross and net.
+
+    THE MEDIAN AND THE CENSORED MEAN ARE NOT DECORATION -- READ THEM FIRST.
+
+    This table is the one a reader acts on, under the rule stated at the top of
+    this file ("refused candidates with a POSITIVE mean net -> the gate is
+    costing money"). On a raw mean that rule inverts. Measured at --hours 168
+    (Sage, p694): `momentum_not_aligned` reported a sequential net mean of
+    +81.93% at an 8.5% win rate, and `slope_not_positive` a raw +250.10% at
+    5.0%. Both are outlier artifacts, and read literally they instruct you to
+    loosen the two gates whose refusals are in fact indistinguishable from
+    everything else -- the censored medians put every population at -0.700%,
+    which is the round trip exactly.
+
+    This file already knew: it censors this contamination in the dip sweep and
+    warns about it in source for the lift. It just did not do it for the table
+    it prints first. A mean and a win rate that disagree by that much are the
+    signature, so both reads are now printed side by side and the disagreement
+    is impossible to miss.
+    """
     if not rows:
         print("    %-28s  (none)" % label)
         return
     arr = np.asarray(rows, dtype=float)
     net = arr - round_trip
     wins = int((net > 0).sum())
+    keep = arr[np.abs(arr) <= PLAUSIBLE_ABS]
+    dropped = arr.size - keep.size
+    if keep.size:
+        censored = "  net mean* %+7.4f%%" % ((keep.mean() - round_trip) * 100.0)
+    else:
+        censored = "  net mean* (all implausible)"
     print(
-        "    %-28s  n=%-6d  net mean %+7.4f%%  win %5.1f%%  gross mean %+7.4f%%  up %5.1f%%"
+        "    %-28s  n=%-6d  net MEDIAN %+7.4f%%  win %5.1f%%%s  [mean %+.4f%%, "
+        "%d of %d dropped as |ret|>%.0f%%]"
         % (
             label,
             arr.size,
-            net.mean() * 100.0,
+            (np.median(net)) * 100.0,
             wins / arr.size * 100.0,
-            arr.mean() * 100.0,
-            float((arr > 0).sum()) / arr.size * 100.0,
+            censored,
+            net.mean() * 100.0,
+            dropped,
+            arr.size,
+            PLAUSIBLE_ABS * 100.0,
         )
     )
 
@@ -360,7 +401,10 @@ def main() -> int:
     # ------------------------------------------------------------------
     print("\n--- what the refused candidates actually did over the %.0f-min hold ---"
           % hold_min)
-    print("  a gate whose refusals have a NEGATIVE net mean is earning its keep.")
+    print("  a gate whose refusals have a NEGATIVE net MEDIAN is earning its keep.")
+    print("  net mean* is the mean after censoring |ret|>20%; the bracketed raw")
+    print("  mean is shown only so you can see how far the outliers move it.")
+    print("  DO NOT QUOTE THE RAW MEAN -- it read +81.93% for momentum_not_aligned.")
     print("  RAW (overlapping windows, not independent samples):")
     for g in ("momentum_not_aligned",) + POST_MOMENTUM:
         if fwd_raw.get(g):
@@ -388,7 +432,7 @@ def main() -> int:
 
     if variants:
         print("\n--- counterfactual: loosen ONE discount, and what do the new fires return? ---")
-        print("  a variant is only progress if its net mean is POSITIVE.")
+        print("  a variant is only progress if its net MEDIAN is POSITIVE.")
         for name in ("drop the volatility penalty", "drop the momentum decay",
                      "drop both discounts", "raw projection clears cost"):
             if variants.get(name):

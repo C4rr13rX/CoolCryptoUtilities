@@ -30274,3 +30274,243 @@ through.
 replay at money_button's actual 286bp formula producing a materially larger
 fired set whose **decontaminated** gross mean is **positive**. If that exists,
 the route reopens and I am wrong.
+
+---
+
+## PASS 694 (Echo, senior) -- THE LICENCE CHAIN IS NOT THE BLOCKER, AND THE SCOREBOARD IS ONE STRATEGY
+
+Three routes touched. **One CLOSED, one KILLED BY ITS OWN AUTHOR, one NARROWED
+to a two-term blocker.** No production code changed this pass.
+
+### ROUTE: "the inherited licence arms a loser" -- **CLOSED, I WAS WRONG**
+
+**Claim (mine, posted before I tested it):** `is_live_approved('money_button_dip')`
+returns **True** although `data/strategy_ledger.json` has no such key -- the True
+comes from `ledger.py:1448` falling through the exact lookup into
+`_inherits_live_approval_locked()`. I inferred that arming live execution would
+therefore also arm a rule with no evidence behind it.
+
+**Pre-registered complement:** the order gate refuses the borrower via the
+LENDER's book, making the inheritance licence-only and harmless.
+**Discriminator:** call `may_place_live_order` on lender and borrower.
+
+**Result -- the complement won:**
+
+    may_place_live_order('money_button')     -> True
+    may_place_live_order('money_button_dip') -> False
+      'money_button_dip spends on a licence lent by money_button, whose measured
+       expectancy is negative: money_button ghost book n=2 net=-0.0161
+       mean=-0.008075/round-trip'
+    may_place_live_order('atf_static')       -> False
+      'atf_static live book n=18 net=-0.1864 mean=-0.010354/round-trip'
+
+`_losing_book_locked` reads the lender's book in full for a borrower. **A licence
+is necessary, not sufficient**, exactly as the code claims. **CLOSED. Do not
+re-raise this alarm.** What survives is a DOCS defect, filed as `[f88eb9f6]`:
+four shipped sites document `is_live_approved` as an exact dict lookup, and
+`scripts/live_lane_refusal_census.py` prints the True and a NOTE reasoning from
+False *in one screen*.
+
+### CROSS-VERIFIED, FROM A SOURCE THAT IS NOT THE SCOREBOARD
+
+That atf_static refusal string carries **-0.1864 over n=18** -- the loop
+scoreboard number, to 4dp, produced by the order gate rather than by
+`graduation_status.py`. **Every live round trip this repo has ever settled
+belongs to one demoted strategy.** The scoreboard is not a portfolio result.
+
+### THE APPROVED STRATEGY'S LICENCE IS A SIGNATURE, NOT A MEASUREMENT
+
+`data/strategy_ledger.json`, `money_button`, verbatim:
+
+    ghost: trades 2, wins 1, losses 1, total_profit -0.016149
+    live:  trades 0
+    live_approved: true
+    live_approved_by: "Dune (exec) pass 424, on USER instruction 2026-09-16 13:10"
+
+Against the bar of 20 trades / 55% win / P/L>0 it fails **all three arms**
+(n=2, 50%, -0.0161). This is not a defect -- the USER instructed it and the
+approver, pass and date were recorded, which is the right way to do it. But
+**step 5 GRADUATION reading PASS is an operator signature, and
+"LIVE-APPROVED STRATEGIES: 1" is not evidence of an edge.** Do not plan against
+that 1 as though a book earned it.
+
+### THE ACTUAL BLOCKER, NARROWED TO TWO INDEPENDENT TERMS
+
+Every link in the licence chain passes or refuses correctly. There is no gate
+bug left to find. What remains:
+
+    licence      money_button holds its own          -> PASS
+    order gate   may_place_live_order                -> True (live book n=0)
+    executor     _live_trades_dry_run()              -> TRUE = DRY RUN
+    proposal     money_button in `offered`           -> 0 of 13687 over 7d
+
+**These two are independent and fixing either alone changes nothing.**
+
+**Term 1, DRY RUN.** `trading/bot.py:1551`. `EXECUTE_LIVE_TRADES` and
+`LIVE_TRADES_DRY_RUN` are both **unset** in the resolved env, so the function
+falls to `self._auto_execute_approved`, which is False -- `_refresh_auto_execute()`
+is only reached by `_maybe_transition_to_live()`, which returns early while
+`halt_live` is set, and `halt_live` is set. **That is a closed loop: the flag
+that would clear the dry run is only set on a path the dry run's own blocker
+prevents reaching.** `EXECUTE_LIVE_TRADES=1` is a hard override sitting ABOVE
+the entire loop (it returns False before `_auto_execute_approved` is consulted).
+**That is an operator decision about spending real money and is NOT an agent's
+to take.**
+
+**Term 2, NO PROPOSAL.** money_button appears in `offered` **0 of 13687**
+arbitration rows over 7d. Its own skip map over the 9293 measurable rows:
+`momentum_not_aligned 6187`, `edge_below_cost 1361`, `slope_not_positive 672`,
+`move_exhausted 640`, `too_few_samples 361`. Arming the executor against a
+strategy that proposes nothing produces **zero** trades, not a probe.
+
+**ROUTES ALREADY CLOSED AND NOT TO BE RE-RUN** (p693, commits ec28b24, 2c6a08c,
+e9a212b, 1ebbbdd): reprice the fee model; restrict to deep pools (INVERTED --
+WETH-USDC refused on cost 18.9% vs AERO-USDC 17.3%); tune a risk guardrail (all
+five read 0.0); hand-approve atf_static (3 rows of 35 carry its sign).
+
+---
+
+## p694 (Sage, quant) -- ROUTE: LOOSEN money_button's MOMENTUM GATE. **CLOSED.**
+
+Item [ec77032b]. The item pre-registered the test and the budget for it: the
+momentum check is at `trading/strategies/money_button.py:279` and the edge check
+at `:319`, so the 7,294 `momentum_not_aligned` refusals **never reached the edge
+test** and `trading_ops` cannot answer whether loosening momentum would produce
+entries or merely relabel the refusal. It needs a tape replay. This is that
+replay.
+
+    python -X utf8 scripts/money_button_edge_terms.py --hours 168
+
+**HYPOTHESIS:** `momentum_not_aligned` is a tuneable threshold; loosening it
+produces entries, so money_button can be made to trade.
+**COMPLEMENT:** it is structural -- loosening converts momentum refusals into
+cost refusals and `samples` still never reaches 25, in which case the fix is to
+approve a DIFFERENT strategy rather than tune this one.
+
+**THE COMPLEMENT WINS, AND BY A WIDER MARGIN THAN THE COMPLEMENT CLAIMED.** The
+refusals do not convert into cost refusals; they convert into nothing, because
+the predicate being loosened is sorting a tape that does not move.
+
+### 1. The momentum triple has no skill. Lift is 0.009 bp against a 70.00 bp floor.
+
+The script scores the momentum triple against the null of every evaluation that
+got past the feed gates, on MEDIANS (sequential -- no re-entry while holding):
+
+    horizon | null                      | aligned                   | clean                     | lift
+    2 min   | n=17942 med -0.700% w 3.8%| n=4920 med -0.699% w 2.6% | n=2731 med -0.699% w 2.5% | +0.0009%
+    5 min   | n=10628 med -0.700% w 5.6%| n=3283 med -0.699% w 4.0% | n=1918 med -0.699% w 4.1% | +0.0007%
+    12 min  | n=6038  med -0.699% w 8.2%| n=2313 med -0.700% w 6.0% | n=1465 med -0.699% w 6.3% | -0.0010%
+    30 min  | n=2950  med -0.698% w14.2%| n=1466 med -0.700% w11.5% | n=935  med -0.699% w12.4% | -0.0023%
+    90 min  | n=1176  med -0.637% w22.7%| n=765  med -0.689% w20.7% | n=525  med -0.666% w20.8% | -0.0517%
+
+At money_button's OWN 12-minute hold the lift is **NEGATIVE**. The best lift
+anywhere is **+0.0009% = 0.09 bp**, against a round-trip floor of **70.00 bp**
+at census fee and **11.00 bp** at WETH-class depth. The triple carries 0.13% of
+the skill it needs even on the cheapest pair in the book.
+
+**A zero-skill filter's threshold moves the RATE, never the SIGN.** That is the
+whole finding. There is no setting of `r5>0 AND r10>0 AND r30>0` that turns a
+0.09 bp separation into a 70 bp one.
+
+### 2. The median forward move is ZERO, which is why every bucket reads the same.
+
+Median net is **-0.700% in every population at every horizon** -- refused,
+admitted, and all-ticks alike -- and -0.700% is the round trip exactly.
+**Median gross over 12 minutes is 0.000%.** Win rates at h=12 are 8.2% (null)
+and 6.0% (aligned): only ~1 window in 16 clears its own toll, and selecting on
+momentum makes that FRACTION SMALLER, not larger.
+
+### 3. QUANTIFY THE RATE (item criterion 4). It is finite, and the sign is wrong.
+
+The item demands entries/day and days-to-25 rather than a direction. From the
+script's counterfactual block, sequential, over the same 168h:
+
+    variant                        n/7d   entries/day   days to 25   net mean    win
+    drop the volatility penalty      1        0.14         175.0     +0.1752%  100.0%
+    drop the momentum decay          3        0.43          58.3     -0.2827%   33.3%
+    drop both discounts              8        1.14          21.9     -0.4204%   25.0%
+    raw projection clears cost      12        1.71          14.6     -0.6250%   25.0%
+
+So the answer is **no longer infinity** -- the loosest variant fires 1.71/day and
+reaches 25 trades in 14.6 days. **And it still cannot graduate**, by arithmetic
+rather than by gate: the bar is 20 trades AND 55% win AND P/L>0, and this cohort
+is 25% win at -0.6250% mean, so 25 such trades post about **-15.6% cumulative**.
+Buying the rate at this price buys 25 rows of evidence that the strategy loses.
+(The single `n=1` positive cell is one trade and is not a result.)
+
+### 4. **THE INSTRUMENT SAYS THE OPPOSITE IF YOU READ ITS HEADLINE. DO NOT.**
+
+`money_button_edge_terms.py` leads with a gate verdict table on **MEANS**, under
+its own documented rule -- *"refused candidates with a POSITIVE mean net -> the
+gate is costing money"*. Read literally, it instructs you to loosen the exact
+gate this route is about:
+
+    momentum_not_aligned  [seq] n=5061  net mean **+81.9288%**  win  8.5%
+    slope_not_positive    [raw] n=3349  net mean **+250.0985%** win  5.0%
+    edge_below_cost       [seq] n=457   net mean  -0.7260%      win  6.1%
+
+A +81.93% mean at an 8.5% win rate is an outlier artifact. The same script
+CENSORS exactly this contamination in its dip section and warns about it in
+source at `:424-431` -- but only for the lift, not for the verdict table it
+prints first.
+
+**SO I FIXED IT RATHER THAN WARNING ABOUT IT.** `_summarise` now prints the net
+MEDIAN and a censored mean (`net mean*`, the same `|ret|<=20%` bar the dip
+section already used) alongside the raw mean, and the printed decision rule now
+names the median. One diagnostic file; no production code. Re-run, same window,
+same command:
+
+    BEFORE (net mean)                          AFTER (net MEDIAN / net mean*)     dropped
+    momentum_not_aligned [seq] n=5061  +81.9290%   -0.6985% / -0.6615%            8 of 5061
+    momentum_not_aligned [raw] n=36144 +22.3942%   -0.7032% / -0.6863%           58 of 36144
+    slope_not_positive   [raw] n=3347 +250.2484%   -0.6971% / -0.7434%            2 of 3347
+    edge_below_cost      [seq] n=460    -0.7263%   -0.6992% / -0.7263%            0
+    move_exhausted       [seq] n=208    -0.7417%   -0.6996% / -0.7417%            0
+
+**Eight rows in 5,061 -- 0.16% -- carried the entire case for loosening this
+gate.** Note which buckets dropped rows at all: only the two that read positive.
+The contamination and the false verdict are the same ten rows across the table.
+
+Every gate now reads NEGATIVE on both honest statistics, which under the
+script's own rule means **every money_button gate is earning its keep**. There
+is no mis-set threshold in this strategy to find. Proof:
+
+    python -c "import ast;ast.parse(open('scripts/money_button_edge_terms.py',encoding='utf-8').read())"
+    python -X utf8 scripts/money_button_edge_terms.py --hours 168
+
+### 5. The named alternative (item criterion 3), measured not asserted.
+
+    python -c "... group trade_outcomes by wallet, strategy_id ..."
+    LIVE rows by strategy_id: {'atf_static': 15, '(none)': 3}   -- 18 total
+
+**`atf_static` is the only strategy in this repo with ANY live record**, and the
+item forecloses it: demoted x7 on live P/L -0.1585 over 17 trades, and its
+repriced ghost book is 3 rows of 35 carrying 216.5% of its sum. money_button has
+**zero** live rows and **zero** ghost rows in `trade_outcomes`. There is no third
+candidate to name, so "approve a different strategy" -- the complement's own
+prescription -- has an **empty candidate set** on today's evidence. That is the
+honest end of this route, not a hand-off.
+
+### VERDICT
+
+**CLOSED.** Do not re-run the momentum loosening. It is not a threshold problem;
+the predicate separates nothing on this tape (0.09 bp best lift vs a 70 bp toll),
+and the variants that DO fire fire at 25% win and -0.62% mean.
+
+Also closed by this pass's measurement, incidentally: the live book is not a
+running total. All 18 `wallet='live'` rows in `trade_outcomes` fall inside a
+single **56.40-hour** window (2026-09-03 08:36:59 -> 2026-09-05 17:00:46) that
+closed **441 hours** ago. Note the schema: `trade_outcomes.wallet` is the STRING
+`'live'`/`'ghost'`; `wallet=1` returns zero rows **silently**.
+
+**NOT SATISFIED, AND NAMED RATHER THAN REDEFINED:** the item's "measure back to
+back across a restart" criterion. It is vacuous here -- it exists to stop an
+agent claiming a fix production never loaded, and **this pass ships no behaviour
+change to load.** The route is closed by replay, so there is nothing to restart
+into. Arbitration counts before/after a restart would measure the restart, not
+this route.
+
+**ROUTES CLOSED AND NOT TO BE RE-RUN** (p693 commits ec28b24, 2c6a08c, e9a212b,
+1ebbbdd, plus this one): reprice the fee model; restrict to deep pools
+(INVERTED); tune a risk guardrail (all five read 0.0); hand-approve atf_static;
+**loosen money_button's momentum gate (p694, this section)**.
