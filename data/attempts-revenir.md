@@ -32689,3 +32689,43 @@ None of these depended on the cap.
 LESSON FOR THE NEXT PASS, WRITTEN DOWN BECAUSE IT COST ME TWO WRONG POSTS: I
 read a LIMIT in source and concluded it was binding WITHOUT COUNTING THE ROWS.
 Reading a filter is not measuring a filter. COUNT THE ROWS FIRST.
+
+--- PASS 700 ADDENDUM 4 (Echo) -- THE FRESHNESS FIX IS CORRECT AND IT MOVES
+    GRADUATION FURTHER AWAY. ALL OF atf_static's POSITIVE P/L IS ON DEAD FEEDS. ---
+
+atf_static, ALL closed rows carrying a strategy_id (n=52 -- NOT the 18-row
+tradeable sub-book the ladder prints; different population, do not compare
+directly), partitioned by last market_stream tick age:
+
+  population                        n     win        P/L    missing vs bar
+  ALL closed (no cut)              52   28.8%    +0.6699    win 29/55
+  FRESH only, cut 0.25 days        39   23.1%    -0.8685    win 23/55, P/L<0
+  FRESH only, cut 1.0  days        39   23.1%    -0.8685    (identical)
+  FRESH only, cut 2.0  days        39   23.1%    -0.8685    (identical)
+  STALE only (>2d) -- what is lost 13   46.2%    +1.5384
+
+ALL OF atf_static's POSITIVE P/L LIVES ON SYMBOLS WHOSE FEED IS DEAD. Thirteen
+rows on dark symbols carry +1.5384; the 39 rows on symbols that actually tick
+carry -0.8685 at 23.1% win. Per symbol, the fresh side is NEGATIVE IN 7 OF 7:
+AERO -0.3653, VIRTUAL -0.2419, SR -0.1063, CBBTC -0.0844, BASECAT -0.0332,
+CBXRP -0.0191, UNI -0.0184. Not one tradeable symbol is profitable.
+
+THE THREE CUTS RETURN IDENTICAL NUMBERS. 0.25d, 1.0d and 2.0d all give
+n=39 / 23.1% / -0.8685 -- the freshness-gap claim validated by a consequence it
+was not derived from.
+
+CONSEQUENCE FOR [779b2357] -- BOTH HALVES MUST BE SAID TOGETHER. The gate is
+counting +1.5384 of P/L the live lane could never have placed, and that is the
+ONLY reason the ladder prints a positive number for atf_static. Removing it is
+CORRECT; it is unspendable evidence. BUT THE LADDER WILL GO FROM FAILING ONE BAR
+TO FAILING TWO. Anyone shipping this expecting graduation to improve will think
+they broke it. SAY SO IN THE COMMIT MESSAGE.
+
+ROUTE STATUS CHANGED BY THIS MEASUREMENT:
+  ROUTE (a) hand-approve ONE strategy at a minimum clip -- STILL THE RIGHT ROUTE.
+    Live rows remain the only evidence the ratchet cannot take away.
+  ROUTE (a) AIMED AT atf_static -- CLOSED. You do not hand-approve a strategy
+    whose entire tradeable book is -0.8685 at 23% across seven symbols with no
+    positive among them. Echo argued for atf_static earlier in this same pass and
+    was wrong; this is the measurement that closed it. A different strategy, or a
+    different symbol universe, is required.
