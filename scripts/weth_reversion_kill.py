@@ -188,8 +188,63 @@ def report(label: str, wins: Sequence[Window], toll_bp: float, show_rows: bool =
                   f" (sum {tot:+.1f}bp) -- the median is the honest statistic here, not this")
 
 
+def scan(days: float, window: float, tol: float, gap: float, toll_bp: float,
+         top: int) -> int:
+    """Is the dark-tape inflation general, or was WETH unlucky?
+
+    For every symbol with enough tape, report the gross median on ALL windows
+    against the gross median on the CONTINUOUS-tape subset. If continuous is
+    systematically lower, the edge is a stale-price artifact feed-wide.
+    """
+    conn = sqlite3.connect(DB)
+    cutoff = time.time() - days * 86400.0
+    syms = [r[0] for r in conn.execute(
+        "SELECT symbol, COUNT(*) c FROM market_stream WHERE ts>=? AND price>0 "
+        "GROUP BY symbol HAVING c>=200 ORDER BY c DESC LIMIT ?", (cutoff, top))]
+    conn.close()
+    print(f"scan: window {window:g}s, tol {tol:g}s, continuous = no gap >{gap:g}s "
+          f"inside the hold, toll {toll_bp:.2f}bp, {days:g}d")
+    print(f"{'symbol':<16} {'nAll':>5} {'medAll':>9} {'nCont':>6} {'medCont':>9} "
+          f"{'delta':>9}  direction")
+    lower = higher = 0
+    for s in syms:
+        ticks = load_ticks(s, days)
+        if len(ticks) < 50:
+            continue
+        tape = Tape(ticks)
+        wins = build(tape, window, tol)
+        cont = [w for w in wins if w.max_gap <= gap]
+        if len(wins) < 10 or len(cont) < 5:
+            print(f"{s:<16} {len(wins):>5} {'--':>9} {len(cont):>6} {'--':>9} "
+                  f"{'--':>9}  too few windows")
+            continue
+        ma = _quantile([w.gross for w in wins], 0.5)
+        mc = _quantile([w.gross for w in cont], 0.5)
+        d = mc - ma
+        if d < 0:
+            lower += 1
+        else:
+            higher += 1
+        print(f"{s:<16} {len(wins):>5} {ma:>+8.2f}bp {len(cont):>6} {mc:>+8.2f}bp "
+              f"{d:>+8.2f}bp  {'CONTINUOUS IS LOWER' if d < 0 else 'continuous is higher'}")
+    tot = lower + higher
+    print(f"\n    continuous-tape median LOWER on {lower} of {tot} symbols, "
+          f"higher on {higher}")
+    if tot:
+        print("    the complement (dark-tape inflation is WETH-specific) "
+              f"{'DIES' if lower > higher else 'SURVIVES'} on this count")
+    print("    NOTE: a median over non-overlapping windows is a direction-free "
+          "move statistic here --")
+    print("    the sign of each row is the reversion rule's, so read the DELTA, "
+          "not the level.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--scan", action="store_true",
+                    help="sweep every symbol: all-windows median vs continuous-tape median")
+    ap.add_argument("--top", type=int, default=14, help="symbols to scan, by tick count")
     ap.add_argument("--symbol", default="WETH-USDC")
     ap.add_argument("--days", type=float, default=14.0)
     ap.add_argument("--window", type=float, default=1800.0)
@@ -199,6 +254,9 @@ def main() -> int:
     ap.add_argument("--gap", type=float, default=300.0,
                     help="max inter-tick gap allowed inside the hold for CONTINUOUS")
     args = ap.parse_args()
+
+    if args.scan:
+        return scan(args.days, args.window, args.tol, args.gap, args.toll_bp, args.top)
 
     ticks = load_ticks(args.symbol, args.days)
     print(f"{args.symbol}: {len(ticks)} ticks over {args.days:g}d from {DB}")
