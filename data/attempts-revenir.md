@@ -30183,3 +30183,68 @@ answered the question three passes after it was built.
 
 **STATUS: `[76134a6a]` BLOCKED, blocker named and measured. The unblock is
 `[c9fa569a]` + `[3af8d01e]`, not a permission ask.**
+
+---
+
+## PASS 693 (Echo, senior), FIFTH ENTRY -- **ROUTE (b) VIA COST REPRICING IS CLOSED.** THE REPLAY RAN, THE FLIP COUNT IS 0.86%, AND THE FLIPS LOSE.
+
+**This is the measurement the previous four entries were pointing at, and it
+kills the route they were narrowing. Pre-registered on the board before either
+output was read: "the flip count is SMALL and possibly ZERO".**
+
+Two runs, same 168h window, 186 symbols, **61062 evaluations**, 12-min hold:
+
+    BASELINE   one-way fee 0.0030   round trip 0.0070   required edge 0.0077
+    CENSUS     one-way fee 0.0009   round trip 0.0029   required edge 0.0032
+
+The census run applies the **full** lever -- a 3.2x cut in the round trip.
+
+                                BASELINE        CENSUS
+      edge_below_cost            6762            6704
+      (fired)                       0              58     <- 0.46% of survivors
+
+**THE ENTIRE COST-REPRICING ROUTE IS WORTH 58 CANDIDATES OUT OF 6762 -- 0.86%.**
+
+### AND THE 58 LOSE. THEY ARE NEGATIVE *BEFORE* COST.
+
+      (fired)  RAW  n=48  net mean -0.5826%  win 29.2%  GROSS mean -0.2942%
+
+Repricing does not uncover a suppressed edge. It admits a small set of losers.
+This is exactly the failure `[3af8d01e]`'s criteria named in advance: **clearing
+the gate and then losing on the tape is not a win.**
+
+### THE GATE IS EARNING ITS KEEP, BY THE INSTRUMENT'S OWN LEGEND
+
+The script states: *"a gate whose refusals have a NEGATIVE net mean is earning
+its keep."*
+
+      edge_below_cost refusals   RAW        n=6640  net mean -0.2465%
+                                 SEQUENTIAL n=450   net mean -0.3163%
+
+**The 6762 candidates it refuses would have lost. The cost gate is not a bug.
+It is correct.** The 286bp required_edge and the double-counted slippage are
+real defects in the arithmetic, but fixing them does not produce trades -- it
+produces 58 losing trades.
+
+### STATUS: CLOSED. DO NOT RE-RUN IT.
+
+Closed on its own pre-registered kill test, measured at two fee levels back to
+back in one pass. This retires the repricing half of `[3af8d01e]` and the
+"13.3x lever on 61 WETH refusals" framing from my third entry above -- **the
+lever exists and it moves almost nothing.** `[c9fa569a]` survives only as the
+APPROVAL question, not as a cost question.
+
+### A CONTAMINATED NUMBER IN THE SAME OUTPUT -- FLAGGED, NOT USED
+
+The same run reports `momentum_not_aligned` refusals at net mean **+23.2%** raw
+and **+81.8%** sequential, and `slope_not_positive` at **+265%**. **These are not
+believable.** A +265% mean over a 12-minute hold is contamination -- the same
+bad-price class this repo has shipped four times before. It is **NOT** evidence
+that the momentum gate is leaving money on the table. Anyone tempted by it must
+decontaminate first (see `clip_size_edge_frontier.py:482,534` for the shipped
+decontaminate step). I record it so nobody rediscovers it and believes it.
+
+Commands, both reproducible:
+
+    python scripts/money_button_edge_terms.py --hours 168
+    python scripts/money_button_edge_terms.py --hours 168 --fee 0.000942
