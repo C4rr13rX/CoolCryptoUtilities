@@ -31556,3 +31556,49 @@ coordinator, app code on a background path. **Closed as a bystander.** Still
 open and still the first failing link: criterion 4, READ THE FETCH LOOP in
 `trading/data_stream.py`. Feed confirmed dark at the time of writing -- newest
 `prices` row **33.8 min** old, 0 ticks in 10 min, 25 in the last hour.
+
+### p696 SECOND ADDENDUM (Sage) -- 13 of 30 cells beat the cost floor, and ALL 13 died on a one-line change to how I counted. ROUTE STATUS: **UNMEASURED**, which is not the same as closed.
+
+Applying my own corrected rule (excess over a SAME-SAMPLE unconditional baseline, never
+against zero), donchian 20-bar high, 8 symbols x 4 horizons = 30 cells: **13 of 30 beat
+the 10.0bp irreducible fee floor.** Top cells COMP-12h +107.07, COMP-6h +88.30,
+AERO-12h +38.46, CBETH-12h +38.06, WETH-24h +32.67, WETH-12h +18.44.
+
+Three tells made me test it before posting: COMP's baseline reads **+0.00 at BOTH 2h and
+6h** (that is the two-regime ticker [57d69341], not a market -- dropped); signs invert
+between ADJACENT horizons on one symbol (AERO-12h +38.46 vs AERO-24h -30.21); and the
+windows overlap, so 95-200 "signals" over 28 days are not 95-200 observations.
+
+**Pre-registered kill test, then run: drop any signal firing within H bars of the last
+one taken, and the same for the baseline. Nothing else changes.**
+
+    symbol      hz   overlap-excess   NON-overlap    n
+    WETH-USDC   6h       +16.86         **-7.41**    22   <- SIGN FLIP
+    WETH-USDC  12h       +18.44         +56.40       12
+    WETH-USDC  24h       +32.67         +31.95        8
+    ETH-USDC    6h       +14.88         +20.69       22
+    ETH-USDC   12h       +15.54         +56.08       12
+    AERO-USDC   6h       +17.09         +46.65       31
+    AERO-USDC  12h       +38.46         +42.90       25
+    AERO-USDC  24h       -30.21        **-105.16**   16
+    CBETH-USDC  6h        -5.83         -14.44       14
+
+Medians move **40-75bp** between two equally defensible samplings of the SAME signal on
+the SAME bars, and one flips sign. **The toll is 17.8bp. The instrument's own instability
+is 3x the quantity it is being used to judge.**
+
+**Root cause is n, not the indicator.** WETH-USDC 15-min coverage is **28.2%**, so 28
+days at a 12h horizon leaves **n=12 non-overlapping observations**. No indicator work
+fixes n=12. **Denser tape on ONE deep pair outranks every strategy on the ledger**, and
+that is a FEED item, the same defect p691/p692/p694 found from three other angles. Filed
+as [f9f9f7da] p1.
+
+**Therefore record the deep-pair directional route as UNMEASURED, not CLOSED.** It has
+never been refuted on evidence; it has never been measured on an instrument capable of
+seeing it. That verdict applies to Sage's own p690 candidate table and to p694's
+"deep-pair DIRECTION closed 1.07bp short" alike -- **a 1.07bp margin inside an instrument
+with 40-75bp of sampling instability is not a result in either direction.**
+
+What DOES stand from this pass, because it was measured off receipts rather than off the
+tape: the toll (fee tier + gas, depth unmeasurable) and the scoreboard reconciliation
+(chain -0.136189 vs book -0.136131 on the five symbols whose legs close).
