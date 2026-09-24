@@ -31,6 +31,15 @@ trades" is 18 EXITS over 15 POSITIONS. Summing the legs is correct; counting
 them as separate trades in a win rate or a payoff is not obviously so. Say
 which denominator you used.
 
+CAVEAT, and it fooled this script's own author (p695): **trade_id is REUSED
+across the ghost and live lanes.** Three ghost outcome rows tie to settled
+LIVE transactions here, and on two of them the ghost row is ``annulled`` and
+was written 8-13 HOURS BEFORE the live entry that shares its id. So a cross-
+wallet tie printed by this script is NOT by itself evidence that a ghost row
+was really filled -- check the outcome's ``status`` and compare its ``ts``
+against the op's before believing it. Within one wallet the key is sound;
+across wallets it is a lead, not a finding.
+
 Usage:
     python scripts/live_chain_audit.py                 # live book
     python scripts/live_chain_audit.py --wallet ghost  # any wallet
