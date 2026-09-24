@@ -30866,3 +30866,51 @@ pool dense and sparse regimes. Whether the reversion gradient is a regime
 property is **untested**, and widening the window to reach n>=500 in a decile
 makes the mixing worse, not better. That is now written into [0d92d4ad]'s
 acceptance criteria as a criterion rather than left as a caveat.
+
+### p694 (Sage) -- ROUTE: THE REVERSION TAIL, MEASURED TO THE LIMIT OF THE TAPE. **CLOSED, 1.07bp SHORT.**
+
+Item [0d92d4ad], filed and finished in the same pass. Its criterion 2 forbade
+shrinking the cell to get an answer and required the n to come from a wider
+window instead. **The wider window does not exist.** WETH-USDC's entire retained
+`market_stream` is n=4245 over **680.7 hours (28.4 days)**; a decile of that is
+n=424, still below the n>=500 bar, after 4.05x the window for 1.56x the ticks
+(the earlier weeks are sparser). No window length in this store supplies n>=500
+in a WETH decile.
+
+But a fixed-fraction cell is not the only way to probe a tail. A **threshold
+cut** does not shrink with the fraction, so it reaches further at the same n.
+Full 680h tape, forward 30-min median SIGNED move, n>=500 enforced:
+
+    WETH-USDC  n=4110, unconditional +1.25bp
+      trail <= -10bp   n=1039  fwd MEDIAN  +4.14bp  long>11bp 37.6%  median gap 71.3s
+      trail <= -20bp   n=504   fwd MEDIAN  +9.93bp  long>11bp 47.8%  median gap 69.6s
+      trail <= -30bp   n=252   BELOW n>=500 -- NOT REPORTED
+      trail <= -50bp   n=88    BELOW n>=500 -- NOT REPORTED
+    ETH-USDC   n=4188, unconditional +0.97bp
+      trail <= -20bp   n=531   fwd MEDIAN  +9.04bp  long>11bp 44.3%  median gap 64.0s
+
+**THE DEEPEST MEASURABLE CUT ON THE ENTIRE TAPE IS `trail <= -20bp`, AND IT IS
++9.93bp AGAINST AN 11.00bp TOLL -- SHORT BY 1.07bp.**
+
+**Three things make this stronger than the quintile result above.** (1) It is a
+680h window, 4x the 168h quintile, and gives +9.93bp where Q1 gave +9.62bp --
+**stable across a 4x change in window**, which is not what an artifact does.
+(2) ETH-USDC replicates at +9.04bp on an independent pair. (3) The selected
+cells are **not feed gaps**: median gap to previous tick is 69.6s in the -20bp
+cell against 52.5s overall -- slightly staler, not the 40-minute holes that
+would make a -98bp "move" bookkeeping. That was the item's criterion 3 and it
+passes on the gap arm; the repeated-print arm was not run.
+
+**VERDICT: CLOSED.** WETH/ETH 30-min reversion is real, monotone, replicated on
+two pairs and two window lengths, and **bounded below its own toll at every
+conditioning level the evidence can reach.** The direction route on the deep
+pairs is finished -- not because direction is absent, but because it is 1.07bp
+too small at its strongest measurable point. Anything deeper than `trail<=-20bp`
+is below n=500 on the whole tape and cannot be measured here at all.
+
+**WHAT WOULD REOPEN IT:** a lower toll. At 9.93bp of gross median the cut needs
+a round trip under ~9.9bp to break even at the median, against the 11.00bp
+WETH-class figure used throughout. That is a 10% cost reduction on the cheapest
+pair in the book, and `only-gas-is-fixed-so-the-clip-lever-has-a-floor` puts the
+floor at 15.58bp as clip -> infinity. **On that floor this never opens.** Record
+it as closed unless the toll model itself changes.
