@@ -30551,3 +30551,98 @@ with perfect long-side luck, against 31.9% at 11bp.
 of windows a correct long call would have paid -- it BOUNDS the prize, it does
 not find it. A per-symbol read on the deep pairs is the next measurement, not a
 conclusion available from this table.
+
+---
+
+## p694 -- DUNE (exec): THREE FEED-DARKNESS MECHANISMS REFUTED IN ONE PASS, AND THE WETH FEED NUMBER THAT CLOSED ROUTE (b) IS ELEVEN TIMES TOO SMALL
+
+All read-only against `storage/trading_cache.db` and `logs/services/`. Nothing
+in the repo was edited for any of these. Observer window declared before the
+work and excluded from the metric counts: 02:11-02:17 local on 2026-09-24.
+
+**ROUTE TRIED 1 -- "the darkness is a dropped websocket subscription nobody
+resubscribes" (complement B of [a2bfd079]). CLOSED.**
+Connection events inside vs outside the six alive dark runs: `n=3 over 174.8
+dark min = 0.017/min` vs `n=24 over 1265.2 lit min = 0.019/min`, **ratio
+0.90x**. 1 of 6 runs contains any connection event at all.
+*The first run of this read 8.34x and was an artifact.* `market_stream.ts` is
+EPOCH UTC and the service logs stamp LOCAL; joining them raw is a 4-hour error
+that manufactures a fake concentration. Verified rather than assumed: log max
+`[2026-09-24 02:12:19]`, db max ts `1790230429` = `02:13:49` local. **Any
+log-to-market_stream join in this repo must add 4 hours to the log side.**
+Silent half tested separately, because `rg` over `logger.{info,warning,error}`
+in `trading/data_stream.py` for `subscri|reconnect|resume|closed|restart`
+returns ZERO -- a silent drop would leave no log trace. Symbol set 15 min
+before vs 15 min after each run: the two runs on a SETTLED system (21:22
++44.1min, 22:22 +20.5min) lose **0 symbols and gain 0**. The four that do lose
+symbols are all 07:06-08:42, inside the 13-minute boot ramp, and one GAINS 10.
+
+**ROUTE TRIED 2 -- "a dark run is every REST endpoint in cooldown at once"
+([20893eeb]). CLOSED, ON ARITHMETIC, BEFORE ANY DATA.**
+`trading/data_stream.py:510` is `min(900.0, 2.0 * (2 ** min(6, strikes-1)))`.
+The INNER `min` caps the exponent at 6 first, so the ladder is
+`2,4,8,16,32,64,128` and then **128 forever**. Evaluated, not read.
+**The `min(900.0, ...)` can never bind -- the 900 is dead code.** Max
+per-endpoint cooldown is 128s against a shortest alive dark run of 1056s
+(**8.3x**) and a longest of 2646s (**20.7x**). Roster is TEN endpoints
+(binance, bitstamp, coinbase, coingecko, gateio, htx, kraken, kucoin, mexc,
+okx), built PER SYMBOL, all expiring inside 128s.
+Data agrees: `metrics` `category='stream_flow' name='price'`, 18823 rows/24h --
+INSIDE the six runs **6 rows = 0.034/min**, OUTSIDE **18736 = 14.809/min**, a
+435x collapse with EXACTLY ONE row inside each run (the boundary row that ends
+it). Sources outside: dexscreener 12723, geckoterminal 3462, bitstamp 1773,
+kucoin 778 -- **`fallback=False` on every row, inside and outside.** No cooldown
+or fallback signature exists in the telemetry.
+
+**ROUTE TRIED 3 -- "then it is the stream task dying" and its own complement
+"it is a db-write stall". BOTH CLOSED.**
+Per-minute metric rates inside vs outside the six alive runs:
+
+    category              IN/min   OUT/min    n_in    n_out
+    stream_flow            0.343   148.747      60   188190
+    equilibrium_adjust     1.235    67.329     216    85182
+    wallet_sync            0.869    57.757     152    73072
+    brain_state            0.778    52.297     136    66164
+    horizon_accuracy       1.081    12.150     189    15372
+    ALL METRICS            6.646   365.366    1162   462249   (55x collapse)
+
+An endpoint backoff silences `stream_flow` and leaves `wallet_sync` untouched --
+**`wallet_sync` calls no price endpoint.** All of them stop together, so it is
+not the stream task. And it is not the shared-sqlite write path either:
+`logs/services/production.log` lines/min around the 21:22:28 +44.1min run
+(local) read `21:15(1) 21:16(3) 21:18(2) 21:19(1) ... 22:07(1) 22:09(4)
+22:10(2)` -- **a 48-minute hole in the LOG FILE bracketing the 44.1-minute db
+gap.** The process emits nothing, to disk or db, and resumes intact.
+
+**WHAT SURVIVES, UNTESTED AND NOT CLAIMED:** a whole-process freeze of 17.6-44.1
+min, six times in 24h, resuming with the symbol set intact. Same shape as
+`the-feed-stall-is-an-rlock-hold-not-sqlite-on-the-event-loop` (p682). The
+discriminator is pre-registered on [20893eeb]: pid CPU time / working set /
+handle count sampled across a freeze, plus a `py-spy` dump taken during one,
+which names the held lock directly. Say so on the board before running py-spy
+against the 22GB-db process -- the observer effect is measured and real.
+
+**AND THE ONE THAT REOPENS A ROUTE RATHER THAN CLOSING ONE.** [a2bfd079]'s
+chain rested on "route (b) dead because WETH gets 19 ticks per 6h so the cheap
+token is untradeable and only AERO is left" -- a p474 number. Re-measured on
+`market_stream` over the trailing 24h, 57 symbols:
+
+    symbol         n/24h   span_min  silent_at_read
+    VELVET-USDC     1516    1177.8      0.1
+    AERO-USDC       1445    1176.5      1.4
+    SR-USDC         1325    1052.8      1.4
+    WETH-USDT        940    1052.8      1.4
+    ETH-USDT         898     863.4      3.4
+    UNI-USDC         872    1051.6      1.4
+    ETH-USDC         658     770.5      1.4
+    WETH-USDC        619    1051.6      1.4
+
+**WETH-USDC is 619 ticks over 1051.6 min = ~212 per 6h, ELEVEN TIMES the 19
+the route was closed on**, and it was ticking 1.4 minutes before the read. All
+five cheap pairs are among the fourteen best-fed symbols on the tape.
+**Route (b) is NOT closed on feed grounds.** Whatever closes it, it is not this.
+The other 43 of 57 symbols are a carousel that ticks briefly and vanishes --
+CBBTC-USDC is **21 ticks over 0.8 minutes then dark 19.6 hours**, which is bad
+news for the pair memory calls the only one with live cheap-cost receipts.
+Filed as [da37d1cb] with a second-window confirmation as its first criterion:
+**do not re-cost route (b) on the 619 until a different 24h window agrees.**
