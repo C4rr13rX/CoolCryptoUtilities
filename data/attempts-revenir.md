@@ -29199,3 +29199,83 @@ STRATEGY_GRADUATION_ENFORCED.
   when the value is missing. A mechanism was looked for and not found.
 
   ROUTE STATUS: **OPEN, one command from closed.** Item [64895d41].
+
+## p691 (Sage) -- ENTRY SELECTION: does any feature knowable AT ENTRY TIME
+## separate gross winners from losers? YES, ONE DOES, AND IT IS TAPE FRESHNESS.
+## Item [3e185d47]. ROUTE STATUS: **OPEN AND THE STRONGEST ENTRY-SIDE LEAD SO FAR.**
+
+  I PRE-REGISTERED THE COMPLEMENT (no feature separates; 38.9% is irreducible at
+  decision time) AND THE COMPLEMENT LOST. Recording that explicitly because the
+  reasoning that produced the wrong expectation is itself worth keeping: a rule
+  that enters on 96.5% of its ticks has no selectivity, so its entries ought to
+  be a uniform sample of the tape, and a uniform sample should not be separable
+  by anything. That argument is wrong, and the reason it is wrong is the point --
+  the entries are uniform over TICKS THE STRATEGY SAW, and what the strategy saw
+  is itself filtered by a feed that is dark ~40% of minutes.
+
+  CRITERION 1 RE-AUDITED, and the number moved: memory says atf_static enters on
+  99.6% of its ticks (p486). Fresh 7-day window gives **96.5%** (4254 enter /
+  144 hold / 4409 evals). Directionally confirmed, but 99.6% is NOT current.
+
+  BOOK AND EXCLUSIONS (the item is ABOUT entry price, so a bad entry price is
+  fatal to it specifically):
+    286 closed round trips with a computable gross return
+    -15  frozen-feed flat round trips (entry==exit, gross exactly 0.0)
+    - 2  implausible |gross return| > 100%
+    - 1  entry price outside the symbol's whole tape envelope
+    = 268 kept; gross win rate 47.6% BEFORE cleaning -> 49.6% AFTER.
+      The cleaning flatters the book by +2.0 points. Said out loud, per the item.
+
+  NO ENTRY TIMESTAMP EXISTS ON THE BOOK: trade_outcomes.details carries entry_ts
+  on 8 of 286 rows (2.8%). Entry-time context was recovered by joining each
+  outcome to the trading_ops action='enter' row that proposed it, on
+  (symbol, entry_price) at 1e-6 with the enter ts preceding the booking.
+  **265 of 268 matched** against a 66,870-row enter pool. The join is not thin.
+  trading_ops enter rows carry confidence, score, expected_return, liquidity_usd,
+  volume_h1, budget_usd -- but only ~20 of the joined rows have confidence/score
+  populated, so those columns cannot be judged here (n=4 per quintile).
+
+  THE RESULT -- seconds between entry and the last tick preceding it, n=53/quintile:
+    Q1  1-4s        win 71.7%   medGross +0.655%   meanGross +0.702%
+    Q2  4-10s       win 37.7%   medGross -0.093%   meanGross +0.142%
+    Q3  10-20s      win 49.1%   medGross -0.000%   meanGross +1.927%
+    Q4  20-53s      win 49.1%   medGross -0.035%   meanGross +0.501%
+    Q5  54-12293s   win 39.6%   medGross -0.422%   meanGross -2.557%
+  Q1 is 38/53 against a 49.4% base: one-sided binomial p=0.0008, and 0.0008 x 30
+  cells = 0.024, so it SURVIVES ITS OWN MULTIPLE-TESTING CORRECTION.
+  Q1 IS THE ONLY QUINTILE WITH A POSITIVE MEDIAN, and +65.5bp clears the 30.05bp
+  paired live toll. That, not the win rate, is the number that matters.
+
+  THE KILL TEST THAT COULD HAVE ENDED IT, AND DID NOT. The dangerous alternative:
+  freshness predicts the ACCURACY OF THE BOOKED RETURN, not the trade's return --
+  a stale tape means entry_price is a stale mark, making Q1 'the rows whose P/L
+  is real' and Q5 'the rows whose P/L is noise'. That is a data-quality finding,
+  not an edge, and Q5's avgLoss -6.500% vs Q1's -2.561% is what it would predict.
+  Separating test: DISCARD the booked prices entirely and re-measure every return
+  off the tape (nearest tick to entry ts, nearest tick to exit ts, both legs
+  required within 10 min of a real tick). 195 of 265 rows qualify.
+    quintile   n   bookedWin  tapeWin  medBooked  medTape
+    Q1        39     71.8%     71.8%    +0.672%   +0.648%
+    Q5        39     38.5%     41.0%    -0.520%   -0.283%
+    booked-vs-tape sign agreement across all 195 rows: 90.8%
+  **IT SURVIVES INTACT.** The separation is in the TRADES, not the bookkeeping.
+
+  WHAT IS NOT CLAIMED. Q1 is 51 ghost / 2 live, and the ghost book pays ZERO
+  slippage (p690). n=53. This is the strongest entry-side lead this loop has
+  produced and it is NOT a proven live edge. Three other cells also cleared the
+  55% bar (hour_of_day Q1 60.4%, realised_vol Q2 58.5%, tick_density Q4 64.2%);
+  none is near p=0.0008 and none was re-validated, so treat them as noise until
+  somebody does to them what was done to freshness above.
+  The relationship is a CLIFF at ~4 seconds, not a gradient -- Q1 72% then
+  38/49/49/40. Do not model it as continuous.
+
+  WHY THIS CONNECTS TO EVERY OTHER OPEN ROUTE: the bottom quintile enters on a
+  tape stale by 54s to 12,293s. The feed measured at the START of this pass had
+  been silent 39 minutes and ticks in only 59.2% of minutes. THE BURSTY FEED THAT
+  SIX PASSES HAVE TREATED AS AN AVAILABILITY PROBLEM IS ALSO AN ENTRY-QUALITY
+  PROBLEM. We enter on prices from the middle of the dead stretches and those
+  entries lose. Unlike the clip, the cost floor and graduation, a freshness
+  precondition needs nothing else to move first, and services/feed_freeze.py
+  already computes staleness.
+
+  PROVED BY: python scripts/entry_quality_features.py
