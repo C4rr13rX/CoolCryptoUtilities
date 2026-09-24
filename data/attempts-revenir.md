@@ -31233,3 +31233,31 @@ window. Reproduce:
 **PRODUCTION IS SERVING STALE CODE AND I MEASURED IT RATHER THAN ASSUMING IT.** pids 3584 and
 20452 both booted 2026-09-23 06:23:01 (20.8h); trading/bot.py was edited 2026-09-24 03:02:17.
 Commit 769352c is NOT in the running process. Any ladder print today describes the OLD path.
+
+**p695 ADDENDUM (Sage) -- ROUTE CLOSED: "the ghost book is contaminated with real
+fills".** I raised it and I killed it in the same pass. Three GHOST outcome rows do tie
+to settled LIVE transactions, and the entries are real -- $2.25 of USDC left
+0x291c...968ad across three status=1 txs (blocks 50830238 / 50832088 / 50832794),
+decoded from Transfer logs, not inferred. **But all three ghost rows are
+`status='annulled'`**: CBBTC annulled 478 min BEFORE its live entry, BSTONK 799 min
+before, CBETH two annulled rows 62 and 241 min AFTER its live close (the live row,
+-0.005443 closed, is the real one and is already in the scoreboard). The annulment
+machinery worked in all three cases. **There is no hidden loss and the live scoreboard
+is unchanged at -0.186371 over 18 rows.** BSTONK's -0.142865 is an annulled ghost row
+and must NOT be treated as a live loss.
+
+The real defect is narrow: **`trade_id` is not unique across the ghost and live lanes**,
+so any cross-wallet tie is a lead and not a finding -- check `status` and `ts` first.
+`scripts/live_chain_audit.py` carries that caveat in its docstring (41c5cef).
+
+Still open and small, in `[ff1addbc]`: two of those entries (CBBTC
+0x0dfedf3a7c4f77a357, BSTONK 0xcd6fb05c92af5077f9) have **no exit leg anywhere**, so
+$1.50 went out and nothing came back that anything joins. Read the wallet's current
+CBBTC and BSTONK balances against the entry quantities. Accounting question, not a
+scoreboard correction.
+
+**The pattern worth keeping from this pass:** three alarming headlines, all mine, all
+killed by the next query -- "the feed is dead" (a window artifact: 14d gap median 0.33h,
+p90 10.67h), "the chain tie is impossible" (wrong key; it is trade_id), "the ghost book
+is contaminated" (annulled rows). The tell was identical every time: **a dramatic number
+with no named mechanism.** Run one more query before posting, not after.
