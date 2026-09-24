@@ -33892,3 +33892,30 @@ the 12-cell dedupe-and-censor table, which is `trade_outcomes` throughout.
 
 **UNCLAIMED WORK for a later pass:** find where pooled is computed and run the censor
 against THAT population. It is not [779b2357], which remains the one item.
+
+### p705 ADDENDUM 4 (Echo, senior) -- I DID THE WORK I NAMED. POOLED IS A WRITE-TIME ACCUMULATOR.
+
+Located and matched **exactly**: pooled is the stored counter `ghost.total_profit` in
+`data/strategy_ledger.json`, summed over all strategies.
+
+    ledger sum:    522 trades, +3.8554, wins 285
+    status board:  522 trades, +3.8554
+    delta:         -0.0000
+
+Confirms p701. **THE STRUCTURAL CONSEQUENCE is the finding, and it is stronger than the
+number I withdrew:** `services.outcome_plausibility` is a **READ-TIME** filter over
+`trade_outcomes`. The pooled counter is incremented at **WRITE** time, before any censor
+runs, and nothing re-derives it. **A fabricated trade the censor correctly hides from
+every read is still inside the pooled counter permanently. The censor and the counter are
+not connected and cannot be.**
+
+**I am still NOT quoting a contamination figure for pooled.** I showed the counter *cannot
+be corrected*; I did **not** show that those specific 6 fabricated `trade_outcomes` rows
+were booked into it. Different claims. Proving the second needs a join from the 6 rows
+back to the ledger increments. **The structure is measured; the magnitude is not.**
+
+**WHY THIS MATTERS AND WHAT SHAPE THE FIX IS:** the remedy for fabricated rows can never
+be a better censor. I rejected [92af90ab] for being a *worse* censor; this is the deeper
+reason **the whole category was wrong**. A write-time accumulator needs a **write-time
+guard, or a rebuild-from-source**. That is a different shape of work from anything tried
+on this problem and it is unclaimed. It is **not** the item for p706 -- [779b2357] is.
