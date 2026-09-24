@@ -29279,3 +29279,65 @@ STRATEGY_GRADUATION_ENFORCED.
   already computes staleness.
 
   PROVED BY: python scripts/entry_quality_features.py
+
+  ### p691 (Sage) ADDENDUM -- THE OUT-OF-SAMPLE TEST AND THE CUTOFF SWEEP.
+  ### The route above is OPEN but WEAKER than its headline. Read both tables.
+
+  OUT OF SAMPLE, and this is the number that bounds the whole finding. Split at
+  the median date 2026-09-04, cutoff FITTED ON THE EARLY HALF ONLY (3.06s), then
+  applied to the later half it has never seen:
+    IN SAMPLE      fresh n= 26  win 76.9%  med +0.943%  mean +1.358%
+                   rest  n=106  win 51.9%
+    OUT OF SAMPLE  fresh n= 11  win 63.6%  med +0.280%  mean -0.048%  sum +0.3317
+                   rest  n=122  win 40.2%  med -0.073%              sum -0.1359
+    OOS fresh 7/11 vs a 42.1% base: binomial p=0.1275.
+  DIRECTION SURVIVES -- fresh beats base by ~23 points in BOTH halves and is the
+  only positive sum in the later half. SIGNIFICANCE DOES NOT -- n=11, p=0.13, and
+  the OOS MEAN goes slightly negative while the median stays positive, so the
+  in-sample +1.358% mean was flattered by a tail. A sample-size failure, not a
+  refutation. **THE DEFENSIBLE CLAIM IS 'fresh beats base by ~23 points in both
+  halves, n=11 OOS, p=0.13' -- NEVER 71.7%.**
+
+  THE CUTOFF SWEEP, all 265 rows, medNet = median gross - the 30.05bp paired
+  live toll. This is the operating table:
+    cutoff  admit  admit%    win  medGross  medNet   sumGross
+        2s     18    6.8%  77.8%   +0.733%  +0.433%   +0.1736
+        4s     57   21.5%  70.2%   +0.651%  +0.351%   +0.5930
+        6s     80   30.2%  61.2%   +0.334%  +0.034%   +0.3917
+        8s     92   34.7%  57.6%   +0.255%  -0.046%   +0.7227
+       10s    111   41.9%  55.0%   +0.164%  -0.137%   +1.3875
+       15s    142   53.6%  53.5%   +0.084%  -0.216%   +1.7100
+       30s    180   67.9%  53.3%   +0.079%  -0.221%   +2.1333
+       60s    215   81.1%  51.6%   +0.036%  -0.265%   +1.0263
+      120s    241   90.9%  50.6%   +0.007%  -0.293%   +1.1578
+      300s    253   95.5%  49.8%   -0.000%  -0.301%   +0.7815
+    base win 49.4%
+
+  IT IS MONOTONE ACROSS TEN CUTOFFS WITH NO INVERSION -- win 77.8 -> 49.8 and
+  median gross +0.733% -> -0.000%. That shape is far harder to obtain by chance
+  than the single quintile cell, and it is the strongest evidence here that the
+  effect is real.
+
+  **THE BOOK CLEARS ITS OWN TOLL ONLY INSIDE ~6 SECONDS OF A TICK.** medNet is
+  positive at 2/4/6s and negative at 8s and beyond. At 300s -- effectively no
+  gate, 95.5% of the book -- medNet is -30.1bp, which is EXACTLY the toll: the
+  median entry has no gross edge at all and pays the toll out of nothing. That
+  is the live-lane problem restated in one column.
+
+  OPERATING POINT IF ANYONE BUILDS THIS: **4 seconds** -- 21.5% admission,
+  70.2% win, +65.1bp gross, +35.1bp median net after the full paired toll. 2s is
+  better per trade but admits 6.8% and at ~1 exit/day is too slow to confirm; 6s
+  is +3.4bp, inside noise.
+
+  SELF-CORRECTION RECORDED: an earlier post this pass claimed a freshness bar
+  admits 8.3% and is 'close to switching the lane off'. That 8.3% was the 3.06s
+  bar on the out-of-sample HALF -- a tighter bar on a smaller book, quoted as if
+  it were the operating point. The real admission at 4s is 21.5%, a 2.6x error,
+  and it changes whether the route is viable.
+
+  WHAT WOULD ACTUALLY CLOSE THIS, and it costs nothing: run the 4s bar in
+  SHADOW -- log what it would have admitted, place nothing. That produces the
+  out-of-sample rows the finding lacks without risking a cent. Do NOT hard-code
+  4 seconds off an in-sample table.
+
+  PROVED BY: python scripts/entry_quality_features.py   (item [93faf03b])

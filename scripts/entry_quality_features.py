@@ -314,6 +314,45 @@ def tape_revalidation(joined, conn, feature="secs_since_last_tick"):
     )
 
 
+PAIRED_LIVE_TOLL_PCT = 0.3005  # 30.05bp, the paired live toll (Bay, p690)
+
+
+def cutoff_sweep(joined, feature="secs_since_last_tick"):
+    """Where does a freshness precondition stop paying for itself?
+
+    The admission rate is the binding constraint, not the win rate: at roughly
+    one exit a day, a bar that admits 8% of entries is close to switching the
+    lane off. Report it in the same table as the edge, always.
+    """
+    rows = [r for r in joined if r.get(feature) is not None]
+    if not rows:
+        return
+    base = 100 * sum(1 for r in rows if r["gross"] > 0) / len(rows)
+    print(
+        f"\nCUTOFF SWEEP  (n={len(rows)}, base win {base:.1f}%,"
+        f" net = median gross - {PAIRED_LIVE_TOLL_PCT*100:.2f}bp paired live toll)"
+    )
+    print(
+        f"   {'cutoff':>8}{'admit':>7}{'admit%':>8}{'win':>7}"
+        f"{'medGross':>10}{'medNet':>9}{'sumGross':>10}"
+    )
+    for c in (2, 4, 6, 8, 10, 15, 30, 60, 120, 300):
+        f = [r for r in rows if r[feature] <= c]
+        if not f:
+            continue
+        w = 100 * sum(1 for r in f if r["gross"] > 0) / len(f)
+        m = 100 * statistics.median([r["gross_ret"] for r in f])
+        print(
+            f"   {c:7d}s{len(f):7d}{100*len(f)/len(rows):7.1f}%{w:6.1f}%"
+            f"{m:+9.3f}%{m - PAIRED_LIVE_TOLL_PCT:+8.3f}%"
+            f"{sum(r['gross'] for r in f):+9.4f}"
+        )
+    print(
+        "   The median entry clears its own toll only inside ~6s of a tick.\n"
+        "   IN SAMPLE over the whole book -- do not hard-code a cutoff off this."
+    )
+
+
 def main() -> int:
     conn = connect()
     raw = load_outcomes(conn)
@@ -390,6 +429,7 @@ def main() -> int:
     print("   * = clears the pre-registered bar (n>=25 and win rate >55%)")
 
     tape_revalidation(joined, conn)
+    cutoff_sweep(joined)
 
     print("\nPRE-REGISTERED VERDICT")
     # The pre-registration has TWO arms and an earlier version of this function
