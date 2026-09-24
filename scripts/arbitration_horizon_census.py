@@ -120,7 +120,65 @@ def main() -> int:
     print("SHORT-HORIZON CANDIDATES DISCARDED in favour of a longer one:")
     for key, count in discarded_short.most_common(15):
         print(f"  {key:34s} discarded={count}")
+
+    _rung_table(conn, cutoff)
     return 0
+
+
+def _rung_table(conn: sqlite3.Connection, cutoff: float) -> None:
+    """What a SHORTER horizon rung would actually recover, per symbol.
+
+    Every `entry-refused-lattice` row's detail carries the decay limit the
+    profiler measured ON THAT TICK -- `information decays after X min`. A
+    candidate at rung R clears the chaos layer wherever that limit is >= R, so
+    the refusals themselves price the rung nobody has built. The shortest rung
+    that EXISTS in data/strategy_registry.json is @5h = 300 min.
+
+    Read the ALL column before getting excited: even a five-minute rung
+    recovers under a tenth of the refusals. This is a per-symbol result, and
+    on 17 of 19 symbols it is nothing.
+    """
+    decay = re.compile(r"decays after ([0-9.]+) min")
+    per = collections.defaultdict(list)
+    for (raw,) in conn.execute(
+        "SELECT details FROM trading_ops WHERE status='entry-refused-lattice' "
+        "AND ts>?",
+        (cutoff,),
+    ):
+        try:
+            det = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            continue
+        match = decay.search(str(det.get("detail") or ""))
+        if match:
+            per[str(det.get("symbol") or "")].append(float(match.group(1)))
+
+    total = sum(len(v) for v in per.values())
+    if not total:
+        print("\nNo chaos refusal carried a decay figure in this window.")
+        return
+
+    # Rank by what a 30-min rung RECOVERS, not by refusal volume. The six
+    # loudest symbols by volume all recover ZERO above 5 min, so a
+    # volume-ranked table hides the entire result in its ALL column.
+    ranked = sorted(
+        per.items(),
+        key=lambda kv: (-sum(1 for x in kv[1] if x >= 30.0), -len(kv[1])),
+    )[:6]
+    print()
+    print(f"WHAT A SHORTER RUNG WOULD RECOVER (n={total} chaos refusals):")
+    header = "  rung " + "".join(f"{sym:>14s}" for sym, _ in ranked) + f"{'ALL':>16s}"
+    print(header)
+    for rung in (5, 15, 30, 60, 120, 300):
+        cells = ""
+        for sym, vals in ranked:
+            hit = sum(1 for x in vals if x >= rung)
+            cells += f"{hit:>7d}/{len(vals):<6d}"
+        allhit = sum(1 for v in per.values() for x in v if x >= rung)
+        print(f"  {rung:>3d}m " + cells
+              + f"{allhit:>9d} = {100.0 * allhit / total:4.1f}%")
+    print("  (300m is the SHORTEST rung the registry offers; NONE/@5h/@12h/"
+          "@1d/@3d/@5d/@1w)")
 
 
 if __name__ == "__main__":
