@@ -32085,3 +32085,35 @@ suffixless candidate stood and a suffixed one took the tick anyway: 264 of 972
 (27.2%) pre-restart vs 0 of 9 since. P(<=0 of 9) under the pre rate = 0.058.
 Not closed. Re-run `python scripts/arbitration_horizon_census.py --boundary`
 when the denominator reaches 30.
+
+**THE TRADEABLE PREDICATE FAILS OPEN ON A DEAD FEED -- OPEN, DIAGNOSED, NOT
+FIXED.** `ledger._live_tradeable` -> `pipeline.stop_is_unenforceable`
+(pipeline.py:930) -> `stop_survivability_gate.refusal_reason` (:354), which is
+a cache lookup returning None for any symbol ABSENT from the cache. The cache
+is built only from symbols with a readable recent feed and holds 10 entries.
+BSTONK-USDC is not among them: last tick 2026-09-06 19:26, 17.4 days ago.
+`refusal_reason('TOTALLY-FAKE-USDC')` also returns None, which proves it is
+absence rather than a verdict. A symbol becomes TRADEABLE by having no feed.
+
+The defect is a polarity inversion between two callers that are each
+individually correct: `stop_is_unenforceable` documents that it fails CLOSED
+for the tail (False keeps a trade inside ES95), and `_live_tradeable` reads
+the same False as "counts as evidence". Fail-closed for the tail is fail-OPEN
+for graduation. `_live_tradeable`'s own docstring states the right policy --
+"Unknown or unjudgeable symbols are NOT counted as tradeable" -- and its
+implementation violates it.
+
+Cost: atf_static tradeable all-time n=21, 43% win, P/L +1.4052, of which
+BSTONK n=3 win 100% +1.0349 and SIBYL n=1 win 100% +0.7501 (dark since 09-11).
+Strip those 4 of 21 rows and the book is -0.3798; the sign inverts. Filed as
+[779b2357], priority 1. NOT FIXED ON PURPOSE: the one-line fix (cache-absence
+-> untradeable) strips every symbol during this build's whole-process stalls,
+so it needs a freshness test on the symbol's LAST TICK rather than on cache
+membership, written by someone other than whoever found it.
+
+**THE RESTARTED PROCESS STALLS TOO -- the p694 signature is on the new build.**
+trading_ops and market_stream both last wrote 05:05:20 / 05:05:25, the same
+second, 42 min after the 04:23:11 boot; arbitration rows read 31 at 05:07 and
+31 at 05:22. The restart fixed the STALE CODE (365beac is loaded and firing)
+and did not fix the stall. Check `max(ts)` on both tables before trusting any
+post-boot rate.
