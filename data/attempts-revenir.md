@@ -33082,3 +33082,53 @@ the silent REFUSAL counters are.
 FOR p703: [68d58270] and [124eee67] are the same problem from two ends. Merge
 them and work ONE item. The lever is `not ghost_ready` computed over a
 single-row book, not anything downstream of it.
+
+--------------------------------------------------------------------------------
+PASS 702 (Echo, senior) -- ADDENDUM 3: the census attacked on its own thresholds
+--------------------------------------------------------------------------------
+
+A census defined by thresholds is worth only the stability of those thresholds,
+so I swept both axes against my own result.
+
+    gap>=        share0.1%   0.5%    1%     2%     5%
+    1.2x               85      85     79     73     62
+    1.5x (shipped)     73      73     67     61     51
+    2.0x               61      61     56     51     43
+    3.0x               51      51     48     44     36
+    5.0x               49      49     46     42     35
+    10.0x              43      43     40     36     29
+    100.0x             30      30     27     23     17
+
+NOT A THRESHOLD ARTIFACT. Moving the gap bar by a factor of 66 takes the count
+73 -> 30. 37 symbols have a gap >= 100x; 30 of those also hold a minority
+cluster of >=3 ticks and >=0.1% share. The share threshold is nearly inert --
+0.1% and 0.5% give identical counts at every gap bar, because these minority
+clusters are tiny in COUNT but not marginal in SEPARATION.
+
+THE CAVEAT, AND IT CUTS AT THE ITEM'S OWN SUBJECT:
+
+    COMP-USDC      gap 1.86x   flagged at 1.5x: YES   at 2.0x: NO
+    AAVE-USDC      gap 2.47x   flagged at 1.5x: YES   at 2.0x: yes
+    BASELINE-USDC  gap 4.87x   flagged at 1.5x: YES   at 2.0x: yes
+    ARB-USDC       gap 20157x  flagged everywhere
+
+COMP-USDC -- the symbol [57d69341] is named after -- drops out of its own
+census when the bar moves 1.5x -> 2.0x. It is the most fragile member. So the
+honest result is two statements:
+
+  ROBUST AND NEW:   ~30 symbols are unambiguously bimodal at any bar, and none
+                    of them had been named on this board before p702.
+  FRAGILE AND OLD:  the three symbols that motivated the item sit in the
+                    threshold-sensitive tail; COMP qualifies only under the
+                    specific bar chosen.
+
+The 1.5x bar was chosen BEFORE checking where the known members fell -- it was
+calibrated to admit AAVE's documented signature (735 ticks below 150, zero
+between 150 and 250, 5 at 250-400). But COMP's survival cannot be claimed under
+a bar that was not pre-registered, and the criterion was NOT redefined to make
+it fit.
+
+FOR THE VERIFIER (criterion 7, still unmet): do not spend time on COMP. Verify
+the ~30-symbol robust core, where no judgement call is involved. Every cell of
+the sweep re-derives from data/two_regime_census.json (gap_ratio, band, cluster
+counts, share per symbol) without re-reading the 35GB database.
