@@ -32959,3 +32959,65 @@ NOT CLAIMED: criterion 7 of [57d69341] requires verification by an agent other
 than the one producing the census. I was the only agent this pass and I wrote
 the census, so that criterion DOES NOT HOLD and the item is left in_progress.
 Criteria 1-6 hold and the commands are in this pass's board posts.
+
+--------------------------------------------------------------------------------
+PASS 702 (Echo, senior) -- ADDENDUM: where the live lane actually stops
+--------------------------------------------------------------------------------
+
+ROUTE TRIED: measure step 9 (LIVE, SILENT 447.3h) directly, instead of
+inferring it from the books.
+
+NUMBER PRODUCED. Every trading_ops status in the live family by recency,
+against a clock anchor of max(ts) = 2026-09-24 12:41:
+
+    live-exit                 n=18   LAST 2026-09-05 21:10   447.6h ago
+    live-swap-settled         n=46   LAST 2026-09-05 21:02   447.7h
+    live-entry                n=20   LAST 2026-09-05 20:14   448.5h
+    live-exit-failed          n=17   LAST 2026-09-05 16:40   452.1h
+    live-entry-failed         n=11   LAST 2026-09-05 15:49   453.0h
+    live-position-dark-feed  n=419   LAST 2026-09-05 10:08   458.6h
+    entry-refused-live-held  n=326   LAST 2026-09-05 09:09   459.6h
+    guard-blocked-live        n=62   LAST 2026-09-04 23:18   469.5h
+    live-exit-blocked         n=18   LAST 2026-09-04 05:07   487.7h
+
+THE FINDING: the REFUSAL counters are silent alongside the successes.
+guard-blocked-live, live-entry-blocked, live-exit-blocked and
+entry-refused-live-held have not moved in 459-488 hours. A gate that is
+rejecting attempts produces MORE refusals; this produced none of either. The
+live path is UNENTERED, not rejected. Meanwhile the ghost lane is busy: in the
+last 24h, ghost-entry 35, ghost-exit 33, published 121, against
+entry-predropped-edge-ban 5486 / entry-arbitration 5386 /
+entry-refused-lattice 4311 / entry-refused-no-candidates 1936.
+
+This CONFIRMS [68d58270] ("THE LIVE LANE IS EMPTY, NOT BLOCKED") by a route
+disjoint from the one that item used. [68d58270] was reopened on this evidence
+and its criteria rewritten.
+
+CLOSED AS AN APPROACH -- DO NOT HUNT THE BOUNDARY BY COMMIT. The obvious next
+move is to diff what landed at the 2026-09-05 ~21:00 boundary. It is unsound
+by construction: 63 commits land in that 2-day window, AND production serves
+stale code until restart (p697), so commit timestamps do not map to behaviour
+changes. Recorded here so the next pass does not spend an hour on it.
+
+RETRACTED BEFORE IT BECAME A CLAIM: a substring filter over 24h of
+trading_ops.details for halt/demote/ghost_validation returned 36 rows, which
+looked like live evidence of the halt mechanism firing now. Parsing the JSON
+first showed ZERO top-level keys matching -- all 36 were substring hits in
+unrelated nested text. There is NO current-state evidence that the halt
+mechanism is firing. The 447h silence is a consequence; the mechanism is not
+measured.
+
+STALE DOCUMENT, NAMED SO IT STOPS FOOLING PEOPLE: data/live_watchdog_state.json
+(untracked) has updated_iso 2026-08-27 21:48 -- 28 days stale -- and a note
+reading "[FAIL ] 8  EXECUTOR  bots built with live_trading_enabled=False". The
+CURRENT ladder reports step 8 as [PASS] "bots built live-capable on an EXPLICIT
+operator arm". Anyone opening that file to ask whether the executor is armed
+gets a 28-day-old FAIL for a step that now passes.
+
+OPEN, AND IT CUTS AGAINST THE TIDY STORY: the documented chain
+ghost_validation_block -> halt_live -> ghost-demotion (attempts-revenir.md
+:11017 / :13944 / :15456) comes from passes when step 8 was FAILING. If step 8
+now PASSES and bots ARE built live-capable, that chain may no longer describe
+this build, in which case the cause of the 447h silence is UNKNOWN. Not
+resolved here. p703 should re-run the ladder first and believe no file that
+claims to summarise it.
