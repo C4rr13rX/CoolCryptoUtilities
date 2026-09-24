@@ -185,9 +185,182 @@ def ghost_live_split(con: sqlite3.Connection) -> dict:
     return {m: {"rows": n, "net": p} for m, n, p in cur.fetchall()}
 
 
+# Symbols the fleet streams densely and continuously. They are the CONTROL in
+# the hole report below: if a hole appears on the traded symbol AND on these at
+# the same wall clock, it is the pipeline that stopped, not the symbol.
+REFERENCE_SYMBOLS = ("AERO-USDC", "CBBTC-USDC", "CBETH-USDC")
+
+#: How long a hole has to be before it can carry a 2% stop past its level. The
+#: number is atf_static's own calibrated budget (ATF_STATIC_MAX_TICK_GAP_SEC),
+#: not a fresh guess -- see the sensitivity table in atf_static_strategy.py.
+HOLE_SEC = 1200.0
+
+#: Two holes on different symbols count as THE SAME OUTAGE if they end within
+#: this many seconds of each other. Measured 2026-09-05: nine unrelated symbols
+#: resumed within one second of 09:11:42, and BPAD/AERO/CBETH within one second
+#: of 17:17:03. A synchronised resume is the signature of the writer coming
+#: back, and one second is generous for it.
+SYNC_SEC = 5.0
+
+
+def feed_holes(con: sqlite3.Connection, rows: list[dict], lookback_sec: float = 7200.0) -> list[dict]:
+    """Was the FEED up while each live row was open, and was any hole the symbol's own?
+
+    WHY THIS EXISTS, and why it is not another thin-feed census.
+
+    [b576f923] was written to add a symbol-level filter -- tick count or p99
+    jump -- on the ground that the four worst live rows sit on "thin" symbols
+    with zero ticks in 14 days. Measured p691, that zero is a WINDOW ARTIFACT
+    and it inverts the conclusion:
+
+        symbol          all-time ticks   last 14d   last tick seen
+        BPAD-USDC                  462          0   2026-09-06 22:52Z
+        BSTONK-USDC               3068          0   2026-09-06 23:26Z
+        BASECAT-USDC              6339          0   2026-09-09 10:11Z
+        CBXRP-USDC                3068          0   2026-09-06 23:29Z
+
+    Three of the four carry 15x to 31x ``stop_survivability_gate.MIN_TICKS``.
+    They read zero over 14 days because the pipeline STOPPED CARRYING THEM on
+    2026-09-06/09, eighteen days AFTER the trades, which are dated 2026-09-05.
+    A census window that does not reach the trade cannot judge it.
+
+    Bounded AT the trade instead -- 2h to the exit -- BPAD-USDC is dense: 92
+    ticks at a 2.1s median gap, against ``_feed_is_dense_enough``'s 300s
+    ceiling and 6-tick floor. No density gate refuses it and none should. What
+    it has is one 2864.1s HOLE, and the hole is not its own:
+
+        BPAD-USDC    2864.1s   16:48:55 -> 17:17:03Z
+        AERO-USDC    1688.5s   16:48:55 -> 17:17:03Z
+        CBETH-USDC   3203.3s   16:23:40 -> 17:17:03Z
+
+    Three unrelated symbols, two of them the deepest we stream, resuming on the
+    same second. That is the pipeline restarting, and charging it to BPAD is
+    the error atf_static_strategy.py:478-497 already documents costing 32 of 36
+    symbols and a day of zero live trades.
+
+    So this reports the distinction the symbol gates cannot make: dense-with-a-
+    hole vs genuinely thin, and fleet-wide hole vs symbol-specific hole. Only
+    the last of those four is something a symbol filter can fix.
+    """
+    cur = con.cursor()
+
+    def series(symbol: str, lo: float, hi: float) -> list[float]:
+        cur.execute(
+            "SELECT ts FROM market_stream WHERE symbol=? AND ts BETWEEN ? AND ? ORDER BY ts",
+            (symbol, lo, hi),
+        )
+        return [float(r[0]) for r in cur.fetchall()]
+
+    def biggest_hole(stamps: list[float]) -> tuple[float, float, float]:
+        if len(stamps) < 2:
+            return (0.0, 0.0, 0.0)
+        return max(
+            (stamps[i + 1] - stamps[i], stamps[i], stamps[i + 1])
+            for i in range(len(stamps) - 1)
+        )
+
+    # TEST BOTH EDGES OF THE HOLE, NOT JUST THE RESUME.
+    #
+    # An earlier cut of this keyed synchronisation on the hole's END alone and
+    # classified BPAD-USDC as SYMBOL-HOLE. The raw stamps say otherwise, and
+    # the two edges disagree -- which is itself the finding:
+    #
+    #     BPAD-USDC   16:48:55 -> 17:36:40Z   (2864.1s)
+    #     AERO-USDC   16:48:55 -> 17:17:03Z   (1688.5s)
+    #     CBETH-USDC  16:23:40 -> 17:17:03Z   (3203.3s)
+    #
+    # BPAD and AERO go dark on the SAME SECOND: the writer stopped, and no
+    # symbol filter can be blamed for that. AERO and CBETH resume on the same
+    # second: the writer restarted. BPAD does not come back with them -- it
+    # stays dark 19m37s longer and only resumes 4 minutes before its own exit.
+    # The outage is the fleet's; the slow resubscribe is BPAD's own.
+    #
+    # So a single-edge test forces one label onto two different facts. Keying
+    # on either edge reports the shared cause, and `sync_edges` below records
+    # WHICH edge matched so the asymmetric case stays visible instead of being
+    # rounded to the nearer story.
+    def edges_match(a: tuple[float, float, float], b: tuple[float, float, float]) -> list[str]:
+        matched = []
+        if a[0] >= HOLE_SEC and b[0] >= HOLE_SEC:
+            if abs(a[1] - b[1]) <= SYNC_SEC:
+                matched.append("start")
+            if abs(a[2] - b[2]) <= SYNC_SEC:
+                matched.append("end")
+        return matched
+
+    out: list[dict] = []
+    for row in rows:
+        symbol = row["symbol"]
+        # Bound at the trade, never at "now". An unbounded lookback on a row
+        # this old reads a window the position was never open in -- the same
+        # error that once produced a fictitious 859-minute stop delay here.
+        exit_ts = float(row["ts"] or 0)
+        if not exit_ts:
+            continue
+        lo, hi = exit_ts - lookback_sec, exit_ts + 60.0
+
+        stamps = series(symbol, lo, hi)
+        gaps = sorted(stamps[i + 1] - stamps[i] for i in range(len(stamps) - 1))
+        median_gap = gaps[len(gaps) // 2] if gaps else None
+        mine = biggest_hole(stamps)
+        hole, hole_from, hole_to = mine
+
+        # Did the CONTROL symbols stop -- or restart -- at the same moment? If
+        # they did, that edge of the hole belongs to the writer and no symbol
+        # filter can see it.
+        synced: list[str] = []
+        sync_edges: set[str] = set()
+        for ref in REFERENCE_SYMBOLS:
+            if ref == symbol:
+                continue
+            matched = edges_match(mine, biggest_hole(series(ref, lo, hi)))
+            if matched:
+                synced.append(ref)
+                sync_edges.update(matched)
+
+        # A hole that STARTS with the fleet but ends late is two facts, and the
+        # late half is the only one a symbol-level guard could ever act on.
+        lagged = bool(hole >= HOLE_SEC and "start" in sync_edges and "end" not in sync_edges)
+
+        if len(stamps) < 6 or (median_gap is not None and median_gap > 300.0):
+            verdict = "THIN"          # a symbol filter is the right tool
+        elif hole < HOLE_SEC:
+            verdict = "CLEAN"         # no hole big enough to carry the stop
+        elif lagged:
+            verdict = "LATE-RESUB"    # fleet took it down, it came back alone
+        elif synced:
+            verdict = "FLEET-HOLE"    # dense symbol, pipeline outage
+        else:
+            verdict = "SYMBOL-HOLE"   # dense symbol, its own outage
+
+        def utc(t: float) -> str | None:
+            return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t)) if t else None
+
+        out.append(
+            {
+                "symbol": symbol,
+                "net": row["net_profit"],
+                "ticks": len(stamps),
+                "median_gap_sec": median_gap,
+                "max_hole_sec": hole,
+                "hole_starts_utc": utc(hole_from),
+                "hole_ends_utc": utc(hole_to),
+                "synced_with": synced,
+                "sync_edges": sorted(sync_edges),
+                "verdict": verdict,
+            }
+        )
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--verify", action="store_true", help="fetch a receipt for every hash")
+    ap.add_argument(
+        "--feed-holes",
+        action="store_true",
+        help="was the feed up while each row was open, and was any hole the symbol's own",
+    )
     ap.add_argument("--json", metavar="PATH", help="write the full per-row report here")
     args = ap.parse_args()
 
@@ -196,6 +369,7 @@ def main() -> int:
     by_outcome, by_trade = hash_index(con)
     split = ghost_live_split(con)
     censor_lines = _plausibility_banner(con)
+    holes = feed_holes(con, rows) if args.feed_holes else []
     con.close()
 
     total_net = sum(float(r["net_profit"] or 0) for r in rows)
@@ -268,6 +442,30 @@ def main() -> int:
         print(f"CLIP        median ${mid:.4f}  min ${clips[0]:.4f}  max ${clips[-1]:.4f}")
         print(f"            total traded notional ${sum(clips):.4f}")
         print(f"            net is {total_net / sum(clips) * 10_000:.1f}bp of traded notional")
+
+    if holes:
+        print()
+        print("FEED WHILE THE ROW WAS OPEN -- bounded at the trade, 2h to the exit.")
+        print("A symbol filter can only fix THIN and SYMBOL-HOLE. FLEET-HOLE is the writer.")
+        print(
+            f"{'symbol':<14}{'net $':>10}{'ticks':>7}{'med gap':>9}"
+            f"{'max hole':>10}  {'verdict':<12} hole start -> end (UTC)  [edges] synced with"
+        )
+        for h in holes:
+            med = f"{h['median_gap_sec']:.1f}s" if h["median_gap_sec"] is not None else "-"
+            edges = f"[{'+'.join(h['sync_edges'])}]" if h["sync_edges"] else ""
+            sync = ",".join(h["synced_with"])
+            span = f"{(h['hole_starts_utc'] or '-')[11:]} -> {(h['hole_ends_utc'] or '-')[11:]}"
+            print(
+                f"{h['symbol']:<14}{float(h['net'] or 0):>10.5f}{h['ticks']:>7}{med:>9}"
+                f"{h['max_hole_sec']:>9.1f}s  {h['verdict']:<12} {span}  {edges} {sync}".rstrip()
+            )
+        tally: dict[str, list[float]] = {}
+        for h in holes:
+            tally.setdefault(h["verdict"], []).append(float(h["net"] or 0))
+        print()
+        for verdict, nets in sorted(tally.items()):
+            print(f"  {verdict:<12} {len(nets):>2} rows   net {sum(nets):+.6f}")
 
     print()
     print("trade_outcomes by mode -- a ghost census must exclude the live rows:")
