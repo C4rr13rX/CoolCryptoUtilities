@@ -36,11 +36,11 @@ returns **57** lines. The item's "~25 call sites" undercounts by more than
 half. The extra ones are mostly the `wallet="live" if ... else "ghost"` ternary,
 which is repeated six times.
 
-## TWO DOORS TO THE TRAP, NOT ONE
+## THREE DOORS TO THE TRAP, NOT ONE -- AND THE THIRD DOES NOT RECOVER
 
-Echo named one. There are at least two, and they have the same shape: code that
-uses "the live flag is False" as a proxy for "we are in ghost mode", so turning
-the flag True switches GHOST off.
+The item named one. There are **three**, and they have the same shape: code that
+uses "the live flag is False" as a proxy for "we are in ghost mode" or for "the
+plan is halting", so turning the flag True switches GHOST off.
 
     bot.py:2026   _ghost_halt_is_per_strategy:
                   return not bool(self.live_trading_enabled)
@@ -56,14 +56,49 @@ the flag True switches GHOST off.
                   -> flag True => the explore branch never fires => one of the
                      ghost book's entry sources goes dark.
 
-**NOT FOUND BY ECHO, AND IT IS THE SAME BUG.** Both must be re-keyed onto
-`live_trading_armed` (bot.py:1924, the arm-only property that already exists for
-exactly this) or onto the halt directly -- never onto the effective flag.
+### DOOR 3 -- bot.py:4955, and it is the one that does not recover
 
-I did not read all 57 sites inside this pass's clock. Treat the classification
-below as: **verified** = I read the surrounding lines; **inferred** = classified
-from the one-line context only. Anyone shipping the patch must finish the
-inferred column before editing.
+The comment is the original author's, not mine:
+
+    # This ratchet only ever shrinks (min against itself), so it must not
+    # fire on a bot the plan is halting: such a plan publishes
+    # recommended_live_ratio 0, which would pin global_risk_budget and
+    # max_trade_share at the 0.05 floor permanently, for the whole GHOST
+    # lane, with no path back. `live_trading_enabled` reads False under
+    # halt_live now, which closes that.
+    if self.live_trading_enabled and recommended_ratio is not None:
+        cap = max(0.05, float(recommended_ratio))
+        self.global_risk_budget = min(self.global_risk_budget, cap)
+        self.max_trade_share   = min(self.max_trade_share, cap)
+
+**The guard against a permanent ghost-wide risk-budget pin IS the halt being
+folded into `live_trading_enabled`** -- exactly the semantics the proposed change
+removes. Forward on today's state (halt_live True, measured 26/26; a halting plan
+publishes `recommended_live_ratio` 0):
+
+    flag True -> ratchet fires -> cap = max(0.05, 0.0) = 0.05
+    global_risk_budget = min(budget, 0.05);  max_trade_share = min(share, 0.05)
+    and min() NEVER GROWS -- no path back without a process restart.
+
+Doors 1 and 2 stop ghost collection while the flag is True and recover when it
+goes False. **Door 3 does not recover.**
+
+Doors 1 and 2 must be re-keyed onto `live_trading_armed` (bot.py:1924).
+**Door 3 must be re-keyed onto the HALT directly** (`not self._live_halt_active()`),
+not onto the arm: the question it is really asking is "is the plan halting",
+which is a THIRD question that neither of the item's two buckets covers.
+
+## Classification status
+
+All 57 sites are now **verified** -- I read the surrounding lines for every one.
+The 15 that were inferred in the first draft (2842, 3175, 3582, 3740, 3757, 3853,
+4361, 5032, 5371, 6503, 6987, 7048, 7125, 7265, 9029) all confirmed as
+effective-flag "may money move now" sites: sim-vs-real balance, sim gas, sim
+restart, equity, and the swap validator at :9029.
+
+**The item's bankroll set is correct but incomplete.** It names 3631/3646/3682.
+Sites 3582, 3740, 3757, 3853, 4361 and 5371 are the same class and must also keep
+the effective flag.
 
 ## MUST KEEP THE EFFECTIVE FLAG (may money move RIGHT NOW?)
 
@@ -75,10 +110,19 @@ Changing these to the arm makes a halted bot spend the real bankroll.
 | 3631 | `_adjust_quote_balance` -- early-returns so sim balances are not mutated live | verified |
 | 3646 | sim stable-shuffle top-up | verified |
 | 3682 | `SIMULATE_BRIDGE_TOPUP` -- simulated bridge | verified |
-| 2842, 3175 | `not live_trading_enabled or _live_trades_dry_run()` | inferred |
-| 7048 | `use_sim = not live_trading_enabled and not pos_is_live` | inferred |
+| 2842, 3175 | `not live_trading_enabled or _live_trades_dry_run()` | verified |
+| 7048 | `use_sim = not live_trading_enabled and not pos_is_live` | verified |
 | 7158, 7434, 7611, 9137 | the four money seams, `... and _strategy_live_approved(directive)` | verified |
-| 3582, 3740, 3757, 3853, 4361, 5032, 5371, 6503, 6987, 7125, 7265, 9029 | | inferred |
+| 3582 | `_get_quote_balance` -- sim balance vs `portfolio.get_quantity` | verified |
+| 3740 | `_consume_sim_gas` | verified |
+| 3757 | sim gas sufficiency check | verified |
+| 3853 | `_check_sim_restart` | verified |
+| 4361 | `_total_stable` -- sim totals vs `portfolio.stable_liquidity` | verified |
+| 5371 | `_current_equity` | verified |
+| 5032 | `_refresh_auto_execute` -- carries its own documented deadlock fix | verified |
+| 6503 | live risk-budget clamp vs unclamped ghost budget | verified |
+| 6987, 7125, 7265 | live-holding decision, min-notional, gas replenishment | verified |
+| 9029 | `swap_validator.validate` -- real-money guard rails | verified |
 
 ## MUST MOVE TO `live_trading_armed` (did a human arm this?)
 
@@ -86,6 +130,7 @@ Changing these to the arm makes a halted bot spend the real bankroll.
 |---|---|---|
 | 2026 | `_ghost_halt_is_per_strategy` -- **TRAP DOOR 1** | verified |
 | 8023 | ghost-explore entry branch -- **TRAP DOOR 2** | verified |
+| 4955 | risk-budget ratchet -- **TRAP DOOR 3, key on the HALT not the arm, irreversible** | verified |
 | 1883 | `_auto_execute_approved` gate | verified |
 | 5500 | `_maybe_promote_to_live` early-return | verified |
 | 4816, 10416 | reported `"live_trading_enabled": bool(...)` in a status dict | inferred |
@@ -153,9 +198,20 @@ un-pickles DISARMED" -- is dead three ways:
 ## WHY NO PATCH SHIPPED IN PASS 696
 
 Production is 224 commits stale and a boot is 13 minutes, so a getter change
-shipped now is one **nobody can measure today**. With two trap doors confirmed,
-a third of 57 sites still classified only by their one-line context, and a
-circuit breaker that turns into a permanent disarm the moment the getter
-changes, a half-finished edit to the flag that governs real money is worse than
-no edit. The sweep is the deliverable; the patch is the next pass's, and it
-should be measured against a restart or explicitly reported as unmeasured.
+shipped now is one **nobody can measure today**.
+
+And the classification, now complete, argues against the patch as specified:
+**three trap doors, one of them irreversible** (door 3 pins the whole ghost
+lane's risk budget at the 0.05 floor with no path back), plus a circuit breaker
+at :11199 that becomes a permanent disarm the moment the getter changes.
+
+**By the item's own criterion 6 the patch yields zero live rows anyway.**
+`money_button` is the only `live_approved` strategy and produced 0 of 4377 enters
+in 7d; `atf_static` produced 4317 and is not approved. The money seams are
+`live_trading_enabled AND _strategy_live_approved(directive)`, so with the flag
+fixed the AND still cannot be satisfied.
+
+**The sequencing is backwards.** The patch buys no scoreboard movement and costs
+three new failure modes. Fix what produces directives first -- either why
+`money_button` never wins a tick, or hand-approve the strategy that is actually
+firing -- and only then move the flag, measured against a restart.
