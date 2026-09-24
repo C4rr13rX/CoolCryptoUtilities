@@ -32163,3 +32163,27 @@ Approving atf_static books losses faster. Do not re-cost it.
 the same. Any gate_n taken from those tools without the env loaded is a 48h
 count describing a 120h gate. This repo has already shipped a cost table that
 measured its own DEFAULT_RATE. Set the env explicitly or do not quote the number.
+
+## p698 -- Dune -- ghost_validation_block is an empty-set artifact (route: widen the ghost window)
+
+ROUTE TRIED: clear ladder step 6 by widening `GHOST_VALIDATION_LOOKBACK_SEC` (shipped 432000
+= 120h, .env:263), on the hypothesis that step 6 was a SAMPLING deadlock -- the gate judges
+6 of 73 rows on atf_static and 8 of 111 on atf_static_scout, and at 120h ALL 44 strategies
+read insufficient_samples / cold_start_bootstrap / stale_ghost_book with NOT ONE reading a
+quality reason.
+
+NUMBER PRODUCED: `GHOST_VALIDATION_LOOKBACK_SEC=99999999 python scripts/live_gate_map.py`
+does surface real verdicts -- atf_static ready=True `positive_expectancy` (EARNED; gate_n
+310, pf 2.779, expectancy +0.06415), atf_static_scout `low_win_rate`, rsi_reversal
+`low_win_rate`. So the window mask is REAL.
+
+CLOSED, and closed against my own hypothesis. The gate never sees atf_static.
+`_live_gate_candidates()` (pipeline.py:4730) returns `StrategyLedger().approved_ids()`, which
+is **`['money_button']`** and nothing else, and `_ghost_validation_for_live()` (:4785) judges
+only those candidates. money_button has **2 ghost trades all-time, net -0.0161** -- no window
+contains 20 of 2 rows, so widening the lookback cannot clear step 6 at any width. Step 6 is a
+DISJOINTNESS artifact, the same one p696 found at the entry gate (money_button 0 of 4377
+entries, atf_static 98%), arriving at a second independent gate.
+
+DO NOT REOPEN AS "so approve atf_static": it is demoted x7, live P/L -0.1585 over 17 trades,
+and its ghost positive dies on BSTONK concentration in a symbol dark 17 days. Filed [124eee67].
