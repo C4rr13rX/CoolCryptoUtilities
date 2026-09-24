@@ -29656,3 +29656,113 @@ graduation bar at ANY cost model, so the graduation route is not slow -- it is
 empty.** That leaves route (a), hand-approve one strategy onto the live lane at a
 minimum clip, as the only route not closed by measurement. It has never been costed
 in this ledger. That is the next pass's first question.
+
+---
+
+## PASS 692 -- DUNE: THREE ROUTES COSTED, ALL CLOSED, AND ONE PRIOR CLAIM CROSS-VERIFIED
+
+### [b4903017] WETH-USDC 30-minute reversion -- CLOSED
+
+Sage p686 filed this as **the only open positive in the backlog**: n=166, gross
+median +6.60bp, net median +2.52bp at a 4.08bp toll, win 53.6%, p25 -7.74bp. It
+does not survive its own pre-registered kill tests.
+
+The number is **monotone in an unstated parameter**. The measurement needs a price
+at three timestamps on a feed that is dark most of the time, so it does a
+nearest-tick lookup -- and how stale a tick may be was never stated:
+
+    tol    n    % of grid   gross med   NET med @4.08bp   net win
+    120s   68     10.2%      +5.83bp       +1.75bp         52.9%
+    300s  179     26.8%      +2.79bp       -1.29bp         48.3%
+    600s  255     38.1%      +2.79bp       -1.29bp         47.1%
+    900s  328     49.0%      +3.01bp       -1.07bp         47.6%
+
+Only the strictest cut -- 10.2% of the grid -- is net-positive. Every cut with n
+near the claimed 166 is net-NEGATIVE, with p25 -13.21bp and a win-rate Wilson95 of
+[39.4%, 57.3%] that includes 50.
+
+**The tape-continuity test inverts it rather than shrinking it.** Keeping only
+windows with no tick gap >300s across the hold: 25 of 179, net median **-3.68bp**,
+win 44.0%. At tol=120: 14 of 68, net median **-7.23bp**, win 35.7%. The positive
+lives entirely in windows where the tape went dark -- exactly the holds a real
+position could never have been watched or stopped out of.
+
+The one test it passes is the out-of-sample split (first half gross median +2.79bp,
+second +2.80bp, sign holds). **A stable sign on a statistic that is negative after
+cost is a stable negative.** Not priced fill-to-fill, so even the negatives are
+upper bounds. CLOSED.
+
+    python scripts/weth_reversion_kill.py --tol 300
+
+### [86a0df3f] / [1362cbbd] AERO's 200s frontier -- CLOSE THE ROUTE, DO NOT SIZE THE TAIL
+
+AERO-USDC, 14d, non-overlapping 200s windows, tolerance 30s stated, n=303. Median
+|200s move| 2.84bp (p75 11.89, p90 24.76). A perfect direction oracle -- momentum,
+which hits 65.3% here and independently confirms
+`a-sixty-five-percent-signal-still-loses-nine-bp` -- earns a **median +0.46bp**.
+
+AERO's round trip is 64-435bp. That is **139x to 946x**, not "the median move
+equals its round trip" and not "62% of windows lose": at a 64bp toll the p90 move
+is 24.76bp, so essentially **no** window clears it. Tail-sizing cannot close a
+139x gap -- a perfect top-1% selector gets ~3 windows in 14 days and pays 64bp on
+every window it enters and is wrong about. The parent item costs AERO against a
+4.08bp WETH toll, which is why it reads as a close call. CLOSED.
+
+### ROUTE (b), "restrict the universe to deep pools" -- SHORT BY 2x-7x [c3d40499]
+
+The bounded version: is there any hold length at which the cheapest pair clears its
+own round trip? **18 of 18 cells say no.** WETH/ETH/CBBTC, 14d, non-overlapping,
+tolerance window/10 stated. WETH: +0.53 / +3.55 / +0.55 / +4.23 / +4.62 / +8.46bp
+at 200/400/900/1800/3600/7200s on n=37/84/112/127/98/58. ETH-USDC +0.04 to +2.36bp.
+CBBTC cannot support a hold over 15 min at all. **Closest cell: WETH at two hours,
++8.46bp against 8.8bp -- fails by 0.34bp, gross.**
+
+And 8.8bp is the kind bar. `roundtrip_cost.py` has no slippage term; realised live
+slippage is a further 14-21bp, so **the honest bar is ~23-30bp and nothing is
+within 3x**.
+
+**The conclusion the brief does not assume: route (b) does not fail because cost is
+too high. It fails because the move shrank as much as the toll did.** AERO 200s is
++0.46bp against 64-435bp (~140-950x short); WETH 1800s is +4.23bp against 8.8-30bp
+(~2-7x short). Route (b) improves the ratio ~50x and still does not reach one. It
+is the best of the four routes in the brief and it is not sufficient alone.
+
+**A lead filed and killed in the same pass, recorded so nobody re-chases it.**
+WETH's median looked monotone in horizon, implying a crossing past 2h. Extended:
++8.46 / +29.64 / +5.11 / +58.66 / +10.25bp at 7200/10800/14400/21600/28800s on
+n=58/51/34/28/21. A 10x swing between adjacent cells. Fourteen days of tape cannot
+answer anything past two hours. **Treat any cell below n~50 as unquotable -- in
+particular the 21600s +58.66bp cell is not an edge.**
+
+### CROSS-VERIFICATION: "the toll is 21.6x the peak excursion" (Bay p691) -- CONFIRMED
+
+Re-derived from `market_stream` rather than from the report, on Bay's exact 35
+`timed-exit` rows (the reason lives inside the `details` JSON; `trade_outcomes` has
+no `exit_reason` column). True hold median 1062s vs Bay's 1057s, max 3338s vs
+3338s -- the same rows. Peak excursion median **+0.0390%**, ratio **11.9x**, and
+**1 of 20 matched rows cleared the toll** against Bay's 1 of 35.
+
+**The load-bearing claim reproduces**: a perfect exit oracle selling at the single
+highest tick still loses on all but one row. Quote the magnitude as a range
+(11.9x-21.6x); the 1.8x spread is join coverage, and Bay's 35-of-35 join is the
+better one. Two objections tested and killed: every row is long (52 of 53 have
+`sign(gross_profit) == sign(exit_price - entry_price)`, 0 disagree), so the tape
+MAX is the right extreme; and measuring all 53 closed ghost rows instead of the 35
+gives +0.0923% and 7 of 30 clearing, because the 18 non-timed-exit rows carry
+nearly all the large excursions.
+
+### WHAT THIS PASS LEAVES
+
+The standing question from p691 is unchanged and now better supported: routes (b),
+(c) and the short-horizon signal routes are all closed by measurement, on three
+more instruments than before. **The only lever these three measurements do not
+touch is the CLIP.** Every negative above is a fixed-toll-over-a-small-clip result;
+a fixed gas toll over a larger clip is the one thing that moves the ratio. Whoever
+takes it must state the clip with every bp -- and route (a), hand-approve one
+strategy at a minimum clip, remains the only route never costed in this ledger.
+
+**Method note that cost me two queries and will cost the next agent the same.**
+`trading_ops.ts` and `trade_outcomes.ts` are UNIX EPOCH FLOATS, not datetime
+strings -- `WHERE ts >= datetime('now','-24 hours')` returns zero rows **silently**.
+And any nearest-tick price lookup on this feed must state its tolerance: on WETH the
+net median flips sign between 120s and 300s on identical data.
