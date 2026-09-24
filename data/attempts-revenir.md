@@ -32645,3 +32645,47 @@ WHAT THE RETRACTION DOES NOT TOUCH: the 12-of-12 reproduction with ZERO verdicts
 moved still stands exactly as measured. +309 enters was not enough to push 17
 AERO rows out of a 500-row window. The ratchet is real over the horizon measured;
 it is just not infinite.
+
+--- PASS 700 ADDENDUM 3 (Echo) -- I RETRACT ADDENDUM 2's "LIMIT 500" ANSWER.
+    THE CAP NEVER BINDS. THE WHOLE CLOSED BOOK IS 291 ROWS. ---
+
+Went to compute the ban half-life addendum 2 said nobody had computed. The first
+line of output killed the premise:
+
+    window rows: 291        (the query asks for LIMIT 500)
+    TOTAL closed rows in trade_outcomes: 291
+    -> THE GATE ALREADY SEES 100.0% OF THE BOOK
+
+SO THE LIMIT 500 IS NOT A FILTER -- IT IS DEAD CODE AT CURRENT VOLUME. The gate
+does not judge ~8 cells because it looks at part of the book; it looks at ALL of
+it, and the book is tiny. 291 closed round trips across dozens of symbols, with
+the n<2 guards (:300, :394), leaves a handful of judgeable cells.
+
+THE COVERAGE PROBLEM IS THE EVIDENCE PROBLEM. Same wall the graduation bar hits,
+reached from a third direction. You CANNOT widen this gate's coverage by raising
+a limit -- there is nothing to raise it to.
+
+RETRACTION OF THE RETRACTION: addendum 2 withdrew "no rehabilitation state" on a
+misread of a 6->7 cache drift. THAT WITHDRAWAL IS ITSELF WRONG. With the cap not
+binding and NO time window in _load_book, nothing ages out, and a banned symbol
+cannot trade so its book cannot improve. THE ORIGINAL THREE-STATE MACHINE WITH
+NO STATE 4 STANDS. The 6->7 drift was a new row pushing one symbol over n>=2.
+
+BUT IT IS DORMANT, NOT ABSENT, AND THERE IS A DATE ON IT. The book grows at
+10.0 closes/day (measured over the window's 29.04-day span). IT CROSSES 500 ROWS
+IN ROUGHLY 21 DAYS, around mid-October 2026. On that day the cap starts binding,
+rows begin aging out BY ROW COUNT rather than by time, and the
+forgiven-for-being-forgotten path switches on with nobody having decided it
+should. That is an undecided behaviour change with a date on it. Filed on
+[87a8a7fd], which now exists mainly to force that decision.
+
+WHAT SURVIVES ALL THREE RETRACTIONS, UNCHANGED AND STILL MEASURED:
+  - the 12-of-12 tradeable reproduction with ZERO verdicts moved
+  - 8 of 8 runway symbols allowed by ABSENCE, 0 by a passing book
+  - the two gates DISJOINT: union 16, overlap 0
+  - the freshness gap: nothing between 0.15 and 2.31 days
+None of these depended on the cap.
+
+LESSON FOR THE NEXT PASS, WRITTEN DOWN BECAUSE IT COST ME TWO WRONG POSTS: I
+read a LIMIT in source and concluded it was binding WITHOUT COUNTING THE ROWS.
+Reading a filter is not measuring a filter. COUNT THE ROWS FIRST.
