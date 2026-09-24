@@ -32770,3 +32770,83 @@ ROUTE STATUS:
     Fresh universe, fresh evidence, or a different signal class. NOT another
     gate audit -- gates have been the subject of p692, p696, p698, p699, p700
     and every one of them ended in "the refusal is correct".
+
+--------------------------------------------------------------------------
+PASS 701 (Echo, senior) -- item [9c5be3d0]. CLOSED: the sid-attribution route.
+--------------------------------------------------------------------------
+
+ROUTE TRIED: "52 of 180 tradeable ghost rows carry +5.6552 with no resolvable
+strategy_id, and _live_tradeable admits on sid=None" -- i.e. the graduation book
+is inflated by unattributable rows the predicate wrongly admits.
+
+VERDICT (A): CLOSED. Production CAN attribute them, and the sid is not the
+problem.
+
+  * Production's own resolver is services/tradeable_evidence.iter_ghost_exits,
+    services/tradeable_evidence.py:147-203, resolution at :191-193. ledger.py:391
+    names this module as the one services/live_gate_map.py:94 calls "THE
+    POPULATION GRADUATION USES".
+  * It reads trading_ops (action='exit', status='ghost-exit') at :172-173 -- NOT
+    trade_outcomes. The sid-less-ness is a property of the TABLE THE RECOUNT
+    QUERIED, not of the data.
+  * Its fallback is the literal string 'unclassified'. It CANNOT return None.
+    Ran live: 645 rows, 44 distinct ids, 'unclassified' 7, None ZERO (98.9%).
+  * Joined the 92 sid-less trade_outcomes rows to trading_ops on symbol +
+    |dt|<=300s: 85 attributable, 7 not. Validated held-out on the 200 rows whose
+    sid IS recorded: 178 agree / 1 disagree / 21 no-match = 99.4%, zero
+    ambiguity at 300s. (At 1s tolerance ZERO rows match -- the two tables'
+    timestamps are offset by tens of seconds. Never join them exactly.)
+  * Attributing all 92 properly moves the book by n -10, P/L -0.1833.
+  * _live_tradeable(sym, None) admitting is INTENDED AND DOCUMENTED at
+    ledger.py:381-387: omitting the id falls back to the POOLED ban and "can only
+    be MORE permissive". DO NOT "FIX" IT. It is worth -0.1833.
+
+ALSO CLOSED, AND THIS ONE RETIRES A GENRE: "the graduation book contains
+garbage" as inferred from a SELECT over trade_outcomes.
+
+  * A read-time recount over trade_outcomes is NOT the book. That table is
+    UNCENSORED and holds 6 implausible rows worth +5.3566.
+  * The book graduation reads is the incremental stored counter in
+    data/strategy_ledger.json -- 124 tradeable trades, -3.5637 -- written once at
+    record time behind trading/strategies/ledger.py:240 (_is_implausible, GAINS
+    only, :243) applied at :688, and NEVER recomputed.
+  * ZERO of the 6 implausible rows reached the stored counters. The one carrying
+    a valid sid (rsi_reversal@1w, +0.7112) is absent from that strategy's stored
+    -0.1225 -- the guard rejected a row it could have attributed. That is the
+    guard working, not luck.
+  * I filed a "censor gap" item [460798c1] on this and REJECTED it 8 minutes
+    later on the above evidence. There is no gap.
+  * atf_static -- the strategy the banner says is ONE TRADE from re-arming real
+    money -- has 52 rows in trade_outcomes and 0 implausible among them. Its
+    +0.2912 over 19 trades is CLEAN of this defect. I went looking for a reason
+    to distrust that re-arm and did not find one.
+
+CORRECTION TO PASS 700, AND IT STRENGTHENS p700 RATHER THAN WEAKENING IT:
+p700 reported 5 positive strategies on the fresh universe, the largest being
+rsi_reversal@1w +0.5886 over six trades. That +0.5886 was an UNCENSORED recount.
+The six rows are one UNI-USDC row at +122.89% (net +0.7112) plus five real rows
+at -0.1225. Censored it is -0.1225, MATCHING THE STORED LEDGER COUNTER EXACTLY.
+Once the repo's own censor runs there is NO remaining positive book anywhere in
+this system. "ZERO of 44 strategies has a credible positive book" stands, and the
+largest near-miss is actually negative.
+
+BEFORE REPORTING THAT THE GRADUATION BOOK CONTAINS X, CHECK
+data/strategy_ledger.json -- NOT a SELECT over trade_outcomes.
+
+OPENED, NOT CLOSED -> [b9f3fa10]: the two-regime ticker defect is a CLASS, not
+one symbol. All 6 implausible rows checked leg by leg against market_stream:
+  MECHANISM 1, a leg OFF-TAPE entirely (3 rows): AERO exit 1.14 where the tape is
+  [0.456316, 0.731881] over 13506 ticks and 1.14 occurs ZERO times -- the same
+  1.14 reused as the next row's ENTRY; UNI entry 2.859, below the whole UNI range
+  [6.0702, 10.7446] (UNI's exit 6.37231 is REAL, 52 ticks within 1% -- the
+  corrupt leg is the ENTRY, so either leg can be the bad one).
+  MECHANISM 2, both legs on-tape but the TAPE is bimodal (3 rows): COMP-USDC
+  [18.763, 55.34], AAVE-USDC [115.77, 354.99] with 735 ticks <150, ZERO in
+  150-250 and 5 at 250+, BASELINE-USDC [0.0002278, 0.004245]. Worth +2.5504, and
+  all three would PASS a check that only asks "is this price on the tape".
+BLOCKED item [57d69341] is filed as COMP-USDC only; AAVE and BASELINE carry the
+identical signature, which is new evidence for unblocking it.
+WHY IT IS A MONEY-PATH ITEM: ledger.py:240/:688 is a PROFIT-MAGNITUDE guard, not
+a price check, and it runs at CLOSE, not at ENTRY. It cleans the books after the
+fact; it cannot stop the live lane entering at a price belonging to a different
+asset. [b9f3fa10] is scoped to MEASURE that before anyone proposes a guard.
