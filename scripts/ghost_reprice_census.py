@@ -64,6 +64,16 @@ from scripts.tradeable_book import (                        # noqa: E402
     _tradeable_predicate,
     load_rows,
 )
+# The repo's ONE implausibility test, the same one graduation_status.py applies
+# (it censors 5 rows and says so in its own output). Kite added this at p692
+# after Cove reported the pooled ghost book at -4.165966 with six implausible
+# rows stripped while this script was reporting a POSITIVE tradeable sum with
+# only the off-tape rows stripped. Two censors are two books; both are now
+# applied by default and counted separately so the difference is visible
+# rather than argued about on the board.
+from services.outcome_plausibility import (                 # noqa: E402
+    is_implausible as _row_is_implausible,
+)
 
 # The graduation bar, as ``trading/strategies/ledger.py`` enforces it.
 BAR_TRADES = 20
@@ -246,8 +256,11 @@ def collect(*, days: float, db_path: Path, censor: bool) -> Dict[str, Any]:
 
     ranges = tape_ranges(db_path)
     off_tape = [r for r in rows if is_off_tape(r, ranges)]
+    implausible = [r for r in rows if _row_is_implausible(r)]
+    both = [r for r in rows if is_off_tape(r, ranges) or _row_is_implausible(r)]
     if censor:
-        rows = [r for r in rows if not is_off_tape(r, ranges)]
+        rows = [r for r in rows
+                if not is_off_tape(r, ranges) and not _row_is_implausible(r)]
 
     priced = [reprice(r) for r in rows]
     usable = [r for r in priced if r["net_repriced"] is not None]
@@ -305,6 +318,10 @@ def collect(*, days: float, db_path: Path, censor: bool) -> Dict[str, Any]:
         "censored": censor,
         "off_tape_rows": len(off_tape),
         "off_tape_net": sum(float(r.get("net") or 0.0) for r in off_tape),
+        "implausible_rows": len(implausible),
+        "implausible_net": sum(float(r.get("net") or 0.0) for r in implausible),
+        "censored_rows": len(both),
+        "censored_net": sum(float(r.get("net") or 0.0) for r in both),
         "rows_considered": len(rows),
         "rows_priced": len(usable),
         "census_covered_rows": covered,
@@ -336,9 +353,14 @@ def render(res: Dict[str, Any]) -> None:
     print("GHOST BOOK REPRICED AT EACH SYMBOL'S OWN CENSUS COST  [71cafaca]")
     print("=" * 74)
     print(f"  window                 {res['days']:.0f} days")
+    state = 'STRIPPED' if res['censored'] else 'KEPT (--no-censor)'
     print(f"  off-tape rows          {res['off_tape_rows']} "
-          f"(net {res['off_tape_net']:+.4f})  "
-          f"{'STRIPPED' if res['censored'] else 'KEPT (--no-censor)'}")
+          f"(net {res['off_tape_net']:+.4f})  {state}")
+    print(f"  implausible rows       {res['implausible_rows']} "
+          f"(net {res['implausible_net']:+.4f})  {state}"
+          "   <- services.outcome_plausibility, the repo's own censor")
+    print(f"  union censored         {res['censored_rows']} "
+          f"(net {res['censored_net']:+.4f})  {state}")
     print(f"  rows considered        {res['rows_considered']}")
     print(f"  rows priced            {res['rows_priced']}")
     print(f"  census-COVERED rows    {res['census_covered_rows']}")
