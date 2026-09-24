@@ -31644,3 +31644,86 @@ wallet-sized bar by 9.9bp. **NOT a proposal:** n=89 at one lookback, on a pair w
 cells collapsed to +1.11/+2.23, and whose own ledger row is -0.470% mean over 17 closed
 round trips. Recorded because it is the only cell where the numbers meet, and because the
 lever that makes them meet is the clip, not the indicator.
+
+---
+
+## Pass 696 -- Dune (exec) -- [98dc623c] money_button: the cost gate refuses 100.00% of what it sees
+
+**Route:** find why the one live-approved strategy never enters. **Status: the
+momentum route is CLOSED. The cost route is OPEN and is now the only one.**
+
+### The census, re-run not read
+
+    .venv/Scripts/python.exe -X utf8 scripts/money_button_gate_census.py
+    168h of stored ticks, 185 symbols, 63281 evaluations
+    past the feed gates: 50550 of 63281 (79.88%)
+    candidates produced: 0 (0.00%)
+
+**It does not fire rarely. It fires zero times**, on 185 symbols, over a full
+week, with 79.88% of evaluations getting past the feed gates. So this is not a
+feed problem wearing a strategy's clothes. Step 5 of the ladder prints PASS on
+it.
+
+### THE ITEM'S HEADLINE IS REFUTED -- it used the wrong denominator
+
+[98dc623c] said `edge_below_cost` is 13.2% of skips, so "everyone attacking
+money_button through the cost floor is attacking the wrong half", and that
+eliminating cost entirely "leaves 86.8% of skips standing".
+
+The ten gate counts **sum to 63281 exactly**, equal to the evaluation count. So
+every evaluation declines at exactly ONE gate, and each gate only ever sees what
+the earlier gates passed. Share-of-all-declines is meaningless for a sequential
+funnel. The honest rate is killed / what-it-SAW:
+
+    gate                       SAW    KILLED   % of what it SAW
+    too_few_samples          63281      3883      6.14%   FEED
+    window_too_short         59398      2931      4.93%   FEED
+    feed_frozen              56467      5917     10.48%   FEED
+    mixed_denomination       50550       110      0.22%
+    window_exceeds_lookback  50440        55      0.11%
+    momentum_not_aligned     50385     36757     72.95%
+    move_exhausted           13628      3044     22.34%
+    slope_not_positive       10584      3385     31.98%
+    feed_too_sparse_for_hold  7199        30      0.42%
+    edge_below_cost           7169      7169    100.00%   <- survivors 0
+
+**Momentum is not unsatisfiable: 13,628 of 50,385 post-feed evaluations clear
+it, and 7,169 candidates survive all the way to the economics. The cost gate
+then kills every single one -- 7,169 of 7,169, 100.00%.**
+
+**CLOSED: the momentum route.** Relaxing the precondition can only push more
+candidates into a gate that has refused 7169 of 7169. The item's
+"86.8% would still stand" assumes the gates are independent; they are sequential.
+
+Caveat: the funnel ORDER is read from source (feed gates, then momentum:278,
+move_exhausted:281, slope:285, cost last). The small gates' rates would shuffle
+if that order is wrong. **The 100.00% does not depend on it** -- fires are 0 and
+the counts sum exactly, so whichever gate is terminal kills everything reaching
+it, and the source puts the cost check last.
+
+### The precondition, located (criterion met)
+
+    trading/strategies/money_button.py:278
+    if r5 <= 0.0 or r10 <= 0.0 or r30 <= 0.0:
+        return self._decline("momentum_not_aligned")
+
+Strictly positive on all three nested windows, scaled to 1x/2x/6x the MEDIAN
+SAMPLE GAP -- not fixed 5/10/30min. The code comment records that fixed windows
+returned exactly 0.0 on this sparse feed and rejected everything. Long-only.
+`MONEY_BUTTON_DECAY` sensitivity still NOT run.
+
+### OPEN, and it is the whole question now
+
+**H:** the cost gate refuses 7169 of 7169 because it prices most symbols at a
+SYMBOL-BLIND DEFAULT -- 90.8% of forward directives are still billed one even
+after 769352c -- so it refuses real edges at a fictional cost.
+**COMPLEMENT:** the gate is correct, those 7169 genuinely do not clear their own
+real cost, and money_button has no opportunities on this tape -- in which case
+the honest move is to stop treating it as the approved lane.
+
+**THE TEST, not run this pass and not estimated:** re-run the census with
+per-symbol real costs and report how many of the 7169 survive; then
+forward-replay the survivors for gross AND net at the live clip. There are no
+fires to score (the script says so itself), so any replay must run over the
+REFUSED population. **Nobody should loosen this gate on the 100.00% alone** --
+a gate refusing everything may simply be right.
