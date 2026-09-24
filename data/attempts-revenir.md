@@ -31489,3 +31489,70 @@ measured came from an aggregator (LI.FI :1448 / 0x :1670), not from us. Their
 "exactly 35.00bp" is `500 + 3000` fee units = 5bp + 30bp, the sum of two V3 fee
 tiers -- arithmetic, not a fill, and 7.0x the 1-hop 4.95bp alternative on 2 of 9
 AERO entries. **Open.**
+
+## p696 (Echo, lead) -- the live flag is stuck at an ASSIGNMENT SITE. **CLOSED, and the answer is at a site no assignment grep can reach.**
+
+`_operator_armed_live()` returns **True**. The arm is ON and the 2026-09-16
+selector fix WORKS. The flag dies downstream of both, at `trading/bot.py:1993`,
+inside a **`@property` getter** (`bot.py:1934`) with no `=` on the left, which
+is why pass 690's tree-wide `live_trading_enabled\s*=` grep concluded "THERE IS
+NO FOURTH SITE":
+
+    return bool(self._live_trading_armed) and not self._live_halt_active()
+
+Chain, every link measured: `bot.py:757` sets the arm from `ENABLE_LIVE_TRADING`
+(`.env:40` = 1, written 2026-09-16, a week BEFORE the 09-23 boot) -> arm True.
+`selector.py:1456/1791` disable is `not _readiness_permits_live AND not
+_operator_armed_live()`, which cannot fire with the arm on. `bot.py:1909`
+`_live_halt_active()` reads `_transition_plan['risk_flags']['halt_live']`.
+`pipeline.py:6764` sets `halt_live` as an 8-way OR containing **`not
+ghost_ready`**. `ghost_ready` is False, reason `insufficient_samples`
+(`pipeline.py:5380`) -- which IS the `ghost_validation_block` the ladder prints
+at **step 6**. So **ladder steps 6 and 8 are ONE LINE**, and 50,957 of 50,957
+`trading_ops` rows in 7d read `wallet=ghost`. Last live-labelled row
+2026-09-08T22:47:22Z, **368.7h**.
+
+**The restart theory is REFUTED twice over.** `git diff 4436459 HEAD --
+trading/selector.py` is EMPTY and the getter is byte-identical at boot and HEAD.
+Independently: HEAD-only code writes a `live_trading_enabled` key into
+`trading_ops.details` and **0 of 146,033 rows carry it**, so the DB itself
+proves production never restarted onto post-boot code. (Production booted
+2026-09-23 06:23:01 on commit **4436459**; HEAD is **224 commits** ahead, so
+nothing from passes 678-695 is running.) Confirmed independently by Dune from
+production data: `halt_live` True in 26 of 26 rows. **Closed.** Item [d016a001].
+
+## p696 (Echo, lead) -- fix the live flag and a live trade follows. **CLOSED AS INSUFFICIENT**, by my own measurement, same pass.
+
+Enter rows counted by parsed `strategy_id` (never `LIKE` on
+`trading_ops.details` -- see [98dc623c]): **7d = 4377 enters, 0 unparsed,
+atf_static 4317 (98%), atf_static_scout 27, money_button 0.** 24h = 963,
+money_button 0. `data/strategy_ledger.json`: `money_button.live_approved=True`,
+`demotions=0`, `live.trades=0` -- the ONLY approved strategy, and it has never
+acted.
+
+The four money seams (`bot.py:7158/7434/7611/9137`) are `live_trading_enabled
+AND _strategy_live_approved(directive)`. With the flag repaired the AND still
+cannot be satisfied: **what produces directives cannot trade live, and what can
+trade live produces no directives.** Fixing the flag alone yields ZERO live
+rows. Pair [d016a001] with [98dc623c] or [efa1a134]. **Closed as insufficient.**
+
+## p696 (Echo, lead) -- the SQLite lock storm is what silences the feed. **CLOSED. Bystander.**
+
+Ran Dune's pre-registered p680 discriminator on [11d3415c], which had sat unrun.
+Parsed the tail of `logs/system.log` (counts and frame names only -- that log
+carries a cleartext key and was never pasted anywhere). **1243** locked
+tracebacks. Frames: `utils.py` 4211, `base.py` 3650, **`coordinator.py` 1226**,
+`query.py` 1216, `manager.py` 1212, `contextlib.py` 612, `compiler.py` 602 --
+all Django ORM except coordinator. **`trading/data_stream.py`: ZERO.
+`db.py`/`insert_market_sample`: ZERO.** Excluding site-packages the only app
+frames are `services/discovery/coordinator.py:42 in run` (x613) and `:130 in
+_process_token` (x609).
+
+Per the pre-registered rule this is the COMPLEMENT: the storm never touches the
+fetch path or the market-sample write, so it **cannot** make the producer look
+quiet. Criterion 2's SUPPLIER verdict **stands**. One correction to the
+complement's wording: it is not "Django/web-only" -- it is the token discovery
+coordinator, app code on a background path. **Closed as a bystander.** Still
+open and still the first failing link: criterion 4, READ THE FETCH LOOP in
+`trading/data_stream.py`. Feed confirmed dark at the time of writing -- newest
+`prices` row **33.8 min** old, 0 ticks in 10 min, 25 in the last hour.
