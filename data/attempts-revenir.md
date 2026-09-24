@@ -31411,3 +31411,81 @@ chain-measured). **Deep-pair SIGNAL side CLOSED on available evidence** -- not b
 the edge is negative, but because the tape cannot support the measurement and what it
 does support loses to buy-and-hold. Reopening it needs a denser WETH tape, not a
 different indicator.
+
+---
+
+## Pass 696 -- Dune (exec) -- [d016a001] the live-flag getter: sweep done, patch NOT shipped
+
+**Route:** make the operator arm survive the ghost halt at `trading/bot.py:1993`
+(`return bool(self._live_trading_armed) and not self._live_halt_active()`).
+
+**Status: OPEN, and deliberately not patched this pass.**
+
+### What the route rests on -- both numbers measured, read-only
+
+* A process booting now returns `_operator_armed_live() = True`. Same hydration
+  path `main.py:112` uses (`services.env_loader.EnvLoader.load()`), run under
+  `.venv/Scripts/python.exe` from the repo root. `ENABLE_LIVE_TRADING` is `None`
+  pre-hydration, `'1'` post-hydration; `LIVE_REQUIRE_MODEL_READY` unset.
+* `halt_live` is **True in 26 of 26** production rows -- read from what the
+  RUNNING process wrote, not inferred from `pipeline.py`. `trading_ops`, 24h,
+  rows whose `details` carry the key: `{(ghost-entry, True): 16,
+  (ghost-exit, True): 10}`, newest 2026-09-23T18:52:18Z.
+
+`True and not True` = False. Arm on, halt on, flag off. Ladder steps 6 and 8 are
+one line.
+
+### CLOSED: the `__setstate__` complement
+
+"A bot pickled while halted un-pickles DISARMED." **Dead three ways.**
+(1) Nothing pickles a bot -- `grep -rn 'pickle|shelve|joblib'` tree-wide
+excluding `dist/ android/ .venv/ tests/` returns six hits, five in
+`trading/genome/publisher.py` (joblib, genome models) and one
+`np.load(allow_pickle=False)`. (2) `__setstate__`/`__getstate__` have no caller;
+the same grep returns only their own definitions at bot.py:1072/:1077.
+(3) Unreachable by construction -- `__getstate__` is `dict(self.__dict__)`
+stamped v2, and `live_trading_enabled` is a data descriptor whose setter writes
+`_live_trading_armed`, so the key never appears in `__dict__`; the migration at
+:1085 matches only a v1 blob.
+
+### The sweep -- committed bf3c2f8, `docs/live-flag-callsite-sweep.md`
+
+**57 call sites, not the ~25 the item estimates.** And the trap has **two doors**,
+not one:
+
+    bot.py:2026  _ghost_halt_is_per_strategy: return not bool(self.live_trading_enabled)
+    bot.py:8023  ghost-explore entry branch:  elif ((not self.live_trading_enabled) and ...)
+
+Both use "the flag is False" as a proxy for "we are in ghost mode", so flipping
+the getter True switches GHOST off -- the second one stops ghost exploration and
+was not previously recorded. Both must key on `live_trading_armed` (bot.py:1924).
+
+Also recorded: the circuit breaker at :11199 writes through the setter, so it
+**DISARMS rather than halts**. Invisible today; load-bearing the moment the
+getter changes.
+
+### Why no patch
+
+Production is 224 commits stale (booted 2026-09-23 06:23:01 on 4436459) and a
+boot is 13 minutes, so a getter change shipped now is one nobody can measure
+today. A third of the 57 sites are still classified from one-line context only;
+the file marks every row verified or inferred.
+
+**And by the item's own criterion 6 the patch is necessary but NOT sufficient:**
+`money_button` is the only `live_approved` strategy and produced 0 of 4377 enters
+in 7d, while `atf_static` produced 4317 and is not approved. The money seams
+(7158/7434/7611/9137) are `live_trading_enabled AND _strategy_live_approved`, so
+with the flag fixed the AND still cannot be satisfied. **Fixing this flag alone
+produces zero live rows.** It must be paired with the money_button-never-wins-a-
+tick item or a hand-approval of the strategy that is actually firing.
+
+### Side finding, router, filed separately
+
+`router_wallet.py:1902 univ3_quote_and_build` has **zero callers** tree-wide, and
+its two-hop branch is dead code -- the 81-iteration `f1 x f2` loop at :1944 has
+`pass` as its body, `via` is assigned at :1941 and never read, and the function
+returns an error when the direct route fails. So the 2-hop live routes Sage
+measured came from an aggregator (LI.FI :1448 / 0x :1670), not from us. Their
+"exactly 35.00bp" is `500 + 3000` fee units = 5bp + 30bp, the sum of two V3 fee
+tiers -- arithmetic, not a fill, and 7.0x the 1-hop 4.95bp alternative on 2 of 9
+AERO entries. **Open.**
