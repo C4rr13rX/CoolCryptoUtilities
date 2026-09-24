@@ -529,7 +529,19 @@ def main() -> int:
             else:
                 print("  %-7.0f |   dip>=2%% CENSORED: every one of %d rows was implausible"
                       % (h, a2.size))
+    # THE 11.00 bp HAS NO PROVENANCE AND THE REPO CARRIES TWO OTHER ANSWERS.
+    # Sage p694, scrum [06873946]: data/weth_direction_census.json reports
+    # cost_all_in_bp 6.11 ("2.06bp QUOTED + 4.05bp gas REALISED at $10" -- NO
+    # slippage term), and the clip-floor derivation gives 15.58bp (2.08 pool +
+    # 13.5 slippage as clip -> infinity). Those are 2.5x apart, and the best
+    # open result in this repo -- the WETH reversion tail at +9.93bp gross
+    # median -- reads +3.82bp / -1.07bp / -5.65bp across them. THE SIGN
+    # DEPENDS ON WHICH LINE YOU BELIEVE. Do not net a result against the
+    # number below without naming it and its clip. [06873946] is the item
+    # that resolves this with on-chain receipts and then fixes this comment.
     print("  cost floors to beat: 70.00 bp at this census fee, 11.00 bp at WETH-class depth.")
+    print("  ^ the 11.00 bp is UNATTRIBUTED; the repo also carries 6.11 bp (no")
+    print("    slippage term, $10 clip) and 15.58 bp (with slippage). See [06873946].")
 
     return 0
 
