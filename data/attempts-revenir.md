@@ -39339,3 +39339,48 @@ did not adjudicate it.** And **I did not verify the denominator behind Sage's
 4.08 bp**: if it is per-leg rather than per-round-trip the gap halves and is
 still 2.9x against. That is the one input I took on trust and it should be
 checked before this is treated as final.
+
+## Pass 721 (Bay) — [bb32b5c7] the calibrator's 99.9% one-way downward push — **CLOSED, SUPERSEDED**
+
+**Route:** "the probability calibrator pushed the head DOWN in 854 of 855 cycles,
+one-directional: justify it or remove it." Settled read-only, no money-path edit.
+Reproducer `scripts/calibrator_direction_census.py` at `b92a7a3`.
+
+**The number:** the push is real and the item **understates** it — over 20001 points
+spanning `bot.py`'s own clipped domain it is **20001 of 20001**, because the fitted
+Platt `logit_out = 0.9806*logit_in - 2.0784` has a negative intercept, and a negative
+intercept with scale ≈ 1 sends every probability down *as a theorem, not a sample*.
+A base rate below 50% **should** do exactly that, so the push is **justified as
+calibration**. It is only a bias if the base rate is wrong.
+
+**Why the route is closed:** the pushed column is `direction_prob_calibrated`, and it
+is **WRITE-ONLY** — `grep -rn direction_prob_calibrated` excluding `/android/` and
+`/.venv/` returns 4 hits: two are the write and its own comment at `bot.py:6230/:6238`,
+two are in `tests/`. **Zero production readers.** The decision variable `direction_prob`
+has been the **re-centred** column since `113d862` (2026-09-07), and the re-centred
+column is **exactly symmetric**: centred < raw on 10000 of 20001, centred > raw on
+10000. Not 99.9% one way — fifty-fifty.
+
+**The dates are the whole finding.** `113d862` is 2026-09-07. The operator analysis the
+item quotes, `a4495c0`, is 2026-09-10 14:05 — **three days later**. The operator
+measured a build that already had the correction, and split RAW against the diagnostic
+column; **neither of the two columns compared is the one the gate reads.**
+
+**Two consequences worth carrying forward:**
+- **The AUC question cannot be a calibrator question and never could.** All three
+  columns are *strictly monotone* images of each other (verified True over 20001
+  points) and AUC is rank-only, so `AUC(raw) == AUC(calibrated) == AUC(centred)`
+  **exactly**. Whatever the untrained artifact's ordering skill turns out to be, the
+  calibrator can neither create nor destroy it. That belongs to `[821de434]`/`[2a503d95]`.
+- **Removing the calibrator is provably not a way to get trades.** `centred >= 0.5`
+  **iff** `raw >= 0.5`, shift **+0.0000pp**. At the 0.58 entry gate, removal moves the
+  requirement to `raw >= 0.581555` — **+0.1555pp**. The item's empirical criterion 3
+  is confirmed and upgraded to analytic.
+
+**Also true and worth not re-discovering:** the item's only declared file,
+`trading/model_calibration.py`, **does not exist**. The live sites are
+`trading/bot.py:6188-6244` and `trading/pipeline.py:1234-1239`.
+
+**Verification:** `pytest tests/test_a_calibrated_model_is_never_permanently_bearish.py`
+→ 14 passed. `profit_logic_audit` → `NO KNOWN LOSING SHAPES`, 0 `loses_money`,
+0 `suspicious`, 32 files scanned.
