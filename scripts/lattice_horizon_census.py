@@ -60,15 +60,48 @@ c813f5fe), independently and 14 days later, by a different route: that script
 grouped the numerator by suffix and found one value per group; this one counts
 distinct values on BOTH sides and finds the asymmetry.
 
-WHAT IT IS WORTH, AND THE THREE LIMITS ON SAYING IT LOUDER.
-Of the 11,877 candidates the gate refused in 14 days, the share that would
-clear the CHAOS layer if the numerator carried the real intended hold:
+WITHDRAWN BY ITS OWN AUTHOR, SAME PASS, AND THIS IS THE IMPORTANT PART OF THIS
+FILE. The first version of this census priced the numerator defect over 14 days
+WITHOUT SPLITTING AT THE BOOT, and that is the repo's own standing rule broken:
+production booted 2026-09-25 19:59:47 (epoch 1790380787) and pass 680's clamp
+(74d5671, 2026-09-23) IS in the running build.
 
-    45 min (our own MAX_HOLD_FORCE_SECONDS)    458 =  3.9%
-    15 min (standing route (c), shorten hold) 1471 = 12.4%
-     5 min                                    3958 = 33.3%
-     3 min                                    7006 = 59.0%
-    today                                        0 =  0.0%
+    PRE-BOOT (14d)   n=11556   numerator: 11 distinct, median 1440.0, max 10080
+    SINCE BOOT       n=  321   numerator:  1 DISTINCT VALUE, 60.0, max 60.0
+
+One value on every single row: THE CLAMP WORKS, and 97% of the original sample
+described code that is no longer running. So the headline "458 of 11,877 at
+45 min" is withdrawn -- it priced a defect that was already fixed. What survives
+is the DENOMINATOR half above: the decay measurement is real, fork (b) is dead.
+
+WHAT IT IS WORTH, AS A RANGE RATHER THAN A POINT. Share of refused candidates
+clearing the CHAOS layer at a given hold ceiling, on both books:
+
+                          since boot (n=321)   pre-boot (n=11556, 37 symbols)
+    60 min  (today)              0.0%                    1.91%
+    45 min  (MAX_HOLD_FORCE)     0.0%                    3.96%
+    15 min  (route (c))          0.0%                   12.73%
+     5 min                       5.9%                   34.09%
+     3 min                      61.4%                   58.92%
+
+The since-boot decay MAXIMUM is 8.60 min, so every ceiling from 9 min upward is
+the same ceiling on the current tape. The defensible statement about standing
+route (c) is NOT "shorten the hold to 15 minutes" -- that reaches at best 1
+candidate in 8 and at worst none. It is "shorten it to THREE", which is a
+different strategy and not a config change.
+
+The p50 is what holds: 3.50 (all pre-boot), 3.00 (pre-boot restricted to the
+since-boot symbols), 3.30 (since boot). The p95 tail does NOT reconcile --
+38.10 pre-boot against 5.00 since -- and restricting to the same 4 symbols only
+takes it to 28.90, so it is not symbol mix. That gap is UNEXPLAINED here.
+
+AND THE THING THIS SCRIPT FOUND WITHOUT LOOKING FOR IT, filed as [a7ec8489]:
+distinct symbols reaching this gate went 37 -> 5 across the boot, while the TAPE
+carries 47 (17,564 market_stream rows in the same 18.1h, so the feed is alive).
+47 on the tape and 5 at the gate is a 9.4x narrowing that is NOT the feed, which
+makes standing route (b) -- "restrict to deep pools" -- the wrong shape: the
+universe is already restricted, to FLOCK/DRV/HYDX/VELVET/LAPTOP, and WETH-USDT
+sits on the tape with 1,015 rows and reaches this gate five times.
 
   1. THIS BUYS THROUGHPUT, NOT EDGE. 458 candidates reaching the next gate are
      458 candidates that then face the cost floor and the symbol edge ban.
@@ -102,6 +135,13 @@ STATUS = "entry-refused-lattice"
 #: Both sides of web/tradingagent/lattice.py:141, off the row's own detail.
 DECAY_RE = re.compile(r"decays after ([0-9.]+) min")
 AHEAD_RE = re.compile(r"looks ([0-9.]+) min ahead")
+SYMBOL_RE = re.compile(r"(\S+?): information decays after")
+
+#: Production booted 2026-09-25 19:59:47 -0400. An EXPLICIT EPOCH, because
+#: trading_ops.ts is a float and a date-string predicate returns 0 rows with no
+#: error. Pass 680's clamp (74d5671, 2026-09-23) is inside this build, so a
+#: census that does not split here prices a defect that is already fixed.
+BOOT_EPOCH = 1790380787.0
 
 #: Candidate holds to price the numerator fix at. 45.0 is .env:169
 #: MAX_HOLD_FORCE_SECONDS=2700; 15.0 is standing route (c).
@@ -199,11 +239,68 @@ def main() -> int:
               f"{100.0 * passed / n:5.1f}%{tag}")
     print(f"  today               -> {0:6d} of {n} PASS =   0.0%")
 
+    # ---- THE BOOT SPLIT, and it is why the table above is a RANGE ---------
+    # Without this the census prices a defect pass 680 already fixed. An
+    # explicit epoch, never a date string: trading_ops.ts is a float.
+    print(f"\n{'=' * 70}\nBOOT SPLIT -- production booted {BOOT_EPOCH} "
+          f"(2026-09-25 19:59:47 -0400)")
+    print(f"{(newest - BOOT_EPOCH) / 3600:.1f}h of the current build. Pass 680's "
+          "clamp (74d5671) IS in it.")
+    for label, lo, hi in (("PRE-BOOT", cut, BOOT_EPOCH),
+                          ("SINCE BOOT", BOOT_EPOCH, newest + 1.0)):
+        cur.execute(
+            "select details from trading_ops where status = ? "
+            "and ts >= ? and ts < ?", (STATUS, lo, hi))
+        dec: list[float] = []
+        ahd: set[float] = set()
+        syms: set[str] = set()
+        for (raw,) in cur:
+            d = DECAY_RE.search(raw or "")
+            a = AHEAD_RE.search(raw or "")
+            s = SYMBOL_RE.search(raw or "")
+            if d:
+                dec.append(float(d.group(1)))
+            if a:
+                ahd.add(float(a.group(1)))
+            if s:
+                syms.add(s.group(1))
+        if not dec:
+            print(f"  {label:<11} n=0")
+            continue
+        ds = sorted(dec)
+        print(f"\n  {label:<11} n={len(ds)}  numerator: {len(ahd)} distinct "
+              f"{sorted(ahd) if len(ahd) <= 3 else ''}")
+        print(f"              decay p50 {_quantile(ds, .50):.2f}  "
+              f"p95 {_quantile(ds, .95):.2f}  MAX {ds[-1]:.2f} min   "
+              f"SYMBOLS REACHING THE GATE: {len(syms)}")
+        for h in (60.0, 45.0, 15.0, 5.0, 3.0):
+            p = sum(1 for x in ds if x >= h)
+            print(f"              clamp {h:5.1f} min -> {p:6d} clear = "
+                  f"{100.0 * p / len(ds):6.2f}%")
+
+    # The tape itself, so "5 symbols at the gate" is read against a
+    # denominator rather than alone. Read-only; db.py is not opened.
+    try:
+        cur.execute("select count(*) from market_stream")
+        print(f"\n  CONTROL market_stream total rows: {cur.fetchone()[0]}")
+        for label, lo, hi in (("PRE-BOOT", cut, BOOT_EPOCH),
+                              ("SINCE BOOT", BOOT_EPOCH, newest + 1.0)):
+            cur.execute("select count(distinct symbol), count(*) "
+                        "from market_stream where ts >= ? and ts < ?", (lo, hi))
+            ns, nr = cur.fetchone()
+            print(f"  TAPE {label:<11} distinct symbols {ns:<5} rows {nr}")
+        print("  ^ the feed is ALIVE. Symbols on the tape vs symbols reaching "
+              "the gate is a")
+        print("    SELECTION defect, not a feed defect. Filed as [a7ec8489].")
+    except sqlite3.Error as exc:
+        print(f"\n  market_stream unreadable ({exc}) -- the gate-side counts "
+              "above stand alone")
+
     print("\nTHROUGHPUT, NOT EDGE: a candidate that clears chaos still faces "
           "the cost floor and")
-    print("the symbol edge ban. Over 96% of ticks genuinely cannot support a "
-          "45-min forecast,")
-    print("so part of the wall is REAL. Nothing above shows the survivors are "
+    print("the symbol edge ban. Most ticks genuinely cannot support a 15-min "
+          "forecast, so part")
+    print("of the wall is REAL. Nothing above shows the survivors are "
           "profitable.")
     return 0
 
