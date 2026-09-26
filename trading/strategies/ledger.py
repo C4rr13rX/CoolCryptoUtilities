@@ -308,6 +308,117 @@ def _blank_tradeable() -> Dict[str, Any]:
     return {"trades": 0, "wins": 0, "losses": 0, "total_profit": 0.0}
 
 
+#: How long a ``_feed_state`` answer is reused. ``_live_tradeable`` is called
+#: once per recorded outcome and once per row by several censuses; both queries
+#: below are index-covered (``idx_market_stream_symbol_chain_ts`` and
+#: ``idx_market_stream_ts``) and returned in under 10ms on the 39GB store, but
+#: there is no reason to pay for them per row.
+_FEED_CACHE_SEC = float(os.getenv("LEDGER_FEED_CACHE_SEC", "300"))
+
+_feed_lock = threading.Lock()
+_feed_symbol_cache: Dict[str, float] = {}     # symbol -> newest tick ts (-inf = none)
+_feed_global_newest: float = 0.0              # newest tick in the whole table
+_feed_checked_at: float = 0.0                 # when _feed_global_newest was read
+
+
+def _feed_state(symbol: str, now: Optional[float] = None) -> str:
+    """``live``, ``dark`` or ``unknown`` for this symbol's price feed.
+
+    THE THIRD STATE IS THE POINT. ``dark`` means the tape is alive and this
+    symbol is not in it; ``unknown`` means the tape itself cannot be judged, and
+    the caller must abstain rather than convict. Conflating them is the
+    one-liner that strips the whole universe during an outage -- see
+    ``_live_tradeable`` for the measured outage this build actually has.
+
+    ``unknown`` is returned when the store cannot be opened or queried, and when
+    the newest tick in the WHOLE table is itself older than the bound: a global
+    silence is a broken feed, never 553 dead symbols.
+
+    Read-only, never creates the file, and swallows nothing silently on the
+    first failure of a process.
+    """
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return "unknown"
+    ts_now = float(now if now is not None else time.time())
+
+    try:
+        from services.frozen_tape_guard import MAX_TICK_AGE_SEC as _max_age
+    except Exception:  # noqa: BLE001
+        # No second definition of the bound here -- if the module that owns it
+        # cannot be imported, this arm has no clock and must not invent one.
+        return "unknown"
+    try:
+        bound = float(_max_age)
+    except Exception:  # noqa: BLE001
+        return "unknown"
+    if bound <= 0.0:
+        return "unknown"
+
+    global _feed_global_newest, _feed_checked_at
+    with _feed_lock:
+        fresh_cache = (ts_now - _feed_checked_at) < _FEED_CACHE_SEC
+        if not fresh_cache:
+            _feed_symbol_cache.clear()
+            _feed_global_newest = 0.0
+        newest_all = _feed_global_newest
+        cached_sym = _feed_symbol_cache.get(sym) if fresh_cache else None
+
+    if fresh_cache and newest_all <= 0.0:
+        # A previous call inside this window already found the feed unjudgeable.
+        return "unknown"
+
+    conn = None
+    try:
+        import sqlite3
+
+        db_path = Path(os.getenv(
+            "TRADING_DB_PATH",
+            str(Path(__file__).resolve().parents[2] / "storage" / "trading_cache.db"),
+        ))
+        if not db_path.exists():
+            return "unknown"
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0)
+        cur = conn.cursor()
+        if newest_all <= 0.0:
+            cur.execute("SELECT MAX(ts) FROM market_stream")
+            row = cur.fetchone()
+            newest_all = float(row[0]) if row and row[0] is not None else 0.0
+            with _feed_lock:
+                _feed_global_newest = newest_all
+                _feed_checked_at = ts_now
+        if newest_all <= 0.0 or (ts_now - newest_all) > bound:
+            # THE OUTAGE BRANCH. Empty table, or the whole tape has stopped.
+            return "unknown"
+        if cached_sym is None:
+            cur.execute("SELECT MAX(ts) FROM market_stream WHERE symbol = ?", (sym,))
+            row = cur.fetchone()
+            cached_sym = float(row[0]) if row and row[0] is not None else float("-inf")
+            with _feed_lock:
+                _feed_symbol_cache[sym] = cached_sym
+    except Exception as exc:  # noqa: BLE001
+        log_message(
+            "strategy-ledger",
+            f"cannot read market_stream to judge {sym!r} feed liveness "
+            f"({exc}); the freshness arm abstains and the symbol is judged on "
+            "the stop and edge gates alone",
+            severity="warning",
+        )
+        return "unknown"
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    if cached_sym == float("-inf"):
+        # Never ticked at all while the tape is demonstrably running. Not
+        # evidence the live lane could have priced it.
+        return "dark"
+    return "live" if (ts_now - float(cached_sym)) <= bound else "dark"
+
+
 def _live_tradeable(symbol: str, strategy_id: Optional[str] = None) -> bool:
     """Could the live lane have placed a round trip in ``symbol``?
 
@@ -412,9 +523,73 @@ def _live_tradeable(symbol: str, strategy_id: Optional[str] = None) -> bool:
     have placed the trade, and the honest answer to "could it have placed
     this" is yes. ``stop_is_unenforceable`` failing means tradeability cannot
     be established at all, which is not the same thing.
+
+    A SYMBOL BECAME TRADEABLE BY HAVING NO FEED, AND THAT IS WHAT THE THIRD ARM
+    CLOSES. Both gates above are CACHE LOOKUPS that return "allowed" for a
+    symbol they have never heard of, and a symbol whose feed died stops being
+    heard of. Measured in one process on HEAD a610b9d after forcing both
+    rebuilds (Echo, pass 700): ``symbol_edge_gate._cache`` held 6 symbols and
+    ``_pair_cache`` 2 pairs; ``stop_survivability_gate._cache`` held 10 symbols;
+    UNION 16, OVERLAP ZERO, and none of the stop gate's 10 appears in
+    ``atf_static``'s top-12 entered names -- so on the real universe the stop
+    arm is unconditionally ``None`` and this function collapsed to two pair
+    verdicts. Proof the absence is absence and not a verdict:
+    ``refusal_reason`` of ``TOTALLY-FAKE-USDC`` also returns ``None``.
+
+    The population this produced (Echo, pass 704, over all 1230 ``ghost_entry``
+    fills joined to ``max(ts)`` per symbol in ``market_stream``)::
+
+        tradeable + DEAD feed   498 fills     <- 66.0% of the tradeable book,
+        tradeable + LIVE feed   256 fills        across 34 of 57 symbols
+        REFUSED   + DEAD feed    17 fills
+        REFUSED   + LIVE feed   459 fills
+
+    Admitted and dead: CP 156 entries at 487h, TYBG 100 at 454h, BASEPEPE 54 at
+    492h, BSTONK 45 at 423h, OPENHUMAN 37 at 455h, GRASS 29 at 474h -- all with
+    substantial history (CP 737 ticks, TYBG 1141, BSTONK 3068), so these are
+    feeds that DIED, not symbols never tracked.
+
+    THE CLOCK IS NOT A NEW ONE. ``services.frozen_tape_guard.MAX_TICK_AGE_SEC``
+    already bounds exactly this quantity -- the age of a symbol's newest
+    ``market_stream`` tick -- and already defaults to 86400s, the same value as
+    ``GHOST_MAX_STALE_SEC``'s default at trading/pipeline.py:4938. This repo has
+    already paid for three incompatible WETH tolls and two disagreeing evidence
+    clocks; a third clock is the failure mode here, so this arm imports that
+    constant rather than naming a number. It is not a calibration either: the
+    last-tick ages of the 14 symbols in ``atf_static``'s closed book are
+    FRESH 0.00-0.15 days (AERO, VIRTUAL, CBBTC, BASECAT, CBXRP, SR, UNI) and
+    STALE 2.31-18.42 days (VVV, WTCOIN, SIBYL, CBZEC, BSTONK, BPAD, MOONBASE),
+    with NOTHING between 0.15 and 2.31 days -- a 15x gap. Any cut in [0.2, 2.3]
+    days gives the identical 7/7 partition, and the book restricted to fresh
+    symbols returns byte-identical n/win/PL at cuts of 0.25d, 1.0d and 2.0d.
+    The tape chose the cut; 86400s merely lands inside the gap.
+
+    THREE STATES, NOT TWO, and the third is why this is not the one-liner.
+    Mapping "no recent tick" straight to untradeable strips EVERY symbol during
+    the whole-process stalls this build has (``trading_ops`` and
+    ``market_stream`` both stopped at 05:05:20 on 2026-09-24, 42 minutes after a
+    restart; 97 min/day of dark ``market_stream`` while ``trading_ops`` writes
+    normally). So ``_feed_state`` separates them: it asks whether the feed is
+    alive AT ALL before it judges one symbol dead. During an outage -- newest
+    tick in the WHOLE table older than the bound, or the store unreadable -- it
+    returns ``unknown`` and this arm abstains entirely, leaving the two gates
+    above to answer exactly as they did before. Only a live feed may convict a
+    dark symbol. That matters at scale: across all 490 symbols that ever ticked,
+    p50 last-tick age is 12.9 days and only 66 of 490 ticked inside a day, so a
+    naive fail-CLOSED on absence would refuse nearly the whole universe.
+
+    STILL NO LOOK-AHEAD AT ``record()``, but be careful reading this arm in a
+    census. At record() time "newest tick" is the feed the live lane would have
+    been looking at, which is the same replay the two gates get. A census that
+    calls this over historical rows judges them against TODAY's feed instead --
+    which is what the 498/256 split above is, and it is the right question for
+    "which of these rows should ever have counted", not for "what did the lane
+    see then".
     """
     sym = str(symbol or "").strip()
     if not sym:
+        return False
+    if _feed_state(sym) == "dark":
         return False
     try:
         from trading.pipeline import stop_is_unenforceable
