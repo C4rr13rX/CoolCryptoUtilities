@@ -37456,3 +37456,56 @@ stale android build mirror.
 Cove's 31-line insertion (ecff145), so `bot.py` frames read ~9-31 lines BELOW
 the tree -- `_interpret_predictions` is `:7535` in prod. Do not compare py-spy
 output to the working tree directly.
+
+## Pass 716 (Bay, worker) -- ROUTE (b): the per-token cost spread the standing instruction cites is NOT in this book's fills. NOT closed, but do not argue route (b) from those numbers again.
+
+ROUTE TRIED: verify the standing instruction's premise -- "the cost wall here is a TOKEN choice, not a venue fee:
+base round trips are WETH 0.04-0.11%, AERO 0.64-4.35%, KTA up to 74.98%" -- against REALISED fills rather than
+against a model. Measured `fee_cost / (entry_price*quantity)` on all 291 closed round trips that
+`services/strategy_edge_gate`'s own filters keep (`_is_flat` dropped, MIN_NOTIONAL applied).
+
+NOT CLOSED, and I could not close it -- see the separator I could not run. But three findings stand:
+
+ (1) **THE CLAIMED WETH BAND HAS ZERO FILLS IN IT.** The cheapest round trip in the entire book is 0.167%.
+     The five cheapest fills, complete list:
+         fee 0.167%  gross -0.101%  notional 5.2075  WETH-USDC
+         fee 0.171%  gross +0.194%  notional 3.6233  WETH-USDC
+         fee 0.200%  gross -1.352%  notional 1.5155  AERO-USDC
+         fee 0.210%  gross -1.794%  notional 1.3919  AERO-USDC
+         fee 0.250%  gross +1.619%  notional 5.1920  AERO-USDC
+     THREE OF THE FIVE CHEAPEST ROUND TRIPS IN THE BOOK ARE AERO -- the symbol the instruction names as the
+     expensive one. AERO's realised range is 0.200%-4.35%, so the WETH and AERO ranges OVERLAP. It is not a
+     clean token ordering on realised fills.
+
+ (2) **HALF THE BOOK'S FEE RATES ARE TWO MODEL CONSTANTS.** Histogram of realised fee rate to 3dp, n=291:
+         0.650%  x107  (36.8%)   <- the literal ROUND_TRIP_COST fallback
+         0.461%  x44   (15.1%)
+         0.465%  x23   ( 7.9%)   <- services/round_trip_cost's MEASURED value
+         1.226%  x17   ( 5.8%)
+     **145 of 291 = 49.8% are within 0.002pp of 0.465% or 0.650%.** A per-token cost curve cannot be read off a
+     column where half the values are one of two scalars the code already knows. Whole book: median 0.6500%,
+     mean 0.7399%, p90 1.2259%, 62 distinct rounded rates.
+
+ (3) **THE DEEP/SHALLOW ORDERING IS BACKWARDS ON THE ONE PAIR ROUTE (b) WOULD MOVE TO.** Median realised fee
+     rate, symbols with n>=3 (28 of them):
+         WETH-USDC     n= 9   0.4613%
+         AERO-USDC     n=61   0.6500%
+         CBBTC-USDC    n=11   0.6500%
+         CBETH-USDC    n= 7   0.9644%   <- 3rd most expensive of 28
+         MOG-USDC      n= 3   1.2259%
+         ETH-USDT      n= 3   1.7626%
+     CBETH-USDC is a DEEP pool and is half again more expensive than AERO on realised fills. Bay p712 found
+     CBETH-USDC is the ONLY deep pair not refused by the symbol gate -- so it is exactly where a deep-pool
+     restriction sends flow, and it is the most expensive deep pair we have fills for.
+
+COMPLEMENT, and I could not separate it with the data available. (i) route (b) is alive and `fee_cost` merely
+under-records a real on-chain per-token spread; (ii) the spread is a model artifact and restricting to deep pools
+moves onto CBETH at 0.96%, making cost WORSE.
+**THE SEPARATOR I COULD NOT RUN: decode actual gas + swap fee from the Base receipts on the 18 live rows and
+compare to the RECORDED fee_cost per symbol.** `scripts/live_book_chain_audit.py` (Cove, p715, a14f258) is the
+only instrument here that reads receipts. If recorded fee_cost does not match the receipt, every cost argument in
+this repo is arguing from a model. DM'd to Cove at p716. **This is evidence for [fa42ebb9] (the two-bar cost
+defect), not a new item -- I deliberately did not file one.**
+
+Note this does NOT weaken p716's [e4344c4e] verdict above: that verdict rests on deep cells being negative on
+GROSS return before any cost is applied at all, so it is independent of which cost scalar is correct.
