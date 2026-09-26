@@ -38,6 +38,25 @@ def pytest_configure():
     os.environ["TRADING_DB_VENDOR"] = "sqlite"
     os.environ["ALLOW_SQLITE_FALLBACK"] = "1"
 
+    # And the SAME isolation for the trading store, which this function has
+    # always given Django and never given the one database that matters.
+    #
+    # Measured (Dune, p709, item [82716309]): before this line, a single run of
+    # tests/test_a_banned_strategy_does_not_take_the_tick.py -- 5 tests, 1.92s --
+    # appended 7 rows to `trading_ops` in storage/trading_cache.db, 4 of them
+    # `entry-predropped-edge-ban`. Two of its fixture strings had accumulated
+    # 3025 and 3042 copies, 6067 rows in total: 19.7% of every ban reason in the
+    # store, the ENTIRE n=9 bucket of a refusal census, and timestamped NEWER
+    # than any real refusal. The complement -- "those fixtures were copied FROM
+    # production, so the rows are genuine" -- was tested and is dead: a
+    # before/after COUNT(*) around one run shows the rows are created by the run.
+    #
+    # With this line, the same file passes 5/5 and the real store moves by 0.
+    #
+    # setdefault, not assignment: a caller that deliberately points the suite at
+    # a real store (a migration check, a one-off census) keeps that power.
+    os.environ.setdefault("TRADING_DB_PATH", str(cache_root / "trading_cache_test.db"))
+
 
 @pytest.fixture(autouse=True)
 def _isolate_market_endpoint_selection(monkeypatch):
