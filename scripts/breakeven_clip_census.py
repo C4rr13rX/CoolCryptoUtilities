@@ -103,10 +103,60 @@ def worst_leave_one_out(values):
     return (total - max(values)) / (n - 1)
 
 
+def live_counterfactual(db_path, clips=(0.75, 6.00, 23.18), censor=True):
+    """Hold each live round trip's measured gross RATE, vary only the clip.
+
+    Gas is a fixed dollar cost, so it does NOT scale with the clip -- that is
+    the entire argument for sizing up. This function is here to show why the
+    argument fails anyway: the gross rate scales too, and a book whose gross is
+    negative gets more negative. The BSTONK-excluded panel is not optional
+    colour, it is the point -- one row of eighteen decides the sign.
+    """
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM trade_outcomes WHERE status = 'closed' AND wallet = 'live'")]
+    conn.close()
+    if censor:
+        rows, _ = op.partition(rows)
+
+    trips = []
+    for row in rows:
+        notional = (row.get("entry_price") or 0.0) * (row.get("quantity") or 0.0)
+        gross = row.get("gross_profit")
+        if notional <= 0 or gross is None:
+            continue
+        trips.append((row["symbol"], gross / notional, notional, gross,
+                      row.get("fee_cost") or 0.0))
+
+    fee = sum(t[4] for t in trips)
+    gross = sum(t[3] for t in trips)
+    print(f"ACTUAL   n={len(trips)}  gross {gross:+.6f}  fee {fee:.6f}  "
+          f"net {gross - fee:+.6f}   <- the scoreboard")
+    med_notional = statistics.median([t[2] for t in trips])
+    print(f"mean fee per round trip ${fee / len(trips):.6f}  "
+          f"median notional ${med_notional:.2f}  "
+          f"gas = {(fee / len(trips)) / med_notional * 100:.4f}% of notional at that clip")
+    print()
+
+    for label, subset in (("ALL live rows", trips),
+                          ("WITHOUT the single BSTONK-USDC row",
+                           [t for t in trips if t[0] != "BSTONK-USDC"])):
+        sub_fee = sum(t[4] for t in subset)
+        print(f"{label}  (n={len(subset)}, fee ${sub_fee:.6f} held FIXED):")
+        for clip in clips:
+            g = sum(t[1] * clip for t in subset)
+            print(f"    all @ ${clip:6.2f} clip : gross {g:+9.6f}  net {g - sub_fee:+9.6f}")
+        print()
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--db", default=DEFAULT_DB)
+    ap.add_argument("--live-counterfactual", action="store_true",
+                    help="vary the clip on the 18 chain-settled live round trips")
     ap.add_argument("--min-n", type=int, default=5,
                     help="skip symbols with fewer closed round trips")
     ap.add_argument("--fixed-usd", type=float, default=DEFAULT_FIXED_USD)
@@ -116,6 +166,9 @@ def main(argv=None):
     ap.add_argument("--no-censor", action="store_true",
                     help="skip services.outcome_plausibility (NOT recommended)")
     args = ap.parse_args(argv)
+
+    if args.live_counterfactual:
+        return live_counterfactual(args.db, censor=not args.no_censor)
 
     by_symbol, censored, skipped = load_returns(args.db, censor=not args.no_censor)
     print(f"db                : {args.db}")
