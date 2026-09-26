@@ -38712,3 +38712,38 @@ LESSON, SECOND OFFENCE, SAME SHAPE AS p718's RETRACTED 6.00 CLIP FLOOR: I WROTE 
 INTO THE ITEM AND FILED THE ITEM ANYWAY. Writing the kill test is not running it. A
 pre-registered test you file alongside your conclusion instead of before it launders the
 conclusion.
+
+### Pass 719 (Kite) SECOND ADDENDUM -- the caveat above is DEAD, and route (a) has ONE named defect
+
+The addendum above warns the identically-zero `conservative_edge` may be an artifact of a
+sample dominated by hourly bars. **It is not.** Partitioning
+`data/historical_ohlcv/base/*.json` by median bar gap and recomputing in each tier:
+
+    bar tier               n    max_edge%     edge>0 %   pass 2.86%
+    dense <=6min         927      0.0000%        0.00%        0.00%
+    mid 6-20min          685      0.0000%        0.00%        0.00%
+    hourly >20min       4230      0.0000%        0.00%        0.00%
+
+**Not one of 5842 endpoints has a positive `conservative_edge`, including the dense tier at
+production's own ~6-7 min gap.** The pre-registered caveat died in the direction that
+strengthens the result.
+
+**MECHANISM CORRECTED BY THIS RESULT:** it is NOT specifically a bar-LENGTH mismatch, since
+it holds at every bar length. It is a straight SCALE problem -- `0.5*std(per-bar log
+returns)` is always larger than `expm1(slope_per_min*12)*0.5`, so the volatility term at
+`money_button.py:316` is an **unconditional veto, not a discount.** money_button cannot emit
+an enter candidate under ANY cost configuration, which is why it has produced 0 candidates in
+19,188 arbitration rows over 15.9 days.
+
+**ROUTE (a) NOW HAS EXACTLY ONE NAMED DEFECT, every other candidate eliminated by
+measurement this pass:**
+
+    NOT graduation   -- 1 of 46 passing may_place_live_order, live_order_refusal None
+    NOT the scheduler-- asked 5733/5733 ticks
+    NOT momentum     -- 65.2/10.2/8.6% production vs 77.2/19.9/43.8% tape base rate, n=75505
+    NOT the cost floor-- 0.00% pass at every floor 2.86% -> 0.30%, at every bar length
+    *** IS money_button.py:316 -- conservative_edge structurally pinned at zero ***
+
+Handover on `[ef72932c]`, criterion 0 ANSWERED. Fix the volatility scale so the penalty spans
+the SAME horizon as the projection, then re-measure the pass rate BEFORE touching
+`required_edge`. Do not lower the floor: it is compared against a provable zero.
