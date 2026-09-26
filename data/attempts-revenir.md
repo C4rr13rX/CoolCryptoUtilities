@@ -39510,3 +39510,70 @@ wins/(wins+losses) gets an inflated win rate on the 4 affected books. Backfill o
 **⚠ Process note, same rule I broke at p720:** SEARCH FIRST, MEASURE SECOND. The answer
 was in a comment twenty lines from the number I was staring at. I theorised for ten
 minutes instead of reading for one.
+
+## Pass 721 (Echo, senior) -- route (a) via atf_static reduces to ONE failing term, and it is a WIN RATE
+
+ROUTE TRIED: close [137d3c5a] by finding and fixing the demotion predicate that "reads the
+RAW live book". Read-only; no production code changed (senior).
+
+RESULT -- THE ITEM'S OWN TITLE IS FALSE ON THIS TREE. The demotion predicate is
+trading/strategies/ledger.py:1150-1159 and it is ALREADY licence-scoped: :1150 calls
+_licence_trades(live), :1153 calls _licence_net(live), both since a77bce6 (2026-09-06).
+Licence-scoped it sees 0 trips (18 minus trades_ref 18) against a floor of 12, so it
+CANNOT FIRE on atf_static. CLOSED -- do not "fix" the demotion book.
+
+The raw lifetime read survives in exactly ONE site and it is not the demotion:
+_losing_book_locked at :1662-1664, against five licence-scoped siblings (:1107, :1150,
+:1153, :1410, :1411). Filed [72cd2a4f], 2pt, priority 4, and SIZED AT ZERO on the
+scoreboard -- see below for why.
+
+REFUTED, BY THE AGENT WHO WAS CARRYING IT: "licence-scoping :1663 OPENS lane B" is
+arithmetically right and operationally FALSE. may_place_live_order at :1823-1825 is a
+CONJUNCTION -- is_live_approved AND refusal-is-None -- and atf_static fails BOTH
+independently (live_approved:false, demotions:7). Scoping :1663 clears conjunct 2 and
+leaves conjunct 1, so the method still returns False and no order is placed. The free
+control: atf_static_scout has refusal=None AND may_place=False, i.e. conjunct 1 failing
+alone with a clean book. refusal=None DOES NOT MEAN PERMITTED.
+
+THE NUMBER THAT MATTERS. Re-arm bar at ledger.py:1450-1454, against atf_static's fresh
+tradeable ghost window taken from the code's OWN _fresh_tradeable_delta:
+
+    fresh_trades   23        >= 20     PASS
+    fresh_profit   +0.050072 >  0.0    PASS
+    win rate       6/23 = 26.09%       vs 0.55   FAIL   <-- the only failing term
+
+That is the only failing term of the three AND of the entire atf_static live route, and
+it CASCADES: re-arm calls _grant_live_licence, which flips live_approved (conjunct 1) and
+re-bases pl_ref/trades_ref (conjunct 2). ONE TERM, BOTH CONJUNCTS. Every other route on
+the board needed two independent fixes.
+
+ROUTE (a) VIA atf_static IS THEREFORE NOT A COST PROBLEM, NOT A GATE PROBLEM AND NOT A
+SCOPING-BUG PROBLEM. It is a hit rate against a risk bar. A book that MADE MONEY
+(+0.050072 over 23 trips) is refused for winning 26.09% of the time -- win-rarely-win-big,
+a shape the 55% bar was not written for. Admitting it means spending real money against a
+26% hit rate, which is the operator's decision and was NOT made in code. Filed
+[a88a2168], BLOCKED ON USER. If the operator declines, this route is CLOSED ON HIT RATE
+and is a signal problem -- do not reopen it as a cost route, since every cost-constant
+route was closed at p720.
+
+TWO CORRECTIONS TO NUMBERS THIS CREW WAS CARRYING:
+  1. STRATEGY_DEMOTE_MIN_LIVE_TRADES is env-set to 12, NOT the documented default of 8.
+     Blast radius of a granted licence is 12 clips = $72 at LIVE_MIN_CLIP_USD=6.00 against
+     $23.18 deployable, so the demotion guard cannot reach its own sample size before the
+     wallet empties. SEQUENCE THE CLIP FLOOR FIRST.
+  2. The ledger.py:1440 docstring claims the tradeable window is -0.271454. It is
+     +0.050072. Measuring instead of reading is the only reason the cascade above was
+     found -- a docstring is a claim with a date on it.
+
+OPEN, NOT CLOSED, filed as [0fd593eb]: the ledger live book the refusal gate quotes is
+n=18 / -0.186371; Sage's raw trading_ops live book the same pass is n=22 / -0.331986. A
+4-row, -0.145615 gap, with the ledger UNDER-counting. Changes no verdict today (both
+negative) which is why it will sit unexamined. Matters because Sage also found BPAD-USDC
+is ONE row at -0.254927 = 76.8% of the raw live loss, and [137d3c5a] criterion 2 already
+established BPAD is still in the selection universe and cannot be dropped.
+
+WIN-RATE ACCOUNTING CAUTION (Bay, same pass): a 55.0000% win rate elsewhere in this repo
+was 11 UNCOUNTED LOSSES, correct figure 46.48%. Different site from the 26.09% above, and
+mine is internally consistent (wins 6 + losses 17 == trades 23). But before an operator
+lowers a WIN-RATE bar, confirm _fresh_tradeable_delta's wins column against the row-level
+outcomes once. The check is wins + losses == trades and it takes three seconds.
