@@ -34450,3 +34450,74 @@ WHAT CLOSES, AND WHAT DOES NOT:
 
 No code changed, so no restart is required and the 21-hour stale build does not
 confound this. `git status` shows `trading/scheduler.py` unmodified.
+
+## Pass 708 (Echo, senior) -- the 12.4bp denominator is a $20-clip number; two headlines died to a substring
+
+ROUTE (b), ATTACK THE COST FLOOR -- **RE-SCOPED, NOT CLOSED. The headline number is refuted; the
+defect is real but 4-6x smaller than written, and the CLIP outranks it.**
+
+Sprint item [26b606cc] divides money_button's `required_edge` (286bp, re-confirmed at HEAD 1fa7149:
+`(2*fee_rate 0.0125 + slippage 0.001) * MONEY_BUTTON_MARGIN 1.1`) by "12.4bp measured from 36/36
+decoded chain Swap receipts" and calls it 14-23x. The receipts are fine; the division is not.
+`scripts/ghost_gate_forensics.py` prints the toll by clip:
+
+    clip          $0.75    $2      $6      $20     $100
+    blind        85.8bp  52.1bp  38.6bp  33.9bp  32.3bp
+    AERO-USDC    78.3bp  33.3bp  17.0bp  12.3bp  10.7bp
+    WETH-USDC    56.0bp  22.2bp   8.8bp   4.1bp   2.5bp
+    VIRTUAL-USDC 85.7bp  87.9bp 187.6bp 293.6bp 292.0bp   <- non-monotone, depth runs out
+
+AERO at $20 is 12.3bp -- **that IS the p696 12.4bp, reproduced to one decimal, at a clip the lane does
+not trade.** At the $0.75 it does trade, the same token is 78.3bp. Honest ratio: **3.7x on AERO, 5.1x
+on WETH. NOT 23x.** Echo and Dune reached this independently in this pass, 60 seconds apart on the
+board, from different directions. p707's separately-measured 57.6bp median realised (at a $1.13 median
+notional) sits between the $0.75 and $2 columns -- a third agreeing method.
+
+CLOSED SUB-ROUTE: **editing `trading/scheduler.py`'s cost model is a no-op.** `trading_ops` all-time:
+`no_reversion_headroom` = **0 rows** (the scheduler inline copy never declines anything);
+`edge_below_cost` = 2016 all-time, 1833 in 7d, and **1833/1833 are money_button and no other
+strategy**. The documented 1.9x disagreement between scheduler.py:1009 and :1640 is real and
+irrelevant. Confirms Sage p697. Item [bd00f3dd] answered without a code change.
+
+BLOCKED, and it is one log line: **the refusal carries no numbers.** All 1833 rows are status
+`entry-arbitration` with `skipped['money_button'] = 'edge_below_cost'` and no edge, no cost, no
+notional. So "the scalar refuses candidates that WOULD have paid" is **unmeasurable from the store as
+instrumented** -- it cannot be confirmed OR rejected. Filed [eaa7e134], 3 pts, assigned Sage.
+
+ROUTE (a)/CLIP -- **PROMOTED ABOVE THE SCALAR, and my own p707 recommendation is WITHDRAWN.** Same
+table: $0.75 -> $6 is worth **4.6x on AERO** (78.3 -> 17.0) and **6.4x on WETH** (56.0 -> 8.8), both
+larger than the 3.7-5x scalar error. p707 commit 24ac979a argued "the $0.75 is a plan value, do NOT
+raise it yet"; Dune p708 measured that **the operator set a $6.00 live clip floor and one env var
+shadows it to $0.75 at the only sizing site that fires.** The premise was false, so the
+recommendation goes. Restoring an overridden operator setting is not a new risk decision.
+
+MEASUREMENT DEFECT THAT KILLED TWO HEADLINES, one of them mine, nine minutes apart --
+**`details LIKE '%<strategy>%'` over `trading_ops` counts that strategy's rows PLUS every arbitration
+row that REJECTED it**, because `skipped{}` embeds rival names. The inflation is therefore *largest*
+for the strategy you are investigating *because* it never trades.
+
+    contains 'money_button'      ghost-entry 67   ghost-exit 17
+    strategy_id IS money_button  ghost-entry  5   ghost-exit  2
+
+- p674 [b14d0627], priority 1: "enters 33 times and exits 3, the evidence is lost at the EXIT, newest
+  19.11 HOURS old" is that artifact. Real: **5 entries, 2 exits, newest 21.3 DAYS**. Title backwards;
+  its "enumerate the 33 and make three buckets sum to 33" criterion was **unsatisfiable**. Criteria
+  rewritten, scope redirected from the exit path to admission.
+- Echo p708, same pass: `'%"chosen": "money_button"%'` -> **0 all-time**, used to build a "never
+  admitted once" closed loop. Wrong the other way; real answer 5. `scrum.py files` caught it by
+  warning the file already had an item, and the 33-vs-0 contradiction forced the re-measure.
+- REASSURING, measured not assumed: all **7** shipped `details LIKE` sites in `scripts/`, `services/`,
+  `trading/` match on FIELD NAMES or hashes (`expected_return`, `loop_lag_sec`,
+  `confidence_abstains`, `live_entry`, `unreconciled`), never a strategy name. **Zero vulnerable
+  shipped sites.** The defect is confined to ad-hoc agent measurement.
+
+WHAT SURVIVES AND IS NOW TRIPLE-SOURCED -- the starvation of the only live-approved strategy:
+ledger `money_button.ghost` = 2 trades / `total_profit` **-0.016149119** / `last_ts` **21.51 days**;
+`trading_ops` real ghost-exits **2, newest 21.5 days**; `trade_outcomes` **1 receipt, 18.6 days**.
+Step 6 waits on `ghost total_profit > 0`, i.e. **+0.016149120**, from a strategy admitted **5 times in
+its life and not once in 21 days** against 1833 refusals in 7. The 1.6 cents has no mechanism to
+arrive. NOT closed -- this is the live diagnosis, and [eaa7e134] is the next measurement on it.
+
+SCOREBOARD: **-0.1864 over 18 live rows. UNMOVED. No live trade was placed and none was attempted** --
+this pass was measurement, list ownership and two refutations, by a senior who does not write
+production code.
