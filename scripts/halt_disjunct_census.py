@@ -34,17 +34,30 @@ WHAT IT MEASURED, at pass 720 over 1350 rows carrying risk_flags.halt_live,
 coalesced to zero, not None: the key is present on every row and takes exactly
 one distinct value. 22 rows have ghost_ready TRUE and halt_live TRUE anyway.
 
-The consequence is the reason this script is in the tree: repairing ghost_ready
-alone would move halt_live on ZERO of the 1050 rows, because
-`recommended_ratio <= 0` is still true underneath it. ghost_ready is a 97.9%
-co-traveller of the halt, not its cause. Anyone proposing to fix the entry-lane
-halt by way of the ghost evidence bar should run this first and see the 100.0%
-line sitting above their 97.9% one.
+WHAT THAT 100.0% DOES NOT MEAN, corrected in the same pass that wrote it. The
+first version of this file concluded that repairing ghost_ready would move
+halt_live on zero rows, since recommended_ratio <= 0 would still be true
+underneath it. That is wrong. Exactly two sites raise recommended_ratio off its
+0.0 initialiser at pipeline.py:6274 -- safe_to_live at :6307 and the bootstrap
+elif at :6315 -- and BOTH require ghost_ready (it is a conjunct of safe_to_live
+at :6265 and tested directly at :6316). With ghost_ready false the ratio cannot
+be raised, so recommended_ratio <= 0 holds by construction. The universal term
+is the DOWNSTREAM EXPRESSION of ghost_ready, not a second cause beside it, and
+a term caused by the thing you are fixing is no argument against fixing it.
 
-Those 22 ghost_ready-true halts also bound an earlier pass-718 claim of mine
-that the only route to a zero multiplier is the `(mini_ready or ghost_ready)`
-else-branch in pipeline.py: with ghost_ready true and the cap still 0.0, there
-is a second route, and that claim is incomplete.
+So the number that actually bounds ghost_ready's explanatory power is not the
+100.0%, it is the 22 rows that halt with ghost_ready TRUE -- 2.1%. That is the
+part of the halt ghost_ready cannot account for, and this script prints it.
+
+Two further bounds worth carrying, both of which cost a hypothesis of mine:
+
+  min_clip_block is true on 1 of 1050 halts (0.1%), so LIVE_MIN_CLIP_USD is not
+  a meaningful zeroing path however plausible the sizing arithmetic looks.
+
+  ghost_collection_ready is true on 972 of 1050, so the ghost_risk_multiplier
+  = 0.0 else-branch at pipeline.py:6291-6292 explains only 78 halts (7.4%).
+  An earlier pass-718 claim of mine that this branch is the ONLY route to a
+  zero multiplier is incomplete, and narrowing a search to it would miss 92%.
 
 Read-only. Touches nothing but the trading store.
 
@@ -164,15 +177,38 @@ def main() -> int:
     for ts, reason in ghost_ready_but_halted[:10]:
         print(f"  ts={ts:.0f}  reason={reason!r}")
 
-    # The line the script exists to print. A disjunction is only explained by a
-    # term that is true whenever it is.
     universal = [n for n in disjuncts({}) if fired[n] == halted]
     print(f"\ndisjuncts true on EVERY halt row: {universal or 'none'}")
-    if universal and "not ghost_ready" not in universal:
-        print(
-            "  => repairing ghost_ready alone leaves halt_live TRUE on all "
-            f"{halted} rows; it is a co-traveller, not the cause."
-        )
+
+    # Read the next paragraph before drawing the obvious inference from that
+    # line, because the obvious inference is wrong and this script asserted it
+    # for one commit.
+    #
+    # recommended_ratio <= 0 is true on every halt row, and it is tempting to
+    # conclude it is therefore a blocker that survives repairing ghost_ready.
+    # It is not. There are exactly two sites that raise recommended_ratio off
+    # its 0.0 initialiser (pipeline.py:6274), and BOTH require ghost_ready:
+    # safe_to_live at :6264-6272 has `and ghost_ready` as a conjunct, and the
+    # elif at :6315-6321 tests ghost_ready directly. With ghost_ready false the
+    # ratio cannot be raised at all, so `recommended_ratio <= 0` holds BY
+    # CONSTRUCTION. It is the downstream expression of ghost_ready, not a
+    # second cause co-firing with it.
+    #
+    # The 100.0% is therefore not evidence that ghost_ready is a co-traveller.
+    # What IS evidence is the other direction: the rows that halt with
+    # ghost_ready TRUE, printed above. Those are the halts ghost_ready cannot
+    # explain, and that count is the honest measure of how much of the halt
+    # lies elsewhere.
+    unexplained = len(ghost_ready_but_halted)
+    print(
+        f"\nhalts NOT attributable to ghost_ready: {unexplained} of {halted} "
+        f"({100.0 * unexplained / halted:.1f}%)"
+    )
+    print(
+        "  recommended_ratio <= 0 is downstream of ghost_ready (both raise-sites\n"
+        "  require it), so its 100% is not an independent blocker -- see the\n"
+        "  comment above this line before quoting it as one."
+    )
     return 0
 
 
