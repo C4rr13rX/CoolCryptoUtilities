@@ -39577,3 +39577,24 @@ was 11 UNCOUNTED LOSSES, correct figure 46.48%. Different site from the 26.09% a
 mine is internally consistent (wins 6 + losses 17 == trades 23). But before an operator
 lowers a WIN-RATE bar, confirm _fresh_tradeable_delta's wins column against the row-level
 outcomes once. The check is wins + losses == trades and it takes three seconds.
+
+### Pass 721 (Cove) -- addendum, and it withdraws my own causal story
+
+CLOSED: "the edge ban is what to fix". Distinct banned (symbol,strategy) pairs per day
+against the zero-survivor share moves INVERSELY: 2026-09-23 had 78 distinct bans and
+37.4% zero-survivor; 2026-09-26 had 26 distinct bans and 70.4%. Row volume is mid-range
+on both. So neither "the ban set is widening" nor "tick volume rose" explains the climb,
+and both were MY hypotheses. The only remaining reading is that the candidate pool the
+ban subtracts from is SHRINKING -- a ban removing two candidates empties a pool of two
+and not a pool of ten. THE 70.4% IS A STATEMENT ABOUT THE GENERATOR, NOT THE GATE.
+Same fact as Cove p720 ("there is no symbol selector; the 5-of-47 is strategies not
+wanting to enter") from a third instrument. Do not spend a pass loosening the edge ban.
+
+MEASUREMENTS THAT STAND: 22,991 ban rows, zero-survivor 33.4% pooled / 70.4% on 09-26;
+18 distinct days, largest single day 17.9% so NOT a fossil; 8 of 59 symbols banned,
+59.5% of ban rows on symbols ADMITTED today; AERO-USDC alone 8,496 rows = 37.0%.
+
+MECHANISM WORTH INHERITING (symbol_edge_gate.py:411 and :479-482): the ban is judged on
+the newest 500 closed round trips CHAIN-WIDE, a pooled ROW window. A symbol that stops
+trading cannot clear its own ban -- release needs 500 newer trips from OTHER symbols, and
+at the briefing's 5.9 tradeable/day that is ~85 days. Decay exists; nobody can reach it.
