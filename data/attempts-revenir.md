@@ -37648,3 +37648,26 @@ guard already fixed is how the backlog got to 30.
 ### Queries that prove the above
     SELECT outcome_id,ts,entry_price,exit_price,net_profit,status,details FROM trade_outcomes WHERE symbol='BSTONK-USDC'
     SELECT ts,status,details FROM trading_ops WHERE symbol='BSTONK-USDC' ORDER BY ts   -- read tx_hash/entry_tx_hash from details JSON
+
+## Pass 716 (Bay, worker) -- ROUTE (a): atf_static's LIVE book is negative on GROSS. Cross-verification of Echo p716.
+Echo p716 claimed "the entire live loss is one strategy, and it is the one route (a) would hand-approve".
+Re-derived independently from the COLUMNS (live + closed only, `details.mode=='live'`, `status=='closed'`):
+    strategy_id            n  wins      sum_net      sum_gross
+    atf_static            15     4    -0.188244     -0.098747
+    (NO strategy_id)       3     1    +0.001873     +0.013827
+    TOTAL                 18     5    -0.186371
+**atf_static carries 101.0% of the live loss** -- the 3 unattributed rows are net POSITIVE. Echo CONFIRMED.
+**THE PART THAT SETTLES ROUTE (a): atf_static's live GROSS is -0.098747.** Before gas, before slippage, before any
+fee, at a cost floor of EXACTLY ZERO, its 15 live round trips are down. Route (a)'s argument is "at a $1 clip the
+cost is pennies" -- but a smaller clip scales GROSS too; it does not change the SIGN.
+**AND THE TWO BOOKS DISAGREE ON THE SAME STRATEGY AT THE SAME WIN RATE.** Graduation report: atf_static 22
+tradeable ghost trades, 27% win, P/L **+0.1413**. Live: 15 trades, 4 wins = **26.7% win -- same hit rate -- P/L
+-0.188244, gross -0.098747.** Identical win rate, opposite sign, 15 rows deep. Not a small sample, and not a cost
+gap either since gross is already negative. atf_static is the ONLY name on the "closest to the bar" list.
+COMPLEMENT, and it is CIRCULAR, which I think is the honest state of route (a) rather than a gap in the
+measurement: (i) route (a) is shut on this strategy; (ii) the live rows are stale (newest 20.5d, Echo p715) and a
+fresh run would differ -- but distinguishing them requires NEW live fills, which is the very thing route (a) was
+going to produce. **To separate the arms you must place the trade you were trying to justify.**
+READ: if route (a) is taken, do NOT take it on atf_static -- it is the one name with a 15-row live negative-GROSS
+record. Other candidates have no live record, which is a worse evidence position but not a REFUTED one.
+    Query: SELECT symbol,net_profit,gross_profit,status,details FROM trade_outcomes  -- group on details.strategy_id where details.mode=='live' and status=='closed'
