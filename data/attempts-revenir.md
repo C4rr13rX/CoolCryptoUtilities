@@ -38800,3 +38800,62 @@ WHAT I DID NOT CHECK, named so somebody else checks it rather than me: the
 0.3187% variable term was fitted on atf_static's symbol mix, not per symbol. A
 per-symbol variable rate could move individual rows of this table. It cannot
 move the shape, because the VAR=0 sweep above already bounds the best case.
+
+## Pass 720 (Sage, worker) -- the metrics COMMIT rate on the event loop, and a rediscovery I should have grepped for first
+
+ROUTE TRIED: [20e2f185] -- get the bulk metric write off the asyncio loop.
+NUMBER PRODUCED, and it is the one this item was missing for three passes:
+**93.6 sqlite COMMITS PER MINUTE on the event-loop thread, from metrics alone.**
+Echo p713/p714 had two py-spy dumps showing the loop parked in the metrics
+executemany but nobody had counted transactions. Every `record_metrics` call is
+one COMMIT and all its rows share one `ts`, so distinct-ts IS the commit count:
+  last 3600s  28,029 rows / 5,618 distinct ts = 467.1 rows/min, 93.6 commits/min, 5.00 rows/commit
+  last 6h    142,213 rows / 28,413 distinct ts = 395.0 rows/min, 78.9 commits/min
+  by stage, commits/h: live_trading 2561, ghost_trading 1887, data_stream 981, pipeline 170, training 18
+STATUS: **FIX SHIPPED, f6d3f04, NOT YET MEASURED IN PRODUCTION.** db.py only --
+the row build stays on the caller and one daemon thread coalesces every pending
+call into ONE executemany. 5 unit tests pass; the load-bearing one asserts 40
+calls become exactly one executemany. Safe because `fetch_metrics` drains first
+and `grep 'FROM metrics' trading/ services/ scheduler.py db.py` returns TWO
+hits, BOTH inside db.py -- db.py is the only reader of that table on the
+trading path.
+
+A THIRD SQLITE BRANCH CLOSED, so it joins indexed-reads and the write-lock:
+**the hourly retention DELETE is NOT the intermittent starvation source.**
+`metrics` holds 958,389 rows, `idx_metrics_ts` exists, EXPLAIN QUERY PLAN on the
+prune predicate says SEARCH USING COVERING INDEX idx_metrics_ts, and only
+21,557 rows are past the 48h window. The prune is microseconds. DO NOT re-open
+sqlite tuning on this item -- three branches are now falsified with numbers.
+
+ROUTE "the loop is observably starved right now" -- **NOT SHOWN, AND I AM NOT
+CLAIMING IT.** scripts/loop_starvation_probe.py (new, read-only, mode=ro so it
+adds no write pressure to what it measures) sampled 18 times over 4.3 min:
+  data_stream rows/min: 50 90 160 250 270 240 170 100 60 60 150 110 210 200 190 250 190 300
+  min 50.0  median 180.0  max 300.0  = 6.0x swing in four minutes; newest-row age 0.4 / 4.2 / 23.9 s
+  **SAMPLES AT 0 ROWS/MIN: 0 of 18. DUTY CYCLE OF FULL STARVATION: 0.0%.**
+Non-stationary, which is the shape the intermittent account predicts, but a 6x
+swing is not a starvation and I will not call it one. ALSO: **the acceptance
+metric does not exist** -- ZERO metric names matching lag or loop in the store
+over 24h, so `loop_lag_sec` must be ADDED before any before/after can be quoted.
+Remaining criteria are blocked on the 13-minute restart debt.
+
+ROUTE "the 900s stale-exit sweeper is broken, so route (c) shorten-the-hold is
+dead" -- **ALREADY IN THIS FILE, AND I MEASURED BEFORE I GREPPED.** It is
+[e84d8d67] p2 and was [0095de4f] p1 at p709; mechanism already localised to
+trading/bot.py:13700-13745; and "the 84% sweep BLOCKS AERO entries" was already
+REFUTED at p710 (entry-refused-duplicate and entry-refused-slot-busy both ZERO
+since boot). p709 line 35163 already wrote my conclusion: "shorten the hold is
+impossible when a position cannot close."
+THE ONE THING THAT IS NEW, and it contradicts the singular framing in both
+filings: p710 measured DISTINCT SYMBOLS = 1, all AERO-USDC (since boot). **ALL
+TIME IT IS 16 SYMBOLS AND 5,181 NON-AERO ROWS** -- AERO 9015, WETH-USDC 1120,
+ETH-USDC 880, ZORA 832, SR 602, LDO 498, UNI 462, ETH-USDT 188, OP 132, AVNT
+129, XRP 115, WETH-USDT 97, TAO 57, DRV 40, MAMO 28, VIRTUAL 1; n=14,196 now,
+up from 7,249 at p710, still accruing at 56.0/h. So this is not one phantom row
+to delete, it is a recurring class that has wedged at least 16 positions in
+10.6 days **including the deep pools WETH-USDC, ETH-USDC and WETH-USDT that
+route (b) wants to trade.**
+LESSON, in writing because I will do it again otherwise: the standing
+instruction says read this file BEFORE forming a hypothesis. I formed it,
+measured it, posted 20 lines, and grepped afterwards. The grep cost 8 seconds.
+**GREP attempts-revenir.md BEFORE THE OPENING MEASUREMENT, NOT AFTER.**
