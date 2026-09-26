@@ -40,6 +40,13 @@ class TradingDatabase:
         else:
             self._vendor = "postgres" if vendor_env == "postgres" else "sqlite"
         self._lock = threading.RLock()
+        # Buffered metrics writer state -- see record_metrics. Set up before
+        # either vendor init so a connection failure cannot leave it missing.
+        self._metrics_buffer: List[Tuple[float, str, str, str, float, str]] = []
+        self._metrics_buffer_lock = threading.Lock()
+        self._metrics_stop = threading.Event()
+        self._metrics_flusher: Optional[threading.Thread] = None
+        self._metrics_dropped = 0
         if self._vendor == "postgres" and psycopg is not None:
             try:
                 self._init_postgres()
@@ -1700,6 +1707,123 @@ class TradingDatabase:
             rows.append((ts, stage, category, str(name), numeric_value, payload))
         if not rows:
             return
+        self._buffer_metrics(rows)
+
+    # ------------------------------------------------------------------
+    # Metrics write path: buffered, flushed off the caller's thread
+    # ------------------------------------------------------------------
+    #
+    # `record_metrics` used to do a synchronous executemany plus a COMMIT
+    # inline, and production calls it from the asyncio loop thread
+    # (trading/metrics.py -> trading/bot.py _run_wallet_sync/_handle_sample).
+    # Measured 2026-09-26 against the live store: **93.6 sqlite commits per
+    # minute** from metrics alone, 5 rows each (28,029 rows / 5,618 distinct
+    # ts in one hour), on a 41 GB WAL database. py-spy caught the loop thread
+    # parked in that executemany twice. The loop cannot service the tape while
+    # it waits on a commit, and the starvation is intermittent because the
+    # commit latency is.
+    #
+    # So the row build stays on the caller (it is pure CPU and microseconds)
+    # and the transaction moves to one daemon thread that coalesces every
+    # pending call into a single executemany. That drops the commit rate by
+    # roughly the flush interval times the call rate -- ~94/min to ~30/min at
+    # the 2 s default -- and, more importantly, takes the loop thread off the
+    # critical path entirely.
+    #
+    # Two things this deliberately does NOT do, both because the item that
+    # scoped it falsified them with measurements first: it does not tune
+    # sqlite (indexed reads were 6.5/0.0/0.1/0.4 ms) and it does not
+    # checkpoint the WAL (BEGIN IMMEDIATE took the write lock in 0.5 ms, so
+    # there is no contention to relieve). This is a throughput fix.
+
+    #: Flush cadence for the buffered metrics writer.
+    _METRICS_FLUSH_INTERVAL_SEC = max(
+        0.1, float(os.getenv("METRICS_FLUSH_INTERVAL_SEC", "2.0"))
+    )
+    #: Hard cap on buffered rows. A process that stops draining must not grow
+    #: without bound -- [20e2f185] warns that intermittent starvation already
+    #: looks like a leak, and an unbounded buffer would make that real.
+    _METRICS_BUFFER_MAX = max(
+        1000, int(float(os.getenv("METRICS_BUFFER_MAX", "50000")))
+    )
+
+    def _buffer_metrics(self, rows: List[Tuple[float, str, str, str, float, str]]) -> None:
+        """Queue metric rows for the background flusher. Never touches sqlite."""
+        buffer_lock = getattr(self, "_metrics_buffer_lock", None)
+        if buffer_lock is None:
+            # Instances built before this attribute existed (or a subclass that
+            # skipped __init__) still have to work: fall back to writing inline
+            # rather than dropping the rows.
+            self._flush_metric_rows(rows)
+            return
+        dropped = 0
+        with buffer_lock:
+            self._metrics_buffer.extend(rows)
+            overflow = len(self._metrics_buffer) - self._METRICS_BUFFER_MAX
+            if overflow > 0:
+                del self._metrics_buffer[:overflow]
+                dropped = overflow
+                self._metrics_dropped += overflow
+        if dropped:
+            _log_db_warning(
+                "metrics buffer overflow; oldest rows dropped",
+                {"dropped": dropped, "total_dropped": self._metrics_dropped},
+            )
+        self._ensure_metrics_flusher()
+
+    def _ensure_metrics_flusher(self) -> None:
+        if self._metrics_stop.is_set():
+            # Stopped means stopped: do not resurrect the thread, and do not
+            # let it take a parting flush after a caller asked it to stand down.
+            return
+        thread = getattr(self, "_metrics_flusher", None)
+        if thread is not None and thread.is_alive():
+            return
+        with self._lock:
+            thread = getattr(self, "_metrics_flusher", None)
+            if thread is not None and thread.is_alive():
+                return
+            try:
+                thread = threading.Thread(
+                    target=self._metrics_flush_loop,
+                    name="metrics-flusher",
+                    daemon=True,
+                )
+                thread.start()
+            except Exception as exc:  # pragma: no cover - thread budget exhausted
+                self._metrics_flusher = None
+                _log_db_warning("metrics flusher could not start", {"error": str(exc)})
+                return
+            self._metrics_flusher = thread
+
+    def _metrics_flush_loop(self) -> None:
+        stop = self._metrics_stop
+        while not stop.wait(self._METRICS_FLUSH_INTERVAL_SEC):
+            self.flush_metrics()
+        self.flush_metrics()
+
+    def flush_metrics(self) -> int:
+        """Write every buffered metric row. Returns the number written.
+
+        Public and synchronous on purpose: read-your-writes matters to
+        `fetch_metrics` and to tests, and both call this first.
+        """
+        buffer_lock = getattr(self, "_metrics_buffer_lock", None)
+        if buffer_lock is None:
+            return 0
+        with buffer_lock:
+            if not self._metrics_buffer:
+                return 0
+            rows = self._metrics_buffer
+            self._metrics_buffer = []
+        self._flush_metric_rows(rows)
+        return len(rows)
+
+    def _flush_metric_rows(
+        self, rows: Sequence[Tuple[float, str, str, str, float, str]]
+    ) -> None:
+        if not rows:
+            return
         try:
             with self._lock:
                 with self._conn:
@@ -1713,9 +1837,9 @@ class TradingDatabase:
         except Exception as exc:
             _log_db_warning(
                 "metrics insert failed",
-                {"error": str(exc), "stage": stage, "category": category, "rows": len(rows)},
+                {"error": str(exc), "rows": len(rows)},
             )
-        self._maybe_prune_metrics(ts)
+        self._maybe_prune_metrics(rows[-1][0])
 
     #: Metrics older than this are dropped. They are diagnostics, not trading
     #: state -- nothing reads them beyond recent-window dashboards.
@@ -1756,6 +1880,8 @@ class TradingDatabase:
         category: Optional[str] = None,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
+        # Read-your-writes: the write path is buffered, so drain it first.
+        self.flush_metrics()
         where: List[str] = []
         params: List[Any] = []
         if stage:
