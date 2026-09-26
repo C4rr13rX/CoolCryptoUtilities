@@ -69,7 +69,11 @@ def _bot(buffer):
     bot = TradingBot.__new__(TradingBot)
     bot._buffer = buffer
     bot._live_clip_usd = lambda: 0.75
-    bot._roundtrip_fee_rate = lambda notional_hint=None: 0.0065
+    # MATCH PRODUCTION'S SIGNATURE, keyword-only and including `symbol`
+    # (bot.py:2229). A double that omits `symbol` raises TypeError inside
+    # `_lattice_refusal`, which swallows it at bot.py:2440 and returns None --
+    # so the gate reads as FAILING OPEN when the only broken thing is this stub.
+    bot._roundtrip_fee_rate = lambda *, notional_hint=None, symbol=None: 0.0065
     return bot
 
 

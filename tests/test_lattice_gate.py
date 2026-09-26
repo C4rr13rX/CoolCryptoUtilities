@@ -42,7 +42,11 @@ def _bot(buffer):
     bot = TradingBot.__new__(TradingBot)
     bot._buffer = buffer
     bot._live_clip_usd = lambda: 0.75
-    bot._roundtrip_fee_rate = lambda notional_hint=None: 0.0065
+    # MATCH PRODUCTION'S SIGNATURE, keyword-only and including `symbol`
+    # (bot.py:2229). A double that omits `symbol` raises TypeError inside
+    # `_lattice_refusal`, which swallows it at bot.py:2440 and returns None --
+    # so the gate reads as FAILING OPEN when the only broken thing is this stub.
+    bot._roundtrip_fee_rate = lambda *, notional_hint=None, symbol=None: 0.0065
     return bot
 
 
@@ -126,12 +130,16 @@ class TestFailsOpen:
     def test_a_raised_exception_allows(self):
         bot = _bot(_persistent_series())
 
-        def _boom(notional_hint=None):
+        def _boom(*, notional_hint=None, symbol=None):
             raise RuntimeError("cost model unavailable")
 
         bot._roundtrip_fee_rate = _boom
         sample = {"price": 1.0, "ts": time.time()}
         assert bot._lattice_refusal("T", _Directive(), sample) is None
+        # NAME THE EXCEPTION, or this test passes on any exception at all --
+        # including the TypeError a stale stub signature raises, which is
+        # exactly how it passed while the two tests above it were red.
+        assert bot._lattice_last_exit == "exception:RuntimeError"
 
     def test_an_unknown_horizon_label_allows(self):
         bot = _bot(_persistent_series())
