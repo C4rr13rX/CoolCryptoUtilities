@@ -26,19 +26,38 @@ Usage:
 PREFER --body-file FOR ANYTHING LONGER THAN A SENTENCE, and never build a
 notice on the command line. Measured 2026-09-10: a notice of roughly 2,400
 characters arrived as 978, and one of roughly 1,450 arrived as 331 cut
-mid-word at "Median price move is 0.0783 perce". The script is not the
-culprit -- ``segments`` preserves every word and ``MAX_SEGMENTS`` was not in
-play at those lengths -- the body was ALREADY short when it reached ``argv``,
-because a command line has a length limit and the shell cut it. Reading the
-body from a file takes it off the command line entirely.
+mid-word at "Median price move is 0.0783 perce". Reading the body from a
+file takes it off the command line entirely, and that is still the right
+habit -- but it was NOT the whole story, and the rest of it cost four
+agents a notice each.
+
+THE SEGMENT CAP WAS THE SECOND CUT, AND IT REPORTED SUCCESS. Measured
+2026-09-26 by Cove against this file unchanged since 2026-09-10 18:44
+(1f08755): a 3,977-character body segments to 15 parts totalling 4,074
+characters, ``MAX_SEGMENTS`` kept 12 of them totalling 3,600, and ``send``
+returned 0. So 3 segments and 474 characters were dropped and the caller
+was told the notice went out. Four reports blamed "a hard cap of six in the
+send loop"; that cap does not exist -- stubbing ``_send_one`` and calling
+``send`` on the same body performs 12 sends, and on a 3,001-character body
+performs 11 sends of 3,069 characters, which is every segment there is.
+The observable half of those reports -- twelve segments needed, a short
+delivery, exit 0 -- is entirely explained by the cap binding at 12. The
+"six" is not reproducible here and no code path in this module can produce
+it.
+
+So the cap now SPEAKS: a notice that cannot be delivered whole exits 3 and
+says on stderr how many characters and segments were lost. Raise the cap
+with ``SMS_MAX_SEGMENTS`` when a long notice genuinely has to go.
 
 It matters more than a formatting nit: the standing orders put the ASK LAST
-in every notice, so an argv cut removes precisely the decision request and
+in every notice, so either cut removes precisely the decision request and
 leaves the evidence that motivated it.
 
-Exit codes: 0 sent, 1 not configured/skipped, 2 send failed.
+Exit codes: 0 sent whole, 1 not configured/skipped, 2 send failed,
+3 SENT BUT INCOMPLETE -- part of the notice was not delivered.
 A missing config is not worth crashing a trading loop over, so callers
-should treat exit 1 as "skip" -- which is why it differs from 2.
+should treat exit 1 as "skip" -- which is why it differs from 2. Treat 3 as
+"the operator did not read all of this".
 """
 
 from __future__ import annotations
@@ -63,6 +82,15 @@ import sys
 # small enough to survive the gateway. Nothing is dropped.
 SEGMENT_BODY = 300
 MAX_SEGMENTS = 12
+
+# The cap exists so a runaway body cannot text the operator two hundred times.
+# It is NOT a length policy, and it must never be the reason a notice arrives
+# half-finished with exit 0 -- see the docstring. Raise it deliberately.
+MAX_SEGMENTS_ENV = "SMS_MAX_SEGMENTS"
+
+# segments() takes ``limit`` as a plain int, so "do not cap" needs a number
+# rather than None. Anything above the longest notice anyone will ever write.
+NO_LIMIT = 1_000_000
 
 DEFAULTS = {
     "SMS_TO": "9194957881@vtext.com",
@@ -97,23 +125,20 @@ def config() -> dict:
     return {k: (os.getenv(k) or v).strip() for k, v in DEFAULTS.items()}
 
 
-def segments(body: str, *, size: int = SEGMENT_BODY,
-             limit: int = MAX_SEGMENTS) -> list:
-    """Split a notice into numbered parts, breaking on whitespace only.
+def _room(size: int, limit: int) -> int:
+    """Characters of CONTENT a part may hold once numbering is reserved.
 
-    Pure, so the transport's own truncation is testable without SES. Returns
-    ["(1/3) ...", "(2/3) ...", ...], or a single UNPREFIXED part when the whole
-    notice already fits -- a one-part notice must not be labelled "(1/1)".
+    It depends on ``limit`` -- "(12/12) " is eight characters and
+    "(1000000/1000000) " is eighteen -- which is why the full and the capped
+    segmentation of one body must be taken at ONE room. Splitting twice with
+    two limits gives two different part boundaries, and then "how much did the
+    cap drop" is answered against a notice that was never going to be sent.
     """
-    body = (body or "").strip()
-    if not body:
-        return []
-    if len(body) <= size:
-        return [body]
+    return max(32, size - len("(%d/%d) " % (limit, limit)))
 
-    # Reserve room for the widest prefix this notice can carry, so numbering
-    # can never push a part back over the segment size.
-    room = max(32, size - len("(%d/%d) " % (limit, limit)))
+
+def _split(body: str, room: int) -> list:
+    """The unnumbered parts, breaking on whitespace only. No cap applied."""
     parts, cur = [], ""
     for word in body.split():
         candidate = (cur + " " + word) if cur else word
@@ -132,19 +157,74 @@ def segments(body: str, *, size: int = SEGMENT_BODY,
         cur = word
     if cur:
         parts.append(cur)
+    return parts
 
-    if len(parts) > limit:
-        # Say what was dropped IN the notice rather than dropping it silently.
-        parts = parts[:limit]
-        parts[-1] += " [TRUNCATED: notice exceeded %d segments]" % limit
+
+def _number(parts: list) -> list:
     total = len(parts)
     return ["(%d/%d) %s" % (i, total, p) for i, p in enumerate(parts, 1)]
+
+
+def segments(body: str, *, size: int = SEGMENT_BODY,
+             limit: int = MAX_SEGMENTS) -> list:
+    """Split a notice into numbered parts, breaking on whitespace only.
+
+    Pure, so the transport's own truncation is testable without SES. Returns
+    ["(1/3) ...", "(2/3) ...", ...], or a single UNPREFIXED part when the whole
+    notice already fits -- a one-part notice must not be labelled "(1/1)".
+
+    IT RETURNS THE CAPPED LIST. What the cap dropped is not recoverable from
+    the return value, so do not size a notice off ``len(segments(body))`` --
+    use ``plan``, which returns the loss alongside it.
+    """
+    parts, _dropped_chars, _dropped_segs = plan(body, size=size, limit=limit)
+    return parts
+
+
+def max_segments() -> int:
+    """The cap, overridable, so a long notice can go whole when it must."""
+    _load_env()
+    raw = (os.getenv(MAX_SEGMENTS_ENV) or "").strip()
+    try:
+        val = int(raw)
+    except ValueError:
+        val = 0
+    return val if val > 0 else MAX_SEGMENTS
+
+
+def plan(body: str, *, size: int = SEGMENT_BODY,
+         limit: int = None) -> tuple:  # noqa: RUF013
+    """What will be sent, and what the cap will drop -- both, explicitly.
+
+    Returns ``(parts, dropped_chars, dropped_segments)``. ``segments`` alone
+    cannot answer the second and third: it returns the capped list, so a
+    caller that only counts what it got back cannot tell a complete notice
+    from a decapitated one. That is exactly how ``send`` used to return 0
+    having delivered 12 of 15 segments.
+    """
+    limit = max_segments() if limit is None else limit
+    body = (body or "").strip()
+    if not body:
+        return [], 0, 0
+    if len(body) <= size:
+        return [body], 0, 0
+
+    raw = _split(body, _room(size, limit))
+    if len(raw) <= limit:
+        return _number(raw), 0, 0
+
+    dropped = raw[limit:]
+    kept = raw[:limit]
+    # Say what was dropped IN the notice as well as on stderr -- the operator
+    # holding the phone is the one person stderr never reaches.
+    kept[-1] += " [TRUNCATED: notice exceeded %d segments]" % limit
+    return _number(kept), sum(len(p) for p in dropped), len(dropped)
 
 
 def send(body: str) -> int:
     cfg = config()
 
-    parts = segments(body)
+    parts, dropped_chars, dropped_segs = plan(body)
     if not parts:
         sys.stderr.write("notify_sms: empty message; nothing to send\n")
         return 1
@@ -157,6 +237,20 @@ def send(body: str) -> int:
     rc = 0
     for part in parts:
         rc = _send_one(aws, cfg, part) or rc
+
+    if dropped_segs:
+        # LOUD, AND NONZERO. An agent must not be able to write "notice sent"
+        # off this call when the ask at the bottom of the notice never left.
+        sys.stderr.write(
+            "notify_sms: INCOMPLETE -- delivered %d of %d segments; "
+            "%d characters (%d segments) were NOT delivered, and they are the "
+            "END of the notice, which is where the ask is.\n"
+            "  Raise the cap for this send:  %s=%d\n"
+            "  Or split the notice.  Exit code 3 means SENT BUT INCOMPLETE.\n"
+            % (len(parts), len(parts) + dropped_segs, dropped_chars,
+               dropped_segs, MAX_SEGMENTS_ENV, len(parts) + dropped_segs)
+        )
+        return rc or 3
     return rc
 
 
