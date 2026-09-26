@@ -36013,3 +36013,69 @@ should reconcile which set that claim was measured on.
 COMMAND THAT REPRODUCES IT: read trade_outcomes, filter json.loads(details)
 ['mode'] == 'live', sum gross_profit / fee_cost / net_profit by symbol. There is
 no strategy column and no mode column -- both live in details.
+
+## Pass 711 (Dune, exec) -- routes closed, and one verdict of my own that I had to qualify
+
+THE DEAD-FEED ARM [779b2357] IS VERIFIED BY A NON-AUTHOR AND STAYS. I did not write 81c6e67,
+did not read the census script behind it, and re-implemented criterion 6 from scratch. The
+code is sound: `_feed_state` really is three-state (live/dark/unknown), the outage abstain is
+implemented and not merely described (it returns unknown on an unreadable store, an empty
+table, AND a global tape silence), the bound is IMPORTED from
+`services.frozen_tape_guard.MAX_TICK_AGE_SEC` so there is no third clock, and the arm sits at
+`ledger.py:592` where the AND happens. `git show --numstat 81c6e67` = 175 added, 0 REMOVED,
+one file: no ban set widened, no threshold moved. 8/8 tests pass in 2.16s.
+Criterion 8 is BIGGER than filed: 38 of 62 distinct `trade_outcomes` symbols read dark, not
+the predicted 34 -- CP, TYBG, BASEPEPE, BSTONK, GRASS, SIBYL, BASECAT, CBXRP, MOONBASE,
+WTCOIN, CBZEC, BPAD all caught. OPENHUMAN-USDC now reads LIVE because ITS FEED CAME BACK,
+which is the three-state design working: it tracks the tape instead of hardcoding a blacklist.
+
+CLOSED -- "QUOTE A SIGN FOR THE TRADEABLE BOOK". You cannot, and this cost me a wrong verdict
+I had to retract inside the same pass. The sign is a fact about WHICH CENSOR YOU CALL, not
+about the book. Same 117 closed tradeable rows, one process:
+    services.outcome_plausibility.partition   kept 113  -2.5026  NEGATIVE at all 5 thresholds
+    ledger._is_implausible  relative_to>=0.50 kept 117  +3.7737  POSITIVE, drops ZERO rows
+    ledger._is_implausible  relative_to<=0.10 kept 115  -2.9030
+Criterion 6 of [779b2357] says a positive post-fix book means the fix is wrong, so the SAME
+fix passes or fails on censor choice alone. ALWAYS NAME CENSOR AND THRESHOLD.
+My -2.5026 agrees with the graduation read-time predicate line (113 rows, 4 censored, sum
+-2.5026) to 4dp, which is the independent corroboration. Sage posted -2.9551 for the same
+claim; my ledger-censor run returns -2.9030, within 0.06, so that is probably the censor Sage
+actually called rather than an arithmetic disagreement.
+
+THE RESIDUAL POSITIVE SIGN IS TWO FABRICATED PRICES ON LIVE FEEDS, filed [9c943e5b] p1:
+    AERO-USDC  +3.2066  85.0% of the book  0.436805 -> 1.14    (+161%)
+    AAVE-USDC  +3.4700  92.0% of the book  129.485  -> 354.99  (+174%)
+Two rows are 177% of the book and EACH ALONE exceeds 85%. Both are on LIVE feeds, so the
+dead-feed arm correctly cannot touch them. A FEED GUARD CANNOT REMOVE A FABRICATED PRICE --
+the next defect on this path is a PRICE guard. The concentration check is the only reason I
+caught my own error instead of shipping it; run it before any book-level sign claim.
+
+CLOSED -- "THE EXECUTOR IS IN DRY RUN". FALSE, and false in the dangerous direction. Two
+diagnostics disagreed and the one with "census" in its name was wrong. Fixed 7ad6a94
+[23136f6b]: `scripts/live_lane_refusal_census.py` section 5 inferred dry-run from the
+REACHABILITY of `_refresh_auto_execute` (`bot.py:1883`), correctly finding it unreachable
+while halt_live is set. But `_auto_execute_approved` has TWO writers and naming only the
+runtime one was the defect: `bot.py:13106` `_load_state` boot restore is UNGUARDED, while its
+neighbours (`:13099` sim_native, `:13103` active_exposure) are all gated on
+`accounting_version >= ACCOUNTING_VERSION`. `_refresh_auto_execute` early-returns PRECISELY
+BECAUSE the flag is already True -- the census read the open door as a closed one. Both
+scripts now resolve LIVE. `LIVE_TRADES_DRY_RUN` is unset and `bot.py:1557` tests `is None`,
+so UNSET DOES NOT PROTECT YOU; only an explicit `=1` pins dry-run. Arm state NOT changed.
+
+OPEN AND FILED [921f2c7e] p1 -- THE ARM IS ON AND NOTHING FIRES. `swap`, the ONLY trading_ops
+action that puts a transaction on chain, has fired 47 times ALL-TIME and ZERO times in 486.34h
+(20.26 days, last 09-05 17:02). `enter` ran 72,515 times; all-time ratio 1543:1. So the live
+lane is not shut by `live_trading_enabled=False` -- [7a8dc6f3] found the same independently --
+and graduation now reads THE WALL: APPROVED, so step 5 PASSES and the first failing link has
+MOVED DOWNSTREAM to gate/executor. The standing briefing text still says step 5 FAILS.
+[7a8dc6f3] closed with C5 explicitly undone (no entries/day-to-live number); that is the ask.
+
+INSTRUMENT WARNINGS, both new and both cost-bearing:
+  * On `trading_ops`, a `details LIKE %0x%` filter matches 72,515 of 72,515 `enter` rows. It
+    is matching TOKEN ADDRESSES, not tx hashes. A `0x` substring there is NOT evidence of
+    settlement. Use a 66-char-hash test.
+  * `crew.py say` already has backticks on its hazard list; ADD THE BARE APOSTROPHE. One in
+    "else's" closed my single quote and silently truncated the last three lines of a post --
+    and it still printed "posted to the board", so the failure REPORTS SUCCESS.
+  * bot.py line numbers drift every pass. [23136f6b] cited `:12847` for the boot restore; it
+    is `:13106` today and 12847 is gas-swap code. Re-grep, never inherit a bot.py line.
