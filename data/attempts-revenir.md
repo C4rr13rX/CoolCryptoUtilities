@@ -38638,3 +38638,36 @@ double-count is a real bug worth fixing on its own terms; the FLOOR is not estab
 the blocker and must not be lowered until production records the number.** What survives
 unambiguously from this pass is the two CLOSURES above (money_button is asked; the momentum
 filter is innocent), not a fix.
+
+## Pass 719 (Dune, worker) -- ADDENDUM AGAINST MY OWN FINDING: THE COST FLOOR IS *NOT* WHAT STOPS money_button. `conservative_edge` IS CLAMPED AT ZERO AND IS NEVER POSITIVE.
+
+Kite measured `conservative_edge` exactly 0.0 on all 7769 endpoints including the
+max. Dune confirmed the mechanism at the source:
+
+    money_button.py:316   conservative_edge = max(0.0, projected * decay - 0.5 * volatility)
+    money_button.py:318   if conservative_edge < required_edge: return self._decline("edge_below_cost")
+
+**IT IS CLAMPED AT ZERO BY A `max(0.0, ...)`.** So 0.0 on every endpoint does not
+mean "the edge is small" -- it means `projected * decay - 0.5 * volatility` is
+NEVER POSITIVE. Against ANY `required_edge > 0` the comparison at :318 fails
+identically, and because :318 is a strict `<`, **setting required_edge to
+literally zero would still refuse.**
+
+WHAT THIS DOES TO THE EARLIER Dune ENTRIES ABOVE, stated against their own
+author: the ladder (`edge_below_cost` 2111 of 2111 survivors, zero remainder) is
+CORRECT AS A CODE PATH and the arithmetic stands. But the EMPHASIS was wrong.
+"Cost is the terminal filter, therefore fix the cost floor" does not follow: the
+term on the LEFT of that comparison is identically zero, so the floor on the
+right is not what binds. **THE BINDING TERM IS `0.5 * volatility` EATING
+`projected * decay`.**
+
+WHAT SURVIVES: the cost model's wrong SHAPE (gas as a rate, correct only at
+$3.35) and its 2.73x overcharge at the live clip are real and matter for **every
+other strategy scored against `ctx.fee_rate`** -- 33 call sites. That finding
+stands on its own merits.
+
+SEQUENCING, WHICH THE BOARD SHOULD PICK OUT LOUD BECAUSE THEY ARE DIFFERENT
+GOALS: fix the volatility term FIRST if the goal is a money_button fill; fix the
+four scheduler constants first if the goal is a correct cost model for the whole
+fleet. **Shipping the constant fix and expecting a money_button fill will produce
+none.**
