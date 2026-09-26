@@ -39258,3 +39258,42 @@ PASS I FILED IT. A WINDOW-LENGTH ARTIFACT.
   what we carry -- while WETH-USDT sits on the tape with 1,015 rows in 18.2h and
   reaches the gate FIVE TIMES. "Restrict to deep pools" would be a SECOND
   selector arguing with the first. NAME THE FIRST ONE BEFORE BUILDING ANOTHER.
+
+### Pass 720 (Sage) second addendum -- MY OWN REST-BACKOFF LEAD KILLED IN 4 MINUTES, AND IT PUTS [20e2f185] BACK ON ITS ORIGINAL MECHANISM
+
+ROUTE: "the 13.3% starvation duty cycle is a failure-driven REST poll backoff
+(`data_stream.py:3036` REST_POLL_INTERVAL_MAX=120.0, grow/reduce at :3040-3073),
+i.e. a FEED problem, not an event-loop problem." Both episodes were 180 s apart
+and each was preceded by a decaying ramp, which is the shape of a backoff.
+COMPLEMENT: it is a genuine loop/executor stall and the backoff is innocent.
+TEST: a failure-driven backoff needs FAILURES, and `data_stream` writes
+`consensus_failures` to `metrics` every sample.
+NUMBER PRODUCED: **`consensus_failures` = 0.0 on EVERY row across 17:58-18:06,
+straddling both starved windows. ZERO failures.**
+STATUS: **ROUTE CLOSED, REFUTED BY ITS AUTHOR IN 4 MINUTES.** Nothing for a
+backoff to back off from. **Do not re-open REST tuning on this item.**
+
+TWO FINDINGS FROM THE SAME QUERY, both pointing back at the loop:
+1. **`sample_count` IS MONOTONIC AND LOSES NOTHING ACROSS THE GAP.** One symbol
+   reads `sample_count=1196` at 18:00:16 and **1197** at 18:02:24 -- the very
+   next integer, **128 s later** instead of the usual ~8 s. A throttled poller
+   would advance the counter more slowly; this advanced by exactly one, LATE.
+   **THE WORK WAS QUEUED, NOT DROPPED.**
+2. **`consensus_age` SPIKES 200-600x EXACTLY AT RECOVERY.** Baseline ~0.0007 s.
+   First rows out of the stall at 18:02:23: **0.1510, 0.0909, 0.0227**. Second
+   episode at 18:04:26: **0.4486**. That is a queue draining stale work, not a
+   fresh poll.
+⇒ both are the signature of a **BLOCKED EXECUTOR OR BLOCKED LOOP HOLDING
+COMPLETED WORK**, which is the mechanism [20e2f185] was scoped on.
+
+COMPATIBLE WITH, AND DOES NOT UNDO, THE FIRST ADDENDUM: `live_trading` metrics
+still ramp DOWN with the tape rather than bursting into the stall, and
+`trading_ops` still commits right through it. So `f6d3f04` is a real reduction
+in blocking I/O on that thread but is **NOT PROVEN to be THE cause of the 13.3%
+duty cycle** -- something parks the sampler path and holds its finished work; the
+metrics commit rides on that same thread and is worth removing, but removing it
+may not be sufficient.
+**SHARPEST STATEMENT FOR p721: the stall HOLDS FINISHED WORK and releases it late
+with a 200-600x stale `consensus_age`, LOSES ZERO SAMPLES, and involves ZERO
+upstream failures. Look for a thread or executor that BLOCKS -- not a feed that
+fails, and not a db that locks.**
