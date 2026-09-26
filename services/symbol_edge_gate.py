@@ -264,6 +264,11 @@ _pair_cache: Dict[Tuple[str, str], Tuple[float, str]] = {}
 #: standing verdict 288 times a day.
 _pair_seen: set = set()
 _cache_built_at: float = 0.0
+#: Rows the plausibility censor refused on the last ``_load_book``. Recorded
+#: rather than discarded: a filter that hides what it dropped cannot be
+#: audited, and this repo has shipped a report whose entire edge was the rows
+#: it silently kept.
+_censored_rows: int = 0
 
 
 def _t_statistic(values: List[float]) -> float:
@@ -455,10 +460,20 @@ def _load_book(limit: int = 500) -> Tuple[Dict[str, List[Trip]], Dict[Tuple[str,
         # `gross_profit` falls back to `net_profit`, which is a STRICTER bar
         # (net is already gross minus the fee, so the symbol is asked to earn
         # the round trip twice) -- the safe direction for a missing column.
+        #
+        # ``exit_price`` is selected for the PLAUSIBILITY CENSOR below, and it
+        # is what forced a fourth and fifth rung onto this ladder. A schema
+        # without the column degrades to ``NULL``, which makes
+        # ``booked_return`` return None -- UNJUDGEABLE by the ratio arm, so the
+        # row is kept. That is the same direction this ladder already takes
+        # everywhere else: a missing column must never turn the censor into a
+        # silent ban of everything.
         for sql in (
-            "SELECT symbol, net_profit, gross_profit, entry_price, quantity, details",
-            "SELECT symbol, net_profit, net_profit, entry_price, quantity, details",
-            "SELECT symbol, net_profit, net_profit, entry_price, quantity, NULL",
+            "SELECT symbol, net_profit, gross_profit, entry_price, exit_price, quantity, details",
+            "SELECT symbol, net_profit, net_profit, entry_price, exit_price, quantity, details",
+            "SELECT symbol, net_profit, gross_profit, entry_price, NULL, quantity, details",
+            "SELECT symbol, net_profit, net_profit, entry_price, NULL, quantity, details",
+            "SELECT symbol, net_profit, net_profit, entry_price, NULL, quantity, NULL",
         ):
             try:
                 rows = list(conn.execute(
@@ -469,18 +484,90 @@ def _load_book(limit: int = 500) -> Tuple[Dict[str, List[Trip]], Dict[Tuple[str,
                 break
             except sqlite3.OperationalError:
                 continue
-        for symbol, net, gross, entry_price, quantity, details in rows:
+        # THE PLAUSIBILITY CENSOR, AT READ TIME, ON THE TRADING PATH.
+        #
+        # ``services.outcome_plausibility`` was in 23 scripts and ZERO files in
+        # trading/ (Sage p716): every census this crew wrote measured a
+        # different book from the one production decided on. Measured p719/p720
+        # over the 308 rows this SELECT returns, it drops 6 as
+        # ``repricing_return`` -- rows whose exit/entry ratio is past
+        # ``IMPLAUSIBLE_RET`` (0.50) and which move the pooled gross by 4.06,
+        # more than the entire surviving book:
+        #
+        #     AAVE-USDC     +174.2%   gross +3.4830
+        #     AERO-USDC     +161.0%   gross +3.2196
+        #     UNI-USDC      +122.9%   gross +0.7196
+        #     BASELINE-USDC  +57.9%   gross +0.2021
+        #     COMP-USDC      -55.3%   gross -1.1065
+        #     AERO-USDC      -54.9%   gross -1.0985
+        #
+        # FOUR SPURIOUS WINS AND TWO SPURIOUS LOSSES, which is what a genuine
+        # repricing artifact looks like and not what a filter fitted to a
+        # desired answer looks like. The direction it moves the gate is
+        # UNFAVOURABLE and shipped anyway: the pooled verdict changes on 2 of
+        # 60 symbols and both get STRICTER (AERO-USDC allow -> ban at t=-4.59;
+        # COMP-USDC ban t=-1.66 -> ban t=-2.85), and 0 of 130 pairs move. This
+        # is a correctness fix for the books, NOT a route to a live fill -- do
+        # not read "the censor works" as "the censor helps".
+        #
+        # READ TIME ONLY. Nothing here rewrites ``trade_outcomes``: the raw tape
+        # stays auditable, the graduation report censors at read the same way,
+        # and the two now agree by construction rather than by coincidence.
+        #
+        # FAILS OPEN TO UNCENSORED. If the module cannot be imported the book is
+        # built exactly as it was before, because this function decides every
+        # symbol refusal in production and an exception here would ban the
+        # universe.
+        try:
+            from services.outcome_plausibility import (
+                implausible_reason as _implausible_reason,
+                strategy_scales as _strategy_scales,
+            )
+        except Exception:  # noqa: BLE001 - uncensored is the pre-existing book
+            _implausible_reason = None
+            _strategy_scales = None
+
+        judged: List[Dict[str, Any]] = []
+        for symbol, net, gross, entry_price, exit_price, quantity, details in rows:
             if not symbol:
                 continue
+            judged.append({
+                "symbol": symbol,
+                "entry_price": entry_price,
+                "exit_price": exit_price,
+                # The SAME gross the verdict will sum. Handing the dollar arm a
+                # different number than the book counts would censor rows on a
+                # quantity that never reaches the test.
+                "gross_profit": (net if gross is None else gross),
+                "quantity": quantity,
+                "details": details,
+                "strategy_id": _strategy_of(details),
+            })
+
+        censored = 0
+        if _implausible_reason is not None and _strategy_scales is not None:
+            scales = _strategy_scales(judged)
+            kept: List[Dict[str, Any]] = []
+            for row in judged:
+                if _implausible_reason(row, scales=scales) is None:
+                    kept.append(row)
+                else:
+                    censored += 1
+            judged = kept
+        globals()["_censored_rows"] = censored
+
+        for row in judged:
+            symbol = row["symbol"]
             try:
-                notional = float(entry_price) * float(quantity)
+                notional = float(row["entry_price"]) * float(row["quantity"])
                 if not (notional >= MIN_NOTIONAL):   # also rejects NaN
                     continue
                 # GROSS, not net: `net_profit` has the fee already taken out,
                 # so comparing it against the round trip charges the round
-                # trip twice. A NULL gross falls back to net, which only ever
-                # makes the bar harder.
-                gross_amount = float(net if gross is None else gross)
+                # trip twice. A NULL gross fell back to net when the row was
+                # materialised above, which only ever makes the bar harder --
+                # and it is the same value the censor judged.
+                gross_amount = float(row["gross_profit"])
                 ret = gross_amount / notional
             except (TypeError, ValueError, ZeroDivisionError):
                 continue
@@ -489,7 +576,7 @@ def _load_book(limit: int = 500) -> Tuple[Dict[str, List[Trip]], Dict[Tuple[str,
             key = str(symbol).upper()
             trip = Trip(ret=ret, gross=gross_amount, notional=notional)
             book.setdefault(key, []).append(trip)
-            strategy = _strategy_of(details)
+            strategy = row["strategy_id"]
             if strategy:
                 pairs.setdefault((strategy, key), []).append(trip)
     except Exception:  # noqa: BLE001
@@ -610,6 +697,15 @@ def _never_ban(symbol: str) -> bool:
 def _rebuild(now: float) -> None:
     global _cache_built_at
     book, pair_book = _load_book()
+    if _censored_rows:
+        log_message(
+            "trading",
+            f"SYMBOL EDGE GATE: plausibility censor dropped {_censored_rows} "
+            f"row(s) from the book before judging "
+            f"(services.outcome_plausibility, read-time only -- "
+            f"trade_outcomes is unmodified)",
+            severity="info",
+        )
     verdicts: Dict[str, Tuple[float, str]] = {}
     for symbol, values in book.items():
         if _never_ban(symbol):
