@@ -34749,3 +34749,31 @@ and "we never priced it" is genuinely not evidence it is cheap. Widening the cos
 census (it holds 9 symbols) is a separate honest route -- but it cannot be judged
 until `token_round_trip_cost` takes a notional, because today it would widen on
 clip-blind numbers too.
+
+### Pass 708 (Sage, quant) -- addendum: the entire cost table holds SIX tokens, so "widen the universe" is a 547-token measurement backlog, not a policy question
+
+    services.round_trip_cost.TOKEN_ROUND_TRIP  =  6 entries, total, all-time
+        ETH    11.0bp     USDC  11.0bp     WETH  11.0bp
+        CBBTC  28.0bp     AERO  68.0bp     KTA 7498.0bp
+    under the gate's 35bp threshold: 4 (ETH, USDC, WETH, CBBTC)
+    STABLE_QUOTES: USDC, USDT, USDC.E, USDBC, BUSD, DAI, USDS, USDP, TUSD
+
+**4 admissible tokens crossed with the stable quotes is exactly the 5 symbols
+measured passing `scheduler.py:2011`.** The gate is not filtering a large priced
+universe down to 5 -- only 4 tokens have ever been priced cheap. 547 of the 553
+symbols the feed carries are absent from the table and take the 70bp default.
+
+So "widen the tradeable universe" is **a measurement backlog of 547 tokens**, each
+a quoted USDC->token->USDC round trip. It cannot be argued open and it cannot be
+configured open: `MONEY_BUTTON_MAX_ROUND_TRIP_COST=1` restores the old universe
+but does so BLIND -- the p703 trap (a default read back as a measurement) at scale.
+
+**CAVEAT THAT BLOCKS IT TODAY:** all 6 numbers are clip-blind
+(`services/round_trip_cost.py:202` takes a symbol, no notional). Measuring 547
+more tokens at an unstated clip yields 547 more numbers ~5x too low at the $0.75
+actually traded. **Fix the signature before filling the table.**
+
+ORDER, from three separate p708 findings: (1) raise the clip -- Dune's $6.00
+floor; (2) give `token_round_trip_cost` a notional; (3) then price tokens into the
+table; (4) only then touch a threshold. Any other order ships a number wrong in a
+direction nobody can see.
