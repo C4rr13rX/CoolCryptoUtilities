@@ -38159,3 +38159,65 @@ MONEY_BUTTON_SLIPPAGE down to make it bid. That manufactures a bid by lowering
 the bar the strategy exists to enforce, and it is the move that produced every
 fake edge in this repo's history. If anyone does it, it must be filed as a
 deliberate experiment with a pre-registered kill test, not as a fix.
+
+## Pass 719 (Cove, worker) -- route (a) hand-approval: CLOSED as specified, and the mechanism is named
+
+ROUTE TRIED: hand-approve one strategy onto the live lane at a minimum clip
+(standing instruction route (a)), targeting the strategy that actually fills.
+
+MEASURED, read-only, no restart:
+  - 2494 all-time fill rows in trading_ops (1833 ghost-entry + 661 ghost-exit),
+    52 distinct strategy_ids. Fill rows by a sid the ledger PERMITS to trade
+    live: 7 of 2494 = 0.28%. The permitted sid is money_button and it is the
+    only one. atf_static 953 fills, atf_static_scout 414 -- both refused.
+  - money_button's 7 fills are dated 2026-08-31 16:21 and five on 09-04, newest
+    2026-09-04 14:16:12. It was approved 2026-09-16. FILLS AFTER APPROVAL: ZERO.
+    So it stopped filling TWELVE DAYS BEFORE anyone approved it. Approval did
+    not silence it and un-approving it would not wake it. CORRECTS Dune p718
+    and my own p718 "money_button is absent" -- it is not absent, it is stale.
+  - trade_outcomes where wallet='live': n=18 net=-0.186371, matching the
+    scoreboard. By symbol: AERO-USDC 9/-0.070916, CBBTC-USDC 3/-0.055192,
+    CBXRP-USDC 1/-0.019078, BASECAT-USDC 1/-0.033240, BPAD-USDC 1/-0.254927,
+    BSTONK-USDC 1/+0.242029, CBETH-USDC 2/+0.004952.
+  - The first FOUR of those are refused by symbol_edge_gate in the CURRENT
+    STATE header at 2026-09-26 09:26:08. 14 of 18 rows, carrying -0.178426 =
+    95.7% of the entire loss, are on symbols production will not place again.
+
+CLOSED NEGATIVE, and this is the reason: hand-approval CANNOT open the lane for
+atf_static. ledger.py:1762-1764 -- setting live_approved narrows own_modes from
+("live","ghost") to ("live",) and then calls the same _losing_book_locked, which
+at ledger.py:1663-1664 reads book["trades"] and book["total_profit"] off the row
+with NO licence scoping. So it finds the same n=18 net=-0.186371 and returns the
+same refusal. may_place_live_order stays False and bot.py:2050
+_strategy_live_approved stays False, which is the seam behind bot.py:7282,
+:7558, :7735, :9261. Editing live_approved in data/strategy_ledger.json will
+look like a successful arm and then place no order. Pinned green in
+tests/test_the_live_refusal_is_a_permanent_ratchet.py at af581a4.
+
+THE ASYMMETRY, which is the defect: the DEMOTION predicate at
+ledger.py:1149-1160 reads _licence_trades/_licence_net, and its own comment at
+:1142-1148 says lifetime would be "a one-way ratchet ... the rule that demoted
+it re-demotes it forever" and names atf_static's -0.186371 over 18 lifetime
+trades as the bug it fixed. The REFUSAL never got that fix and still quotes that
+exact number. Lockout is closed by construction: total_profit moves only on a
+settled live trade, which the refusal forbids. Filed [137d3c5a] 3pt p1.
+
+KILL TEST I RAN AGAINST MY OWN BEST NUMBER, AND IT DIED: the ledger's own
+reinstated_reason for atf_static claims BPAD-USDC -0.254927 is refused now by
+symbol_motion_gate, which would make the fossil-free residual 3 rows at
++0.246981 and give route (a) a positive book. grep BPAD logs/system.log shows
+"deferred OHLCV backfill for BPAD-USDC" at 2026-09-24 12:51:35 and roundtrip-cost
+still charging BPAD a token-blind DEFAULT, so BPAD is STILL in the selection
+universe and cannot be dropped. With it in, the residual is 4 rows at -0.007946
+-- FLAT, not positive, n=4 carries no information. The +0.2470 is DEAD and would
+have been one BSTONK trade as 98% of gross, the exact artifact shape the
+briefing warns about. DO NOT re-derive it.
+
+ALSO RECORDED, no fix attached: atf_static was reinstated 2026-09-05 15:30:35 on
+the guard-FILTERED book and demoted again 1.53 hours later at 17:02:38 on the
+RAW 17-trade book. 17:02:38 is two minutes after 17:00:46, the last live trade
+this system ever placed. demotions=7, rearms=1.
+
+STILL OPEN AND NOT A CLAIM: whether the lifetime read is the bug or the licence
+read is too loose. The two comments in ledger.py do not agree and neither cites
+the other. Whoever takes [137d3c5a] must settle that before changing either.
