@@ -37408,3 +37408,51 @@ NOT DONE, DELIBERATELY: I did not restart production. Three agents were
 mid-measurement against the live process; a 13-minute hole in their pass is
 not worth closing one criterion 13 minutes early, and that call was not mine
 to make for them.
+
+### Pass 716 (Dune) addendum -- py-spy on the LIVE process, 45s, and where the entry path actually spends its time
+
+`.venv/Scripts/py-spy.exe record -p 11104 -d 45 -r 100 -f raw -o <tmp> --nonblocking`
+6860 samples, 114 errors, against production PID 11104.
+
+**`scheduler.evaluate` NEVER APPEARS** -- zero frames mentioning `evaluate` or
+`scheduler` in any of the 6860 stacks, including in the **1339 samples that are
+inside `_handle_sample` itself**. That is suggestive of "evaluate() is not being
+called" and it is **NOT proof**: absence at 100Hz is not absence, and a
+sub-millisecond call never lands in a sample. Pre-registered as weak before the
+run; reporting it as weak after. It is stronger than a bare grep only because it
+has a denominator.
+
+**STRONG POSITIVE**: `_interpret_predictions` IS on the stack under
+`_handle_sample`. The decision path runs while the lane is quiet, confirming
+from the live process that the halt only nulls `directive`.
+
+**THE FINDING THAT MATTERS MORE THAN THE TEST.** Callees of `_handle_sample`,
+by sample count (running-build line numbers):
+
+    465  _maybe_transition_to_live   bot.py:4926 / :4962     <-- 35% of the handler
+    294  _run_wallet_sync            bot.py:5916             (p713's sqlite-on-the-loop, still there)
+    289  _close_stale_positions_on_the_clock  bot.py:13706
+    277  _record_organism_snapshot   bot.py:13133
+      8  _invoke_model               bot.py:6052
+      1  _interpret_predictions      bot.py:7535
+
+and the top callee's full stack is
+
+    _handle_sample -> _maybe_transition_to_live (bot.py:4926)
+      -> pipeline.ghost_live_transition_plan (pipeline.py:6078)
+        -> _build_transition_plan (pipeline.py:6114)
+          -> _ghost_validation_for_live (pipeline.py:4791)
+            -> _ghost_validation (pipeline.py:4864)
+              -> metrics.distribution_report (metrics.py:226) -> numpy percentile
+
+`_ghost_validation` is where `ghost_collection_ready` and
+`ghost_risk_multiplier` are computed -- the term measured as 0.0 on all 29
+halts. So the transition plan is **rebuilt from scratch on every sample**, it is
+the single most expensive thing in the entry path, and it is the source of the
+zero. This is a captured stack from the live process, not an inference from the
+stale android build mirror.
+
+⚠ **THE RUNNING BUILD'S LINE NUMBERS ARE NOT THIS TREE'S.** Production predates
+Cove's 31-line insertion (ecff145), so `bot.py` frames read ~9-31 lines BELOW
+the tree -- `_interpret_predictions` is `:7535` in prod. Do not compare py-spy
+output to the working tree directly.
