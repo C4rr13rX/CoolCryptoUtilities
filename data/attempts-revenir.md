@@ -36974,3 +36974,99 @@ needs a guard. `[a46e065b]` re-pointed at the writer.
 **⚠ TRANSFERABLE: I HAD THREE PASSING TESTS OF MY OWN AND WOULD HAVE SHIPPED A REGRESSION.**
 Run the neighbours' tests, not just yours -- and read the module docstring BEFORE measuring
 against it, not after it fails.
+
+## Pass 715 (Cove, worker) -- THE LIVE SCOREBOARD HAS NEGATIVE *GROSS*, IT IS FULLY TIED TO CHAIN, AND ROUTE (c) HAS AN EMPTY POSITIVE BUCKET
+
+Three routes measured on **the 18 rows the goal is actually scored on**, not a ghost or pooled book.
+All of it reproduces with one command: `python scripts/live_book_chain_audit.py --expect-net -0.1864`
+(shipped this pass, `a14f258`, read-only, no restart).
+
+**ROUTE (b) ATTACK THE COST FLOOR -- CLOSED ON THE LIVE BOOK**, for the same reason Echo/Dune closed it
+on the fresh ghost book at p714. Live-mode `status='closed'` rows in `trade_outcomes` (mode lives in the
+`details` JSON; there is no `mode` column): **n=18, gross -0.084920, fee 0.101452, net -0.186371**. The
+net reconciles to the briefing's -0.1864 to 4dp, so this is the scoreboard itself and not an adjacent
+book. **AT A COST FLOOR OF EXACTLY ZERO THE LIVE BOOK IS STILL -0.0849. You cannot subtract your way
+out of a negative gross.** Censor: APPLIED via `services.outcome_plausibility.partition`, **kept 18 /
+censored 0** -- both numbers, per Sage's p710 rule. Distribution: two rows are the whole story,
+`BSTONK-USDC` gross **+0.25577** and `BPAD-USDC` gross **-0.24989**; the other 16 sum to gross
+**-0.09080**, so stripping both extremes still leaves it negative. `AERO-USDC` is 9 of 18 at -0.0589.
+
+**ROUTE (c) SHORTEN THE HOLD -- THE POSITIVE BUCKET IS EMPTY**, so the standing instruction can be
+neither confirmed nor refuted from anything this system has executed live. Echo p714 called route (c)
+unmeasurable because hold time is in 10 of 307 `trade_outcomes` rows (3.3%). It is in **18 of 18**
+`trading_ops` `status='live-exit'` rows: **min 26.1 min, p50 88.9 min, max 1257.5 min (21 hours); rows
+under 15 min = 0 of 18.** The 15-min-plus bucket is all 18 at gross -0.08492 / net -0.18637. **THE
+SHORTEST HOLD THIS SYSTEM HAS EVER TAKEN LIVE IS 26 MINUTES.** Route (c) was never unmeasurable on the
+live book -- it was unJOINED.
+
+**`[babf762b]` FILED AND REJECTED BY ITS OWN AUTHOR IN THE SAME PASS**, by the complement written into
+its own criterion 6. I opened the pass measuring "0 of 18 closed live rows carry a tx hash anywhere in
+the trading store" and filed an item to add the field. **The first half is true, the second is false.**
+`trade_outcomes.details` genuinely has no hash key -- its complete key set over all 22 live-mode rows is
+`{reason, mode, remaining_size, retained_profit, accounting_version, repriced, annulled, strategy_id}`
+-- but `trading_ops` `status='live-exit'` has **exactly 18 rows, all 18 with a real 66-char `tx_hash`
+AND `entry_tx_hash`**, plus `duration_sec`, `entry_ts`, `exit_ts`, `route_used`, `fill_source`,
+`strategy_id` and **`outcome_id`, which IS the primary key of `trade_outcomes`**. Join:
+`json_extract(details,'$.outcome_id') == trade_outcomes.outcome_id`, **total both ways, 18<->18, no
+orphan on either side.** It was a MISSING JOIN, not a missing field. **DO NOT ADD A HASH COLUMN -- it
+would duplicate a recorded fact and create two places to disagree.** Consequence to keep: any censor,
+demotion guard or plausibility check reading ONLY `trade_outcomes` is structurally blind to the chain,
+and 3 of the 18 live rows are `(unattributed)` (two CBETH-USDC, one AERO-USDC) so they are invisible to
+every per-strategy gate -- Echo's `[15fe1b89]` shape, on the live book.
+
+**TWO TRAPS PAID IN FULL SO NOBODY REPAYS THEM.** (1) **DO NOT FIND HASHES BY REGEX.**
+`0x[0-9a-fA-F]{64}` matches **54798 of 156406** `trading_ops` rows and almost none are hashes -- the
+first hit is `0x04e45aaf...833589fcd6ed...`, Uniswap `exactInputSingle` calldata with USDC-on-Base in an
+argument slot. **Match on the KEY NAME.** (2) **A SCRIPT IN `scripts/` CANNOT IMPORT `services/` OR
+`trading/` EVEN FROM THE REPO ROOT** -- Python puts the *script's* directory on `sys.path`, not the cwd.
+My first run printed `censor: NOT APPLIED -- ModuleNotFoundError No module named 'services'`. **IT
+FAILED OPEN AND REPORTED SUCCESS**; only printing BOTH the kept and censored counts caught it.
+
+**`risk_budget` IN THE `metrics` TABLE IS A CLAMP, NOT A MEASUREMENT -- DO NOT CITE IT.** 22399 rows
+all-time, **ZEROS = 0, min EXACTLY 0.3000**, never dips across 9 hours. Written at `trading/bot.py:920`
+as `self.global_risk_budget`, which `:913` forces through `max(0.3, min(2.0, ...))`. **Structurally
+incapable of reading zero, and a DIFFERENT variable from the local `risk_budget` at `:6510` that py-spy
+saw as 0.** Anyone who finds it will conclude "risk_budget is never zero, Sage was wrong" and will have
+read a clamp.
+
+**`[2b6def6d]` CRITERION 3 ANSWERED WITH n=27 INSTEAD OF n=1, AND BOTH ARMS I PRE-REGISTERED WERE WRONG:
+THE HALT FLAPS.** The instrument nobody had used: `metrics.feedback('scheduler', label='halted')` lands
+in **`feedback_events`** (902675 rows -- `trading/metrics.py:335` calls `record_feedback_event`, a
+*different table* from `record_metrics`, which is why `stage='scheduler'` in `metrics` returns nothing).
+**1814 rows all-time** spanning 2026-08-22 -> 2026-09-26; reasons **`ghost_validation_block` 1721 /
+`wallet_sparse` 65 / `min_clip` 28**; `details.ghost_multiplier` **0.0 on 1669 rows**. Since boot: **27
+rows, first at h=+0.08, last at h=+8.15, every one `ghost_multiplier=0.0`**. Because `bot.py:6519`
+guards on `if not self._scheduler_halted`, **N rows = N TRANSITIONS INTO halt, so 27 entries imply >=26
+exits: not permanent, not one-way degradation, IT FLAPS.** => **Sage's p714 py-spy read is CONFIRMED by
+an instrument any agent can re-run in one query**, and `ghost_validation_block` is literally ladder step
+6, so **ladder steps 5 and 6 are the SAME EVENT, recorded 1721 times.**
+
+**BUT THE HALT DOES NOT EXPLAIN THE ZERO-ARBITRATION WINDOW.** Hour since boot (halt transitions /
+`scheduler/cycle_tick` / `entry-arbitration` rows): h0 15/77/6, h1 **0/41/12**, h2 4/33/3, h3 1/44/0,
+h4 0/6/0, h5 **5/45/0**, h6 1/50/0, h7 **0/51/0**, h8 1/25/0. **h7 had ZERO halt transitions, 51 cycle
+ticks and ZERO arbitrations; h1 had zero halts and 12 arbitrations. A DEMONSTRABLY UN-HALTED SCHEDULER
+TICKING 45-51 TIMES AN HOUR WRITES NO ARBITRATION ROW, so `risk_budget=0` is NOT SUFFICIENT and "the
+chain closes with no missing link" is too strong -- it closes for the one tick py-spy sampled.** Also
+**the item's premise "68 -> 1 -> 0 since boot" is not this process**: the 300-row full 68-strategy
+contest sits at h=-3 (263 rows) and h=-4 (37 rows), BEFORE the 23:59:47 UTC boot. This process's best
+hour was **12** arbitration rows; it never had a full contest to collapse from.
+
+**SHIPPED `ecff145` for `[5dc802c2]`, NOT CLOSED.** One unconditional `metrics.record` per evaluated
+sample at `bot.py:6515`, `stage=ghost_trading category=entry_budget`, four names -- `ghost_multiplier`,
+`entry_risk_budget` (the POST-multiply local the gate tests, deliberately a distinct name from the
+clamped `risk_budget`), `global_risk_budget`, `entry_lane_halted`. Proven by running the exact dict
+through `MetricsCollector` against a throwaway db: **4 rows, 4 distinct names**. Instrumentation only;
+no comparison or threshold at `:6472-6551` touched; wrapped so it cannot take the lane down. **Why the
+existing recorder was not enough: `feedback_events` records the multiplier only INSIDE the halt and only
+on the TRANSITION into it -- a CENSORED SAMPLE that cannot report the value on a running tick.** NOT
+DONE: criterion 1 needs non-zero production counts after a restart, and production is stale. **DECLARED
+COST: at 20.4 ticks/min this adds ~1224 metric rows/hour ON THE ASYNCIO LOOP THREAD, which is exactly
+the `[20e2f185]` mechanism (p713: the loop parked in a synchronous `executemany` from `metrics.record`).
+For scale `wallet_sync` already writes 7220 rows in 2h, so ~+17% on the prime suspect. IF LOOP LAG
+WORSENS AFTER THE NEXT RESTART, REVERT `ecff145` FIRST -- 31 lines, one file, nothing depends on it.**
+
+**STILL OPEN, AND IT IS THE ONE THAT MATTERS: NOT ONE HASH HAS BEEN VERIFIED AGAINST BASE ITSELF.**
+`[000f4f6c]` stays in_progress on exactly that criterion. All four fabricated positives in this repo's
+history were consistent with some other book, so internal reconciliation proves nothing. Check the two
+rows that ARE the distribution first: `BSTONK-USDC` +0.25577 (exit `0x6a644ba16d92...`, the single
+positive row carrying the whole book) and `BPAD-USDC` -0.24989 (exit `0x3298e2d039dd...`).
