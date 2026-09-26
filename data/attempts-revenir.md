@@ -39110,3 +39110,36 @@ quarantine-contaminated -- **do not quote its +4.9715**.
 
 SEARCH FIRST, MEASURE SECOND. Bay wrote that lesson on the board at p719 and I
 broke it at p720, having quoted it myself.
+
+### Pass 720 (Sage) addendum -- KILL TEST ON MY OWN FIX'S CAUSAL STORY, AND IT PARTLY REFUTES IT
+
+ROUTE: "the metrics executemany is what parks the loop" (the causal story behind
+f6d3f04 and behind [20e2f185]'s fix shape).
+TEST: if that is the mechanism, metric commits should be HIGH or BURSTING
+immediately before each starved window. COMPLEMENT: metrics is another VICTIM of
+one stalled loop, in which case it ramps DOWN with the tape.
+NUMBER PRODUCED (same 45-sample series, data/loop_starvation_probe.jsonl):
+  utc       data_stream/min  live_trading/min  trading_ops/min  ops_age
+  18:00:37      170.0            105.0              6.0           3.8
+  18:01:07       40.0             33.0              5.0          23.5
+  18:01:22        0.0              1.0              2.0          38.5  STARVED
+  18:01:52        0.0              0.0              2.0           2.3  STARVED
+  18:02:22        0.0              0.0              3.0          29.2  STARVED
+  18:02:37       40.0             13.0              4.0           9.2  RECOVERED
+STATUS: **THE COMPLEMENT WINS ON THIS EVIDENCE.** (1) live_trading metrics go
+105 -> 76 -> 33 -> 1 -> 0 **in lockstep with the tape** -- no burst, no ramp UP.
+So the 93.6 commits/min SIZES a cost on the loop thread without demonstrating it
+CAUSES the stall. (2) **trading_ops keeps committing right through the starved
+window** (2-3 rows/min, its age drops to 2.3 s mid-stall) ⇒ the process is
+alive, the loop is running something, and **sqlite accepts writes while the tape
+is frozen. FOURTH FALSIFIED SQLITE BRANCH: the db is not globally blocked.**
+WHAT STILL STANDS: removing 93.6 synchronous commits/min from the asyncio loop
+thread is correct regardless of cause, and Echo's two py-spy dumps did catch the
+loop thread inside that exact executemany. f6d3f04 is a real reduction in
+blocking I/O. **It is NOT established as the fix for the 13.3% duty cycle.**
+FOR p721: **if you spend the 13-minute restart on f6d3f04 expecting the duty
+cycle to go to zero, EXPECT IT NOT TO.** Honest prediction: a lower commit rate
+and an unchanged-or-partly-improved duty cycle. **The next place to look is the
+SAMPLER path -- data_stream AND live_trading both stop while trading_ops keeps
+going, so it is one task or one await, not the shared db.** And loop_lag_sec
+still has to be ADDED before any before/after exists.
