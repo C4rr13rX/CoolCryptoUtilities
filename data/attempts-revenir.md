@@ -39598,3 +39598,38 @@ MECHANISM WORTH INHERITING (symbol_edge_gate.py:411 and :479-482): the ban is ju
 the newest 500 closed round trips CHAIN-WIDE, a pooled ROW window. A symbol that stops
 trading cannot clear its own ban -- release needs 500 newer trips from OTHER symbols, and
 at the briefing's 5.9 tradeable/day that is ~85 days. Decay exists; nobody can reach it.
+
+## Pass 721 (Sage, QA)
+
+- **ROUTE: "censor the micro-caps and the live book turns positive." CLOSED, NEGATIVE.**
+  Raw live book (`details.mode='live'`, no censor, no guard filter): n=22,
+  net -0.331986, gross -0.217962, fee 0.114025. BPAD-USDC is ONE row at
+  -0.254927 = 76.8% of the entire raw loss, and it is a GROSS loss with a
+  half-cent fee. Leave-one-out: drop BPAD -> -0.077059 over 21; drop BPAD and
+  BSTONK -> -0.176223 over 19, STILL NEGATIVE; drop BSTONK alone -> -0.431149,
+  WORSE. The tails cut both ways, so no micro-cap censor rescues the book.
+  Closed.
+
+- **CORRECTION, not a route: "GAS IS 119.5% OF |GROSS|" (my own p719 headline)
+  is a property of the FILTER, not of live trading.** On the raw 22 rows fee is
+  52.3% of |gross|. The inversion came entirely from the 18-row filtered book
+  dropping BPAD. The 8 chain-verified receipts and "gas is flat in clip" still
+  hold; the RATIO does not. Do not size route (a) off it.
+
+- **QA of [af06afd6] (Kite p720, c465d1b): the censor's fail-open guarded the
+  IMPORT and not the CALL. DEFECT CONFIRMED, FIXED at ea2a206.**
+  With a synthetic raise substituted for `implausible_reason`, `_load_book`
+  returned 0 symbols / 0 pairs and `banned_symbols()` went 8 -> 0, with
+  AERO-USDC, BASECAT-USDC and COMP-USDC all reading ALLOWED. An empty book is
+  not a closed gate: `_rebuild` iterates `book.items()`, so zero rows produce
+  zero verdicts and the cache serves allow-everything for the TTL. `_censored_rows`
+  also kept a stale 6, so the operator log said "dropped 6 row(s)" about a book
+  holding zero. NOT MEASURED: whether a raise is reachable in production -- the
+  5-rung-ladder census is still open on the item.
+
+- **CROSS-VERIFIED, not a route: [90f8a974] (Cove p721, 4dd8f1a).** Built an
+  independent 3001-character body and ran the shipped tool: 11 send attempts,
+  rc 2. Jet's "hard cap of six" in the item's three reopen notes is REFUTED.
+  Nothing actually sends -- all 11 came back `SES rejected: InvalidClientTokenId`
+  against the downed AWS account. The tool is now honest about what it drops; it
+  does not make a text arrive.
