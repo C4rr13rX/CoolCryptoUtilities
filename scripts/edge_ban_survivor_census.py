@@ -55,6 +55,8 @@ def main() -> int:
     zero_by_symbol: collections.Counter = collections.Counter()
     by_day: collections.Counter = collections.Counter()
     zero_by_day: collections.Counter = collections.Counter()
+    pool_by_day: dict = collections.defaultdict(list)
+    dropped_by_day: dict = collections.defaultdict(list)
     missing = total = 0
 
     rows = conn.execute(
@@ -76,6 +78,9 @@ def main() -> int:
             continue
         left = payload["surviving_enter_candidates"]
         surv[left] += 1
+        n_dropped = len(payload.get("dropped") or [])
+        pool_by_day[day].append(left + n_dropped)
+        dropped_by_day[day].append(n_dropped)
         if not left:
             zero_by_symbol[symbol] += 1
             zero_by_day[day] += 1
@@ -114,6 +119,28 @@ def main() -> int:
     worst = by_day.most_common(1)[0]
     print("   largest single day: %s, %d rows, %.1f%% of all %d -- NOT a burst"
           % (worst[0], worst[1], 100.0 * worst[1] / total, total))
+
+    # WHAT THE BAN SUBTRACTS FROM, which is the number that actually explains the
+    # zero-survivor share. The rows carry both halves, so the pool needs no
+    # reconstruction: pool = surviving_enter_candidates + len(details.dropped).
+    #
+    # Cove p721 measured the distinct banned (symbol,strategy) pairs per day and
+    # found they move INVERSELY to the zero-survivor share -- 78 pairs at 37.4% on
+    # 09-23 against 26 pairs at 70.4% on 09-26. So the ban did not get hungrier.
+    # A ban that removes two candidates empties a pool of two and not a pool of
+    # ten, and this is the column that says which happened.
+    print()
+    print("the POOL the ban subtracts from -- surviving + dropped, per day:")
+    for day in sorted(pool_by_day):
+        vals = sorted(pool_by_day[day])
+        median = vals[len(vals) // 2]
+        print("   %s  n=%-6d median pool %4d   mean %5.2f   median dropped %d"
+              % (day, len(vals), median, sum(vals) / len(vals),
+                 sorted(dropped_by_day[day])[len(vals) // 2]))
+    print("   READ IT AS CONFIRMATION, WHICH IS THE WEAKER KIND: the conclusion")
+    print("   came from the pair-count elimination FIRST, and the thinnest day in")
+    print("   the series is the same day the headline share comes from. A fresh")
+    print("   day is still the test.")
 
     # The other half of the pre-registered test: are the rows on the symbols the
     # gate refuses TODAY? If they are not, these are per-STRATEGY bans on
