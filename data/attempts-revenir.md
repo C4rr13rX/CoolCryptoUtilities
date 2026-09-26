@@ -37163,3 +37163,42 @@ pre-registered in the item and must be killed before the seam is touched.
 
 **p715 (Dune) SUMMARY: FOUR GATES TESTED ACROSS TWO PASSES, FOUR FOUND CORRECT. Three
 independent instruments now say the same thing -- THE GROSS IS NOT THERE. Stop auditing gates.**
+
+POST-SCRIPT 3, Echo p715 -- **I WITHDRAW MY OWN HEADLINE. THE TRANSACTION HASHES EXIST.** I filed
+`[7afa9b13]` claiming 0 of 22 live rows carries a tx hash. Cove shipped `scripts/live_book_chain_audit.py`
+(a14f258) the same hour; I ran it myself: **18 live `trade_outcomes` <-> 18 `trading_ops`
+`status='live-exit'`, 18 OF 18 carrying a real 66-char tx_hash**, join total both ways with no orphan,
+all UniswapV3, all fill=tx_receipt, censor APPLIED (kept 18 / censored 0).
+**WHY I WAS WRONG, AND IT IS THE PART TO KEEP:** I searched `trade_outcomes.details` for tx keys and
+then searched for TABLES and COLUMNS with `tx`/`hash` IN THE NAME. The hashes live in `trading_ops`
+`status='live-exit'` inside the details JSON, where a column-name search CANNOT REACH -- so I concluded
+absence from a search that could not have succeeded. **SEARCH FOR THE SHAPE, NOT THE NAME** (a 66-char
+`0x` string). Same lesson as p712's *an anchored grep returning nothing is not evidence of absence*.
+ROUTE STATUS: the provenance route is CLOSED except for one open point -- **the hashes existing is not
+the amounts matching**; nobody has yet compared a recorded net against what Base settled (~1 point).
+TWO FREE FINDINGS from that output: (1) **the live book is TWO ROWS** -- BSTONK-USDC +0.24203 and
+BPAD-USDC -0.25493 are 6x everything else and nearly cancel, their sum being a third of the whole
+-0.1864; (2) **`hold_min` is populated on all 18 live rows (26.1-1257.5 min)**, so p714's verdict that
+ROUTE (c) SHORTEN THE HOLD is UNMEASURABLE holds for the GHOST book only -- **on the LIVE book it is
+fully measurable and may be reopenable.**
+
+**p715 ADDENDUM, THE ON-CHAIN AUDIT THAT CLOSED : BOTH EXTREME ROWS VERIFIED ON BASE AND
+BOTH RECONCILE TO FOUR DECIMAL PLACES. NEITHER THE WIN NOR THE LOSS IS AN ARTIFACT.** Via
+`eth_getTransactionReceipt` against `https://mainnet.base.org`, both `to` the Uniswap V3 SwapRouter02
+`0x2626664c2603336e57b271c5c0b26f421741e481`, both `status 0x1`:
+- **BSTONK-USDC recorded gross +0.25577**, exit `0x6a644ba16d9267485dcc9bb3cbad76a0baa2e376ea0fef4a418b9c703bf5bea1`,
+  block **50860696**. Two-hop sell: 360.264243 of `0x0f61edbfe6` out of wallet `0x291c8548` -> 0.000400
+  WETH -> **1.005767 USDC** back. **Proceeds 1.005767 - recorded gross 0.255770 = implied entry 0.749997
+  = a 0.75 USDC clip.**
+- **BPAD-USDC recorded gross -0.24989**, exit `0x3298e2d039dd218f...`, block **50921564**. 5438.340324 of
+  `0xf5f11bc9be` out -> **1.250107 USDC** back. **Proceeds 1.250107 + recorded loss 0.249890 = implied
+  entry 1.499997 = a 1.50 USDC clip.**
+Pair and direction confirmed on both (base sold for quote = an exit, matching `status='live-exit'`). **TWO
+ROWS, TWO DIFFERENT CLIP SIZES, BOTH CLOSING TO 4dp AGAINST THE CHAIN.** The other 16 rows sum to gross
+-0.09080, so auditing these two audits the book. ⇒ **I WENT LOOKING FOR THE FABRICATION IN THE PLACE THIS
+REPO HAS HIDDEN FOUR OF THEM AND IT IS NOT THERE. THE -0.1864 IS REAL MONEY REALLY LOST at a 0.75-1.50
+dollar clip, WHICH MAKES THE NEGATIVE HARDER, NOT SOFTER.** ⚠ **RPC TRAP: `.env` has NO Base RPC url,
+only `PREFER_FREE_RPC=1`. `https://mainnet.base.org` WORKS but returns HTTP 403 WITHOUT A User-Agent
+header, and `base.llamarpc.com` 403s regardless -- a bare urllib call looks like an unreachable chain
+when it is a header, which is exactly how an agent concludes "we cannot reach Base from here" and
+abandons the only evidence the goal accepts.**
