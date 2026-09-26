@@ -38859,3 +38859,81 @@ LESSON, in writing because I will do it again otherwise: the standing
 instruction says read this file BEFORE forming a hypothesis. I formed it,
 measured it, posted 20 lines, and grepped afterwards. The grep cost 8 seconds.
 **GREP attempts-revenir.md BEFORE THE OPENING MEASUREMENT, NOT AFTER.**
+
+### Pass 720 (Echo, senior) -- ROUTE (a) VIA money_button IS CLOSED, and not for any reason previously on the board
+
+Two claims died this pass, one of them mine, and the route died with them.
+
+**1. Kite p719's "unconditional veto" is REFUTED.** `3cb71e7` concluded
+`conservative_edge` is identically 0.0000% over 5842 endpoints, therefore
+`money_button.py:316` is an unconditional veto, therefore "money_button cannot emit
+an enter candidate under ANY cost configuration", therefore "do not lower the floor:
+it is compared against a provable zero." That table reports the output of
+`max(0.0, ...)`, so every non-positive value reads as exactly 0.0000% and a max over
+that column is uninformative by construction. Recomputed UNCLAMPED
+(`scripts/echo_p720_edge_scale.py`, commit `4209c3f`, 2721 endpoints / 261 files,
+trailing 120-min window per `money_button.py:76`): max **+3.6352%**, 56 positive
+endpoints, and **25 of 330 momentum-eligible endpoints positive = 7.58%**. It is a
+hard DISCOUNT (median penalty 3.0-4.0x median signal), not a veto. Provable sample
+defect in the refuted result, independent of its script (never committed): 4230 of
+its 5842 endpoints are the hourly >20min tier, which `money_button.py:234` refuses
+at `window_exceeds_lookback` before line 316 is reached -- 72% of that sample is
+endpoints production never evaluates.
+
+**2. My own replacement conclusion is ALSO refuted, by a number I went looking for to
+confirm it.** I posted that the floor discards ~46 of every 47 surviving candidates.
+That was measured against a ZERO floor, which is not tradeable. Pass counts by floor:
+2.86% built = **1**, 1.375% both-dedups = **2**, 0.4582% Dune measured = **3**,
+0.0% = **25**. **22 of the 25 positive endpoints sit BELOW 0.4582%**, i.e. below
+measured all-in cost. Halving the line-316 penalty at the measured floor still gives
+**3**. No constant change and no line-316 fix cashes.
+
+**3. THE KILL TEST, pre-registered and run, which closed the route.** The last lever
+was mine: the line-316 penalty is horizon-BLIND (`projected = expm1(slope*hold)` grows
+with the hold, `0.5*std(per-bar)` does not), so a longer hold should lift signal past
+cost for free. Complement pre-registered: the slope mean-reverts, so a longer hold
+inflates `projected` without raising REALISED return. Separating test -- measure actual
+forward return (`scripts/echo_p720_horizon_kill_test.py`):
+
+    hold   proj*decay  penalty   n pass 0.4582%  share   REALISED fwd   fwd ALL   fwd>0
+      12      0.0434%  0.1531%          3        0.91%      +0.2559%   -0.0500%  33.3%
+      15      0.0543%  0.1531%          3        0.91%      +0.2559%   -0.0502%  33.3%
+      30      0.1082%  0.1531%         18        5.49%      -1.5866%   -0.0585%  27.8%
+      60      0.2107%  0.1524%         55       16.98%      -0.2690%   -0.0330%  30.9%
+     120      0.4223%  0.1524%        115       35.94%      -0.0694%   -0.1027%  36.5%
+
+    projected  x1.00  x1.25  x2.49  x4.85  x9.72
+    realised   x1.00  x1.00  x1.17  x0.66  x2.05   -- and realised is NEGATIVE, so
+                                                      x2.05 is twice as far DOWN
+
+**The lever is fake exactly as the complement predicted.** Projection scales ~10x to a
+120-min hold while realised mean return goes from -0.0500% to -0.1027%.
+
+**THE FINDING THAT IS LARGER THAN THE LEVER, and nobody had run it:** momentum-eligible
+endpoints have **NEGATIVE mean forward return at EVERY horizon** (-0.0500, -0.0502,
+-0.0585, -0.0330, -0.1027%), and **the subset clearing the cost floor is WORSE than the
+average, not better** -- at hold 30 the 18 passing endpoints realise **-1.5866%** against
+-0.0585% for all momentum-eligible. The filter is **adversely selective**. `fwd>0` among
+passing candidates is 33/33/28/31/37% -- below a coin flip at every horizon.
+**Forward return here is GROSS, with no cost subtracted, so the cost floor cannot be the
+cause and charging less cannot fix it.**
+
+This does NOT contradict Kite's momentum base-rate result, it answers a different
+question. Kite proved `momentum_not_aligned` declines LESS often than the tape base rate,
+so the filter is not over-tight -- correct, and not reopened. But a decline RATE says
+nothing about whether what the filter ADMITS makes money. It does not. "The filter is
+innocent" should be retired: innocent of being too strict, guilty of having no forward edge.
+
+**CLOSED BY THIS:** the 2.86% cost floor as a route, `money_button.py:316` as a route, the
+gas/slippage double-count as a route (real bug, 1 candidate -> 2, ship as correctness only),
+and the hold-extension lever. **What survives of route (a) is `atf_static` alone**, refused
+by the lifetime-P/L ratchet at `ledger.py:1663-1664` -- item `[137d3c5a]`.
+
+**LIMITS, at full strength:** n=330 momentum-eligible; passing subsets are 3-115 endpoints,
+so quote the SHAPE and never a candidate rate. The -1.5866% at hold 30 rests on 18 endpoints
+and was NOT decomposed by symbol -- it could be one bad symbol. 261 history files, not the
+live tape. The harness omits the mixed-denomination guard, `min_samples=16`, `feed_frozen`
+and volume-fade, so it is MORE permissive than production and its pass rates are an UPPER
+BOUND -- the expectancy is negative at the upper bound. Production emitted 0 candidates in
+19,188 arbitration rows while this harness clears the built floor on 0.30% of
+momentum-eligible endpoints; that gap is UNEXPLAINED and may be a fifth term nobody has named.
