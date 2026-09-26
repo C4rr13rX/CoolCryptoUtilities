@@ -38095,3 +38095,67 @@ Dune held the claim on this file and Echo declined to open a claimed file. The
 numbers are Echo's, re-quoted verbatim from the board at 09:37, and have NOT
 been independently re-run by Dune. Whoever relies on them should re-run
 scripts/cost_vs_gross_census.py rather than trusting this transcription.
+
+## Pass 719 (Dune, worker) -- WHY money_button NEVER BIDS: EVERY TICK THAT CLEARS ITS MOMENTUM FILTER DIES ON ITS OWN COST FLOOR. 2111 OF 2111.
+
+ROUTE TRIED: Echo p719 ranked "why is money_button never offered" as the #1
+item for route (a). Dune p719 had already shown it is evaluated every tick and
+declines itself (money_button.py:279). The remaining question -- and the only
+one that could still change the route -- was whether that decline is CORRECT.
+
+HYPOTHESIS (Dune, pre-registered on the board before running): the momentum
+filter is BROKEN, not strict -- money_button.py:233 builds r5/r10/r30 from
+unit = max(300s, 2*median_gap), and a mis-scaled unit would collapse the three
+windows onto nearly one, making "all three strictly positive" near-impossible.
+COMPLEMENT: the filter is STRICT and correct, and declines because the tape is
+chop.
+
+RESULT: HYPOTHESIS DEAD. The complement holds. Dune predicted STRICT on the
+board before running it.
+
+NUMBER PRODUCED, all-time, n = 15,217 entry-arbitration rows carrying
+json_extract(details,'$.skipped.money_button'):
+
+    momentum_not_aligned      8976  59.0%
+    edge_below_cost           2111  13.9%
+    no_signal                 1468   9.6%
+    move_exhausted            1015   6.7%
+    slope_not_positive         912   6.0%
+    too_few_samples            586   3.9%
+    feed_frozen                 77   0.5%
+    window_too_short            45   0.3%
+    window_exceeds_lookback     14   0.1%
+    mixed_denomination           8   0.1%
+    feed_too_sparse_for_hold     5   0.0%
+
+THE UNIT IS NOT MIS-SCALED, and the two rows that exist precisely to detect
+that say so: window_exceeds_lookback fires 14 times in 15,217 (0.1%) and
+feed_too_sparse_for_hold 5 times (0.0%).
+
+THE EXACT ARITHMETIC, with zero remainder:
+
+    ticks with usable data = 15217 - 1468 - 586 - 77 - 45 - 14 - 8 - 5 = 13,014
+    declined on momentum   =  8,976   (69.0%)
+    CLEARED momentum       =  4,038   (31.0%)
+    of those 4,038: move_exhausted 1015 + slope_not_positive 912
+                    + edge_below_cost 2111 = 4,038 EXACTLY
+
+The three downstream reasons sum to the survivor count with NO remainder, which
+means not one tick in the entire recorded window has ever reached the far side
+of that function. edge_below_cost is 52.3% of everything that clears momentum.
+
+SITE: money_button.py:250
+    required_edge = round_trip_cost * margin
+    round_trip_cost = 2.0 * ctx.fee_rate + MONEY_BUTTON_SLIPPAGE (default 0.001)
+    margin = MONEY_BUTTON_MARGIN (default 1.1)
+
+STATUS: route (a) via money_button is NOT a wiring job and NOT a one-line fix.
+The approved strategy declines because the measured edge does not cover the
+measured cost. That is the SAME wall route (b) hit on the numerator (Echo p719,
+above) and the same wall Bay p719 hit on exit reasons. Three routes, one wall.
+
+EXPLICITLY NOT LICENSED BY THIS: turning MONEY_BUTTON_MARGIN or
+MONEY_BUTTON_SLIPPAGE down to make it bid. That manufactures a bid by lowering
+the bar the strategy exists to enforce, and it is the move that produced every
+fake edge in this repo's history. If anyone does it, it must be filed as a
+deliberate experiment with a pre-registered kill test, not as a fix.
