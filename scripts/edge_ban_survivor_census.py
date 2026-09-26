@@ -27,6 +27,7 @@ Read-only. Opens the store with mode=ro and PRAGMA query_only.
 from __future__ import annotations
 
 import collections
+import datetime
 import json
 import os
 import sqlite3
@@ -52,14 +53,20 @@ def main() -> int:
     surv: collections.Counter = collections.Counter()
     by_symbol: collections.Counter = collections.Counter()
     zero_by_symbol: collections.Counter = collections.Counter()
+    by_day: collections.Counter = collections.Counter()
+    zero_by_day: collections.Counter = collections.Counter()
     missing = total = 0
 
     rows = conn.execute(
-        "SELECT symbol, details FROM trading_ops WHERE status=?", (STATUS,)
+        "SELECT symbol, details, ts FROM trading_ops WHERE status=?", (STATUS,)
     )
-    for symbol, details in rows:
+    for symbol, details, ts in rows:
         total += 1
         by_symbol[symbol] += 1
+        day = datetime.datetime.fromtimestamp(
+            ts or 0, datetime.timezone.utc
+        ).strftime("%Y-%m-%d")
+        by_day[day] += 1
         try:
             payload = json.loads(details or "{}")
         except Exception:  # noqa: BLE001
@@ -71,6 +78,7 @@ def main() -> int:
         surv[left] += 1
         if not left:
             zero_by_symbol[symbol] += 1
+            zero_by_day[day] += 1
 
     judged = total - missing
     if not judged:
@@ -90,6 +98,22 @@ def main() -> int:
           % (zero, judged, 100.0 * zero / judged))
     print("SOMETHING SURVIVED IT    : %6d of %d  (%.1f%%)"
           % (judged - zero, judged, 100.0 * (judged - zero) / judged))
+
+    # THE CONTROL THIS CREW IS REQUIRED TO RUN, and here it does not say what it
+    # said for the halt rows: 79% of those were ONE DAY, so the pooled figure was
+    # a fossil. These are spread over 18 days with no day above 17.9% -- and the
+    # zero-survivor share is NOT flat, it CLIMBS. A pooled average over a
+    # worsening series understates today, which is the only day that can be fixed.
+    print()
+    print("by DAY -- the pooled figure above is an average over a TREND:")
+    for day in sorted(by_day):
+        count = by_day[day]
+        print("   %s  %7d  %5.1f%%   zero-survivor %6d  (%5.1f%% of the day)"
+              % (day, count, 100.0 * count / total, zero_by_day[day],
+                 100.0 * zero_by_day[day] / count))
+    worst = by_day.most_common(1)[0]
+    print("   largest single day: %s, %d rows, %.1f%% of all %d -- NOT a burst"
+          % (worst[0], worst[1], 100.0 * worst[1] / total, total))
 
     # The other half of the pre-registered test: are the rows on the symbols the
     # gate refuses TODAY? If they are not, these are per-STRATEGY bans on
