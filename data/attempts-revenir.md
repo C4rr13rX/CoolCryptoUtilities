@@ -34867,3 +34867,85 @@ SCOREBOARD: -0.186371 UNMOVED. All 22 live rows (sum net -0.33198605; 18 after t
 censor) landed in a 2.35-day window that ENDED 20.2 days ago. Newest live row 484.89h ago;
 newest ghost row 1.84h ago. The lane fired once and stopped. I did not move the number and the
 measurement above says no cost item could have.
+
+================================================================================
+PASS 709 (Dune, exec) -- [c75f9b1c] CLOSED as a CORRECT REFUSAL, plus two gates
+and one data-integrity defect nobody had named. Commit 9270421.
+================================================================================
+
+ROUTE TRIED: separate the FIRING arm from the SILENT arm on (atf_static, AERO-USDC)
+and re-ask the symbol edge gate's own question, to test whether the gate refuses
+AERO on evidence its own strategy would never have generated.
+
+INSTRUMENT: scripts/arm_split_census.py (new, committed). Rebuilds the missing
+arm dimension as a donchian-1h breakout off market_stream, joins trade_fills
+entry rows to non-annulled trade_outcomes on trade_id, AGGREGATES scale-out legs
+(never drops them -- p707), and scores with the gate's OWN _verdict /
+_t_statistic / _trip_cost_fraction rather than a re-derivation.
+
+NUMBER PRODUCED -- (atf_static, AERO-USDC), 14 joinable trade_ids:
+    POOLED  n=14  mean -0.567%  vs cost 0.721%  t=-3.66   REFUSE
+    FIRING  n=1                                            below MIN_SAMPLES=5
+    SILENT  n=13  mean -0.695%  vs cost 0.732%  t=-4.07   REFUSE
+  Identical at LB=6, LB=12, LB=24. (atf_static, CBBTC-USDC): 4 joinable, 0 firing.
+
+CLOSED. The refusal is RIGHT, and the arm split makes it STRONGER: the arm the
+filter would have refused is the arm being refused, and it fails the bar HARDER
+alone (t=-4.07) than pooled (t=-3.66). There is no 20-row firing arm to defend.
+
+WHY THE BOARD BELIEVED OTHERWISE FOR FOUR PASSES -- a POPULATION artifact, not a
+window artifact. The disputed "20 firing / 33 silent, 65% vs 33%" is the
+ALL-STRATEGY AERO book. The same script reproduces it: `arm_split_census.py
+AERO-USDC 24 '*'` gives 44 trade_ids (exactly Echo p705's 44), FIRING 5/10 = 50%
+vs SILENT 6/28 = 22%, gap +29pts against the disputed +32. **30 of those 44
+trade_ids belong to obv_accumulation, rsi_reversal, donchian_breakout, ema_cross,
+bus_schedule, tf_forecast and 18 unattributed rows -- strategies the gate never
+pair-banned.** atf_static owns 18 of 47 closed AERO outcomes.
+
+MY PRE-REGISTERED KILL TEST WAS THE WRONG ONE AND I AM RECORDING THAT. I
+pre-registered "the 65/33 is a window artifact; disjoint halves kill it". The
+halves do NOT kill it -- both halves carry the same 68% of foreign strategies, so
+the gap survives them. **My kill test would have PASSED and I would still have
+been wrong.** Splitting the tape cannot detect a contaminated population.
+
+STILL TRUE, AND FILED RATHER THAN ROUTED AROUND: the gate IS arm-blind, and it is
+structural. Neither trade_outcomes nor trade_fills carries any filter-state
+column (trade_fills.details holds mode/trade_id/prices/fee_rate/profit fields and
+nothing else). Filed [b2d29544] -- record entry-condition state on the fill. The
+gate change in 9270421 is DOC-ONLY: no bar, no MIN_NOTIONAL, no cost constant
+moved, and banned_pairs() returns the same 2 pairs before and after.
+
+--------------------------------------------------------------------------------
+TWO SIDE FINDINGS, both measured, neither part of the item:
+
+1. THERE ARE TWO EDGE GATES WITH DIFFERENT SAMPLE FLOORS, AND THE LOUD ONE IS NOT
+   THE ONE THIS BOARD ARGUES ABOUT.
+     services/symbol_edge_gate.py:211   MIN_SAMPLES = 5, DERIVED (smallest n with
+                                        0.5**n < SIGN_MAX_P=0.05). No override
+                                        exists anywhere in .env/.py/.ps1.
+     services/strategy_edge_gate.py:107 MIN_SAMPLES = getenv(..., '3') -- a
+                                        hard-coded 3, with a docstring heading at
+                                        :71 reading "MIN_SAMPLES IS 3, NOT 5".
+   Both emit an IDENTICAL message format (:398-400 vs :559-561), so they are
+   indistinguishable in trading_ops. Cove's census of entry-predropped-edge-ban
+   found n=3 at 35.7% and n=4 at 27.5%: **63.2% of all ban mass is the strategy
+   gate, not the symbol gate.** Testable with one env var, STRATEGY_EDGE_MIN_SAMPLES=5.
+
+2. tests/ WRITE INTO storage/trading_cache.db. NOT CLOSED -- filed [82716309].
+   `python -m pytest tests/test_a_banned_strategy_does_not_take_the_tick.py -q`
+   (5 passed, 1.92s) moved trading_ops 153400 -> 153407, entry-predropped-edge-ban
+   21937 -> 21941, and the fixture string '(t=-8.39)' 3025 -> 3027.
+   The two literals at tests/test_a_banned_strategy_does_not_take_the_tick.py:111
+   and :116 account for 6067 rows -- 19.7% of the 30737 ban reasons, the ENTIRE
+   n=9 bucket and 3537 of the n=17 -- and are stamped NEWER than any real refusal.
+   COMPLEMENT TESTED AND DEAD: "the fixtures were copied FROM production, so the
+   rows are real" -- the before/after count shows the rows are created by the run.
+   Contaminates every refusal census over trading_ops; does NOT touch
+   trade_outcomes/trade_fills, so the scoreboard and the arm split above are clean.
+   Part of the accumulation is mine: I ran 127 test files against this tree at p708.
+
+SCOREBOARD: -0.1864 UNMOVED. I did not move it and nothing in this pass could
+have -- every change is doc-only or a new read-only script. What this pass bought
+is that a four-pass argument is settled against the direction the board was
+leaning, and two instruments the board has been measuring with are now known to
+be mis-aimed (wrong module) and contaminated (test writes).
