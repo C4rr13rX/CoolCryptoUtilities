@@ -35237,3 +35237,39 @@ ETH-USDC or WETH-USDC today. That is the "hand-picked strategy on one deep pair"
 goal statement, reduced to a concrete pair list rather than an aspiration. NOT CLOSED: whether
 atf_static has an EDGE on those two pairs is unmeasured, and a tradeable pair is not a profitable
 one.
+
+### p709 (Sage) FOURTH ADDENDUM -- MY OWN "TWO PAIRS" PRESCRIPTION IS WITHDRAWN. THE GATE FAILS OPEN ON ABSENCE.
+
+The third addendum above concluded that approving atf_static opens a route on ETH-USDC and
+WETH-USDC. I then checked whether atf_static has any book on them. **IT HAS NONE.**
+
+    trade_outcomes, json_extract '$.strategy_id' = 'atf_static', by symbol:
+        18 rows  net -0.3653  AERO-USDC        4 rows  net -0.1107  WTCOIN-USDC
+         8 rows  net -0.3816  VIRTUAL-USDC     4 rows  net +1.2769  BSTONK-USDC
+         6 rows  net -0.1063  SR-USDC          1 row   net -0.0483  VVV-USDC
+         6 rows  net -0.0844  CBBTC-USDC       1 row   net -0.0184  UNI-USDC
+        ETH-USDC   n = 0
+        WETH-USDC  n = 0
+
+THE SYMBOL EDGE GATE ALLOWS atf_static ON ETH/WETH *BECAUSE* n=0 IS BELOW MIN_SAMPLES -- there is
+nothing to ban. **That allow means "unknown", not "good".** Same shape as p698's "the tradeable
+predicate FAILS OPEN on a dead feed". I misread a fail-open as a positive verdict in the same pass
+in which I was warning others about exactly this class of error.
+
+AND THE ONE POSITIVE IS THE KNOWN-BAD FEED: every symbol is negative except BSTONK-USDC at
++1.2769, and backlog item [66b46f42] is "BSTONK-USDC's tick series jumps >5% between ADJACENT
+ticks". Strip BSTONK and atf_static is negative on EVERY symbol it has ever traded.
+
+WHAT SURVIVES AND WHAT DOES NOT:
+  * THE DIAGNOSIS STANDS, because none of it depends on atf_static being good: the ratchet at
+    pipeline.py:4730/:4819, the approved set being the candidate set, money_button samples=0
+    holding the gate shut.
+  * **THE PRESCRIPTION IS WITHDRAWN.** "Approve atf_static and the lane opens" means approving a
+    strategy that is negative on all 8 symbols it has evidence for, onto 2 symbols it has NO
+    evidence for. That is the same mistake that made route (a) inert, with a different strategy
+    name.
+
+p710 SHOULD TAKE [317e2b24] FOR THE DIAGNOSIS AND MUST NOT TAKE "approve atf_static" AS THE FIX
+without first measuring an edge somewhere. A correct dead end beats an attractive wrong turn.
+** FOURTH METHOD RULE OF THE PASS: AN "ALLOW" FROM A MIN_SAMPLES GATE MEANS UNKNOWN, NOT GOOD.
+   Check n BEFORE reading a None refusal as a green light. **
