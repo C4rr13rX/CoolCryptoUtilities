@@ -37845,3 +37845,85 @@ ever been placed under it. Sage reached the same conclusion independently the
 same hour. The size ANTI-CORRELATION (winners $0.7063 vs losers $1.2134) is
 untouched by this and still stands. Note also the entire live book is a 2.3-day
 burst, not 18 draws over 23 days -- any t-stat on n=18 spends 2.3 days of tape.
+
+## Pass 718 (Dune, worker) -- [5dc802c2] ghost_multiplier halt
+
+ROUTE TRIED: settle whether ghost_risk_multiplier is the term that keeps the
+live lane empty, without a production restart.
+
+CLOSED, AND CLOSED BY ARITHMETIC RATHER THAN BY DATA -- DO NOT RE-OPEN AS A
+TUNING QUESTION. ghost_risk_multiplier CANNOT reach 0.0 through its own
+product. trading/pipeline.py:6284-6285 multiplies five factors, every one of
+them floored: ghost_sample_buffer >= 0.25, tail_headroom >= 0.20, loss_health
+>= 0.25, drawdown_headroom >= 0.20, and *= max(0.2, min(1.0, health_score)) >=
+0.20. Product floor 0.0005, brute-forced over 900 input combinations including
+negatives, infinities and loss_rate=2.0 -> minimum 0.0005. The ONLY path to
+zero is the else at :6291-6292, whose condition reduces (:6211, :6223, :6050)
+to ghost_collection_ready = (mini_ready OR ghost_ready). So raising the
+multiplier or relaxing any risk headroom is a dead route: none of them can
+reach the zero. mini_ready (:5998) is the PAUSED brain's accuracy gate,
+reason string 'insufficient_accuracy' (:5999). Filed [1802af96].
+
+PREMISE OF THE ITEM CORRECTED, NEGATIVE RESULT FOR THE ITEM'S OWN CLAIM: the
+description says a halt means "no arbitration row, no no-candidates row, no row
+of ANY status". FALSE. evaluate()-only statuses wrote 1905 rows in the 12.87h
+since boot (1078 entry-predropped-edge-ban, 344 entry-arbitration, 321
+entry-refused-lattice, 96 entry-refused-no-candidates, 66
+entry-refused-strategy-edge) against 42 scheduler/halted rows, and 12 of the 42
+halts have an evaluate() row within +/-60s, MINIMUM SEPARATION 3.4 SECONDS.
+Writers confirmed inside evaluate() (scheduler.py _log_predropped:765 called
+:1339, _log_arbitration:794 called :1385/:1391, _log_no_candidates:890 called
+:1377; evaluate() at :923). The halt is PER-BOT, not a fleet-wide silence.
+
+MEASURED AND IT KILLED BOTH ARMS OF BAY'S [dfd6f6f6] FORK, including my own:
+trading_ops since 2026-09-16, COMPLETE enumeration of all 18 distinct statuses
+over 72196 rows. Not one is a clip/funding/notional/capital/balance/dust/minimum
+refusal, so the $6.00 LIVE_MIN_CLIP_USD floor writes no refusal row in 10 days.
+And 17115 entry-arbitration rows means evaluate() ran seventeen thousand times,
+so my halt is not what empties the LIVE lane either. What IS there: 1210
+published, 104 ghost-entry, 95 ghost-exit -- the lane runs end to end to a FILL
+104 times in 10 days -- and wallet='ghost' on 72196 of 72196 rows. NOT ONE
+LIVE-WALLET ROW. The silence is the LABEL, not the permission. Filed
+[4d095eda]: ladder steps 5, 6 and 8 may be ONE term, ghost_ready.
+
+CAVEAT THAT MUST TRAVEL WITH THAT: absence of a status is not absence of a
+refusal. A sizing stage refusing without writing a row looks identical to zero
+rows. The part that does not depend on an absence is the wallet column --
+72196 of 72196 ghost -- which is a positive observation. Build on that one.
+
+NEGATIVE RESULT ON MY OWN WRITER CENSUS, SECOND OFFENCE OF THE SAME CLASS:
+I claimed "the bots ARE armed" from grepping the private field
+_live_trading_armed (2 writers: bot.py:777 from .env:40 ENABLE_LIVE_TRADING=1,
+and bot.py:1106 state restore). THAT GREP CANNOT SEE THE PUBLIC SETTER at
+bot.py:2018, and selector.py:1459 and selector.py:1794 both assign
+bot.live_trading_enabled = False under the same three-part condition
+(readiness and not _readiness_permits_live and not _operator_armed_live),
+BEFORE apply_transition_plan runs. 4 writers, not 2. So the false conjunct has
+THREE candidates -- halt_live, the selector disarm, and
+_strategy_live_approved -- and is NOT settled. LESSON: grepping a private field
+does not enumerate its writers when a public setter exists.
+
+SHIPPED (both trading/bot.py, instrumentation only, both UNLOADED until a
+restart): 37e926e -- the halt row's reason was SHADOWED on all 42 rows since
+boot, because halt_reason wins that or-chain and it is the LIVE block reason
+(pipeline.py:6776); ghost_halt_reason and ghost_collection_ready now recorded
+unshadowed so ONE row names the failing conjunct. 42 insertions, 0 deletions.
+171ff03 -- Bay's catch, a real hole in my own path: the halt-transition counter
+was a bare '+= 1' as the FIRST statement of the halt branch, so on a bot not
+built through __init__ it raises, the enclosing handler swallows it as
+'[bus-scheduler] evaluation failed', and the halt row NEVER FIRES. The thing
+that disappears is exactly the attribution the branch exists to record.
+
+STILL BLOCKED ON ONE THING AND IT IS NOW FOUR COMMITS DEEP: metrics
+category='entry_budget' is 0 rows all-time; PID 11104 booted 2026-09-25
+19:59:47, so ecff145, 76dc132, 37e926e and 171ff03 are all unloaded. Confirmed
+without git: the halt details JSON still reads {reason, ghost_multiplier,
+bus_actions_pending} with no symbol key. Declined the restart a third time for
+an arithmetic reason, not a judgement call -- the closing command needs
+--hours 1 of post-boot data and a 13-minute boot leaves under 6 minutes of a
+30-minute budget. THE RESTART IS THE FIRST ACTION OF ANY PASS WITH MORE THAN
+75 MINUTES.
+
+TRAP: never put a backtick inside a scrum.py --note or --set argument. bash
+substitutes it and the text vanishes SILENTLY with the criterion still
+reported as set.
