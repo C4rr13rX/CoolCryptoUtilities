@@ -34358,3 +34358,95 @@ ticks reported volume=0 ... trade_size ... was ALWAYS zero"). At $0.75 the AERO
 toll is **78.25bp**; at $6.00 it is 17.04bp. **NOT CHANGED** -- Echo p707 closed
 the clip-raise route on edge grounds ([3f82769b], operator clip ask WITHDRAWN)
 and that closure stands. Filed as a config-intent question, not an edge one.
+
+## Pass 708 (Sage, quant) -- both scheduler cost models are CLOSED as dead; the only live cost gate in this repo is one line in money_button.py
+
+ITEM [bd00f3dd] asked which of `trading/scheduler.py:1009` (fee_rate = 125.0bp)
+and `trading/scheduler.py:1640` (cost_rate = 65.0bp) gates the funnel, and said
+to decide before changing either. **The answer is NEITHER, and the item closes
+with ZERO edits to trading/scheduler.py.**
+
+ROUTE TRIED: count each cost path's refusal string over the trading store, on
+the theory that the constant which has refused candidates is the constant worth
+correcting. `storage/trading_cache.db` opened `mode=ro`, `trading_ops.details`
+LIKE, raw counts (no dedupe -- stated as such, the ratios below do not depend
+on it because two of the three are exactly zero):
+
+    path 1  money_button.py:243   required_edge (2*fee_rate + 0.001)*1.1 = 286bp
+            'edge_below_cost'            all = 2016,  7d = 1833,  newest 3.67h
+                                                               <-- LIVE
+    path 2  scheduler.py:2103     _money_button_candidate, fee_rate once = 125bp
+            'net_expected_below_min_net_return'            all = 0
+            'no_reversion_headroom'                        all = 0
+            every '_mb_gate_refusal' string                all = 0
+                                                               <-- DEAD
+    path 3  scheduler.py:1640     cost_rate -> build_schedule = 65bp
+            'does not clear the'                           all = 0
+            'unpriced_default'                             all = 0
+            '"cost_source": "census"'                      all = 0
+                                                               <-- DEAD
+
+PATH 3 IS DEAD TWO INDEPENDENT WAYS, and the second matters more than the first.
+
+(i) Its own service log. `logs/services/bus-scheduler.log` last WRITE
+    2026-09-18 21:17 -- seven days stale -- while `production.log`,
+    `market-stream.log`, `roundtrip-cost.log` and `atf-static.log` in the same
+    directory were all written 2026-09-25 21:19. The logging bus is alive; this
+    service is not. `replanned` appears 257 times and EVERY LINE is dated
+    2026-09-04 (first 16:42:36 `MOG-USDC@6m+23.7%`, last 21:16:35
+    `MOG-USDC@3d+5.9%`). One day of legs in twenty-one.
+
+(ii) **THE REFUSAL IS UNCOUNTABLE FROM THE DATABASE, so the zero in the table
+    above was never evidence on its own.** `trading/swap_schedule.py:459-466`
+    appends the cost refusal to `schedule.rejected`. `trading/bot.py:1654-1670`
+    logs only when `getattr(schedule, "legs")` is TRUTHY, and logs only the
+    legs. Nothing in this repo ever writes `schedule.rejected`. A leg refused
+    by the 65bp floor leaves no row and no log line. An agent who counts 0 for
+    path 3 and concludes "not firing" is right today by luck, not by method --
+    the liveness answer came from the mtime comparison in (i), not the count.
+
+TWO CORRECTIONS TO THE ITEM'S OWN CRITERIA, both against closing it cleanly:
+
+  A. The item prescribes "route through
+     `services.roundtrip_cost.roundtrip_cost_rate(notional, symbol)`".
+     **PATH 3 ALREADY DOES.** `swap_schedule.py:453` calls
+     `_symbol_roundtrip_cost(clip_usd, symbol, roundtrip_cost_rate)`, and
+     `:143-162` returns the per-SYMBOL census rate, falling back to the
+     caller's number only for a symbol the census never priced -- tagged
+     `cost_source='unpriced_default'` so a default can never be read back as a
+     measurement. The 65bp at `:1640` is a FALLBACK FOR UNPRICED SYMBOLS, not
+     the symbol-blind batch gate the item describes. The prescribed fix ships
+     already.
+
+  B. Blast radius is larger than the item states. Item: "16 reference sites,
+     line 1848 multiplies". Measured: **20** occurrences of `fee_rate` in
+     `trading/scheduler.py`, and **TWO** multiply sites, not one --
+     `:1848` long, `last_price*(1.0 + 2.0*edge*fee_rate*50.0)`, AND **`:1855`
+     short**, `last_price*(1.0 - 2.0*edge*fee_rate*50.0)`. Anyone who patched
+     only 1848 on the item's word leaves the short leg's target price on the
+     old constant. `grep -c 'SCHEDULER_GAS_ROUNDTRIP_RATIO|SCHEDULER_SLIPPAGE_BPS' .env`
+     = 0, so both defaults are live.
+
+WHAT CLOSES, AND WHAT DOES NOT:
+
+  CLOSED -- "correct the scheduler's cost scalar to open the funnel". Neither
+  scheduler constant has logged a single refusal, ever. Nothing downstream of
+  them has logged a decision in 21 days. Editing `trading/scheduler.py` cannot
+  move the scoreboard. This also bounds sibling item [26b606cc]: the 125bp
+  scalar is real and wrong, and it is not a gate.
+
+  STILL OPEN, AND IT IS ONE LINE -- `money_button.py:243`. It is the only cost
+  constant in this repo that has ever refused a candidate. But the item's own
+  pre-registered complement still holds: Dune's kill test shows correcting
+  286bp converts 0 refusals into ~101 LOSING candidates. So it is a
+  CORRECTNESS fix to a wrong constant, **not a route to profit**, and I am not
+  recommending it be changed.
+
+  CONVERGENT, INDEPENDENTLY: Echo p708 reached "neither" from the opposite
+  direction -- the cost is a FUNCTION of clip and symbol, so the defect in
+  scheduler.py is not the magnitude of its scalar but the fact that it IS a
+  scalar. Two agents, two methods (his a cost curve, mine a refusal count),
+  same verdict.
+
+No code changed, so no restart is required and the 21-hour stale build does not
+confound this. `git status` shows `trading/scheduler.py` unmodified.
