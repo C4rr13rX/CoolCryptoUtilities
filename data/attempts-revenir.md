@@ -36921,3 +36921,56 @@ cost_rate` has no census row for most of this book and charges a token-blind 0.3
 
 Commit `e0ced49`, files `services/stop_survivability_gate.py` +
 `tests/test_a_fabricated_print_cannot_ban_a_symbol.py`.
+
+POST-SCRIPT, Echo p715, an error I caught before it became a finding: a census returned
+`entry-arbitration` = 3 rows "since 02:05" where every earlier query this pass returned ZERO, and I
+had a "the lane recovered while I was watching" post half-written. The rows are stamped
+`02:05:35.459805`; my earlier query used `ts > T+1`, the later one `ts > T`. **A ONE-SECOND
+DIFFERENCE IN MY OWN CUTOFF MANUFACTURED A RECOVERY. THE DATA NEVER MOVED -- MY FENCE DID.**
+The newest arbitration row is still 02:05:35 and the lane has written nothing for 6.65h.
+THIS IS THE THIRD INSTANCE IN THREE PASSES OF ONE ERROR CLASS (p713 Echo fake decay ramp from his
+own bucket width; p714 Sage twice in one pass; p715 Echo here). ADOPT AS A HABIT: **WHEN A COUNT
+CHANGES, PULL THE TIMESTAMPS BEFORE PULLING THE CONCLUSION.** A count is a summary; a timestamp is
+a fact, and a bucketed count never shows you its own edge.
+
+**⚠⚠⚠⚠⚠ p715 SAME PASS, 12 MINUTES LATER: THE FIX ABOVE IS REVERTED AND ITS PREMISE IS
+REFUTED. `e0ced49` -> reverted. DO NOT RE-SHIP IT.**
+
+Running the WIDER test set rather than only my own: **6 failed, 267 passed**, and three were
+mine -- `test_moonbase_is_still_refused`, `test_it_refuses_a_feed_a_stop_cannot_bind_on`,
+`test_a_gate_that_refuses_everything_is_switched_off`. Proved they were mine rather than
+assuming: `STOP_SURVIVE_MAX_PRICE_SCALE=0 python -m pytest <both files> -q` -> **16 passed**.
+Tree re-verified green after the revert. (The other 3 failures are not mine; they are
+`[a8bc6623]`.)
+
+**WHY IT WAS WRONG, AND THE MODULE HAD ALREADY SAID SO IN A DOCSTRING I DID NOT READ BEFORE
+MEASURING.** `stop_survivability_gate.py:29` and `:39-40`:
+
+    MOONBASE-USDC  618 ticks  p50 jump 0.000%  p99 jump 99381.16%  2% stop holds? NO
+    "Against MOONBASE's 99,381% p99 jump (FEED CONTAMINATION: A DENOMINATION FLIP, NOT A
+     REAL MOVE) no stop of any width binds."
+
+**The author already knew the jumps were fabricated prices and banned on them ON PURPOSE.**
+The gate asks "can this symbol's stop be ENFORCED on this symbol's feed", not "is this symbol
+volatile" -- and a feed emitting 100x flips is one where a stop is decoration regardless of
+whose fault the print is. `:112-114` repeats it: `MIN_BREACHES` is 2 "because a single bad
+print is a print, and this repo has shipped enough denomination flips to know one of them
+proves nothing."
+
+⇒ **"THE GATE IS FOOLED BY GARBAGE" IS CLOSED. The gate is correctly refusing to trade through
+a broken feed.** That is the THIRD gate tested this pass and the third found correct
+(`momentum_not_aligned`, `edge_below_cost`, `stop_survivability`). **No loosenable gate was
+found anywhere on pass 715.**
+
+**WHAT SURVIVES THE REVERT (measurements, not the fix):** the 1553/199220 rows (0.78%, 49 of
+496 symbols, newest 0.58d); `db.py:1588` validating nothing; 9 -> 5 refused on a cleaned feed;
+`money_button.py:170-174` being the only guarded consumer of six.
+
+**⇒ THE FIX BELONGS AT THE WRITER, NOT THE READER.** Suppressing bad prints at a gate asks the
+gate to trade a symbol whose feed is lying. Stopping them at `db.py:1588` means the jumps never
+exist, MOONBASE stays banned on whatever is REALLY in its feed, and no downstream consumer
+needs a guard. `[a46e065b]` re-pointed at the writer.
+
+**⚠ TRANSFERABLE: I HAD THREE PASSING TESTS OF MY OWN AND WOULD HAVE SHIPPED A REGRESSION.**
+Run the neighbours' tests, not just yours -- and read the module docstring BEFORE measuring
+against it, not after it fails.
