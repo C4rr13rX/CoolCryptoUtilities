@@ -39756,3 +39756,89 @@ my own item from p695; at p722 I re-measured a route this file had already close
 Both times the measurement was sound and the pass was still partly wasted. Grep
 attempts-revenir.md for the key SYMBOL, not for the prose -- "ghost_samples" found it in one
 command, and I ran that command after posting the finding instead of before.
+
+### Pass 722 (Echo, senior) -- TWO ROUTES CLOSED, ONE MECHANISM SIZED-AND-EXONERATED, AND I KILLED TWO OF MY OWN STORIES BEFORE POSTING THEM
+
+**ROUTE: "arm the live lane / hand-approve one strategy / get the operator to
+authorise live trading" ([20e2f185]-adjacent, and one of the FOUR standing routes
+in our own instructions). CLOSED -- THE FLAG IS ALREADY SET.**
+
+`.env` line 40 is `ENABLE_LIVE_TRADING=1`. `bot.py:2015` is
+`return bool(self._live_trading_armed) and not self._live_halt_active()`, and the
+setter at `:2019` writes `_live_trading_armed`. So the env arm is the TRUE half of
+the conjunction and the HALT is the false half. `_live_halt_active()` at
+`:1938-1943` reads `_transition_plan["risk_flags"]` with no strategy argument, so
+it is structurally GLOBAL, and `bot.py:1979-1981` states in its own docstring that
+`pipeline.py` raises `halt_live` on `not ghost_ready`, publishing
+`halt_reason='ghost_validation_block'` -- the exact string
+`scripts/graduation_status.py` prints at step 6.
+
+    live_trading_enabled False <- _live_halt_active True <- halt_live <- not ghost_ready
+
+`ghost_ready` is False on 68/68 halts since 09-16 (Dune p720). **There is no env
+var for the operator to set and no approval to grant. Any pass planned around
+"arm the live lane" is planned around a boolean that is already the value it
+wants.** The only lever is `ghost_ready`, which is [4d095eda].
+
+**AND THE NAIVE VERSION OF THIS ROUTE HAD A NEGATIVE PAYOFF.** Per the same
+docstring (`:1973-1984`), the halt used to sit INSIDE `if live_trading_enabled`,
+so ARMING the lane was what switched the bot OFF: an armed bot zeroed its ENTIRE
+risk budget, halted the scheduler and wrote NO decision row, while a ghost-only
+bot ignored the halt and kept deciding. Fixed now, but it means "just arm it and
+see" would have stopped the bot earning the very ghost evidence the halt's own
+cure requires. Do not reach for the arm again without reading that docstring.
+
+**ROUTE: "the organism timeline write is the feed stall" (mine, p722). SIZED AND
+LARGELY EXONERATED AS THE CAUSE -- filed as a cheap win at [7d9c8877], NOT as the
+stall.**
+
+`trading/bot.py:13260` `_append_organism_timeline` does `path.read_text` ->
+`json.loads` -> append -> `json.dumps` -> `path.write_text` on
+`runtime/organism_timeline.json`, called from `_record_organism_snapshot` <-
+`_handle_sample`, i.e. ON the asyncio sampler callback. Measured on the live file:
+**5.714 MB, 32 frames, 178 KB per frame, read 13.7 + loads 94.4 + dumps 84.9 =
+192.9 ms per call.** `ORGANISM_SNAPSHOT_INTERVAL` defaults to 5.0s, so this burns
+**3.86% of wall clock** on the loop thread, forever. The design bug is that
+`limit=32` caps the FRAME COUNT and nothing caps the BYTE SIZE.
+
+**TWO OF MY OWN INFERENCES DIED IN THE MEASURING, BOTH BEFORE I POSTED THEM:**
+ - I expected UNBOUNDED growth. It is capped at `limit=32`. Story dead.
+ - I expected the cost to be TRENDING UP. Frames oldest-to-newest are
+   174,172,177,176,175,174,153,160,182,...,183,183,160,162 KB; first-8 avg
+   170.1 KB vs last-8 avg 178.4 KB. **FLAT.** Story dead.
+
+**3.86% steady CANNOT produce the measured 75-128 s gaps. Nobody should carry
+"the organism timeline is the stall" out of p722.** It is a seventh mechanism
+sized and set aside, and a real 2-point win on its own merits.
+
+**WHAT IS STILL OPEN AND IS THE BEST REMAINING CANDIDATE: [15e642c8].** py-spy
+0.4.2 against live pid 11104, 23 dumps, read-only, no restart. On every non-idle
+dump the `active+gil` thread is `Thread-10 (_run_supervisor_loop)` and the stack
+roots in `_handle_sample` -- the sample handler itself, which is exactly Sage
+p720's constraint that the stall HOLDS finished work (sample_count advances by
+EXACTLY ONE across a 128 s gap, zero dropped). 2 of 23 dumps caught
+`sample_texts` (`data_loader.py:1450`) <- `_adapt_vectorizers`
+(`pipeline.py:3582`) <- `_ensure_vectorizers_ready` (`:1501`) <-
+`ensure_active_model` (`:1244`) <- `_handle_sample` (`bot.py:6396`): **a
+vectorizer refit over a text corpus, synchronously on the sampler callback.
+O(corpus), which unlike 193 ms CAN block for seconds to minutes.** A third frame:
+`_ghost_validation` (`pipeline.py:4850`) -> `ghost_trade_snapshot`
+(`metrics.py:425`) -> `fetch_trades` (`db.py:1911`) -> `json.loads`.
+
+**PROCESS FACT WORTH MORE THAN THE FINDINGS: [20e2f185] WAS UNCLOSABLE BY ANYBODY
+AND THAT WAS A PLANNING ERROR, MINE.** Its acceptance required "restart into
+`f6d3f04`, then 45+ samples at 15s" and noted it "needs a pass opening with more
+than 75 minutes". Pass 722 opened with a **30-minute budget**: a 13-min boot plus
+an 11.25-min probe is 24+ min with zero slack, while two other agents were
+mid-edit. Production pid 21232/11104 both started 9/25 19:59:47 and `f6d3f04`
+landed 9/26 13:58:26, so **the running process does not contain the fix its own
+criterion tests.** Criteria replaced; the item is now an explicit umbrella over
+[15e642c8]. **Write acceptance criteria against a clock somebody actually has.**
+
+**TRAP THAT COST ME A WRONG READ: py-spy reports the RUNNING build's line
+numbers, and this tree is 16 commits past it.** `bot.py:13081` in a dump is not
+`bot.py:13081` in the editor -- I read it and landed in gas-refill code, and
+nearly posted about the wrong function. **Grep the function NAME, never trust the
+dumped line number.** Same class as the `crew.py` unicode crash and the
+`trading_ops.ts` float epoch: the instrument answers confidently in the wrong
+frame of reference.
