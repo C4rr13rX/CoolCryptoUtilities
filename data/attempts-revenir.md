@@ -39887,3 +39887,54 @@ live finding without grepping the BACKLOG**, and the answer was in a `done` item
 time. Searching `attempts-revenir.md` is not enough: run `scrum.py list` too, and **read the
 DONE items -- that is where the answers are, and a `done` item is the one place nobody thinks
 to look for an open question.**
+
+## Pass 722 (Sage, worker) -- five routes closed, four of them closed by refuting myself
+
+**ROUTE: "the live lane stopped being EVALUATED on 2026-09-08" -- CLOSED, REFUTED BY ME.**
+Split `status='entry-refused-lattice'` by wallet per day: 09-07 live 21 / ghost 4, 09-08 live 36 /
+ghost 35, then `wallet='live'` stops all-time (n=1238, 08-28..09-08 only) and `ghost` inherits and
+grows to 321 today. A relabeling crossover, not a shutdown. **The live entry path IS evaluated
+thousands of times a day.** ⇒ **`wallet != 'ghost'` IS A DEAD PREDICATE: it returns 0 with no
+error.** What STANDS: zero `trade_outcomes` with `details.mode='live'` since 2026-09-05, 21 days.
+
+**ROUTE: "ghost_samples reads 0 because the count is broken or wrongly keyed" -- CLOSED.**
+`pipeline.py:4730` `_live_gate_candidates()` returns `approved_ids()`; `:4785` judges ONLY those.
+In-process: `approved_ids()=['money_button']`, money_button ghost trades=2, atf_static ghost
+trades=71 and `live_approved=False`. **The zero is CORRECT for the narrow set.** Also explains the
+2026-09-16 cliff with no commit: the counter did not change, **the SET IT COUNTS OVER did.**
+
+**ROUTE: "money_button produces zero evidence, so the funnel is structurally disconnected and the
+honest graduation figure is *never*" -- CLOSED, REFUTED BY ME.** Built on `status LIKE
+'ghost_candidate%'`, which is only `atf_static`'s path; money_button runs through
+`entry-arbitration` and writes `ghost-entry` directly. **Measured the absence of a STATUS STRING
+and reported it as the absence of ACTIVITY.**
+
+**ROUTE: "18 ghost round trips vs 1 outcome row -- evidence is being dropped between tape and
+ledger" -- CLOSED, REFUTED BY ME, filed as `[17fc337d]` and rejected by me 12 minutes later.**
+Only **2 of the 18** ghost-exit rows carry `strategy_id=='money_button'`; the other 16 belong to
+atf_static, rsi_reversal(@12h,@5d), tf_forecast and obv_accumulation@1d. `details LIKE
+'%money_button%'` matches rows that merely MENTION it in an arbitration field. **Everything
+reconciles: tape 2, ledger 2, outcomes 1, gate 0 (2 ghost, 0 tradeable). NO leak, NO keying bug,
+NO scoping defect -- the gate is CORRECT at every hop. DO NOT RE-FILE THIS.**
+
+**ROUTE: costing anything against $23.18 -- MIS-SIZED, not closed.** `balances` guardian/base:
+USDC 14.662954 + USDT 4.997367 = **19.660321**; the newest published plan spends the **USDC alone**
+(`effective_budget_usd` 14.662954). A 12-clip x $6 route needs $72 against a real **$14.66** --
+4.9x, not 3.1x. ⚠ NOT MEASURED whether excluding the USDT is a defect or correctly avoids an extra
+swap fee.
+
+⛔ **THE LESSON, and it is the transferable part.** Five bad predicates in one pass:
+`wallet!='ghost'`, `j.get('tradeable')` (not a key), `status LIKE 'ghost_candidate%'`, `details
+LIKE '%money_button%'`, plus the known float-epoch `ts`. The standing rule is "when a census
+returns **0**, suspect the predicate." **That is too weak. Four of these returned plausible
+NON-ZERO numbers, and those were the dangerous ones -- a zero makes you check, a good number does
+not. SUSPECT THE PREDICATE WHEN THE CENSUS RETURNS A NUMBER YOU LIKE.**
+
+✅ **What actually shipped this pass: `[73e1c19b]` done.** Step 3 no longer prints "no ghost
+activity in 1h" at a moment carrying 49 ghost enter rows -- it prints `49 candidates in 1h, 0
+converted to ghost-entry; top refusal entry-refused-strategy-edge x5` (`9b51360`). Step 6 no
+longer prints the bare mechanism `ghost_validation_block` -- it leads with the shortfall,
+`ghost_samples=0 of 20 needed; ghost_reason=no_qualified_strategy:cold_start_bootstrap`
+(`2213692`). **The remaining blocker on `[4d095eda]` is a HUMAN DECISION, not a defect:** every
+route to one live round trip runs through widening the candidate set or hand-approving a demoted
+strategy, and `pipeline.py:4772-4783` rejects the former in writing.
