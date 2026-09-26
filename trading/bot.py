@@ -9862,6 +9862,7 @@ class TradingBot:
                                 expected_price=float(price),
                                 executed_price=float(executed_entry_price),
                                 tolerance_bps=slippage,
+                                decision_ts=float(sample_ts),
                             ),
                         },
                     )
@@ -11453,6 +11454,7 @@ class TradingBot:
                                 executed_price=float(exit_price_effective),
                                 native_price_usd=float(native_price_usd),
                                 native_price_source=str(native_price_source),
+                                decision_ts=float(sample_ts),
                             ),
                             "fee_cost_usd": float(fee_cost),
                             "gross_profit": float(gross_profit),
@@ -12380,6 +12382,7 @@ class TradingBot:
         tolerance_bps: Any = None,
         native_price_usd: Optional[float] = None,
         native_price_source: Optional[str] = None,
+        decision_ts: Optional[float] = None,
     ) -> Dict[str, Any]:
         """The cost fields for ONE leg of a round trip, measured not assumed.
 
@@ -12432,6 +12435,29 @@ class TradingBot:
         }
         if tolerance_bps is not None:
             fields["slippage_tolerance_bps"] = tolerance_bps
+        # THE OTHER HALF OF [3f942885] CRITERION 5. 276523c recorded the venue
+        # that charged the toll; this records HOW OLD the price was that we
+        # decided on. The surviving explanation for a one-sided entry toll that
+        # is not depth impact (a $0.75 notional moves no pool) is that the
+        # decision prices off a reference that has moved by the time the swap
+        # lands -- and until now nothing on the fill row could tell a 2-second
+        # gap from a 2-minute one.
+        #
+        # READ THIS BEFORE QUOTING THE NUMBER: ``decision_to_fill_sec`` is an
+        # UPPER BOUND on the quote-to-submit gap, NOT the gap. ``decision_ts``
+        # is the TAPE timestamp of the sample the decision priced off, and the
+        # clock is read here, AFTER the swap has settled -- so the interval
+        # contains decision latency + submit + one or two Base blocks. A small
+        # value therefore kills the staleness mechanism outright; a large one
+        # does not convict it on its own, because settlement is inside it.
+        if decision_ts is not None:
+            try:
+                decided_at = float(decision_ts)
+            except (TypeError, ValueError):
+                decided_at = 0.0
+            if decided_at > 0.0:
+                fields["decision_ts"] = decided_at
+                fields["decision_to_fill_sec"] = max(0.0, time.time() - decided_at)
         return fields
 
     def _estimate_token_price(self, chain: str, symbol: str, *, route: List[str], price: float) -> float:
