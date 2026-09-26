@@ -131,6 +131,9 @@ def main() -> int:
     ghost_ready_but_halted = []
     split_fired = {k: Counter() for k in SPLITS}
     split_n = Counter()
+    recent_ghost_reason = Counter()
+    recent_samples = Counter()
+    recent_required = Counter()
 
     rows = conn.execute(
         "select ts, details from trading_ops where details like '%halt_live%'"
@@ -164,6 +167,16 @@ def main() -> int:
         keys = ["BURST 09-03/04" if day in BURST_DAYS else "ELSE"]
         if day >= "2026-09-16":
             keys.append("SINCE 09-16")
+            if transition.get("ghost_ready") is not True:
+                recent_ghost_reason[
+                    flags.get("ghost_reason")
+                    or transition.get("ghost_reason")
+                    or "(empty)"
+                ] += 1
+                recent_samples[flags.get("ghost_samples")] += 1
+                recent_required[
+                    (transition.get("required_trades"), flags.get("ghost_min_trades"))
+                ] += 1
         for key in keys:
             split_n[key] += 1
             for name, is_on in on.items():
@@ -242,6 +255,38 @@ def main() -> int:
     )
 
     unexplained = len(ghost_ready_but_halted)
+    # One level down from the confirmed cause. ghost_ready being false is not a
+    # reason, it is a verdict -- and the plan publishes the reason beside it in
+    # risk_flags.ghost_reason, which is worth more than the whole table above.
+    #
+    # Since 2026-09-16 that reason is 'no_qualified_strategy:cold_start_bootstrap'
+    # on 60 of 68 halts, with ghost_samples 0 on exactly those rows. All-time the
+    # plan routinely sees 14-21 samples, so this is not an empty ghost book: the
+    # ghost lane kept booking throughout. The plan stopped counting, because it
+    # found no qualified strategy to evaluate, and ghost_samples is then 0 by
+    # definition.
+    #
+    # The consequence is the one worth carrying out of this file. The graduation
+    # panel reasons "20 tradeable ghost trades at N/day, so ~54 days" -- that
+    # arithmetic assumes the counter counts. On 88% of recent halts it reads 0
+    # with no qualified strategy, so booking ghost trades at any rate moves
+    # ghost_samples from 0 to 0. Raising the evidence rate and lowering the
+    # evidence bar are both aimed past this.
+    #
+    # Note also that 'insufficient_samples' -- the reason a 2026-09-16 docstring
+    # at selector.py:1254-1257 names, and which this sprint took as confirmed --
+    # is 5 of 68 on the tape since that same date. A docstring is a claim with a
+    # date on it.
+    print("\nWHY ghost_ready IS FALSE (risk_flags.ghost_reason), since 2026-09-16:")
+    for reason, n in recent_ghost_reason.most_common():
+        share = 100.0 * n / max(1, sum(recent_ghost_reason.values()))
+        print(f"  {n:6d}  {share:5.1f}%  {reason}")
+    print(f"  ghost_samples on those rows: {dict(recent_samples.most_common(8))}")
+    print(
+        "  (required_trades, ghost_min_trades) seen: "
+        f"{dict(recent_required.most_common(6))}  <- three numbers for one bar"
+    )
+
     recent_unexplained = sum(
         1
         for ts, _ in ghost_ready_but_halted
