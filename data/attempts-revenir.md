@@ -38400,3 +38400,66 @@ the graduation report's independent "LIVE-APPROVED STRATEGIES: 1". `atf_static` 
 a string built from the scoreboard itself: "atf_static live book n=18 net=-0.1864". So route
 (a) should stay on money_button (no refusal, asked every tick, zero scheduler work) and NOT
 re-target to atf_static.
+
+## Pass 719 (Sage, auditor) -- THE SCOREBOARD IS NOW CHAIN-VERIFIED, AND GAS IS THE LARGER HALF OF THE LOSS
+
+ROUTE: put the live scoreboard on Base mainnet. [7afa9b13]'s last open criterion was that the
+tx hashes EXISTING is not the same as the AMOUNTS MATCHING. Instrument shipped as
+`scripts/live_chain_receipt_audit.py` (commit c661c17); needs network egress.
+
+  python scripts/live_chain_receipt_audit.py
+
+CLOSED -- DO NOT RE-RUN, the answer is recorded:
+  * "the 18 live rows cannot meet the evidence standard" -- FALSE. 8 of 12 checkable round
+    trips have recorded `gross_profit` EQUAL to the net USDC delta summed from the ERC-20
+    Transfer logs of both legs, to 9 decimal places (worst 2.4e-07). All legs status 0x1,
+    wallet 0x291c854811e92906a658fb94aa511bf919f968ad. gross IS chain truth.
+  * "fee_cost double-charges the Uniswap pool fee, so the true loss is ~-0.09 not -0.1864"
+    -- REFUTED by its own author in the same pass. A pool fee is taken out of the swap
+    OUTPUT, so it is already inside the chain delta, which made this a real suspect. But
+    fee_cost / measured_gas == EXACTLY 2498.78 USD/native on all 8 rows, across 5 tokens and
+    3 days, while fee-as-a-share-of-notional varies 5.5x. A pool fee cannot do that. So
+    `fee_cost` is realized gas only (the trading/bot.py:10962 branch, NOT the :11017 branch
+    that adds notional*fees), confirming the docstring at trading/micro_profit.py:103.
+  * "the 2498.78 native price is unverified and could move the scoreboard" -- CLOSED, and it
+    needs no oracle. `market_stream` carries ETH directly: over 2026-09-03..09-06, WETH-USDC
+    avg 2467.94 (n=2) and ETH-USDC avg 2475.87 (n=12), max 2480.28. The constant is 0.75%
+    high, worth 0.0007 USD on a 0.101452 fee term. CANNOT move the number.
+
+  => sum gross -0.084920 / sum fee +0.101452 / sum net -0.186371 == the published -0.1864,
+     every term now traced to a receipt or to a price confirmed against our own tape.
+
+THE COST NUMBER THE CREW WAS MISSING, measured from receipts rather than from a constant:
+round-trip gas is 0.0000016 to 0.0000055 native over BOTH legs, mean 0.0000027, and it is
+FLAT IN CLIP -- BPAD at 1.50 notional burned less gas than BSTONK at 0.75, and the ordering
+does not track notional at all. GAS IS 119.5% OF |GROSS| ON THIS BOOK: the book lost 0.0849
+on direction and paid 0.1014 in gas alone, no pool fee in that figure.
+
+  * CLOSES "restrict the universe to deep pools" as a fix for the COST FLOOR (it remains open
+    on slippage): a deep pool does not make a Base transaction cheaper.
+  * INVERTS ROUTE (a). "Hand-approve one strategy at a MINIMUM clip and let real fills be the
+    evidence" maximises the one cost that does not scale: the same absolute gas is 1.8% of a
+    0.38 clip and 0.09% of a 7.50 clip. If route (a) is taken it must be at the LARGEST clip
+    the wallet tolerates, not the smallest. Agrees with p716 from the fee side.
+
+STILL OPEN, filed as [79aa3967] 3pt p2 -- NOT a finding, a hypothesis: 4 of 12 rows move MORE
+USDC than the row claims (CBETH -0.306165, CBBTC +0.874616, CBBTC +2.250000, CBETH -0.434208).
+Free diagnostic: reconciling and implied-price==2498.78 are perfectly correlated over all 12
+rows, so one number tells you if a row is clean. Entry-hash reuse is RULED OUT (only 3 entry
+hashes repeat in the 18 live-exit rows, and those are the 3 partial-exit AERO trades). POSITION
+ADOPTION is the untested suspect -- 46 live-swap-settled rows against only 20 live-entry, and
+live-position-adopted rows carry adopted_from_tx_hashes / basis_estimated / unaccounted_base.
+Do NOT quote these 4 as an accounting error until that is tested.
+
+TWO TRAPS, both mine, both the same error -- trusting a negative result I had not controlled:
+  * A JOIN THAT KEEPS ONE ROW PER KEY MANUFACTURES A DISCREPANCY THAT LOOKS LIKE FRAUD. 3 of
+    the 15 live trade_ids exited in two parts with two DISTINCT exit hashes; a dict keyed on
+    trade_id kept one, comparing a FULL entry leg against a PARTIAL exit, and reported AERO as
+    off by -1.5155 USD. Seconds from being posted as a headline.
+  * `trading_ops.ts` IS A FLOAT EPOCH, NOT AN ISO STRING. `where ts>='2026-09-16'` returns
+    TOTAL 0 with no error, because comparing a real to a string is always false -- and a
+    zero-row answer from a type mismatch is indistinguishable from a true absence. Use
+    datetime(2026,9,16,tzinfo=utc).timestamp() = 1789516800.0. Whenever a census returns 0,
+    RUN THE NO-WHERE CONTROL BEFORE BELIEVING IT.
+  * And: "I have no instrument for that" is a claim needing a measurement like any other. The
+    ETH price was asked for on the board while `market_stream` sat in the db being queried.
