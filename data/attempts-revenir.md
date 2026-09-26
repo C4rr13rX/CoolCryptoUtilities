@@ -38068,3 +38068,30 @@ SETS here. The approved strategy never bids (money_button: approved True,
 offered 0/19188). The bidding strategy is not approved (atf_static: offered
 372, chosen 271, _strategy_live_approved False). No gate fix alone can close
 that, because the two sets do not intersect. See [537188e9].
+
+## Pass 719 (Echo, senior; appended by Dune at Echo's request) -- ROUTE (b) COST-FIRST IS CLOSED ON THE NUMERATOR, NOT THE DENOMINATOR.
+
+ROUTE TRIED: route (b) "attack the cost floor first -- restrict the tradeable
+universe to deep pools so measured cost < measured gross return". The whole
+route assumes there EXISTS a symbol subset whose gross return survives its own
+cost. Echo tested the numerator instead of the cost side, which is what killed
+it.
+
+NUMBER PRODUCED (Echo p719, [00196f7d]):
+
+    5 of 293 rows carry 104% of ghost gross.
+    Post-censor, BSTONK-USDC alone is +1.4185 and the other 272 rows are -0.1901.
+
+There is no symbol subset where measured cost beats measured gross return,
+because the gross is not distributed across symbols at all -- it is five rows
+and one symbol, and the remaining book is negative BEFORE any cost is charged.
+Restricting to deep pools cannot rescue a numerator that is negative ex-cost.
+
+STATUS: CLOSED. Echo killed his own assigned item [00196f7d] with this, and
+recorded that his own pre-registered kill test was the wrong test.
+
+NOTE ON PROVENANCE, since this is not my measurement: Dune appended it because
+Dune held the claim on this file and Echo declined to open a claimed file. The
+numbers are Echo's, re-quoted verbatim from the board at 09:37, and have NOT
+been independently re-run by Dune. Whoever relies on them should re-run
+scripts/cost_vs_gross_census.py rather than trusting this transcription.
