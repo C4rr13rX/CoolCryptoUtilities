@@ -35671,3 +35671,61 @@ list cannot separate a bad quote from a real move. Folded into [e201703b] p1.
 CAVEAT ON MY OWN CENSOR NUMBER: I invoked outcome_plausibility with a dict built
 from the row; the API may want another shape, so read the 0 as either not firing
 or not correctly invoked. Someone who did not write it should re-run it.
+
+--------------------------------------------------------------------------------
+PASS 710 (Cove, worker) -- WITHDRAWAL AND RE-DERIVATION DISCLOSURE ON MY OWN
+SLIPPAGE WORK ABOVE. Read this before using the block above.
+
+WITHDRAWN: "the variable cost floor is fee-only and must be doubled to ~63.7bp."
+DO NOT ACT ON IT. I argued COST_VARIABLE 0.003187 (scripts/tradeable_book.py:117)
+was fitted to GHOST fees, that ghost slippage is structurally zero, and that my
+31.82bp is therefore additive. Commit b2c15ee's body does say "fees 1.4166" and I
+read it correctly, BUT the same literal 0.003187 also lives in
+services/roundtrip_cost.py as DEFAULT_RATE, and scripts/roundtrip_cost_census.py
+REDERIVES it FROM FILLS at 0.0027774. A rate rederived from fills is not
+slippage-free. [a044e46e]'s ECHO PASS 444 note already says the 0.31% "is, to
+within rounding, the SHIPPED CONSTANT -- not an independent measurement of fill
+cost." I generalised from one module's provenance to THE cost model when two
+modules carry the same literal with different stated derivations.
+  WHAT SURVIVES, narrowly: tradeable_book.py:117 was INTRODUCED fitted to ghost
+  fees per its own commit body. Whether that is the same quantity as
+  roundtrip_cost.DEFAULT_RATE is OPEN, and it is the live question inside
+  [a044e46e] -- which is p1 and has been todo since pass 444. That is the item to
+  take. DO NOT FILE A NEW ONE.
+
+RE-DERIVATION, DISCLOSED: I grepped the backlog AFTER shipping, not before. Most
+of my slippage block above was already filed:
+    [be91fca9] done -- decompose the ~14bp live slippage   (mine: 13.54bp median leg)
+    [96c5f532] done -- the 27.77bp toll is 78% BUY-LEG     (mine: entry 16.18 / exit 6.04)
+    [a044e46e] todo -- buy median 21.7347, sell median 6.0393, n=12
+    [de1da775] todo -- trade_fills is 1481/1519 exact zeros, ghost only, live ZERO
+    [5c6977ca] todo -- slippage_bps written as the literal 75.00 on all 20 entries
+MY EXIT-LEG MEDIAN 6.04bp EQUALS [a044e46e]'s 6.0393bp TO FOUR DECIMALS -- same
+rows, different script. This is the fifth consecutive pass this defect has cost
+somebody work. GREP scrum.py list FOR THE FILENAME AND THE QUANTITY BEFORE
+MEASURING, not after.
+
+TWO THINGS I STILL BELIEVE ARE NEW, stated narrowly:
+
+1. THE 10000.00bp MAXIMUM IN trade_fills IS NAMED. [de1da775] asks for its source
+   and calls it "a sentinel or a divide artifact, not a fill". It is NEITHER. It
+   is CBETH-USDC live_entry ts 1788435497, a raw-units price that never got
+   normalised:
+       fill    expected_price 2731.12  executed_price 2.739721277650459e-09
+               quote_spent 7.5e-13     slippage_bps 75  (the [5c6977ca] literal)
+       outcome entry_price    2739.7212776504584        net_profit +0.010394
+   Same digits scaled by EXACTLY 1e12 = 10^(18-6): CBETH's 18 decimals against
+   USDC's 6. THE OUTCOME BOOKED THE CORRECT HUMAN-SCALE PRICE, so booked P/L and
+   the -0.186371 scoreboard are UNAFFECTED -- this is NOT a P/L defect and should
+   not be re-raised as one. Disposition: EXCLUDE, do not fix. One historical row,
+   the earliest live entry in the store; the other 19 live_entry rows carry a sane
+   quote_spent of $0.75-$2.91, so it is not systematic. I did NOT name the
+   producing line, so that criterion of [de1da775] is PARTLY met, not met.
+
+2. PAIR ON trade_id BEFORE QUOTING ANY PER-SYMBOL SLIPPAGE. A median of pooled
+   LEGS is not the median of round-trip SUMS, and 8 of 20 entry legs have no
+   matching exit leg, so a pooled median weighs unclosed positions against closed
+   ones. AERO-USDC: -1.38bp pooled-leg median vs +25.24bp paired round trip,
+   n=6 -- an INVERTED SIGN on the pair route (a) would use. Book level barely
+   moves (27.07 -> 31.82bp), which is exactly why the error hides. [a044e46e] and
+   [96c5f532] both quote separate buy and sell medians, so this cuts at them too.
