@@ -12405,6 +12405,19 @@ class TradingBot:
         )
         fields: Dict[str, Any] = {
             "leg": leg,
+            # THE ROUTER PATH WAS REACHED BUT NEVER RECORDED. ``route`` was
+            # consumed only to price the native token above, so the fill row
+            # kept the toll and threw away the venue that charged it. That
+            # gap is why [3f942885] is blocked: the surviving explanation for
+            # a one-sided, size-invariant, tick-age-independent entry toll is
+            # that the decision prices off an aggregate last-trade reference
+            # while we execute against ONE pool at its marginal price, and
+            # testing it needs the fee tier the router actually used. A 0.05%
+            # reference against a 0.30% execution tier is 25bp by arithmetic;
+            # the measured entry toll is 13.9-14bp, the right order. Without
+            # this field the test cannot be run at all. Costs one list copy
+            # per fill and is read by scripts/realised_slippage_census.py.
+            "route": [str(x) for x in (route or [])],
             "notional_usd": float(notional_usd),
             "native_token_price_usd": float(native_price_usd),
             "native_token_price_source": str(native_price_source),

@@ -112,6 +112,10 @@ def load_fills(con):
                 "quote_spent": d.get("quote_spent"),
                 "gas_native": d.get("gas_spent_native"),
                 "tol_bps": d.get("slippage_bps"),
+                # Written from pass 710 onward (trading/bot.py _leg_cost_fields).
+                # Every fill recorded before that has none, and an absent route
+                # is reported as absent rather than guessed from the swap row.
+                "route": d.get("route") or None,
             }
         )
     return out
@@ -242,6 +246,24 @@ def main():
     for s, fs in sorted(bysym.items(), key=lambda kv: -len(kv[1])):
         xs = [f["cost_bp"] for f in fs if f["cost_bp"] is not None]
         print("        %-16s %s" % (s, _dist(xs)))
+
+    # ---- 2b. the venue that charged the toll
+    print("\n[2b] SLIPPAGE BY ROUTER PATH -- the surviving mechanism for a one-sided,")
+    print("     size-invariant entry toll is an aggregate reference price against a")
+    print("     single pool's marginal price, so the toll should track the FEE TIER.")
+    withr = [f for f in live if f["route"] and f["cost_bp"] is not None]
+    if not withr:
+        print("     NO live fill carries a route. The field is written from pass 710")
+        print("     onward (trading/bot.py _leg_cost_fields); every fill in this book")
+        print("     predates it. THE MECHANISM TEST CANNOT BE RUN YET -- it needs one")
+        print("     live fill recorded after that change. Not estimated.")
+    else:
+        byroute = defaultdict(list)
+        for f in withr:
+            byroute["/".join(f["route"])].append(f["cost_bp"])
+        for r, xs in sorted(byroute.items(), key=lambda kv: -len(kv[1])):
+            print("     %-28s %s" % (r, _dist(xs)))
+        print("     (%d of %d live fills carry a route)" % (len(withr), len(live)))
 
     # ---- 3. by clip size, because route (a) is a clip-size argument
     print("\n[3] BY CLIP SIZE -- route (a) claims $20 beats $6 because fixed gas dilutes.")
