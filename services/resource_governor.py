@@ -103,6 +103,13 @@ _SAMPLE_INTERVAL = float(os.getenv("GOVERNOR_SAMPLE_INTERVAL", "2"))
 # ``mem`` from virtual_memory(), which is still sampled every single tick.
 _RSS_SCAN_SEC = float(os.getenv("GOVERNOR_RSS_SCAN_SEC", "30"))
 
+# How far the governor thread's own wake-up may slip past _SAMPLE_INTERVAL
+# before we call the process stalled. See _StallProbe below for why this exists.
+_STALL_BUDGET_SEC = float(os.getenv("GOVERNOR_STALL_BUDGET_SEC", "5"))
+# Ring size for the stall series. At _SAMPLE_INTERVAL=2s, 1800 samples is one
+# hour of continuous history held in ~14KB.
+_STALL_RING = int(os.getenv("GOVERNOR_STALL_RING", "1800"))
+
 # Absolute bounds on the dynamic worker count.
 _MIN_WORKERS = int(os.getenv("GOVERNOR_MIN_WORKERS", "1"))
 _MAX_WORKERS = int(os.getenv("GOVERNOR_MAX_WORKERS", "0"))  # 0 = auto

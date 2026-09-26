@@ -3,9 +3,10 @@ import time
 from trading.triggers import evaluate_long_triggers
 
 
-def _pos(entry=100.0, target=105.0, high=None, age=600.0):
+def _pos(entry=100.0, target=105.0, high=None, age=600.0, mode="ghost"):
     now = time.time()
     return {
+        "mode": mode,
         "entry_price": entry,
         "target_price": target,
         "entry_ts": now - age,
@@ -76,3 +77,83 @@ def test_live_stop_is_tighter_than_ghost():
     )
     assert result.should_exit
     assert result.reason.startswith("stop_loss")
+
+
+def test_a_flat_live_position_has_no_exit_without_the_hold_clock(monkeypatch):
+    """The hole the hold clock fills, in the numbers that found it.
+
+    CBXRP-USDC, live, opened by atf_static at 1788543478 and still open 20.6h
+    later. Entry 1.41056722, target 1.46966765 (+4.19%), live stop -1.50%. Over
+    554 ticks the price never left -1.46%..-0.39%, so the target was
+    unreachable, the stop was missed by 4 basis points, and high_pnl_pct never
+    went positive -- break-even, profit-lock and trailing never armed.
+    """
+    monkeypatch.delenv("MAX_HOLD_FORCE_SECONDS", raising=False)
+    entry = 1.4105672172894166
+    pos, now = _pos(entry=entry, target=1.4696676505689195, age=20.6 * 3600.0,
+                    mode="live")
+
+    # The worst tick it ever printed: still not a stop.
+    result = evaluate_long_triggers(
+        pos, price=1.39, fee_rate=0.0086, now_ts=now, live=True
+    )
+    assert not result.should_exit, "the -1.46% low was a stop after all: %s" % result.reason
+
+
+def test_the_hold_clock_closes_a_position_that_goes_nowhere(monkeypatch):
+    """With the operator's clock set, the same tick finally proposes an exit."""
+    monkeypatch.setenv("MAX_HOLD_FORCE_SECONDS", "2700")
+    entry = 1.4105672172894166
+    pos, now = _pos(entry=entry, target=1.4696676505689195, age=20.6 * 3600.0,
+                    mode="live")
+
+    result = evaluate_long_triggers(
+        pos, price=1.40, fee_rate=0.0086, now_ts=now, live=True
+    )
+    assert result.should_exit
+    assert result.reason.startswith("max_hold_force")
+    # Not a protective reason: bot.py bypasses the cost gate for this one via
+    # forced_by_age, not by claiming the close pays for itself.
+    assert not result.reason.startswith(
+        ("stop_loss", "break_even_lock", "profit_lock", "trailing_stop")
+    )
+
+
+def test_the_hold_clock_does_not_fire_before_its_window(monkeypatch):
+    monkeypatch.setenv("MAX_HOLD_FORCE_SECONDS", "2700")
+    pos, now = _pos(entry=1.4105672172894166, target=1.4696676505689195, age=600.0,
+                    mode="live")
+
+    result = evaluate_long_triggers(
+        pos, price=1.40, fee_rate=0.0086, now_ts=now, live=True
+    )
+    assert not result.should_exit
+
+
+def test_the_hold_clock_leaves_the_ghost_lane_alone(monkeypatch):
+    """Ghost has its own clock, and this book feeds graduation.
+
+    Passed live=True deliberately: bot.py hands this function
+    ``live=self.live_trading_enabled``, so every ghost position on a
+    live-enabled bot arrives with live=True. The position's own mode is what
+    must decide, or the clock force-closes the ghost book.
+    """
+    monkeypatch.setenv("MAX_HOLD_FORCE_SECONDS", "2700")
+    pos, now = _pos(entry=1.4105672172894166, target=1.4696676505689195,
+                    age=20.6 * 3600.0, mode="ghost")
+
+    result = evaluate_long_triggers(
+        pos, price=1.40, fee_rate=0.0086, now_ts=now, live=True
+    )
+    assert not result.should_exit
+
+
+def test_an_unset_hold_clock_changes_nothing(monkeypatch):
+    monkeypatch.delenv("MAX_HOLD_FORCE_SECONDS", raising=False)
+    pos, now = _pos(entry=1.4105672172894166, target=1.4696676505689195, age=100 * 3600.0,
+                    mode="live")
+
+    result = evaluate_long_triggers(
+        pos, price=1.40, fee_rate=0.0086, now_ts=now, live=True
+    )
+    assert not result.should_exit

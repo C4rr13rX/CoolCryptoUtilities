@@ -68,6 +68,13 @@ try:
 except Exception:  # pragma: no cover - import-order safety only
     ROUND_TRIP_COST = 0.0065
 
+# One definition of "a horizon in minutes" and one set of corpus bounds for the
+# whole loop. Duplicating either is how two scripts come to disagree about what
+# a report means while both call the number "horizon 12".
+from scripts.omen_experiment import (  # noqa: E402
+    MAX_CADENCE_DRIFT_RATIO, MAX_CORPUS_BAR_SECONDS, horizon_bars,
+)
+
 
 # --- corpus ---------------------------------------------------------------
 
@@ -86,22 +93,22 @@ def bar_seconds(bars: Sequence[Mapping[str, Any]]) -> int:
     return int(sorted(gaps)[len(gaps) // 2]) if gaps else 3600
 
 
-def horizon_bars(minutes: float, cadence_seconds: int) -> int:
-    """A wall-clock horizon in this symbol's own bars, never fewer than one.
+def cadence_drift(bars: Sequence[Mapping[str, Any]]) -> float:
+    """How far the HEAD cadence is from the whole file's.
 
-    The horizon is the thing the strategy promises -- "I will be out in twenty
-    minutes" -- and it is a wall-clock promise. Expressing it in bars makes it
-    mean six different things across a corpus whose cadences run 300s to 3600s,
-    which is how a single run came to average a 120-minute forecast on cbBTC
-    with a 720-minute forecast on SHIB.
-
-    Rounds to nearest so a 10-minute horizon on 600s bars is 1 bar rather than
-    0; a zero-bar horizon would compare a bar's close against itself and report
-    a flawless, free, entirely fictional edge.
+    ``bar_seconds`` reads the first 400 gaps, and that is what every horizon is
+    converted with. A file whose later half runs at a different cadence gets
+    its horizon converted by the wrong factor for that half -- 1.0 is one
+    instrument, 2.0 is two timeframes stapled together.
     """
-    if cadence_seconds <= 0:
-        raise ValueError("cadence must be positive")
-    return max(1, int(round(minutes * 60.0 / cadence_seconds)))
+    gaps = [int(bars[i]["timestamp"]) - int(bars[i - 1]["timestamp"])
+            for i in range(1, len(bars))]
+    gaps = [g for g in gaps if g > 0]
+    if len(gaps) < 2:
+        return 1.0
+    head = sorted(gaps[:399])[len(gaps[:399]) // 2]
+    full = sorted(gaps)[len(gaps) // 2]
+    return max(head, full) / max(1, min(head, full))
 
 
 def extract_once(bars: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
@@ -415,8 +422,12 @@ def main() -> int:
                              "horizon per symbol (~230 min on AERO-USDC); a "
                              "horizon past it is a forecast the data cannot "
                              "support.")
-    parser.add_argument("--max-bar-seconds", type=int, default=None,
-                        help="skip symbols coarser than this cadence. A "
+    parser.add_argument("--max-bar-seconds", type=int,
+                        default=MAX_CORPUS_BAR_SECONDS,
+                        help="skip symbols coarser than this cadence "
+                             f"(default {MAX_CORPUS_BAR_SECONDS}s, the corpus "
+                             "bound named in omen_experiment and censused by "
+                             "scripts/omen_corpus_cadence_census.py). A "
                              "10-minute forecast cannot be measured on hourly "
                              "bars, and the corpus is 63%% hourly by file "
                              "count while the LARGEST files -- which is how "
@@ -443,6 +454,7 @@ def main() -> int:
     chosen: List[Tuple[str, List[Dict[str, Any]], int]] = []
     seen_symbols = set()
     skipped_cadence = 0
+    skipped_drift: List[Tuple[str, float]] = []
     for path in sorted(candidates, key=lambda p: -p.stat().st_size):
         if len(chosen) >= args.symbols:
             break
@@ -462,6 +474,13 @@ def main() -> int:
         if args.min_bar_seconds is not None and cadence < args.min_bar_seconds:
             skipped_cadence += 1
             continue
+        # A file holding two timeframes converts the horizon by the wrong
+        # factor for one of them, so it is not one measurement -- and it is
+        # SILENT, because bar_seconds only ever sees the first 400 gaps.
+        drift = cadence_drift(bars)
+        if drift > MAX_CADENCE_DRIFT_RATIO:
+            skipped_drift.append((symbol, round(drift, 2)))
+            continue
         seen_symbols.add(symbol)
         chosen.append((symbol, bars, cadence))
 
@@ -475,6 +494,12 @@ def main() -> int:
           f"bins {bin_settings}"
           + (f", {skipped_cadence} symbols skipped on cadence"
              if skipped_cadence else ""))
+    # Never a silent drop: a selection that quietly excluded files is a
+    # different experiment from the one the reader thinks they are reading.
+    if skipped_drift:
+        print(f"  {len(skipped_drift)} symbols skipped: cadence changes "
+              f"mid-file by more than {MAX_CADENCE_DRIFT_RATIO}x -- "
+              + ", ".join(f"{s}({d}x)" for s, d in skipped_drift[:8]))
     print(f"{len(chosen)} symbols: " + ", ".join(
         f"{s}({len(b)}@{c}s)" for s, b, c in chosen))
     for minutes in horizon_minutes:
@@ -490,6 +515,12 @@ def main() -> int:
 
     report: Dict[str, Any] = {
         "cost": cost, "horizon_minutes": horizon_minutes, "bins": bin_settings,
+        "horizon_bars": {s: horizon_bars(horizon_minutes[0], c)
+                         for s, _, c in chosen},
+        "selection_bound_bar_seconds": args.max_bar_seconds,
+        "max_cadence_drift_ratio": MAX_CADENCE_DRIFT_RATIO,
+        "skipped_on_cadence": skipped_cadence,
+        "skipped_on_cadence_drift": skipped_drift,
         "prior_strength": args.prior, "min_trades": args.min_trades,
         "symbols": [s for s, _, _ in chosen],
         "bar_seconds": {s: c for s, _, c in chosen}, "settings": [],

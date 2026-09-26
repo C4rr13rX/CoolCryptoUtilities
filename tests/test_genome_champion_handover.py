@@ -224,3 +224,46 @@ def test_a_fitted_model_is_cached_to_disk(tmp_path, monkeypatch):
     assert publisher._load_cached_model("abc123def456") == sentinel
     # A genome never fitted has no cache, and that is not an error.
     assert publisher._load_cached_model("never_fitted0") is None
+
+
+def test_a_same_size_rewrite_inside_one_timestamp_tick_is_seen(champion_file):
+    """The swap mtime cannot see.
+
+    Two genomes serialise to the same length, so a handover is a same-path,
+    same-size rewrite -- and on Windows st_mtime is coarse enough that both
+    writes land in one tick. Every field an mtime-based cache compared was
+    identical across a real swap, so it served the previous genome for up to
+    60 seconds and attributed its trades to the new one's ledger.
+    """
+    for _ in range(25):
+        write_champion(champion_file, genome_payload("aaaaaaaaaaaa1111"))
+        assert load_champion(champion_file).genome_id == "aaaaaaaaaaaa1111"
+        write_champion(champion_file, genome_payload("bbbbbbbbbbbb2222"))
+        assert load_champion(champion_file).genome_id == "bbbbbbbbbbbb2222"
+
+
+def test_two_champion_files_do_not_answer_for_each_other(tmp_path):
+    """The cache is one module-global entry and ignored which path was asked."""
+    a, b = tmp_path / "a.json", tmp_path / "b.json"
+    write_champion(a, genome_payload("aaaaaaaaaaaa1111"))
+    write_champion(b, genome_payload("bbbbbbbbbbbb2222"))
+    assert load_champion(a).genome_id == "aaaaaaaaaaaa1111"
+    assert load_champion(b).genome_id == "bbbbbbbbbbbb2222"
+    assert load_champion(a).genome_id == "aaaaaaaaaaaa1111"
+
+
+def test_an_unchanged_file_is_not_reparsed(champion_file, monkeypatch):
+    """The cache must still earn its keep."""
+    write_champion(champion_file, genome_payload("aaaaaaaaaaaa1111"))
+    first = load_champion(champion_file)
+    calls = []
+    real_loads = json.loads
+
+    def counting_loads(*a, **k):
+        calls.append(1)
+        return real_loads(*a, **k)
+
+    monkeypatch.setattr(champion_module.json, "loads", counting_loads)
+    second = load_champion(champion_file)
+    assert second is first
+    assert calls == [], "an unchanged champion was parsed again"

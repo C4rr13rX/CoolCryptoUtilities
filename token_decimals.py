@@ -30,6 +30,12 @@ KNOWN_TOKEN_DECIMALS: Dict[str, Dict[str, int]] = {
         "0x50c5725949a6f0c72e6c4a641f24049a917db0cb": 18,  # DAI
         "0x4200000000000000000000000000000000000006": 18,  # WETH
         "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf": 8,   # cbBTC
+        # Read from the contracts on base 2026-09-03 via
+        # base-rpc.publicnode.com (eth_call 0x313ce567). Both are held live, so
+        # keeping them off an RPC read removes the last way their fills can be
+        # mismeasured.
+        "0x2ae3f1ec7f1f5012cfeab0185bfc7aa3cf0dec22": 18,  # cbETH
+        "0x940181a94a35a4569e4529a3cdfb74e38fd98631": 18,  # AERO
     },
     "arbitrum": {
         "0xaf88d065e77c8cc2239327c5edb3a432268e5831": 6,   # USDC (native)

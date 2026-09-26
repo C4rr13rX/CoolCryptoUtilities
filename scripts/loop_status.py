@@ -131,12 +131,36 @@ def collect() -> Dict[str, Any]:
         out["feed_age_sec"] = None
 
     # What is held right now, from the BOOK rather than reconstructed.
+    #
+    # The book is at state['ghost_trading']['positions'], NOT state['positions']
+    # -- that key does not exist and never has, so this read returned {} every
+    # time it ran and reported "0 open" for 19.8 hours while atf_static sat on
+    # CBBTC-USDC and CBXRP-USDC with no path to sell either. A status line that
+    # cannot see a stuck position cannot report the thing most likely to stop
+    # trading, and "0 open" plus "0 trades" reads like a quiet market instead of
+    # a deadlock. Live positions are counted out separately for the same reason:
+    # they are the ones that block real money.
     try:
         row = conn.execute(
             "SELECT value FROM kv_store WHERE key='state'").fetchone()
-        positions = (json.loads(row[0]) if row and row[0] else {}).get("positions") or {}
+        state = json.loads(row[0]) if row and row[0] else {}
+        positions = (state.get("ghost_trading") or {}).get("positions") or {}
         out["open_positions"] = len(positions)
         out["open_symbols"] = sorted(positions)[:10]
+        live_held = {
+            sym: pos for sym, pos in positions.items()
+            if isinstance(pos, dict) and str(pos.get("mode") or "") == "live"
+        }
+        out["open_live_positions"] = len(live_held)
+        # Age matters more than count: the mandate is round trips in minutes, so
+        # a live position measured in hours is a broken exit, not a long hold.
+        oldest = 0.0
+        for pos in live_held.values():
+            entry_ts = float(pos.get("entry_ts", pos.get("ts", 0.0)) or 0.0)
+            if entry_ts > 0.0:
+                oldest = max(oldest, now - entry_ts)
+        out["oldest_live_hold_sec"] = round(oldest, 1) if oldest else None
+        out["live_held_symbols"] = sorted(live_held)[:10]
     except Exception:  # noqa: BLE001
         out["open_positions"] = None
 
@@ -188,6 +212,17 @@ def main() -> int:
           f"  {data.get('open_symbols') or ''}")
     print(f"  last hour  : {data.get('entries_1h', 0)} in, {data.get('exits_1h', 0)} out"
           + (f" ({rate:.0%} close)" if rate is not None else ""))
+
+    # A live position measured in hours is the single most common reason this
+    # pipeline goes dark: it holds its symbol against every further entry, so
+    # one stuck hold silently switches off the strategy that owns it.
+    live_open = data.get("open_live_positions")
+    if live_open:
+        oldest = data.get("oldest_live_hold_sec") or 0.0
+        print(f"  live held  : {live_open}  {data.get('live_held_symbols') or ''}")
+        print(f"  oldest live hold: {oldest / 3600.0:.1f}h"
+              + ("   <- BLOCKING every entry on that symbol"
+                 if oldest > 3600.0 else ""))
 
     age = data.get("feed_age_sec")
     print(f"\nfeed: {data.get('ticks_10m', 0)} ticks/10m across "

@@ -553,6 +553,84 @@ class UltraSwapBridge:
         self._rpc_clients[chain] = (w3_obj, good_url)
         return w3_obj
 
+    # A provider that answers the handshake but refuses the CALL is healthy by
+    # every measure this class had. `_w3` scores an endpoint on whether it
+    # connects, and `is_connected()` keeps returning True for a rate-limited
+    # RPC forever, so the cached client is never evicted and the health tracker
+    # never hears about a failure that happened after the connection.
+    #
+    # That is not a theoretical gap. Measured 2026-09-05 on the live book: the
+    # AERO-USDC exit at 12:38:13 asked mainnet.base.org for one allowance and
+    # got `429 Too Many Requests`. `_ensure_allowance` reads a failed READ as a
+    # failed APPROVAL, so UniswapV3 was abandoned; Camelot has no Base router
+    # and Sushi does not support Base, so "[ERR] All routes failed" and the
+    # position did not sell. The same nine-line sequence appears 12 times in
+    # the current log and has killed live exits (CBETH, AERO) and live entries
+    # (CBBTC) alike.
+    #
+    # The allowance it could not read was 2^256-1: the router was ALREADY
+    # approved and the swap needed no approval at all. Probing the seven Base
+    # endpoints at the time of the failure, three answered the identical call
+    # in ~0.5s (mainnet.base.org, base-rpc.publicnode.com, base.publicnode.com)
+    # and four are permanently broken for eth_call (meowrpc: "method not
+    # supported"; llamarpc: 521; 1rpc: plan limit; drpc: 408). So a working
+    # endpoint was always one retry away and nothing ever retried.
+    #
+    # Deterministic answers are NOT retried. A revert is the chain replying,
+    # and asking a second node the same question gets the same revert more
+    # slowly -- worse, retrying it would paper over a real contract failure.
+    _TRANSIENT_RPC_MARKERS = (
+        "429", "too many requests", "rate limit", "usage limit", "quota",
+        "timeout", "timed out", "connection", "temporarily", "503", "502",
+        "504", "521", "408", "-32005", "not supported", "capacity",
+    )
+
+    def _rpc_error_is_transient(self, exc: BaseException) -> bool:
+        """Is this the endpoint failing, or the chain answering?"""
+        name = type(exc).__name__
+        # A revert / bad ABI decode is an answer. Never retry it elsewhere.
+        if name in {"ContractLogicError", "BadFunctionCallOutput", "Web3ValidationError",
+                    "InvalidAddress", "ABIFunctionNotFound"}:
+            return False
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if isinstance(status, int) and (status == 429 or status >= 500 or status == 408):
+            return True
+        blob = f"{name}: {exc}".lower()
+        return any(marker in blob for marker in self._TRANSIENT_RPC_MARKERS)
+
+    def _call_with_rpc_failover(self, chain: str, fn, *, what: str):
+        """Run ``fn(w3)`` against Base's healthiest RPC, moving on when one balks.
+
+        Every endpoint gets at most one attempt, in health order, and a
+        transient failure demotes the endpoint AND evicts the cached client so
+        the next caller does not walk straight back into the same 429. The
+        final exception is re-raised unchanged, so callers that already handle
+        a failure keep handling it -- this only removes the case where a
+        healthy alternative was never asked.
+        """
+        cfg = CHAINS.get(chain) or {}
+        attempts = max(1, len([u for u in (cfg.get("rpcs") or []) if u]))
+        last: Optional[BaseException] = None
+        for attempt in range(attempts):
+            w3 = self._w3(chain)
+            url = (self._rpc_clients.get(chain) or (None, ""))[1]
+            try:
+                result = fn(w3)
+                if attempt:
+                    print(f"[rpc] {what} recovered on {url} after {attempt} failed endpoint(s)")
+                return result
+            except Exception as e:  # noqa: BLE001 - classified immediately below
+                if not self._rpc_error_is_transient(e):
+                    raise
+                last = e
+                self._rpc_latency[url] = float("inf")
+                self._rpc_health.record_failure(url)
+                self._rpc_clients.pop(chain, None)
+                print(f"[rpc] {what} failed on {url} ({type(e).__name__}: "
+                      f"{str(e)[:80]}); trying the next endpoint")
+        assert last is not None
+        raise last
+
     # ------------------------ Fees / Sending ------------------------
 
     def _gas_urgency(self, scope: Optional[str] = None) -> Optional[str]:
@@ -902,15 +980,26 @@ class UltraSwapBridge:
         except Exception:
             return 18
 
+    # Both reads sit directly on the money path -- the balance sizes a live
+    # exit and the allowance decides whether the swap is attempted at all --
+    # so a single rate-limited endpoint must not be the end of the question.
+    # See ``_call_with_rpc_failover``.
     def erc20_balance_of(self, chain: str, token: str, owner: str) -> int:
-        w3 = self._w3(chain)
-        return int(self._erc20(w3, token).functions.balanceOf(Web3.to_checksum_address(owner)).call())
+        owner_cs = Web3.to_checksum_address(owner)
+        return int(self._call_with_rpc_failover(
+            chain,
+            lambda w3: self._erc20(w3, token).functions.balanceOf(owner_cs).call(),
+            what=f"balanceOf({token})",
+        ))
 
     def erc20_allowance(self, chain: str, token: str, owner: str, spender: str) -> int:
-        w3 = self._w3(chain)
-        return int(self._erc20(w3, token).functions.allowance(
-            Web3.to_checksum_address(owner), Web3.to_checksum_address(spender)
-        ).call())
+        owner_cs = Web3.to_checksum_address(owner)
+        spender_cs = Web3.to_checksum_address(spender)
+        return int(self._call_with_rpc_failover(
+            chain,
+            lambda w3: self._erc20(w3, token).functions.allowance(owner_cs, spender_cs).call(),
+            what=f"allowance({token})",
+        ))
 
     def erc20_symbol(self, chain: str, token: str) -> str:
         w3 = self._w3(chain)

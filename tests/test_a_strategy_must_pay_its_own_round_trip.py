@@ -39,20 +39,33 @@ if str(ROOT) not in sys.path:
 def _make_book(path: Path, rows) -> None:
     """A trade_outcomes table shaped like the real one.
 
-    ``rows`` are ``(strategy_id, net_profit, entry_price, quantity)``.
+    ``rows`` are ``(strategy_id, net_profit, entry_price, quantity)``, or
+    ``(strategy_id, net_profit, entry_price, quantity, exit_price)`` when the
+    test cares about the exit leg.
+
+    EXIT PRICE DEFAULTS TO A PRICE THAT MOVED. ``_load_book`` discards round
+    trips whose entry and exit prices are identical -- they earn the negative
+    of the fee whoever opened them, so they are evidence about the venue and
+    not about the strategy (see the ``_load_book`` docstring for the three
+    DRB-USDC rows that forced this). Every test in this file that does not
+    name an exit price is asking a question about returns, not about flat
+    tapes, so the default must not be flat or the whole book would vanish.
     """
     conn = sqlite3.connect(str(path))
     conn.execute(
         "CREATE TABLE trade_outcomes ("
         " outcome_id INTEGER PRIMARY KEY, ts REAL, status TEXT,"
-        " net_profit REAL, entry_price REAL, quantity REAL, details TEXT)"
+        " net_profit REAL, entry_price REAL, exit_price REAL,"
+        " quantity REAL, details TEXT)"
     )
-    for index, (strategy, net, entry_price, quantity) in enumerate(rows):
+    for index, row in enumerate(rows):
+        strategy, net, entry_price, quantity = row[:4]
+        exit_price = row[4] if len(row) > 4 else float(entry_price) * 1.01
         conn.execute(
             "INSERT INTO trade_outcomes"
-            " (ts, status, net_profit, entry_price, quantity, details)"
-            " VALUES (?, 'closed', ?, ?, ?, ?)",
-            (1000.0 + index, net, entry_price, quantity,
+            " (ts, status, net_profit, entry_price, exit_price, quantity, details)"
+            " VALUES (?, 'closed', ?, ?, ?, ?, ?)",
+            (1000.0 + index, net, entry_price, exit_price, quantity,
              json.dumps({"strategy_id": strategy})),
         )
     conn.commit()
@@ -237,7 +250,7 @@ def test_a_strategy_is_judged_only_on_its_own_trades(gate):
     assert module.refusal_reason("the_winner") is None
 
 
-def test_it_reads_every_strategy_id_key_the_writers_use(tmp_path):
+def test_it_reads_every_strategy_id_key_the_writers_use(tmp_path, monkeypatch):
     """Three executors write the id under three different keys.
 
     Missing one silently drops that executor's entire history, and a strategy
@@ -256,20 +269,28 @@ def test_it_reads_every_strategy_id_key_the_writers_use(tmp_path):
     conn.execute(
         "CREATE TABLE trade_outcomes ("
         " outcome_id INTEGER PRIMARY KEY, ts REAL, status TEXT,"
-        " net_profit REAL, entry_price REAL, quantity REAL, details TEXT)"
+        " net_profit REAL, entry_price REAL, exit_price REAL,"
+        " quantity REAL, details TEXT)"
     )
     for index in range(9):
         conn.execute(
             "INSERT INTO trade_outcomes"
-            " (ts, status, net_profit, entry_price, quantity, details)"
-            " VALUES (?, 'closed', ?, 1.0, 1.0, ?)",
+            " (ts, status, net_profit, entry_price, exit_price, quantity, details)"
+            " VALUES (?, 'closed', ?, 1.0, 1.01, 1.0, ?)",
             (1000.0 + index, -0.015 - (index % 3) * 0.001,
              json.dumps(id_keys[index % 3])),
         )
     conn.commit()
     conn.close()
 
-    module.DB_PATH = db_path
+    # monkeypatch, NOT a bare assignment. This line used to set DB_PATH
+    # permanently and tmp_path is deleted after the test, so every LATER test
+    # in the session found the gate pointed at a database that no longer
+    # exists. ``_cost()`` then threw, fell back to the 0.0065 constant, and
+    # test_both_edge_gates_charge_the_same_cost failed with 0.0065 != 0.004654
+    # -- in a file it had nothing to do with. Found 2026-09-23 pass 689 while
+    # working an unrelated item; the leak is older than that change.
+    monkeypatch.setattr(module, "DB_PATH", db_path)
     module._cache.clear()
     module._cache_built_at = 0.0
     reason = module.refusal_reason("keyed")
