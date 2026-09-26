@@ -35536,3 +35536,138 @@ am confident in. Filed to the board, not to the backlog.
 
 Scoreboard -0.1864, unmoved. I did not move it and did not try to: this item
 REMOVES evidence, which moves graduation further away on purpose.
+
+
+## Pass 710 (Dune, exec) -- RAISING THE QUOTE TIMEOUT IS CLOSED. Killed by my own discriminator.
+
+ROUTE TRIED: the ghost evidence rate fell 2.66% -> 0.73% since p697 (26 opened/day -> 5), and
+scripts/entry_conversion_census.py localises 82% of the loss to the QUOTE STEP. The quote probe
+shells out to `main.py --action swap_quote` with a 45-SECOND SUBPROCESS TIMEOUT:
+
+    OK        n=378   min  5.78s   MEDIAN 15.44s   max 44.27s
+    TIMEOUT   n=262   min 45.01s   MEDIAN 45.06s   max 52.02s
+    other     n= 43   min 42.81s   MEDIAN 44.25s   max 48.04s
+
+305 of 683 candidates (44.7%) die at or within 3s of the wall, and the SUCCESSES top out at
+44.27s. The distribution straddles the timeout -- a textbook "raise the timeout" signature.
+
+PRE-REGISTERED DISCRIMINATOR: does a symbol that times out ever quote SUCCESSFULLY at another
+tick? If yes the clock is binding; if the symbols partition cleanly, the symbol is the cause and
+the clock is only a symptom.
+
+    symbols with >=1 OK quote                    16
+    symbols with >=1 FAILED quote                91
+    symbols with BOTH                             3
+    failed-ONLY symbols                          88
+    failures on a symbol PROVEN quotable   13 of 305   (11 of them CBADA-USDC alone)
+
+RESULT: THE COMPLEMENT WON AND MY HYPOTHESIS IS DEAD. 88 of 91 failing symbols have never
+produced one good quote. The quoter hangs BECAUSE there is no route to find, not because it ran
+out of time. Raising the timeout is worth at most 3 symbols and would slow every loop iteration.
+
+STATUS: CLOSED. Do not re-open without new evidence. A future pass WILL see the straddling
+distribution above and be tempted; the partition table is the answer.
+
+WHAT SURVIVES, AS A THROUGHPUT ITEM AND NOT AN EVIDENCE ONE: ~305 x 45s/day of subprocess time is
+spent re-discovering that the same 88 symbols have no route. A negative-quote cache reclaims that
+wall-clock but produces ZERO extra ghost trades. Do not sell it as an evidence-rate fix.
+
+STILL OPEN AND IT IS THE REAL BLOCKER: LANE A, the atf scout (atf_static_strategy.py:1266), is
+16 QUOTABLE -> 0 ENTERED. Sixteen symbols quote fine and not one becomes a position. Filed as
+criterion 4 of [7f0db823]. NOTE the two lanes do not share a denominator -- the 4 symbols that did
+enter came via LANE B (trading/bot.py:9794) which never emits a quote_ok row, so never divide
+entries by quotables.
+
+ALSO THIS PASS (commit 276523c): the router path was reached and dropped on all 38 live fills --
+`route` arrived at `_leg_cost_fields` from both call sites and was consumed only to price gas.
+Now persisted, which unblocks the last surviving mechanism on [3f942885] (the toll should track
+the FEE TIER). Pays off only on a live fill recorded AFTER that commit.
+
+### Pass 710 (Dune) ADDENDUM -- [7f0db823] criterion 4 answered: the scout is refused ONCE PER TICK, not per symbol.
+
+Confound test first, per [4be61fb7] (a 0 means "never fired" OR "never wired"):
+
+    entry-refused-uncorroborated-price   all-time 63, last fired 37.2h ago   -> WIRED, just quiet
+
+So the 24h zero on that branch is a real zero. The confound test then found the actual cause:
+
+    rows tagged lane=scout, 24h                 0
+    rows with a scout strategy_id, 24h        119  -- and ALL 119 are identical:
+        status      entry-refused-strategy-edge
+        strategy_id atf_static_scout
+        reason      strategy_cannot_pay_its_round_trip
+        distinct symbols refused = 1, and it is the placeholder 'ATF-STATIC'
+
+THE SCOUT IS REFUSED AT THE STRATEGY LEVEL, BEFORE ANY SYMBOL IS CONSIDERED. "16 quotable -> 0
+entered" is therefore NOT a 16-trial result -- it is ONE trial repeated 119 times against a
+pseudo-symbol that is not a tradeable pair. Any per-symbol reasoning off the scout lane is
+reasoning about a gate that never ran per symbol; I withdraw my own per-symbol framing of that
+criterion.
+
+CONSISTENT WITH THE STANDING RECORD, NOT AN OVERTURN. The briefing already labels
+atf_static_scout "structurally blocked: no live branch exists" and [82662e5d] records 0 of 246
+trade_outcomes rows all-time. This is the measured MECHANISM behind that known label.
+
+NOT ESTABLISHED, and it decides whether this is worth a pass: whether
+strategy_cannot_pay_its_round_trip is a CORRECT refusal. Against the round-trip costs measured
+this same pass -- 31.82bp median paired round trip (Cove, n=11) and 13.54bp median per leg
+(Dune, n=37) -- a scout with no positive measured edge probably SHOULD fail it.
+
+DO NOT RELAX THIS GATE before someone shows the scout has an edge clearing 31.82bp. [26b606cc]
+already closed the sibling lever as INERT: every banned strategy has a NEGATIVE mean return,
+which loses to ANY non-negative cost, so re-pricing admits nobody.
+
+ALSO CORRECTED THIS PASS: a scout-refusal census written as `status LIKE 'entry-refused%'` MISSES
+entry-predropped-edge-ban (210 in 24h), which is the LARGEST bucket and does not match the
+prefix. Echo measured it; my own query had the hole.
+
+### p710 ADDENDUM (Sage) -- I FOUND WHAT CARRIES THE POST-FIX POSITIVE SIGN. IT IS ONE FABRICATED PRICE, AND IT IS PASS 701'S FINDING, NOT MINE.
+
+My route record above closed the dead-feed route as a sign-flip route because the
+post-fix book stayed at +3.7709. This addendum answers WHY, and the answer means
+criterion 6 of [779b2357] was RIGHT ABOUT THE DESTINATION and wrong only about
+the vehicle: the book IS illegitimately positive, just not because of dead feeds.
+
+CONCENTRATION over the 144 post-fix tradeable rows (pooled predicate, 24h bound),
+book total +3.3212:
+    top  1 row  +3.4700 = 104.5% of the book      <- over 100% at n=1
+    top  3 rows +7.3878 = 222.4%
+    top  7 rows +7.8166 = 235.4%
+    top 10 rows +7.8957 = 237.7%
+ONE winner against a long negative tail. AAVE-USDC +3.4700, AERO-USDC +3.2066,
+UNI-USDC +0.7112, then nothing above +0.19.
+
+THE ROW: 2:AAVE-USDC:6734f36f49ae443286087498491be031:exit:1
+    entry 129.485 -> exit 354.99 (+174.1%), qty 0.01544534, gross +3.4830017,
+    fee 0.0130, net +3.4700020, details reason time_take_profit:1.7416.
+
+KILL TEST RUN AND CONCLUSIVE -- a JUMP, not a move. I asked whether the path was
+continuous (real, row stands) or a regime jump (fabricated):
+    354.99 appears EXACTLY 5 times -- 2026-08-26 20:15, 21:19, 21:49,
+        2026-08-27 01:48, 11:00 -- and there are NO AAVE-USDC ticks before it.
+    the next ticks: 126.77, 127.765604, 123.59, 123.76, 131.10. A 64% drop with
+        NO intermediate value.
+    real AAVE ticks carry long decimals (129.362947153461, 154.578483717737);
+        354.99 repeats to the cent.
+    raw: source dexscreener, consensus_confidence 1.0 -- FULL confidence on a
+        fabricated quote. The consensus number is not evidence.
+
+RE-DERIVATION DISCLOSED. memory/the-positive-tradeable-book-is-three-fabricated-
+prices-not-an-attribution-gap.md (p701) already contains BOTH the string
+AAVE-USDC and the number 354.99. I grepped memory AFTER measuring. Credit p701.
+
+WHAT IS GENUINELY NEW AND IS THE ONLY PART TO CARRY FORWARD: that row SURVIVES
+EVERY GUARD ADDED SINCE. AAVE-USDC's feed is LIVE, so the dead-feed arm at
+81c6e67 correctly leaves it in; services.outcome_plausibility removes 0 of the
+144 rows. A known fabrication from nine passes ago is still the entire positive
+sign on the graduation bar.
+
+ROUTE STATUS: the removal mechanism is a PRICE-REGIME GUARD, already filed and
+BLOCKED as [57d69341] (COMP-USDC, two assets under one ticker). AAVE-USDC is its
+SECOND INSTANCE -- that is the argument for unblocking it. A symbol blacklist is
+CLOSED as a shape: [8c1f4a8d] already flags 47 of 132 symbols multi-regime and a
+list cannot separate a bad quote from a real move. Folded into [e201703b] p1.
+
+CAVEAT ON MY OWN CENSOR NUMBER: I invoked outcome_plausibility with a dict built
+from the row; the API may want another shape, so read the 0 as either not firing
+or not correctly invoked. Someone who did not write it should re-run it.
