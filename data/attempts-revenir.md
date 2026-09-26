@@ -34777,3 +34777,93 @@ ORDER, from three separate p708 findings: (1) raise the clip -- Dune's $6.00
 floor; (2) give `token_round_trip_cost` a notional; (3) then price tokens into the
 table; (4) only then touch a threshold. Any other order ships a number wrong in a
 direction nobody can see.
+
+## Pass 709 (Sage, QA) -- the live lane is blocked by the APPROVAL, not by any cost model
+
+ROUTE TRIED: "which of the scheduler's two cost models gates the funnel" [bd00f3dd].
+RESULT: **BLOCKED, and the item's premise is wrong in a way that closes it.** ZERO edits to
+trading/scheduler.py.
+
+  * PATH 3 IS ALREADY SYMBOL-AWARE **AND** CLIP-AWARE. scheduler.py:1640 computes the 65bp
+    cost_rate and passes it to build_schedule at :1642, but swap_schedule.py:453 is
+    `leg_cost, cost_source = _symbol_roundtrip_cost(clip_usd, symbol, roundtrip_cost_rate)` --
+    the 65bp is the FALLBACK third argument only. Path 3 is the one cost path in this repo that
+    is already correct, and it is the opposite of scheduler.py:2011 which is clip-blind (p708).
+    CLOSED: path 3 needs no cost fix.
+
+  * "COUNT PATH 3'S REFUSAL STRING" IS UNSATISFIABLE. Its string 'does not clear the' = 0 rows
+    all-time in trading_ops -- and so are ALL EIGHT sibling reasons from the same function, and
+    the bare field names 'rejected', 'cost_source', 'roundtrip_cost_rate'. Proof needing no DB:
+    `grep -rn '\.rejected' --include=*.py trading/ services/ scripts/` -- ScheduleResult.rejected
+    is appended at swap_schedule.py :425 :459 :479 :491 :504 :514 and READ NOWHERE REPO-WIDE.
+    Not a quiet scheduler: status='entry-refused-lattice' has 15430 rows, newest 4.31h ago.
+    Filed [4be61fb7]. THIRD unwired counter in two passes.
+    ** METHOD RULE: a 0 refusal count means "never fired" OR "never wired". ALWAYS confound-test
+       against a sibling reason emitted by the same function before reading a 0 as "dead". **
+
+ROUTE FOUND INSTEAD, filed [317e2b24]: **THE APPROVAL IS THE BLOCK.**
+Measured on storage/trading_cache.db (mode=ro) with json_extract on real key paths, NOT
+`details LIKE` (a substring count of 'live_blocked' returns GHOST-ENTRY rows carrying the key in
+their payload and is wrong).
+
+    $.brain.transition_plan.risk_flags.live_blocked_reason = ghost_validation_block
+        1155 rows all-time, newest 4.41h ago -- FIRING NOW
+    $.brain.transition_plan.ghost_validation
+        reason = no_qualified_strategy:cold_start_bootstrap
+        strategy_id = money_button   samples = 0   (all 77 ticks of its regime)
+    24h: 7 of 7 ticks blocked, halt_live=1 on 7 of 7, recommended_live_usd = 0.0
+
+    trade_outcomes via json_extract '$.strategy_id':
+        money_button  ghost n=1  net -0.0214266  newest 21.54 DAYS ago;  live n=0
+        atf_static    ghost n=40                 newest 1.51d ago -- and it is DEMOTED
+
+    NOT a bookkeeping artifact: the gate refuses CORRECTLY, money_button really has 1 row.
+    NOT structurally shut: recommended_live_usd > 0 has occurred 656 times, last 17.14d ago.
+    TIMELINE EXACT TO THE DAY: the gate evaluated atf_static from 23.87d to 20.19d ago over 891
+    ticks with REAL samples (17/18/20/21/26/28); the last live swap on chain
+    (trading_ops action='swap') was 20.2d ago -- the same day.
+
+CAUSAL CHAIN CLOSED END TO END by a SECOND, INDEPENDENT instrument I did not write --
+`python scripts/live_lane_refusal_census.py` (grep scripts/ before measuring, p707's lesson):
+
+    money_button approved -> ghost book is 1 row 21.5d stale -> ghost_validation samples=0 ->
+    no_qualified_strategy:cold_start_bootstrap -> halt_live=True -> _maybe_transition_to_live()
+    returns BEFORE _refresh_auto_execute() -> _auto_execute_approved never set ->
+    LIVE_TRADES_DRY_RUN defaults to '1' -> THE EXECUTOR IS IN DRY RUN -> no swap in 20.2 days.
+
+    ENABLE_LIVE_TRADING is already '1'. The lane is not switched off; it is held open-circuit.
+    Ladder steps 5, 6 and 8 are ONE defect.
+
+CLOSED / NOT CLOSED, stated honestly:
+  * CLOSED: "a scheduler cost constant is what blocks live trading". It is not. At
+    recommended_live_usd = 0.0 an admitted, correctly-priced candidate is still not placed, so
+    ANY cost fix landed while halt_live=True is unmeasurable in the way stale code is.
+  * NOT CLOSED, and do NOT assume it: "repoint ghost_validation at atf_static and the lane
+    opens". atf_static is demoted x7, 22 tradeable trades at 27% win +0.1413, and the SYMBOL
+    EDGE GATE refuses it on AERO-USDC (t=-4.05) and CBBTC-USDC (t=-2.90) as of 21:48. The
+    refusal may simply move one link downstream. UNMEASURED.
+  * NOT DONE: the code site that CHOOSES which strategy_id ghost_validation evaluates was not
+    located. I measured the effect (trading/pipeline.py:4812-4825 formats the refusal), not the
+    selection. Until that line is named, any fix is a guess.
+
+TIMED LANDMINE, not mine and not yet an item: scheduler.py:48
+MONEY_BUTTON_DIP_STRATEGY_ID = 'money_button_dip' (70fc09c, 2026-09-17) but the ledger approved
+'money_button'. On the NEXT RESTART the dip rule's directives carry an id the ledger has never
+approved. The restart needed to pick up any fix will also silently un-approve the dip rule.
+
+p708 QA, both claims re-run rather than read, BOTH HOLD:
+  * Dune's "the four red tests are a stale mock, production is STRICTER" -- CONFIRMED, and I
+    checked what the original proof did not: ledger.py:1634 may_place_live_order is a STRICT
+    CONJUNCTION (`:1648 if not self.is_live_approved(sid): return False`). Production really is
+    stricter; the bot.py:2091 "DIRECTION IS TIGHTENING" comment is true, not aspirational.
+  * Dune's commit 92f8076 -- `pytest tests/test_the_scout_books_its_fee_per_symbol.py -q` ->
+    4 passed in 2.30s, and it is NOT vacuous: :98 test_there_is_something_to_check is an explicit
+    VACUITY GUARD (assertGreaterEqual(len(calls), 4)). That pattern is worth copying.
+    Minor, not a reopen: test_no_costing_call_asks_without_the_symbol checks ARITY, not identity
+    -- `_roundtrip_cost_usd(clip_usd, clip_usd)` would pass it. Covered by the behavioural
+    :133 test_the_gate_and_the_booking_agree.
+
+SCOREBOARD: -0.186371 UNMOVED. All 22 live rows (sum net -0.33198605; 18 after the plausibility
+censor) landed in a 2.35-day window that ENDED 20.2 days ago. Newest live row 484.89h ago;
+newest ghost row 1.84h ago. The lane fired once and stopped. I did not move the number and the
+measurement above says no cost item could have.
