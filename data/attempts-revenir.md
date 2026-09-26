@@ -39633,3 +39633,53 @@ at the briefing's 5.9 tradeable/day that is ~85 days. Decay exists; nobody can r
   Nothing actually sends -- all 11 came back `SES rejected: InvalidClientTokenId`
   against the downed AWS account. The tool is now honest about what it drops; it
   does not make a text arrive.
+
+## Pass 721 (Kite) -- three routes closed, two of them my own
+
+**ROUTE: "the full pytest sweep starves the live price feed" ([e60e1a20], filed p107). CLOSED, REFUTED.**
+Controlled quiet-vs-sweep probe, `scripts/feed_contention_probe.py` at `ed206ce`, same 10s
+schedule and 120s trailing window in both phases, per-process CPU/IO for production and
+pytest throughout.
+  QUIET (no pytest, n=9):  zero-tick 2/9 = 22.2%, 0.94 rows/min, age median 21.3s, age MAX 267.2s, syscpu 79.2%
+  SWEEP (pytest live, n=9): zero-tick 0/9 = 0.0%, 3.39 rows/min, age median 11.2s, age MAX 52.8s, syscpu 96.1%, pytest cpu 30.1%
+Every column goes the wrong way for the headline. The feed's own variance is larger than
+anything the sweep does to it, so a single uncontrolled observation during a sweep -- which
+is all p107 ever had -- cannot be evidence about the sweep. NOT claiming the sweep helps;
+that direction is noise. Criterion 1 answer is STILL STALLED (267.2s hole, zero pytest on
+the box) which escalates to [20e2f185], already open. Criteria 3 and 4 were conditional on
+contention being confirmed and were NOT claimed. Specifically: the full-sweep criterion on
+[54aaf3b7] was NOT amended -- there is no measured reason to restrict when the suite runs.
+CAVEAT: the "quiet" control is not an idle box (79.2% system CPU, five other agents).
+
+**ROUTE: "GIL contention starves the ingest task" (mine, p721). CLOSED, REFUTED BY ITS AUTHOR.**
+`scripts/pyspy_stall_watch.py` at `6e64f93`, py-spy 0.4.2 attached to live production by pid,
+no restart. 60 samples at 5s, stall threshold 60s newest-row age.
+  stalled 19/60 = 31.7%
+  STALLED n=19  loop thread holds the GIL  7/19 = 36.8%
+  HEALTHY n=41  loop thread holds the GIL 15/41 = 36.6%
+Identical to 0.2pp. The same functions (`_particle_filter`, `_dtw_stability`, `_hurst`,
+json `raw_decode`) hold the GIL just as often while the tape is healthy as while it is
+stopped, and the GIL is busy in both (free 2/19 vs 3/41). Add GIL contention to the
+falsified list beside indexed reads, the write lock, the retention DELETE, the whole-db
+theory and REST backoff. CAVEAT on the negative: "loop thread" is a name match on
+asyncio/Thread-10/_run_supervisor_loop, which biases toward finding no difference.
+
+**ROUTE: "news_lab.py:357 / fetch_trades db.py:1906 are the blocking call" (mine, p721). WITHDRAWN.**
+Both were real observations -- during the stall `dl-static:base` held the GIL in
+`_record_news_attempt` and json iterencode/raw_decode, and `Thread-10` (whose stack is
+`run_forever` <- `_run_supervisor_loop` production.py:275) held it in `fetch_trades`
+db.py:1906 and `get_json_many` db.py:772. Both are equally present in healthy samples, so
+neither is a cause. DO NOT re-open either on the p721 dumps.
+
+**WHAT SURVIVES AND IS NEW.** (a) The stall is confirmed from a second instrument at a third
+of Sage's sample interval: age 61->66->71->76->81->86->91->96->101->106->111->116s, +5.0s per
+5s sample with no drift, then unaided recovery to 2.5s. 116s is longer than the 75s longest
+run in the p720 series. (b) A staleness duty cycle of 31.7% at a 60s bar, against the 13.3%
+zero-rows bar in MEMORY.md -- different thresholds, not in conflict, but 13.3% understates it.
+(c) py-spy 0.4.2 is now installed in .venv and names any thread's stack in a RUNNING
+production process with no restart and no 13-minute boot: `.venv/Scripts/py-spy.exe dump --pid <pid>`.
+(d) `symbol_edge_gate` admits 51 of 59 symbols and 8 of the 16 it can decide, including
+WETH-USDC (n=9) and CBETH-USDC (n=7) with `refusal_reason()` None -- so no plan should start
+"first get a symbol past symbol_edge_gate". Cove measured the same independently this pass.
+(e) The two `main.py --action start_production` processes are a PARENT AND ITS CHILD
+(11104's ppid is 21232, same create_time); there is ONE bot, no duplicate writer.
