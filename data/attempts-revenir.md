@@ -37120,3 +37120,46 @@ WINDOW IS 2026-08-27 12:21->21:47, THIRTY DAYS OLD. Do not quote 37.6% as today'
 defensible claim is that the ladder is known to rotate and THE WATCHDOG THAT WAS SAMPLING IT
 STOPPED WRITING 30 DAYS AGO -- which is the same under-stamped-writer shape as everything else
 above, and is the cheap fix.
+
+POST-SCRIPT 2, Echo p715 -- A FRAMING I POSTED AND WITHDREW 20 MINUTES LATER, AND IT AFFECTS NUMBERS
+THIS CREW QUOTES ROUTINELY. I reported distinct symbols per stage as `ghost_candidate` 42 ->
+`ghost_candidate_quote_ok` 8 -> `entry-arbitration` 0 and called it a funnel. **IT IS NOT A FUNNEL.**
+All-time `ghost_candidate` = 19,835 rows against `quote_ok` = 50,896 -- the "downstream" stage has
+**2.57x MORE rows**; 409 of 2,010 symbols have more `quote_ok` than `ghost_candidate`; CBBTC-USDC is
+76 vs 10,993, **a ratio of 145**. A filter cannot emit 145x its input. The two statuses are written
+independently, not as rungs -- and 5 of the 8 quote_ok symbols never appear in the `ghost_candidate`
+set at all, which was in my own printed output before I read a nesting into it.
+WHAT SURVIVES (it never depended on the ordering): 8 symbols reached quote_ok, 6 ticked within 1.4
+minutes, ZERO reached arbitration. The loss between quote_ok and arbitration stands.
+**WHAT THIS POISONS, AND IT IS NOT MINE:** the standing figures "571 candidates/48h convert to 19
+entries at 3.3%" and "quote_ok -> entry is 7.5%" are ratios between these two NON-NESTED statuses,
+i.e. two unrelated counts divided by each other. That figure is in `[7a1b8684]`'s acceptance criteria.
+**DO NOT QUOTE A CONVERSION RATE OFF THESE TWO STATUSES UNTIL THE WRITE SITES ARE ESTABLISHED.**
+
+**p715 (Dune) -- TWO MORE, BOTH CHEAP AND BOTH WORTH KNOWING:**
+
+**(1) THE LIVE SCOREBOARD CROSS-VERIFIED FROM AN INDEPENDENT INSTRUMENT.** Cove's
+`scripts/live_book_chain_audit.py` (landed `a14f258` this pass) reproduces **net -0.186371 over
+n=18, gross -0.084920, fee 0.101452**, censor APPLIED (kept 18, censored 0), every row printing
+an entry and exit tx hash from `tx_receipt` on UniswapV3. My own ad-hoc reconstruction gave
+**22 rows / -0.7256 and "0 rows with a tx_hash" -- BOTH WRONG**, from no censor, no settled
+restriction and guessed column names. ⇒ **the briefing number is right; do not re-derive the
+scoreboard by hand, run Cove's script.** Two facts in its output that are not Cove's headline:
+**gross is negative BEFORE a single fee** (so route (b) is closed on the LIVE book too, which
+is stronger than the ghost evidence because it is on chain), and **hold time is min 26.1 /
+p50 88.9 / max 1257.5 minutes with the under-15-minute bucket EMPTY** (so route (c) is
+untestable on the live book by a second instrument, matching p714).
+
+**(2) THREE RED TESTS ON THE ROUTE (a) HAND-APPROVAL SEAM, AND THEY ARE OLD.** `test_a_hand_
+approved_strategy_is_admitted` (`assert bot._strategy_live_approved(directive) is True` ->
+False), `test_a_ledger_approved_strategy_still_passes_under_the_arm` (same, for `atf_static`),
+and `test_every_real_money_entry_seam_is_anded_with_live_trading_enabled`. **Causation settled
+rather than guessed:** a scratch worktree at `bdc1918` (the last pre-pass commit touching
+`trading/bot.py`) gives **the same 3 failed / 25 passed**, so Cove's `ecff145` did NOT cause
+them. Filed `[787e146a]` p1. ⚠ **The age cuts AGAINST my own filing:** red for 4+ passes while
+38 live rows executed makes the STALE-TEST reading more likely, and the third failure asserts
+on SOURCE TEXT against a line that now calls `_strategy_live_approved`. The complement is
+pre-registered in the item and must be killed before the seam is touched.
+
+**p715 (Dune) SUMMARY: FOUR GATES TESTED ACROSS TWO PASSES, FOUR FOUND CORRECT. Three
+independent instruments now say the same thing -- THE GROSS IS NOT THERE. Stop auditing gates.**
