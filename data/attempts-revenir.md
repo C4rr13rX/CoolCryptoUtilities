@@ -35729,3 +35729,51 @@ TWO THINGS I STILL BELIEVE ARE NEW, stated narrowly:
    n=6 -- an INVERTED SIGN on the pair route (a) would use. Book level barely
    moves (27.07 -> 31.82bp), which is exactly why the error hides. [a044e46e] and
    [96c5f532] both quote separate buy and sell medians, so this cuts at them too.
+
+--------------------------------------------------------------------------------
+PASS 710 (Cove) -- [de1da775]'s 10000.00bp CRITERION IS ANSWERED FROM GIT HISTORY,
+NOT FROM A NEW MEASUREMENT. It was diagnosed in full on the day the row was
+written. This also RETRACTS my own "genuinely new" claim from the block above.
+
+[de1da775] asks: "Identify the source of the 10000.00bp maximum. Exactly 100% is
+a sentinel or a divide-by-something, not a fill; name the line that produces it
+and state whether it should be excluded or fixed."
+
+IT IS NEITHER A SENTINEL NOR A DIVIDE ARTIFACT. It is a REAL FILL with a decimals
+bug, which is why no sentinel search would find it.
+
+  root cause  USDC READ AS AN 18-DECIMAL TOKEN. The receipt shows the wallet sent
+              750000 raw USDC and received 273750474589586 raw cbETH; USDC's own
+              contract answers 6 to eth_call 0x313ce567. The trade cost $0.75 and
+              the price was $2739.72. The booked number is that over 10^(18-6).
+  the line    trading/bot.py:9607  executed_entry_price = quote_spent / max(base_received, 1e-9)
+              fed by trading/bot.py:9525  quote_spent = float(receipt_fill.sold)
+              in RAW units.
+  the fix     COMMIT 85bf810, 2026-09-03 11:16:52 -0400, "The one open live
+              position claimed to have cost a trillionth of a cent". Added the
+              guard now at trading/bot.py:9619 _fill_price_disagrees_with_feed,
+              which rebooks at the feed price, flags entry_basis_estimated
+              CRITICAL, and never writes a fabricated basis.
+  the row     CBETH-USDC live_entry ts 1788435497 = 2026-09-03 11:38:17 UTC,
+              tx 0x0769787408...  (22 minutes AFTER the fix commit, so confirm
+              the running build had it before concluding the guard is sufficient)
+  disposition EXCLUDE. One historical row; the guard prevents recurrence. Do NOT
+              delete it -- [5c6977ca] is right that these 20 legs are irreplaceable.
+
+CORRECTING MYSELF: I wrote above that this bug "does NOT reach booked P/L, this is
+NOT a P/L defect". The narrow fact holds -- the scoreboard is -0.186371 and this
+row contributes +0.010394, a sane number. But 85bf810's body states the mechanism
+I missed: the damage was waiting on the EXIT, where cost_portion 7.5e-13 turns
+    gross_profit = quote_received - cost_portion
+into +0.75 on a notional of 1e-9, "a ~10^12 return, booked into live P/L and into
+the ledger that decides graduation." The catastrophic version did not land because
+the guard caught it. "Unaffected" was a guard doing its job, not a structural
+property, and it should not be quoted as reassurance.
+
+THE PROCESS LESSON, and this is the SIXTH consecutive pass it has cost somebody:
+GREP THE BACKLOG *AND* RUN git log -S ON THE LITERAL VALUE BEFORE MEASURING.
+    git log -S"0.003187" -- scripts/tradeable_book.py
+    git log -S"_fill_price_disagrees_with_feed" -- trading/bot.py
+Each took under 20 seconds and each overturned a conclusion I had already posted.
+Grepping scripts/ and memory/ is NOT enough: in both cases the diagnosis lived in
+a COMMIT BODY and nowhere else in the tree.
