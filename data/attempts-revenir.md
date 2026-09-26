@@ -34286,3 +34286,75 @@ inward by ~45bp — **which is exactly where the +0.19 to +0.29 lives.** **[6672
 **OMARCHY-USDC is worth one query by itself:** two rows, both at $2.00, together −0.54847,
 **65% of the bucket's entire loss**. A symbol exclusion may beat any stop.
 
+
+## Pass 708 (Dune, exec) -- the scout's fee was booked token-blind; the route it opened is CLOSED, the defect it exposed is FIXED
+
+**ROUTE TRIED (a):** "the ghost book is being over-charged by a token-blind cost
+constant, so correcting it raises the ghost P/L that graduation reads."
+**NUMBER:** over the 10 closed `atf_static_scout` rows in `trade_outcomes`
+(5 AERO-USDC, 3 SR-USDC, 2 VIRTUAL-USDC): stored `fee_cost` sum **$0.231690**,
+symbol-aware sum **$0.345770** at the $6.00 ghost clip. The book was
+**UNDER-charging by $0.114080**. **CLOSED -- REFUTED, sign backwards.**
+Correcting it makes the ghost book WORSE. `atf_static_scout` sits in the
+graduation table helped by a fee it never paid.
+
+**THE DEFECT, FIXED (commit 92f8076).** `services/atf_static_strategy.py` asks
+`services.roundtrip_cost` four times. The 2026-09-17 symbol fix reached ONE --
+the exit GATE at `:974`. The three BOOKING sites (`:1064` net P/L, `:1076`
+details blob, `:1137` the ledger row's `fee_cost`) were left blind, so the
+scout DECIDED on this symbol's real cost and WROTE the trade charged at a
+constant. Every closed scout row carries `fee_cost` = exactly $0.023169 =
+$0.004047 + $0.003187 x $6.00 -- the blind default to the last digit.
+Proof: `pytest tests/test_the_scout_books_its_fee_per_symbol.py -q` -> 4 passed;
+the same AST check against `git show HEAD:...` -> FAILS with 3 violations.
+
+**ROUTE TRIED (b):** "`trading/metrics.py:155` calls `net_profit_usd(fraction)`
+with no notional and no symbol, so the RISK layer at step 6 -- the ladder's
+first FAIL -- is repairing legacy rows at a $2 default notional against a $6
+clip." **NUMBER:** `_profit_usd` equals the stored `net_profit` column to the
+last digit on **10 of 10** rows. **CLOSED -- INERT. Do not change
+`trading/metrics.py`.** The blind call is real and does not bite these rows.
+
+**WHAT THAT SECOND RUN DID BUY:** the $0.114080 reproduces from the risk
+layer's own reader, a different code path from the `fee_cost` column it was
+first measured on. Two independent derivations, same six decimals.
+
+**THE NUMBER WORTH CARRYING FORWARD -- this account's real tolls at a $6 clip,
+from `services.roundtrip_cost` (which reproduces Sage p696's 36/36 chain
+receipts to within 5%: 17.04bp vs 17.8bp at $6, 12.04bp vs 12.4bp at the
+wallet):**
+
+    WETH-USDC       8.79bp
+    AERO-USDC      17.04bp
+    token-blind    38.62bp   <- what the book charged everything
+    SR-USDC        23.17bp   (not in the census; gets the constant)
+    VIRTUAL-USDC  187.60bp
+
+**A 21x spread. No single scalar is within 3x of both ends.** The blind
+constant is not a safety margin: it over-charges the cheap symbols and
+under-charges the dear ones, and the dear ones are larger, so the book nets
+out FLATTERED. This is the measured case against [26b606cc] / [bd00f3dd]
+resolving to a better constant.
+
+**ONE ROW FLIPS SIGN, BOTH WAYS.** VIRTUAL-USDC +0.632% books +0.014727 and is
+truly **-0.074678** (a +0.632% move does not pay a 1.876% toll). AERO-USDC
++0.177% books -0.012543 and is truly **+0.000403**. Net win count over the 10
+is UNCHANGED -- the scout's 62% win rate is NOT claimed to move at n=10.
+
+**LIMITS, NOT BURIED.** n=10, joined via `details LIKE '%atf_static_scout%'`.
+The graduation table reports 266 pooled / 32 tradeable for that id, so that
+join does NOT see every row: **$0.114080 is a floor on the error, not the
+total**, and the gap is unresolved. NOT restarted into production (booted
+2026-09-25 19:59:47); this corrects rows written from the next boot onward and
+repairs no row already in the book.
+
+**SEPARATELY MEASURED, NOT ACTED ON (opening measurement, no code touched):**
+`trading/bot.py:7231` reads
+`os.getenv("LIVE_MIN_TRADE_USD", os.getenv("LIVE_MIN_CLIP_USD", "0.35"))`.
+`LIVE_MIN_TRADE_USD` resolves to `'0.75'` and `LIVE_MIN_CLIP_USD` to `'6.00'`,
+so the inner getenv is **never evaluated** and the operator's $6.00 floor is
+dead text at the only live sizing site that fires (its own comment: "100% of
+ticks reported volume=0 ... trade_size ... was ALWAYS zero"). At $0.75 the AERO
+toll is **78.25bp**; at $6.00 it is 17.04bp. **NOT CHANGED** -- Echo p707 closed
+the clip-raise route on edge grounds ([3f82769b], operator clip ask WITHDRAWN)
+and that closure stands. Filed as a config-intent question, not an edge one.
