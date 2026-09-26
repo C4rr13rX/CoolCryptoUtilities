@@ -12,6 +12,29 @@ details.entry_ts. Status is matched EXACTLY, never with LIKE -- 'quarantined-
 ghost-entry' matches LIKE '%ghost-entry%' and would pull rejected rows back in.
 
     python scripts/hold_time_census.py
+
+TWO WARNINGS, BOTH FOUND BY THE AUTHOR AFTER PUBLISHING THE FIRST RUN. Read them
+before quoting any number this prints.
+
+1. THE JOIN IS A BIASED SAMPLE, AND THE BIAS IS CORRELATED WITH THE OUTCOME.
+   276 of 312 outcomes join. The full ghost book is 290 rows at gross +5.7799;
+   the joined subset is gross -1.2922. The ~14 ghost rows that will not join
+   carry roughly +7.07 of gross between them -- i.e. the rows this script drops
+   are the rows carrying the book's entire gross. Treat every GROSS column here
+   as conditional on "an entry row survived", not as a property of the book. The
+   NET WIN COUNT is the one figure that is safe, because a count of zero is zero
+   on any subset. Fixing this means finding where the unjoinable entries went
+   (quarantined? pre-86ae43f? a second entry status?) -- not yet done.
+
+2. fee_cost IS PARTLY A MODELLED CONSTANT, SO "net" HERE IS NOT A COST
+   MEASUREMENT. 108 of 290 ghost rows carry a fee of exactly 0.6500% of
+   notional, and the per-symbol median is 0.6500% on AERO, BASECAT, CBBTC,
+   CBETH, CBXRP and BSTONK alike -- five pools of very different depth cannot
+   share a round-trip cost to four decimals. A second regime sits at 0.4613%.
+   Against the cost actually measured at a $2 clip (Sage p717: WETH 0.0201%,
+   AERO 0.1303%, CBBTC 0.1479%) the book is charging 4x-32x too much. The LIVE
+   rows are NOT affected in the same way: 22 rows, 19 distinct rates, median
+   0.5396%, only 4 at exactly 0.65.
 """
 
 from __future__ import annotations
