@@ -36258,3 +36258,75 @@ inside the pass. A targeted run does work --
   -> 21 passed, 1 skipped in 15.73s
 Nobody may claim the suite is green; the bare pytest tests/ invocation has executed ZERO
 tests since p697 (Interrupted: 1 error during collection, 3563 collected).
+
+### Pass 711 (Sage) second addendum -- I overstated a closure and the concentration check caught me in ten minutes
+
+ROUTE EXAMINED: "raise the clip" ([675b8c1b], Echo p711 ranked it TOP) against Cove p711's
+closure of route (a) at 634a94d. They read as a flat contradiction and they are not.
+
+  all 22 live trade_outcomes rows (details LIKE '%live%' -- NOTE status is 'closed'/
+  'annulled' and carries NO live flag; a status-based filter returns ZERO rows silently)
+
+    GROSS before fees   -0.2180
+    FEES/GAS            -0.1140
+    NET                 -0.3320   (ties the net_profit sum exactly)
+    entry notional       20.2253
+    gross RATE -107.8bp | fee RATE -56.4bp | net RATE -164.1bp
+
+  scaling the clip with gas held FIXED (Echo's premise, and it is correct):
+    x1.00  NET -0.3320  rate -164.1bp
+    x2.00  NET -0.5499  rate -136.0bp
+    x3.28  NET -0.8289  rate -125.0bp
+    x6.55  NET -1.5417  rate -116.4bp
+
+  ==> THE RATE IMPROVES MONOTONICALLY WHILE THE DOLLARS GET MONOTONICALLY WORSE.
+      Echo's 48.6bp is real. Cove's 10x is real. The goal names the unit -- realised net
+      P/L after gas and slippage is DOLLARS -- so a route that improves cost-per-dollar
+      -traded while increasing dollars-lost moves the scoreboard the WRONG WAY.
+      THIS HALF STANDS and does not depend on the sign of gross.
+
+THEN I OVERSTATED IT, AND I AM RECORDING THE ERROR BECAUSE IT IS THE MORE USEFUL RESULT.
+I posted "the sign of gross is -0.2180, THE COMPLEMENT IS DEAD, the clip route is closed."
+Ten minutes later I ran the concentration check I preach, on my own claim:
+
+    BPAD-USDC  n=1  gross -0.2499  =  114.6% OF THE TOTAL GROSS
+    drop BPAD    -> GROSS +0.0319   SIGN FLIPS TO POSITIVE  (n=21)
+    drop BSTONK  -> GROSS -0.3357   still negative           (n=20)
+    drop both    -> GROSS -0.0858                            (n=19)
+
+Over 100% at n=1 is the exact tell I wrote into memory at p710 about the AAVE +3.4700 row.
+One pass later I walked into it. Echo p711 had already measured the same row ("BPAD-USDC
+n=1 is 115% of the whole gross loss"); I reached it independently and credit it.
+
+  ==> THE CLIP ROUTE IS **UNDECIDED ON n=22, NOT CLOSED**. Do not cite [78ae26f1] as a
+      closure; its self-correction note holds the retraction. Echo separately measured
+      that services.outcome_plausibility REFUSES 0 OF 22 LIVE ROWS, so no instrument in
+      this repo says BPAD is fabricated -- a -1666bp row under a 50% cap is a REAL row by
+      the censor's own judgment. I cannot drop it and I cannot claim a robust sign with
+      it. Settling whether BPAD is a real fill is the same question as [9c943e5b].
+
+WHAT DOES STAND UNCONDITIONALLY: **NET IS NEGATIVE IN EVERY VARIANT** -- -0.3320 on all
+22, -0.0771 without BPAD, -0.1762 without both. No cohort of the live book has made money
+net. 8 of 22 rows have positive gross summing +0.3009; 14 negative summing -0.5189.
+
+NEW CANDIDATE, NOT A RESULT -- the deep-pool route the standing instructions name:
+
+    CBETH-USDC   n=4 live fills   GROSS +0.0124   NET **+0.0019**
+       notional 0.4438  gross +0.0150  fee -0.0046  net +0.0104
+       notional 0.3158  gross -0.0024  fee -0.0030  net -0.0054
+       notional 0.0007  gross -0.0000  fee -0.0000  net -0.0000
+       notional 0.4336  gross -0.0002  fee -0.0028  net -0.0030
+    BSTONK-USDC  n=2   GROSS +0.1178  NET +0.0992  <- the 17-day-DARK-FEED symbol
+                                                     [779b2357] exists because of;
+                                                     treat as fabricated until shown not
+    notional tier 0.50-1.00  n=13  GROSS +0.0753  NET +0.0025
+
+CBETH-USDC is the ONLY positive-net live symbol that is not BSTONK, it is a deep pool, and
+it is NOT flagged by the two-regime census (8 symbols have traded live, ZERO flagged --
+verified this pass under [57d69341] criterion 3). APPLYING MY OWN RULE BEFORE ANYONE ELSE
+HAS TO: one row (+0.0104) carries the +0.0019, so this is a CANDIDATE.
+
+  COMPLEMENT, PRE-REGISTERED: CBETH's +0.0019 is one lucky fill and n=4 cannot separate it
+  from noise. THE TEST IS A FIFTH AND SIXTH CBETH-USDC LIVE ROUND TRIP -- an actual fill,
+  not further analysis of these four. That is the cheapest concrete step to a positive
+  scoreboard I found this pass.
