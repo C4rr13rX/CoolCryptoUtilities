@@ -34683,3 +34683,69 @@ arbitration row that REJECTED the strategy, worst for the strategy that never tr
 unsatisfiable). All 7 shipped `details LIKE` sites match FIELD NAMES, so **zero shipped sites affected.**
 
 SCOREBOARD: **-0.1864 over 18 live rows. UNMOVED, no trade attempted.**
+
+### Pass 708 (Sage, quant) -- ROUTE (b) IS ALREADY SHIPPED AND LIVE: the "dead" gate admits 5 of 553 symbols and they are ETH, WETH and CBBTC. It is also CLIP-BLIND, which makes the clip the lever and makes "fix the gate" a way to close the lane entirely.
+
+The gate three agents called dead an hour earlier, read at source:
+
+    scheduler.py:2005   max_round_trip = float(os.getenv("MONEY_BUTTON_MAX_ROUND_TRIP_COST", "0.0035"))
+                        = 35bp.  ABSENT from .env -- the DEFAULT IS LIVE.
+    scheduler.py:2009   symbol_cost = services.round_trip_cost.token_round_trip_cost(state.symbol)
+    scheduler.py:2011   if symbol_cost > max_round_trip: refuse "round_trip_cost_above_max"
+
+MEASURED over every symbol `trading_ops` saw in the last 7 days, n=553:
+
+    PASS the 35bp gate        5     0.9%
+    REFUSED                 548    99.1%
+
+    pass:     ETH-USDC 11.0bp  ETH-USDT 11.0bp  WETH-USDC 11.0bp
+              WETH-USDT 11.0bp  CBBTC-USDC 28.0bp
+    refused:  544 at EXACTLY 70.0bp, 2 at 140.0bp, 2 at 68.0bp
+
+**544 of 548 refusals are the pessimistic UNMEASURED default, not a measured
+cost.** The source comment says so: "An UNMEASURED token prices at the
+pessimistic default (0.70%) and is refused by the default threshold: that is
+deliberate, because 'we have never priced it' is not evidence that it is cheap."
+The gate refuses UNPRICED tokens, and 98.4% of the universe is unpriced.
+
+**ROUTE (b) FROM THE STANDING INSTRUCTIONS -- "restrict the tradeable universe to
+deep pools may beat any amount of signal work" -- IS ALREADY IMPLEMENTED,
+ALREADY LIVE, AND ALREADY DOWN TO WETH/ETH/CBBTC.** Nobody on the crew knew,
+because the only instrument that records it resets every process and three agents
+had concluded the path was dead from a table it never writes to.
+
+THE TEST THAT DECIDED IT, one grep:
+
+    services/round_trip_cost.py:202   def token_round_trip_cost(symbol: str) -> float:
+
+**ONE ARGUMENT. NO NOTIONAL. THE GATE IS CLIP-BLIND.** So the 11.0bp admitting
+WETH is the same $20-clip artifact already caught in the 12.4bp figure:
+
+    gate admits WETH on      11.0bp   (clip-blind table value)
+    real toll at $0.75        56.0bp   (Echo/Dune p708, measured)
+    gate threshold            35bp
+
+**MADE CLIP-AWARE, THIS GATE WOULD ADMIT ZERO SYMBOLS AT $0.75** (56.0 > 35). The
+only thing that makes any symbol admissible on an honest cost is RAISING THE
+CLIP -- the $6.00 operator floor Dune measured. Reached here from the gate side
+without looking for it, so:
+
+**THREE INDEPENDENT ROUTES NOW POINT AT THE CLIP, NOT AT A CONSTANT:**
+  * Echo/Dune p708 -- the 12.4bp denominator is a $20-clip number; $0.75 -> $6 is
+    worth 4.6-6.4x, larger than the scalar error.
+  * Echo p707 -- fixed gas is 41.9bp at a $1.13 notional and 2.4bp at $19.66.
+  * Sage p708 (this) -- the live gate admits 5 of 553 on a clip-blind price that
+    is ~5x too low at the clip actually traded.
+
+**CLOSED AS A TRAP, AND THIS IS THE OPERATIONAL WARNING:** "make
+`scheduler.py:2011` clip-aware" is NOT a fix on its own. Shipped without raising
+the clip it refuses 553 of 553 and CLOSES THE LANE COMPLETELY -- the same shape as
+Dune's kill test on the 286bp floor, where the correctness fix converts 0
+refusals into ~101 losing candidates. **Order is: clip FIRST, then
+cost-awareness.**
+
+NOT CLAIMED: that the 548 refusals are wrong. 544 sit at the unmeasured default
+and "we never priced it" is genuinely not evidence it is cheap. Widening the cost
+census (it holds 9 symbols) is a separate honest route -- but it cannot be judged
+until `token_round_trip_cost` takes a notional, because today it would widen on
+clip-blind numbers too.
