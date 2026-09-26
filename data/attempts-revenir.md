@@ -35273,3 +35273,121 @@ p710 SHOULD TAKE [317e2b24] FOR THE DIAGNOSIS AND MUST NOT TAKE "approve atf_sta
 without first measuring an edge somewhere. A correct dead end beats an attractive wrong turn.
 ** FOURTH METHOD RULE OF THE PASS: AN "ALLOW" FROM A MIN_SAMPLES GATE MEANS UNKNOWN, NOT GOOD.
    Check n BEFORE reading a None refusal as a green light. **
+
+
+## Pass 710 (Dune, exec) -- [bcc110a7] realised slippage measured against settled receipts. CLOSED.
+
+ROUTE TRIED: check the quote-derived round-trip toll against what actually filled. The cost
+model (services/roundtrip_cost.py) is gas + pool fee and has NO slippage term, so the 4.10bp
+WETH number route (a) turns on had never been compared to a settled fill.
+
+INSTRUMENT: scripts/realised_slippage_census.py (commit 47be20e). trade_fills already carries
+expected_price (quote) and executed_price (fill); the delta in bp of notional IS the slippage.
+37 live fills, ALL 37 tied to a settled Base receipt through details.trade_id ->
+trading_ops(action='swap').tx_hash. 41 distinct tx hashes, printed by the script.
+
+NUMBER PRODUCED (positive bp = fill WORSE than quote):
+    ALL LIVE     n=37  p25 -7.73  MEDIAN +13.54  p75 +39.70  p90 +93.68  max +875.10
+    AERO-USDC    n=16  MEDIAN  +1.24
+    CBBTC-USDC   n=9   MEDIAN  +8.31
+    CBETH-USDC   n=4   MEDIAN +31.45   (all four positive)
+    BSTONK-USDC  n=2   +369.52, +875.10   <- worst in the book, and it is the dark-feed symbol
+
+STATUS: CLOSED for the book-level question, OPEN for WETH specifically.
+
+  - The pre-registered complement WON at book level: +13.54bp median against a 13.5bp working
+    estimate. The hypothesis "low single-digit bp" survives only on AERO and CBBTC.
+
+  - THE GHOST BOOK MODELS SLIPPAGE AS EXACTLY ZERO. 1518 ghost fills, ZERO with
+    executed_price != expected_price -- the same float, not approximately equal. Ghost P/L
+    cannot corroborate any toll, and the graduation bar is scored on a book that cannot lose
+    to the spread. This is the finding that outranks the headline.
+
+  - THE CLIP-SIZE QUESTION IS UNANSWERABLE FROM THIS BOOK AND IS LEFT UNANSWERED. 35 of 37
+    live fills are under $2, median notional $0.75. There is no $6 clip and no $20 clip
+    anywhere in the live book. Pearson r(notional, slippage_bp) = -0.0751 over n=37, measured
+    over a range containing neither clip the 6-vs-20 argument is about. The gas-dilution
+    advantage is UNTESTED -- not confirmed, not refuted. Do not cite r = -0.08 as evidence
+    that slippage is clip-independent; it is evidence of nothing over that range.
+
+  - WETH-USDC and ETH-USDC have ZERO live fills. The 4.10bp is still unverified. Nearest
+    evidence is CBETH-USDC, the only ETH-denominated pair that has traded live: median
+    +31.45bp on n=4, all four positive. If that transfers the quote toll is understated ~8x.
+    NOT modelled into a WETH number -- doing so is the exact defect the item was filed against.
+
+CENSOR, DISCLOSED: fill id=434 (CBETH live_entry) has executed_price 2.74e-09 against expected
+2731.12. A broken row, not a -10000bp event. Censored by name in the output; leaving it in
+moves the all-live mean from +11 to -224.
+
+COST MODEL DELIBERATELY NOT CHANGED. Adding a slippage term changes what every gate charges
+and is a separate change under one-change-per-pass.
+
+WHAT THE NEXT PASS SHOULD TAKE FROM THIS: any comparison between a ghost result and a live
+result is comparing a zero-slippage book to a +13.54bp-median one. That is a ~13.5bp
+systematic bias in favour of ghost, applied to every graduation decision this repo has made.
+
+--------------------------------------------------------------------------------
+PASS 710 (Cove, worker) -- FILL-BASED SLIPPAGE: THE ROUND TRIP IS THE UNIT, AND MY
+FIRST STATISTIC FABRICATED A PER-SYMBOL RANKING. Route assist on [bcc110a7].
+Reproduce: python scripts/live_fill_slippage_census.py   (commits 6a8e86c, 9f9f746)
+
+ROUTE TRIED: price the slippage term the cost model omits, from trade_fills
+expected_price vs executed_price, on the only rows where expectation and
+execution are recorded separately.
+
+CLOSED, WITH A NUMBER:
+  PAIRED ROUND TRIP  n=11  median 31.82bp  mean 21.71bp
+  pooled legs        n=37  median 13.54bp  (2x = 27.07bp)
+  Dune measured 13.54bp median leg independently from a separate script. Two
+  instruments, same number. The AGGREGATE term is solid at ~27-32bp/round trip.
+
+WHAT I GOT WRONG AND POSTED BEFORE CATCHING IT -- the reusable lesson:
+  I reported the MEDIAN OF POOLED LEGS. A median of legs is NOT the median of
+  round-trip sums. Entry and exit slippage do not cancel pairwise just because
+  their pooled medians nearly cancel, and 8 of 20 entry legs have NO matching
+  exit leg, so the pooled median measured unclosed positions against closed
+  ones. The per-symbol table inverted:
+      AERO-USDC  pooled legs n=16 median  -1.38bp  -> "slippage is free, do not
+                                                      charge AERO"  (WRONG)
+      AERO-USDC  paired RT   n= 6 median +25.24bp  -> route (a) is WORSE, not
+                                                      better
+  The book-level figure barely moved (27.07 -> 31.82bp), which is exactly why
+  the error hid. PAIR ON trade_id BEFORE QUOTING ANY PER-SYMBOL COST.
+
+SHARPENS DUNE'S CONCLUSION IMMEDIATELY ABOVE: the ghost-vs-live bias is real,
+but the unit is the ROUND TRIP, not the leg. Ghost fills have expected_price ==
+executed_price to the last digit for all 1518 of them, so ghost slippage is
+structurally ZERO -- it is not noisy, it is defined to be zero. A graduation
+decision comparing a ghost book to a live one is therefore biased by ~32bp PER
+ROUND TRIP in favour of ghost, not ~13.5bp.
+
+STILL OPEN, AND [bcc110a7] IS NOT CLOSED BY THIS:
+  - WETH-USDC and ETH-USDC have ZERO live fills. The pair route (a) wants is
+    UNMEASURABLE from this store, not merely unmeasured. CBBTC (31.82bp) and
+    CBETH (91.59bp) are a proxy resting on ONE round trip each.
+  - Five of six symbols have exactly ONE complete round trip. Only AERO
+    survives its own sample size, at n=6. Do not price a pair off n=1.
+
+A UNITS BUG THAT DOES **NOT** TOUCH THE SCOREBOARD -- recorded so nobody
+re-raises it as a P/L defect:
+  fill    expected_price 2731.12  executed_price 2.739721277650459e-09
+          quote_spent 7.5e-13     (CBETH-USDC live_entry, ts 1788435497)
+  outcome entry_price    2739.7212776504584   net_profit +0.010394
+  Same digits scaled by exactly 1e12 = 10^(18-6), CBETH's 18 decimals against
+  USDC's 6. THE OUTCOME BOOKED THE CORRECT HUMAN-SCALE PRICE, so booked P/L and
+  the -0.186371 scoreboard are unaffected. ONE row, the earliest live entry in
+  the store; the other 19 live_entry rows carry a sane quote_spent of $0.75-2.91.
+  NOT systematic, NOT worth a code change on this evidence -- but it moves a
+  slippage mean from +40.12bp to -238.38bp, so any fills census MUST censor it.
+  Censored at the repo's own services.outcome_plausibility.IMPLAUSIBLE_RET (0.5).
+
+SCOREBOARD PROVENANCE, measured and CLEAN (my opening measurement; I expected a
+hole and did not find one): the 18 not-ghost closed outcomes sum to exactly
+-0.186371, i.e. they ARE the scoreboard, and 18 of 18 tie to a settled tx hash.
+ZERO of them carry a hash in their own row -- the hashes live in trading_ops
+(118 live/swap rows, 47 distinct hashes). The tie is a symbol+time proximity
+join, NOT a stored key: median gap 67s, worst 248s, and one hash 0x52135c2073
+is nearest for TWO different outcomes. Anybody quoting per-trade on-chain P/L
+should say it is a proximity join. TRAP: trade_outcomes.ts and trading_ops.ts
+are BOTH epoch floats; run them through an ISO parser and every match silently
+returns empty, which reads exactly like a missing-evidence finding.
