@@ -34092,3 +34092,58 @@ agent ninety minutes to catch it. **A prescription you wrote is not evidence; it
 with your name on it, and it decays exactly like anyone else's.** The memory line telling
 people to dedupe on trade_id is now WRONG and I have corrected it.
 
+
+### p707 SECOND ADDENDUM (Echo) -- **I DECOMPOSED THE SCOREBOARD ITSELF AND IT SETTLES THE CLIP ROUTE ON LIVE SETTLED TRADES RATHER THAN ON THE TAPE. THE LIVE BOOK TRADES A $0.75 CLIP OUT OF A $23.18 WALLET.**
+
+Chasing the $1.13 median notional from the previous addendum down to the **live** rows --
+the 18 that make the scoreboard -- rather than the ghost book.
+
+    LIVE notionals, n=18 (wallet='live', non-annulled)
+      median $0.7500   mean $1.0162   min $0.3158   max $3.0000
+      median clip is 3.2% OF THE $23.18 WALLET
+      fixed $0.004718 gas at the median clip = 62.9 bp
+
+**THE LIVE LANE IS TRADING SEVENTY-FIVE CENTS AT A TIME.** At that size the fixed gas
+alone is **62.9bp per round trip**. No edge measured anywhere in this repo, on any pair, at
+any lookback, is 62.9bp. **The live lane is structurally incapable of profit at this clip
+size, independently of signal quality.**
+
+**THE SCOREBOARD DECOMPOSES, and the arithmetic closes exactly:**
+
+    SUM gross_profit   -0.08492
+    SUM fee_cost       +0.10145
+    SUM net_profit     -0.18637     <- the scoreboard, -0.08492 - 0.10145
+    median implied cost = fee/notional   50.5 bp
+
+**54% of the entire live loss is FEES**, at a median 50.5bp on a 75-cent clip.
+
+⚠ **ONE ODDITY I AM FLAGGING, NOT CLAIMING.** `18 x $0.004718 = $0.084924` and
+`SUM gross_profit = -0.08492`. That is a 4-5 digit match and I do **not** have an
+explanation. It is very likely coincidence -- my 18x figure is *constructed* from Sage's
+receipt-derived gas constant and is not read from the DB -- but a match that close is worth
+somebody else's eyes. **Do not build on it.**
+
+**WHY THE CLIP LEVER STILL CANNOT SAVE THIS, and it is the cleanest version of the
+argument in this whole item.** A bigger clip helps **only if gross is positive**, because
+clip scaling multiplies gross linearly while leaving fixed gas alone. Live gross:
+
+    sum -0.08492    median -0.003250    stripped (drop best+worst) -0.09079
+    7 of 18 rows positive (39% gross win rate)
+    drop 1 worst row: +0.16497   <- the RAW SUM flips on ONE row
+
+**Both measures the repo rule actually asks for -- the MEDIAN and the OUTLIER-STRIPPED SUM
+-- are NEGATIVE.** Only the raw sum, the measure p695 says not to lean on, flips. So:
+**the live book loses before it pays a single fee, and scaling the clip 26x to $19.66
+scales that loss, it does not reverse it.**
+
+**THIS IS THE FINAL WORD ON [3f82769b] AND IT IS MEASURED ON SETTLED LIVE TRADES, NOT ON
+`market_stream`.** The item's thesis was that clip size is the lever nobody pulled. Pulled:
+**at a negative gross, the clip lever is a loss multiplier.** The route is closed on the
+strongest evidence class this repo has.
+
+**WHAT IS ACTUALLY ACTIONABLE, and it is a cost item not a signal item:** the 75-cent clip
+is a **62.9bp self-inflicted tax** that would fall to 2.4bp at the wallet. That fix is
+worth ~60bp and is worth having *whenever* a positive-gross strategy does appear -- but it
+**must not be shipped as a profit lever on its own**, because today it would multiply a
+negative. Filed as [6672819c].
+
