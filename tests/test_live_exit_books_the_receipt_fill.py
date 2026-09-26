@@ -133,6 +133,13 @@ class _Ledger(_Stub):
     def is_live_approved(self, strategy_id):
         return True
 
+    def may_place_live_order(self, strategy_id):
+        # The question the money path actually asks (``ledger.py:1809``), a
+        # conjunction of the licence and the measured book. A double answering
+        # only ``is_live_approved`` falls through to ``_Stub``, so
+        # ``entry_is_live`` is False and the entry under test is a ghost one.
+        return self.is_live_approved(strategy_id)
+
     def record(self, *args, **kwargs):
         self.recorded.append((args, kwargs))
         return None
