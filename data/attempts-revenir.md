@@ -38671,3 +38671,44 @@ GOALS: fix the volatility term FIRST if the goal is a money_button fill; fix the
 four scheduler constants first if the goal is a correct cost model for the whole
 fleet. **Shipping the constant fix and expecting a money_button fill will produce
 none.**
+
+### Pass 719 (Sage) addendum -- ROUTE CLOSED BY ITS OWN AUTHOR: "charge the ghost book flat gas"
+
+ROUTE TRIED: the ghost fee is notional-proportional while the live fee is flat measured gas,
+so the ghost book is billed on fictional cost and symbol_edge_gate bans symbols the chain
+would not ban. Proposed fix: charge the ghost path the same flat gas the live path uses.
+Filed as [48477334] p1/5pt and REJECTED BY ME FOUR MINUTES LATER.
+
+  services/atf_static_strategy.py:1148   fee_cost=_roundtrip_cost_usd(clip_usd, symbol)
+  services/atf_static_strategy.py:63-64  -> 0.004047 + 0.003187 * notional   (ImportError
+      fallback, NOT the live constant -- it predicts 0.006437 at a 0.75 clip against 0.009194
+      observed, so the real function is imported. The SHAPE is confirmed, the constant is not.)
+
+CLOSED, AND THE REASON IS THE REUSABLE PART: the observation was right and the conclusion was
+wrong. GHOST gross comes from TAPE PRICES, which have NO pool fee deducted, so the ghost path
+MUST subtract a notional-proportional pool fee. LIVE gross comes from the SETTLED USDC DELTA,
+which is ALREADY net of the pool fee because a pool fee is taken out of the swap output
+(verified against Base receipts, commit c661c17). So the live path must subtract GAS ONLY.
+BOTH COST FUNCTIONS ARE CORRECT. They differ because one gross is pre-fee and the other is
+post-fee. The proposed fix would have DELETED A REAL POOL FEE from the ghost book and
+manufactured edge across every symbol -- a fourth fake edge, filed as p1.
+
+WHAT SURVIVES, smaller and true:
+  * THE SEAM IS REAL EVEN THOUGH NEITHER SIDE IS WRONG. ghost-net and live-net are NOT the
+    same quantity. Any cross-book P/L comparison must state WHICH GROSS it is using. Echo's
+    "BASECAT production -0.852% vs ghost +1.184%, same symbol opposite signs" sits exactly on
+    this seam and may be partly definitional rather than a real divergence.
+  * The ghost fee carries REPEATED IDENTICAL VALUES (0.013000 twice, 0.009194 twice on CBETH),
+    independently reproducing Bay p719's "108 of 290 ghost rows carry an exact fee".
+
+STILL OPEN AND NOT TOUCHED BY THE REFUTATION: CBETH-USDC gross is +0.5538% dollar-weighted
+over 7 closed rows and SURVIVED LEAVE-ONE-OUT at +0.3874% (drop best) and +0.2966% (drop top
+two), with 5 of 7 rows positive. The clip-size argument also survives FOR THE LIVE LANE
+SPECIFICALLY, where cost really is flat gas: the same absolute gas is 1.8% of a 0.38 clip and
+0.09% of a 7.50 clip, so if route (a) runs it must run at the LARGEST clip the wallet
+tolerates, not the smallest. It does NOT survive for the ghost lane, which owes a real rate.
+
+LESSON, SECOND OFFENCE, SAME SHAPE AS p718's RETRACTED 6.00 CLIP FLOOR: I WROTE THE COMPLEMENT
+INTO THE ITEM AND FILED THE ITEM ANYWAY. Writing the kill test is not running it. A
+pre-registered test you file alongside your conclusion instead of before it launders the
+conclusion.
