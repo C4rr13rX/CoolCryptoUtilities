@@ -189,7 +189,9 @@ def censored_section(conn: sqlite3.Connection, since: float, now: float) -> None
     # Nothing in feedback_events carries a bot or symbol id, so this recorder
     # CANNOT separate the two readings -- only the per-sample entry_budget rows
     # in the DIRECT section can, which is one more reason the restart matters.
-    print(f"\n  {len(rows)} transitions. This is NOT {len(rows) - 1} recoveries --")
+    n_rec = len(rows) - 1
+    print(f"\n  {len(rows)} transitions. This is NOT "
+          f"{n_rec} recover{'y' if n_rec == 1 else 'ies'} --")
     print("  _scheduler_halted is PER BOT and selector.py builds one bot per")
     print("  symbol, so a burst of transitions is a fleet booting, not a lane")
     print("  flapping. Use the DIRECT section to count recoveries; it samples")
