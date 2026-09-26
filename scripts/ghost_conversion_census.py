@@ -85,6 +85,57 @@ def _db() -> str:
     return os.environ.get("TRADING_DB_PATH", str(PROJECT_ROOT / "storage" / "trading_cache.db"))
 
 
+def _pearson(xs: List[float], ys: List[float]) -> float:
+    n = len(xs)
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    num = sum((a - mx) * (b - my) for a, b in zip(xs, ys))
+    den = (sum((a - mx) ** 2 for a in xs) * sum((b - my) ** 2 for b in ys)) ** 0.5
+    return num / den if den else float("nan")
+
+
+def series(conn: sqlite3.Connection, days: float, now: float) -> int:
+    """Per-DAY opened series, which is what tells a REGRESSION from a NOISY FUNNEL.
+
+    Two endpoints cannot. ``BASELINE_24H`` against today's 24h is two endpoints,
+    and this file has been quoted that way for several passes: a step change dates
+    a cause to a commit, a smooth or noisy line says nothing regressed and the
+    24h number is a sample of 1. The three columns are deliberately NOT divided
+    into each other -- ``ghost_candidate`` and ``ghost_candidate_quote_ok`` are
+    not disjoint stages (quote_ok routinely EXCEEDS candidate), so the only
+    honest use of the denominators here is as a correlate of ``opened``, printed
+    below the table as an r. See [7f0db823].
+    """
+    rows = list(conn.execute(
+        "SELECT date(ts,'unixepoch') d,"
+        " SUM(status='ghost_candidate'),"
+        " SUM(status='ghost_candidate_quote_ok'),"
+        " SUM(status='entry-arbitration'),"
+        f" SUM(status='{OPENED}'), SUM(status='{CLOSED}')"
+        " FROM trading_ops WHERE ts > ? GROUP BY 1 ORDER BY 1",
+        (now - days * 86400.0,),
+    ))
+    if not rows:
+        print("no trading_ops rows in the window; nothing to date")
+        return 0
+    print("PER-DAY GHOST SERIES -- %d day(s) with rows, window %.0fd" % (len(rows), days))
+    print("  day         candidate  quote_ok  arbitration   OPENED  CLOSED")
+    for d, cand, qok, arb, opened, closed in rows:
+        print("  %-10s %9d %9d %12d %8d %7d" % (d, cand, qok, arb, opened, closed))
+    op = [float(r[4]) for r in rows]
+    print()
+    print("  opened/day: min %d  median %.1f  max %d" % (
+        min(op), statistics.median(op), max(op)))
+    print("  r(candidate, OPENED)   = %+.3f" % _pearson([float(r[1]) for r in rows], op))
+    print("  r(quote_ok, OPENED)    = %+.3f" % _pearson([float(r[2]) for r in rows], op))
+    print("  r(arbitration, OPENED) = %+.3f" % _pearson([float(r[3]) for r in rows], op))
+    print("  AN r NEAR ZERO KILLS THE THIN-TAPE READING AS WELL AS THE REGRESSION ONE:")
+    print("  it says the tape volume does not predict how many positions open, so a")
+    print("  day of zero opens is NOT a day the tape went quiet. Date the step off the")
+    print("  OPENED column and go find the code that changed on that date.")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--hours", type=float, default=24.0)
@@ -93,11 +144,20 @@ def main() -> int:
     ap.add_argument("--gaps", action="store_true",
                     help="also print the inter-opened-position gap distribution")
     ap.add_argument("--gap-days", type=float, default=14.0)
+    ap.add_argument("--series", action="store_true",
+                    help="print the per-DAY opened series instead of the 24h funnel; "
+                         "this is the one that dates a regression (see [7f0db823])")
+    ap.add_argument("--series-days", type=float, default=30.0)
     args = ap.parse_args()
 
     now = time.time()
     t0 = now - args.hours * 3600.0
     conn = sqlite3.connect(f"file:{_db()}?mode=ro", uri=True)
+    if args.series:
+        try:
+            return series(conn, args.series_days, now)
+        finally:
+            conn.close()
     try:
         by_action: Dict[str, Dict[int, int]] = {}
         by_status: Dict[str, int] = {}
