@@ -35212,3 +35212,28 @@ THE THREE LADDER SYMPTOMS". I grepped scripts/ before measuring but NOT the back
 What is genuinely new is the WHY that e8902ea1 explicitly deferred ("NOT DIAGNOSED: I did not find
 WHY it does not fire and deliberately did not guess. That is this item.") and whose done-note then
 answered a different question: the ratchet above. Consider FOLDING [317e2b24] into [e8902ea1].
+
+### p709 (Sage) THIRD ADDENDUM -- the downstream risk on [317e2b24], MEASURED. It is two pairs.
+
+I flagged as the risk to my own item that "the symbol edge gate refuses atf_static on AERO and
+CBBTC, so the refusal may just move downstream". Measured by calling both gates directly:
+
+    services.symbol_edge_gate.refusal_reason(symbol, 'atf_static'):
+        WETH-USDC None · ETH-USDC None · USDC-USDC None          <- ALLOWED
+        CBBTC-USDC REFUSED  (n=6,  mean -0.193% vs 0.655% cost, t=-2.90)
+        AERO-USDC  REFUSED  (n=17, mean -0.470% vs 0.772% cost, t=-4.05)
+    services.strategy_edge_gate.refusal_reason('atf_static') = None   <- NOT banned system-wide
+
+CORRECTS Cove's "the edge gate ALLOWS all five deep pools": CBBTC is one of the five symbols
+scheduler.py:2011 admits (ETH/WETH/CBBTC, Sage p708) and the symbol gate REFUSES it. The useful
+number is the INTERSECTION:
+
+    scheduler.py:2011 admits  INTERSECT  symbol edge gate allows  =  ETH-USDC and WETH-USDC
+
+So if [317e2b24] is fixed by approving atf_static, the route runs on exactly TWO PAIRS, and they
+are the deepest on Base (WETH round trips 0.04-0.11% against AERO 0.64-4.35%). The downstream
+refusal I feared applies to AERO and CBBTC ONLY -- nothing downstream refuses atf_static on
+ETH-USDC or WETH-USDC today. That is the "hand-picked strategy on one deep pair" route from the
+goal statement, reduced to a concrete pair list rather than an aspiration. NOT CLOSED: whether
+atf_static has an EDGE on those two pairs is unmeasured, and a tradeable pair is not a profitable
+one.
