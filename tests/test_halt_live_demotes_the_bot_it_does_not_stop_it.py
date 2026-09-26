@@ -277,9 +277,24 @@ def _live_approval_expressions():
     Returns (kind, rendered source) pairs, where kind is "decides" for an
     expression bound to a name -- the boolean the entry path acts on -- and
     "branches" for a bare ``if``.
+
+    ALIASES ARE RESOLVED, NOT WHITELISTED. A seam may read the arm through a
+    local hoisted out of the conjunction::
+
+        live_armed = bool(self.live_trading_enabled)   # bot.py:8993
+        ...
+        would_be_live = bool(live_armed and self._strategy_live_approved(d))
+
+    That seam is as safe as a literal one, and a text search cannot see it. So
+    a bare name is rendered as ``live_trading_enabled`` only when EVERY
+    assignment to it in the enclosing function is provably the arm -- an
+    expression containing ``self.live_trading_enabled``, or a constant False.
+    ``live_armed = True`` does not resolve and the caller still fails, which is
+    the hole this function exists to catch.
     """
     tree = ast.parse(textwrap.dedent(inspect.getsource(TradingBot)))
     found = []
+    ARM = "live_trading_enabled"
 
     def _asks(node) -> bool:
         return any(
@@ -287,12 +302,53 @@ def _live_approval_expressions():
             for n in ast.walk(node)
         )
 
+    def _arm_aliases(fn) -> set:
+        """Locals in ``fn`` that can only ever hold the arm's own value."""
+        bound: dict = {}
+        for node in ast.walk(fn):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if node.value is None:
+                continue
+            rendered = ast.unparse(node.value)
+            safe = f"self.{ARM}" in rendered or rendered == "False"
+            for t in targets:
+                if isinstance(t, ast.Name):
+                    bound.setdefault(t.id, []).append(safe)
+        return {n for n, flags in bound.items() if flags and all(flags)}
+
+    def _render(node, aliases: set) -> str:
+        """Unparse, substituting resolved aliases for the arm they hold."""
+        src = ast.unparse(node)
+        for alias in sorted(aliases, key=len, reverse=True):
+            src = re.sub(rf"\b{re.escape(alias)}\b", f"self.{ARM}", src)
+        return src
+
+    # An alias is only trustworthy in the scope that binds it -- a `live_armed`
+    # in one method says nothing about another. So resolve each seam against
+    # its OWN enclosing functions. Every node is visited exactly once: walking
+    # per-function would visit anything inside a nested def twice, and the
+    # sibling test below asserts an exact list of bare branches.
+    parent = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[child] = node
+
+    def _enclosing_aliases(node) -> set:
+        aliases, cur = set(), parent.get(node)
+        while cur is not None:
+            if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                aliases |= _arm_aliases(cur)
+            cur = parent.get(cur)
+        return aliases
+
     for node in ast.walk(tree):
         if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
             if _asks(node.value):
-                found.append(("decides", ast.unparse(node)))
+                found.append(("decides", _render(node, _enclosing_aliases(node))))
         elif isinstance(node, ast.If) and _asks(node.test):
-            found.append(("branches", ast.unparse(node.test)))
+            found.append(("branches", _render(node.test, _enclosing_aliases(node))))
     return found
 
 
