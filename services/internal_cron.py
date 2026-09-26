@@ -4,6 +4,7 @@ import json
 import math
 import os
 import random
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -21,6 +22,12 @@ from services.secure_settings import build_process_env, default_env_user
 # to a writable location (see serverless/handlers/cron.py).
 STATE_PATH = Path(os.getenv("CRON_STATE_PATH", "runtime/cron/state.json"))
 LOG_SOURCE = "internal-cron"
+
+# Newest bar lives at the END of an OHLCV file, so the readiness gate reads the
+# tail instead of parsing up to 22k bars per file on every tick.  64 KiB spans
+# many bars at ~120 bytes each, so this is not a one-bar sample.
+_OHLCV_TAIL_BYTES = 65536
+_OHLCV_TS_RE = re.compile(r'"timestamp"\s*:\s*([0-9]+(?:\.[0-9]+)?)')
 
 
 def _ensure_state_dir() -> None:
@@ -754,8 +761,10 @@ class InternalCronSupervisor:
         require_index = bool(production_cfg.get("require_pair_index", True))
         min_files = int(production_cfg.get("min_files_per_chain") or 1)
         min_chains_ready = int(production_cfg.get("min_chains_ready") or 1)
+        max_age_days = self._ohlcv_max_age_days(production_cfg)
         ready_chains = 0
         missing_indexes: list[str] = []
+        stale_chains: list[Dict[str, Any]] = []
         for chain in chains:
             if require_index:
                 index_path = Path("data") / f"pair_index_{chain}.json"
@@ -763,9 +772,37 @@ class InternalCronSupervisor:
                     missing_indexes.append(chain)
                     continue
             files_ready = self._ohlcv_file_count(chain) >= min_files
+            # A COUNT IS NOT A READINESS TEST.  233 files existed on base while
+            # 11 of the 19 the bot actually resolved for a prewarm seed were 5
+            # to 95 days old, and this gate said ready forever.  Age is read
+            # from the newest BAR inside the file, never st_mtime: the 9999_
+            # files are rewritten in place, so mtime reports a stale series as
+            # fresh.  Age is compared against ONE policy -- the prewarm seed
+            # guard's -- so the gate cannot drift from what the bot will accept.
+            if files_ready:
+                age_days = self._ohlcv_newest_bar_age_days(chain)
+                if age_days is None or age_days > max_age_days:
+                    files_ready = False
+                    stale_chains.append(
+                        {
+                            "chain": chain,
+                            "age_days": age_days,
+                            "max_age_days": max_age_days,
+                            "files": self._ohlcv_file_count(chain),
+                        }
+                    )
             db_ready = self._ohlcv_db_count(chain) >= min_files
             if files_ready or db_ready:
                 ready_chains += 1
+        if stale_chains:
+            # Both numbers, because a refusal that does not name what it
+            # compared sends the next reader back to re-measure it.
+            log_message(
+                LOG_SOURCE,
+                "production gate refusing chain(s) on OHLCV bar age",
+                severity="warning",
+                details={"stale": stale_chains},
+            )
         if missing_indexes:
             log_message(
                 LOG_SOURCE,
@@ -830,6 +867,62 @@ class InternalCronSupervisor:
             except Exception:
                 continue
         return count
+
+    @staticmethod
+    def _ohlcv_max_age_days(production_cfg: Dict[str, Any]) -> float:
+        """The age bound, from the profile if it states one, otherwise the
+        prewarm seed guard's.  Deliberately ONE policy shared with the guard:
+        a gate that called a chain ready on bars the bot will then refuse to
+        splice is the same defect in a different file."""
+        raw = production_cfg.get("max_ohlcv_age_days")
+        if raw is not None:
+            try:
+                return abs(float(raw))
+            except (TypeError, ValueError):
+                pass
+        try:
+            from services.prewarm_seed_guard import max_age_days as _guard_max_age
+
+            return float(_guard_max_age())
+        except Exception:
+            return 3.0
+
+    @staticmethod
+    def _ohlcv_newest_bar_age_days(chain: str) -> Optional[float]:
+        """Age in days of the NEWEST bar across the chain's OHLCV files, or
+        None when no bar timestamp can be read at all.
+
+        None means "cannot assert freshness", and the caller treats that as
+        NOT ready -- an unreadable series is not a fresh one.
+
+        Bars are appended in time order, so the newest timestamp sits at the
+        end of the file.  This reads the tail rather than parsing the whole
+        series: base holds 261 files and the largest is ~22k bars, and this
+        runs on every cron tick.
+        """
+        root = Path("data") / "historical_ohlcv" / chain
+        if not root.exists() or not root.is_dir():
+            return None
+        newest = 0.0
+        for path in sorted(root.glob("*.json")):
+            try:
+                size = path.stat().st_size
+                if size <= 0:
+                    continue
+                with path.open("rb") as fh:
+                    if size > _OHLCV_TAIL_BYTES:
+                        fh.seek(-_OHLCV_TAIL_BYTES, os.SEEK_END)
+                    tail = fh.read().decode("utf-8", "ignore")
+                for match in _OHLCV_TS_RE.finditer(tail):
+                    try:
+                        newest = max(newest, float(match.group(1)))
+                    except (TypeError, ValueError):
+                        continue
+            except Exception:
+                continue
+        if newest <= 0:
+            return None
+        return (time.time() - newest) / 86400.0
 
     @staticmethod
     def _ohlcv_db_count(chain: str) -> int:
