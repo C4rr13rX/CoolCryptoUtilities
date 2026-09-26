@@ -36079,3 +36079,115 @@ INSTRUMENT WARNINGS, both new and both cost-bearing:
     and it still printed "posted to the board", so the failure REPORTS SUCCESS.
   * bot.py line numbers drift every pass. [23136f6b] cited `:12847` for the boot restore; it
     is `:13106` today and 12847 is gas-swap code. Re-grep, never inherit a bot.py line.
+
+
+## Pass 711 (Echo, senior) -- the live cost decomposition, and two of my own instruments failed
+
+ROUTE TRIED: decompose the 22 live trade_outcomes rows into DIRECTION + ENTRY TOLL + FEE,
+per bp of entry notional, to decide which cost lever is worth working.
+
+NUMBER PRODUCED (deep cohort AERO+CBBTC+CBETH, n=17, denominator = sum of entry_price*quantity):
+
+    NET -78.8bp  =  FEE/GAS -50.7  +  ENTRY TOLL -13.9  +  DIRECTION -14.1
+    ALL 22 ROWS:  NET -164.1bp = direction -93.8, toll -13.9, fee -56.4
+
+CLOSED -- ROUTE (b) "ATTACK THE COST FLOOR" CANNOT REACH POSITIVE ON THIS EVIDENCE.
+Zeroing every cost (fee AND the slippage toll, which lives inside GROSS not the fee line)
+leaves the book NEGATIVE in all four censoring slices: -93.8bp (all 22), -165.4 (minus
+BSTONK), -35.9 (minus BSTONK+BPAD), -14.1 (deep cohort). This confirms Cove's p711 opening
+claim after correcting its arithmetic. Cost work is still worth 62% of the deep-cohort hole
+but it does NOT close it.
+
+OPEN, AND NOW THE TOP ITEM: the fee line is ENTIRELY the fixed gas constant
+(DEFAULT_FIXED_USD 0.004047; 9 of 16 rows within 25% of it; 0.004047/0.75 = 53.96bp vs a
+measured 51.6bp). Gas falls to 2.06bp at a 19.66 clip => 48.6bp of 78.8bp recoverable with
+NO NEW CODE, because the clip is capped by LIVE_MAX_BOOTSTRAP_USD=6.00. That is [675b8c1b]
+(Sage p688), unworked since. It is an OPERATOR RISK DECISION, not a fix.
+
+CLOSED -- THE PRICE-VS-AMOUNT SLIPPAGE CROSS-CHECK IS NOT A CROSS-CHECK. bot.py:9607 makes
+price_ratio the algebraic reciprocal of amount_ratio, measured ratio 1.00 on 15 of 15 rows.
+The p688 "two instruments agree to about a basis point" is an IDENTITY. The +13.93bp entry
+toll stands with ONE witness. Do not re-derive it as corroboration.
+
+CLOSED -- A CV COMPARISON CANNOT IDENTIFY FUNCTIONAL FORM. CV(fee_usd) vs CV(fee_bp) said
+PROPORTIONAL twice (0.709/0.520, and 0.642/0.539 after dropping the degenerate row) and was
+WRONG. The slope test is correct: notional rose 2.02x while median fee_usd rose 0.99x =>
+FIXED-DOLLAR. This reversed my own route call mid-pass; I had already posted the wrong one.
+
+CLOSED -- outcome_plausibility IS NOT LIVE PROTECTION. partition() refuses 0 of 22 live
+rows, called correctly with the scales arm live. Its cap is 50% and it sails past a -1666bp
+row. BPAD-USDC n=1 alone is 115% of the entire gross loss; BSTONK n=2 is +785bp. Two rows of
+22 set the sign, so state the concentration before any live book-level claim.
+
+BLOCKED -- [3f942885] (entry toll size-invariance) is blocked on a FROZEN TAPE, not analysis.
+Newest live fill is 486.2h / 20.26 DAYS old; all 38 legs sit in one 2.40-day window; the size
+axis is 6 distinct notionals with 13 of 19 at exactly 0.7500 and a max of exactly 3.0000 --
+degenerate BECAUSE of the [675b8c1b] cap. Router path (276523c) and quote-to-submit (Cove
+p711) are shipped, correct, and hold 0 of 38 rows. Only a live fill moves this.
+
+BLOCKED -- [40ccd75d] (first live WETH round trip), filed and blocked by me the same pass:
+[5514c35c] already measured that money_button, the ONLY live-approved strategy, has ZERO WETH
+entries in 10 all-time entries. ZERO live WETH and ZERO live ETH-USDC legs exist at all.
+An operator arm does not fix a symbol-coverage precondition.
+
+
+## Pass 711 (Cove, worker) -- ROUTE (a) RAISE-THE-CLIP CLOSED BY ARITHMETIC ON A NEGATIVE GROSS
+
+ROUTE TRIED: route (a), hand-approve at a bigger clip so fixed gas amortises.
+Tested on the EXACT scoreboard set, which this pass pinned down:
+
+    details.mode == 'live' AND status != 'annulled'  ->  n=18, NET -0.186371
+
+    cohort                  n   GROSS      FEE      NET      fee/|gross|
+    SCOREBOARD all         18  -0.084920  0.101452  -0.186371   119.5%
+    DEEP AERO/CBBTC/CBETH  14  -0.049091  0.072065  -0.121156   146.8%
+    MICRO other             4  -0.035829  0.029387  -0.065216    82.0%
+
+GRANT THE ROUTE ITS OWN PREMISE -- fee is fixed-dollar gas, invariant to clip.
+Then scaling the clip scales GROSS and leaves FEE alone, and gross is NEGATIVE:
+
+    clip x1    gross -0.084920   fee 0.101452 fixed   NET -0.186371
+    clip x5    gross -0.424599   fee 0.101452 fixed   NET -0.526050
+    clip x20   gross -1.698395   fee 0.101452 fixed   NET -1.799846
+    clip x26   gross -2.207913   fee 0.101452 fixed   NET -2.309365
+
+The gas SHARE falls from 119% of |gross| to 6% and the BOOK goes from -0.19 to
+-1.80. Dilution only helps when the thing being scaled is positive.
+
+  CLOSED: "raise the clip because fixed gas dilutes" as a route to PROFIT. The
+          amortisation arithmetic runs the wrong way on a negative gross.
+  OPEN and honestly UNMEASURABLE: whether gross RETURN improves with size. The
+          kill test is a regression of gross return on notional and it cannot
+          be run -- notional spans 0.3158 to 3.0000 with the median at exactly
+          0.7500. n=18, UNDERPOWERED. This is criterion 1 of [3f942885] verbatim.
+  REFRAME: route (a) is BUYING INFORMATION about that complement, at roughly 10x
+          the current bleed. At 26x that is ~2.31 of a 23.18 wallet. Argue it as
+          information, never as gas amortisation.
+
+ALSO CLOSED THIS PASS: THE CV TEST CANNOT TELL FIXED FROM PROPORTIONAL HERE.
+
+    notional  min 0.3158  med 0.7500  max 3.0000   CV 0.599
+    fee_usd   min 0.00284 med 0.00405 max 0.01374  CV 0.622
+    fee_bps   min 20.0    med 50.5    max 183.2    CV 0.640
+
+Fixed-dollar predicts CV_usd near 0; proportional predicts the mirror. Both CVs
+sit next to CV(notional). The test picks "fixed" by 0.018, which is noise.
+Do not quote a CV on this axis until the clip range widens.
+
+A KEY DEFECT FOUND WHILE CHAIN-CHECKING, recorded because it biases any
+per-round-trip cost: TRADE_ID IS NOT STABLE ACROSS THE TWO LEGS OF ONE ROUND
+TRIP. BSTONK entry fill carries 2:BSTONK-USDC:32fff2d5..., the exit fill and
+the outcome carry 2:BSTONK-USDC:38c01e7f..., and trading_ops proves they are
+one position (entry tx 0xcd6fb05c92af5077f9be, exit tx 0x6a644ba16d9267485dcc,
+both live-swap-settled). Book-wide: 20 live_entry ids, 15 live_exit ids, 12
+with BOTH legs, 8 entry-only (BSTONK 1, CBBTC 5, CBETH 1, AERO 1), 3 exit-only
+(CBBTC 2, BSTONK 1). The p710 memory line reading those 8 as UNCLOSED POSITIONS
+overstates it -- at least one is a closed, chain-settled trip whose id rotated.
+Pairing legs on trade_id therefore drops those trips non-randomly.
+
+WHAT SURVIVED A CHAIN CHECK RATHER THAN FAILING ONE: the BSTONK +0.242029, the
+largest positive row in the scoreboard and 130% of the book, is REAL. Entry
+0.00208180527 -> exit 0.002791748054, +34.1023% on a 0.75 clip, both legs
+settled on Base, and the exit beat its own quote by 369.52bp (feed expected
+0.002898865945). Not the take-profit-past-its-limit artifact. Still n=1 on a
+symbol whose feed [779b2357] finds dark, so not an edge either.
