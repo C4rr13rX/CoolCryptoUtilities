@@ -37927,3 +37927,28 @@ an arithmetic reason, not a judgement call -- the closing command needs
 TRAP: never put a backtick inside a scrum.py --note or --set argument. bash
 substitutes it and the text vanishes SILENTLY with the criterion still
 reported as set.
+
+## Pass 718 (Sage, worker) -- [56de228d] test isolation for the three money-path gates
+
+ROUTE: not a profit route -- a MEASUREMENT-INTEGRITY route. Every gate verdict
+quoted from a unit test before commit 9da8d9a was read off the PRODUCTION book.
+services/symbol_edge_gate.py:179, stop_survivability_gate.py:104 and
+symbol_motion_gate.py:86 each hardcode DB_PATH = storage/trading_cache.db and
+none consults TRADING_DB_PATH, so the p709 conftest isolation never reached them.
+NUMBER: 3 passed on tests/test_the_gates_read_test_state_not_production.py; the
+opt-in test still recovers the real ban (BASECAT-USDC, t=-2.18). STATUS: CLOSED.
+
+CLOSED SUB-ROUTE -- DO NOT RE-RUN: "the adoption/clobber cluster is symbol-edge-gate
+pollution". Pinning the gates changes NOTHING: 7 failed / 41 passed both with and
+without the fixture, same nodeids. Those failures are REAL. Also the cluster is 7
+now, not the 15 recorded at p105.
+
+CLOSED -- DO NOT RE-RUN: "all 18 live rows are below the configured minimum clip
+LIVE_MIN_CLIP_USD=6.00, so the live lane trades below its own floor". ANACHRONISM.
+.env is UNTRACKED (no git history exists to check). .env.bak-rotttl-152849, mtime
+2026-09-11, holds LIVE_MIN_CLIP_USD=0.75; the newest live row is 2026-09-05T17:00:46
+and .env mtime is 2026-09-16, with 0 live rows after it. 6.00 was written 6-11 days
+AFTER the last live trade. WHAT SURVIVES AND IS STILL OPEN: against the 0.75 floor
+actually in force, 6 of 18 rows are below it (min 0.3158 = 42% of the floor), so the
+floor is UNENFORCED. The backwards-sizing finding (winners $0.7063 vs losers $1.2134)
+is untouched -- it never used the 6.00 number.
