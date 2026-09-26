@@ -38747,3 +38747,56 @@ measurement this pass:**
 Handover on `[ef72932c]`, criterion 0 ANSWERED. Fix the volatility scale so the penalty spans
 the SAME horizon as the projection, then re-measure the pass rate BEFORE touching
 `required_edge`. Do not lower the floor: it is compared against a provable zero.
+
+
+## Pass 720 (Bay) -- break-even CLIP per symbol: is there a size at which the book pays?
+
+ROUTE TRIED: (b) cost-first, sharpened. Not "lower the floor" but "solve for the
+clip". Because the measured cost is cost(N) = $0.008367 fixed + 0.3187%*N
+(Dune p719, edge_estimate.py, 304 closed round trips), a larger clip amortises
+the fixed term, so there should be a break-even clip N* = FIXED/(gross - VAR)
+per symbol. Hypothesis: N* exists below the $23.18 bankroll for CBETH-USDC.
+Complement: N* is unfundable or nonexistent, and route (a) hand-approval is
+dead on arithmetic regardless of every gate in the sprint.
+
+NUMBER IT PRODUCED (python scripts/breakeven_clip_census.py, commit bda7b5b,
+read-only, services.outcome_plausibility applied, 6 rows censored):
+
+  symbols with n >= 5 closed round trips ................ 16
+  gross rate below the 0.3187% variable cost rate ....... 12  (14 after leave-one-out)
+  survive leave-one-out AND fundable under $23.18 ....... 2
+      BSTONK-USDC  n=15  LOO gross +7.6961%  break-even $0.11
+      CBADA-USDC   n=5   LOO gross +0.6413%  break-even $2.59
+
+MY OWN HYPOTHESIS IS CLOSED NEGATIVE. CBETH-USDC means +0.7101% (n=7) but
++0.2658% with its single best row deleted, which is BELOW the variable rate, so
+it has no break-even clip. CBBTC-USDC collapses +2.0211% (n=11) -> +0.0030%.
+Both are one row wide. DO NOT re-propose either as the hand-approval symbol.
+
+CLOSED, AND THIS IS THE DURABLE PART: "size up to beat the cost floor" is
+CLOSED as a general route. N* exists only when gross_rate > VAR_RATE, and that
+inequality contains no clip term -- for a symbol below the variable rate there
+is no size, however large, that makes it pay. This is a correction to the
+sprint framing "gas is flat in clip therefore run it at the LARGEST clip": true
+of the fixed term, silent about the variable term, and the variable term is
+what disqualifies the book.
+
+ROBUSTNESS -- the conclusion does NOT depend on Dune's constant being right.
+Swept the variable rate across its whole plausible range:
+
+  VAR = 0.0000% (gas only, most generous possible) : 6 of 16 never pay, 3 survive LOO+fundable
+  VAR = 0.3187% (measured)                         : 12 of 16 never pay, 2 survive
+  VAR = 0.6374% (doubled)                          : 12 of 16 never pay, 1 survives
+
+Even at ZERO variable cost, six symbols have negative gross and no clip rescues
+them, and the surviving universe is at most three symbols wide.
+
+STATUS: route closed negative, and the honest reading is that there is no
+symbol to hand-approve tonight. The two survivors are BSTONK-USDC, already
+flagged unauditable here (db.py upserts prices on (chain, token) so its price
+history dies every tick), and CBADA-USDC at n=5.
+
+WHAT I DID NOT CHECK, named so somebody else checks it rather than me: the
+0.3187% variable term was fitted on atf_static's symbol mix, not per symbol. A
+per-symbol variable rate could move individual rows of this table. It cannot
+move the shape, because the VAR=0 sweep above already bounds the best case.
