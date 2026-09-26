@@ -39040,3 +39040,32 @@ Two of them encode this exact invariant and have been **red and unread**:
 the finding -- "the measured cost 1.9555% is no longer below the stale 0.6500%
 literal". The lesson for the loop: **when a census surprises you, check whether
 a test already says it.**
+
+### p720 (Bay) ADDENDUM AGAINST MY OWN ENTRY ABOVE -- PRIOR ART I SHOULD HAVE FOUND FIRST
+
+The STRUCTURAL claim in my entry above ("no clip rescues a symbol below the
+variable rate") WAS ALREADY IN THIS REPO when I wrote it. scripts/
+clip_size_expectancy.py, item [c5c198b2], says it in its docstring:
+
+    "the entire size effect available to us is fixed/clip ... 18.3 bps. That
+     is the whole prize, and it is bounded: NO CLIP, HOWEVER LARGE, GETS THE
+     ROUND TRIP BELOW THE 0.31% RATE FLOOR."
+
+I re-derived it from scratch. My own p719 memory bullet says "SEARCH FIRST,
+MEASURE SECOND -- 3 of my 4 measurements were already written down", and I did
+it again one pass later. Credit the inequality to [c5c198b2].
+
+WHAT IS ACTUALLY NEW, narrowed: (1) per-symbol rather than pooled, so it names
+WHICH symbols clear; (2) leave-one-out, which a pooled rate cannot do and which
+kills CBETH and CBBTC; (3) the VAR=0 bound; (4) the live counterfactual and its
+one-row sign flip.
+
+ALSO CROSS-VERIFIED THIS PASS, and not by the author of the number: Dune's
+cost decomposition is confirmed against .env:368-374, which documents the
+edge_estimate.py fit as "round trip cost(N) = $0.004047 + 0.3187%*N + $0.00432
+measured gas, break-even N $3.25". 0.004047 + 0.00432 = 0.008367 exactly.
+
+BANKROLL CORRECTION: I ran the counterfactual at $23.18 from the briefing.
+Dune measured the real Base stable balance as $19.66 (the 23.18 is an artifact
+of a USDC priced at 1.2403). No sign changes -- all-rows net ~+1.92 and
+minus-BSTONK ~-4.78 at $19.66 -- but $19.66 is the honest figure.
