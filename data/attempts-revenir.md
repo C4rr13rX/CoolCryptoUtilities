@@ -37270,3 +37270,71 @@ priority-1 item off this one.
 
 Also measured: the last 110 test files do NOT complete in 280s, confirming [0f5dea6b]'s 2000s+
 budget is necessary rather than cautious.
+
+## Pass 716 (Bay, worker) -- [e4344c4e] the symbol-blind strategy ban is a CORRECT refusal. CLOSED as a negative.
+
+ROUTE TRIED: relax `services/strategy_edge_gate.py:414 refusal_reason(strategy_id)`, which takes no symbol and
+is consulted at `trading/scheduler.py:754` BEFORE the symbol-aware gate at `:755`, so one strategy-level ban
+pre-drops that strategy on every symbol including deep pools with zero round trips on the pair.
+
+CLOSED. Do not reopen on a cost re-pricing -- see (4).
+
+WHERE THE CENSUS LIVES (four minutes wasted; it is not where the name suggests). `entry-predropped-edge-ban` is a
+`trading_ops.status`, NOT a metric and NOT a log line. `metrics` 858,179 rows, ZERO matching predrop/edge-ban;
+`feedback_events` 904,842 rows, no such label; `system_logs` 0 hits; `logs/system.log` 0 hits.
+    SELECT details FROM trading_ops WHERE status='entry-predropped-edge-ban'
+
+NUMBERS (18.78-day span, reproduced against Cove p709's 21,937):
+  21,941 rows -> 30,741 drops over 238 distinct (strategy,symbol) pairs (same 30,741 denominator as Cove p712).
+  Split by reason shape: STRATEGY-level 30,246 drops / 238 pairs; SYMBOL-level 495 / 1 pair. 98.4% symbol-blind.
+  23 banned strategies across 49 symbols. surviving_enter_candidates == 0 on 6,936 of the 21,941 rows.
+  Blast radius, DEEP = {WETH-USDC, CBETH-USDC, CBBTC-USDC}:
+      shallow n=0 trips 21,717 | shallow n>=1 6,870 | DEEP n=0 1,580 | DEEP n>=1 79
+  => 77.0% of strategy-level drops hit pairs with NO round-trip evidence; 95.2% of the DEEP drops.
+  (Cove's 75.8% replicates; Cove's 82.9% does not -- probably a different DEEP set, not a real disagreement.)
+
+SEPARATOR, pre-registered by the filer and run as written. Per (strategy,symbol) pre-dropped by a strategy-level
+ban, closed round trips on that symbol and mean excess return where n>=2, using the gate's OWN return definition
+(net_profit / entry_price*quantity, `_is_flat` rows dropped, MIN_NOTIONAL applied) and its own `_cost()` = 1.4644%:
+      atf_static             AERO-USDC     3044 drops  18 trips  mean -1.768%  excess -3.232%  shallow
+      rsi_reversal@3d        AERO-USDC     1014         2        -0.340        -1.805  shallow
+      donchian_breakout@1d   AERO-USDC      296         2        -0.399        -1.864  shallow
+      rsi_reversal           VVV-USDC        66         2        -1.328        -2.793  shallow
+      rsi_reversal@5d        WETH-USDC       43         2        -0.161        -1.625  DEEP
+      stochastic_reversal@5d PEPE-USDC       36         2        -0.255        -1.719  shallow
+      ema_cross              WETH-USDC       20         2        -1.292        -2.756  DEEP
+      tf_forecast            DRV-USDC        20         2        -0.454        -1.918  shallow
+      atf_static             VIRTUAL-USDC    18         8        -0.910        -2.375  shallow
+      obv_accumulation@5d    AERO-USDC       11         4        -0.490        -1.954  shallow
+      rsi_reversal@3d        VVV-USDC         2         2        -0.871        -2.336  shallow
+      rsi_reversal           BASECAT-USDC     1         2        +2.870        +1.405  shallow
+      obv_accumulation@5d    COMP-USDC        1         3        -0.644        -2.108  shallow
+  DEEP arm: 2 cells, 4 trips, excess -2.191%, ZERO positive-excess cells.
+  SHALLOW arm: 11 cells, 47 trips, excess -1.882%, ONE positive cell.
+  => hypothesis (i) HOLDS: a strategy that loses money loses it everywhere; the 95.2% is a feature.
+
+FOUR THINGS WORTH NOT RE-LEARNING:
+ (1) **THE DEEP ARM IS NEGATIVE ON GROSS, BEFORE ANY COST AT ALL** -- rsi_reversal@5d on WETH-USDC -0.161%,
+     ema_cross on WETH-USDC -1.292%. At a cost floor of EXACTLY ZERO they are still refused. Therefore
+     **[fa42ebb9]'s two-bar cost defect CANNOT reopen this item whichever way it resolves.** Same shape as
+     Echo p714's fresh-universe negative-gross result: when gross is negative, cost work is irrelevant.
+ (2) The one positive cell is not a lane. rsi_reversal on BASECAT-USDC (+1.405% excess) is 1 drop of 30,246, and
+     BASECAT-USDC is shut by the SYMBOL gate anyway: 37 closed trips, mean -1.239%, excess -2.703%. Un-banning
+     here routes into a pair the other gate refuses. [1ccd17ce]'s "right by accident" survives.
+ (3) **I KILLED MY OWN COUNTER-ARGUMENT AND SO SHOULD ANYONE REPEATING THIS.** The gate charges ONE flat 1.4644%
+     to deep and shallow alike, and pooled all-strategy CBBTC-USDC reads mean **+1.242%**, which at a genuine deep
+     cost of 0.04-0.11% is +1.13% POSITIVE and flips the verdict to (ii). It is ONE ROW: ten of eleven trips are
+     negative, median -0.572%, and the mean is a single UNATTRIBUTED +21.551% on a 0.838 notional. Drop it:
+     n=10, mean -0.789%. **The deep-pool positive is a one-row artifact** (Sage p710's AAVE-USDC shape).
+ (4) Bay's own opening measurement, unrelated to this item and also a negative:
+     **ROUTE (c) SHORTEN THE HOLD IS SHUT ON THE LIVE BOOK.** hold time is `duration_sec` in `trading_ops`
+     details on the 18 `status='live-exit'` rows, joined on `outcome_id` -- it is NOT `hold_min` in
+     `trade_outcomes.details` (those 22 rows carry only mode/reason/remaining_size/retained_profit/
+     accounting_version/strategy_id). ZERO live rows are held under 15 min (shortest 26.1 min), so the standing
+     "positive inside 15 minutes" sentence cannot be evaluated on live at all; and over the range that exists the
+     sign is BACKWARDS (hold<=60min n=5 net -0.3317; hold>60min n=13 net +0.1454). It then dies to two rows:
+     drop BSTONK +0.242029 (930.1 min) and BPAD -0.254927 (35.3 min) and it is FLAT and negative both sides --
+     hold<=120min n=11 -0.01030/trade, hold>120min n=5 -0.01203/trade. 16 of 18 live rows are ~-1 cent each
+     whether held 26 minutes or 21 hours.
+
+NO PRODUCTION CODE WRITTEN. NO GATE LOOSENED. Scoreboard unmoved at -0.186371 over n=18.
