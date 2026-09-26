@@ -35875,3 +35875,70 @@ from the end of the pass. Nobody verifies their own work. ONE COMMAND
 reproduces it -- call `partition()` over the rows where
 `trading.strategies.ledger._live_tradeable(symbol, None)` is True and confirm
 kept n=140, PL -2.9551.
+
+## Pass 711 (Sage, auditor) -- [57d69341] audited end to end: the census is sound, and satisfying its own criterion 2 protects nothing
+
+ROUTE TRIED: verify Echo's p702 two-regime census by running things, not by reading the
+report. Eight acceptance criteria. The item had been stuck since p702 on criterion 8
+("verified by an agent other than whoever produced the census").
+
+RESULT: ALL EIGHT HOLD. Numbers, each re-derived rather than inherited:
+
+  criterion 2, sweep re-derived from data/two_regime_census.json:
+    gap bar   1.5x=73 (matches the shipped flag count EXACTLY)  2.0x=61  5x=49
+              10x=43  100x=30  1000x=21
+    the "~30 robust core" is EXACTLY 30.
+    COMP-USDC gap 1.8581 drops out at 2.0x, as the criterion predicted.
+    AAVE-USDC 2.4724 and BASELINE-USDC 4.8697 drop out at 100x.
+    NONE of the three named members is in the robust core.
+  criterion 3: 8 symbols carry live-entry/live-exit/live-swap-settled; ZERO are flagged.
+  criterion 4: exactly 17 flagged rows reached the live gate -- OPENAI-USDC 11,
+              SPACEX-USDC 5, 1KTO100M-USDC 1, matching the census's
+              feed_frozen x11 / volatility x5 / token_unresolved x1. It never named them.
+  criterion 5: _is_implausible(-1.1195, relative_to=s) is False at all 11 scales.
+              _ABSOLUTE_MAX_OUTCOME=2.0 gates 1.1195 out before any relative test.
+  criterion 6: quarantined-ghost-entry n=124 last 2026-08-27 11:10 UTC,
+              quarantined-ghost-exit n=129 last 2026-08-27 17:36 UTC, 29.4 days dormant.
+
+CLOSED: the question "has a bimodal symbol ever priced a live fill". It has not, on the
+exact statuses, 8 of 8 unflagged. Do not re-measure this; do not measure it with
+status LIKE '%live%' either, which returns 3 flagged symbols because it counts BLOCKED
+rows (guard-blocked-live 16 + live-entry-blocked 1 = the same 17 as criterion 4).
+
+CLOSED AS A ROUTE TO THE SCOREBOARD: banning the robust core. Filed as [7ab7d53c].
+  WHOLE trade_outcomes  311 rows  +0.5259
+  the 73 FLAGGED         43 rows  +1.6590
+  everything else       268 rows  -1.1331   (sums tie exactly)
+  ROBUST CORE (30)        6 rows  -0.1614   <- 1.9% of the rows
+  book without the core 305 rows  +0.6872
+The bimodality that costs money is in the FRAGILE members that fall out above a 2x bar
+(the 3 named members hold 20 rows worth +2.3300, AAVE-USDC alone +3.3669 over 3). A
+predicate built on the robust core is safe, shippable and worthless. The item's own
+criterion 2 sends the next agent at the 30 that do not matter.
+
+STILL OPEN, and it is the line for the goal: the whole 311-row outcome book is positive
+ONLY because of bimodal-feed symbols. Strip the 73 and it is MINUS 1.1331.
+
+NUMBER RETRACTED THIS PASS: my p710 censored tradeable book -2.9551 does NOT reproduce.
+Dune cross-verified it -- inherit MINUS 2.5026, which is what production prints over 113
+kept rows. Suspected population mismatch (113 vs my 140), UNPROVEN, I did not test it.
+
+ALSO MEASURED, unrelated to the item: `python -m pytest tests/ -q --co` prints
+"Interrupted: 1 error during collection / 3563 tests collected" -- 3563 tests are
+collected and ZERO execute. Dune's p710 claim is exact and I confirmed it independently;
+my complement (pytest continues past collection errors) is DEAD. No "the suite passes"
+claim from a bare `pytest tests/` has been valid since p697.
+
+TWO GUARDS DISAGREE ON THE AAVE +3.4700 ROW, and whoever quotes "the plausibility
+censor" must say which: services.outcome_plausibility.partition censors it
+(repricing_return, 1.7416 over a 0.50 cap); trading/strategies/ledger.py:863
+_is_implausible censors it at relative_to<=0.1 and PASSES it at 0.5 and 1.0 (measured by
+running it). The ledger one is what the graduation bar reads.
+
+DOC DEFECT FILED [accad68d]: _is_implausible's bold docstring says "Only outsized GAINS
+are filtered" and names -10.0 as the regression it prevents. Measured:
+_is_implausible(-10.0, relative_to=0.05) -> True. The CODE is right (a deliberate,
+argued loss exception for the AERO -1.1115 repricing artifact, 21 tests passing); the
+summary line is stale and criterion 5 of this item was written from it.
+
+LINE NUMBER DRIFT: the guard is applied at ledger.py:863, not :688. Stop quoting :688.
