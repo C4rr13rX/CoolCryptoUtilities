@@ -163,6 +163,7 @@ def censored_section(conn: sqlite3.Connection, since: float, now: float) -> None
 
     mult: Counter = Counter()
     reason: Counter = Counter()
+    attributed: list[tuple[object, object]] = []
     for _ts, raw in rows:
         try:
             det = json.loads(raw) if raw else {}
@@ -170,6 +171,7 @@ def censored_section(conn: sqlite3.Connection, since: float, now: float) -> None
             det = {}
         mult[det.get("ghost_multiplier")] += 1
         reason[det.get("reason")] += 1
+        attributed.append((det.get("symbol"), det.get("halt_transitions")))
 
     print(f"  ghost_multiplier values : {dict(mult)}")
     print(f"  halt reasons            : {dict(reason)}")
@@ -203,6 +205,43 @@ def censored_section(conn: sqlite3.Connection, since: float, now: float) -> None
             f"  gaps between transitions: min={gaps[0]/60:.1f}m "
             f"median={mid/60:.1f}m max={gaps[-1]/60:.1f}m"
         )
+
+    # ...and here is the field that DOES settle it, without waiting for the
+    # per-sample rows. Dune p717 added `symbol` and `halt_transitions` to the
+    # halt row (bot.py:6551) precisely because the paragraph above had to say
+    # "this recorder CANNOT separate the two readings". It can now, from ONE
+    # row: `halt_transitions` is a per-bot counter, so a row reading >= 2 means
+    # that bot halted, left the halt, and halted again -- and leaving requires
+    # `risk_budget > 0` at bot.py:6549, which requires evaluate() to have run.
+    # A fleet of first-halts is all 1s. A flapping lane has a 2 somewhere. The
+    # two arms are distinguished by the same number, which is what makes it a
+    # measurement rather than a story.
+    print()
+    known = [(s, t) for s, t in attributed if isinstance(t, (int, float))]
+    if not known:
+        print("  ATTRIBUTION: none of these rows carry `symbol`/`halt_transitions`.")
+        print("  They predate Dune p717. Standing-vs-flapping is UNDECIDABLE from")
+        print("  this window -- do not claim either arm from the row count alone.")
+        return
+
+    repeats = [(s, int(t)) for s, t in known if int(t) >= 2]
+    per_symbol: Counter = Counter(str(s or "?") for s, _t in known)
+    print(f"  ATTRIBUTION: {len(known)} of {len(rows)} rows attributed, "
+          f"{len(per_symbol)} distinct symbol(s).")
+    print(f"  worst halt_transitions per symbol: "
+          f"{dict(sorted(((str(s or '?'), max(int(t) for s2, t in known if s2 == s)) for s in {s for s, _ in known}), key=lambda kv: -kv[1])[:8])}")
+    if repeats:
+        print(f"  *** FLAPPING, PROVEN: {len(repeats)} row(s) with "
+              f"halt_transitions >= 2 ***")
+        print("  Each is a bot that LEFT the halt and re-entered, so risk_budget")
+        print("  was > 0 at bot.py:6549 and scheduler.evaluate() DID run between")
+        print("  the two halts. The lane is intermittent, not shut.")
+    else:
+        print("  *** STANDING, PROVEN: every attributed row reads "
+              "halt_transitions == 1 ***")
+        print("  No bot has ever left the halt once it entered. This is a fleet")
+        print("  of first-halts, exactly the reading the caveat above warns is")
+        print("  possible -- and here it is the one that holds.")
 
 
 def clamp_section(conn: sqlite3.Connection) -> None:

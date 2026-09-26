@@ -543,6 +543,26 @@ class TradingBot:
         self._bg_task: Optional[asyncio.Task] = None
         self._running = False
         self._scheduler_halted: bool = False
+        # How many times THIS bot has entered the entry-lane halt at :6549.
+        #
+        # The halt's feedback row fires only on the transition into the halt
+        # (`if not self._scheduler_halted`), and `_scheduler_halted` lives on
+        # the instance -- selector.py:1450 builds one TradingBot per pair and
+        # :1781 builds more at every reconcile, so every new bot arrives with
+        # the flag False and spends one free transition. That is why a count of
+        # halt rows cannot tell a STANDING halt from a FLAPPING one: 29 rows
+        # since boot are equally consistent with 29 bots halting once each and
+        # never recovering, and with a handful of bots halting over and over.
+        # Pass 716 claimed the flap from the row count and had to retract it.
+        #
+        # This counter removes the ambiguity from a SINGLE row. A halt row
+        # reading `halt_transitions >= 2` proves that bot left the halt and
+        # re-entered, which requires `risk_budget > 0` at :6549, which requires
+        # scheduler.evaluate() to have run. If every row on every symbol reads
+        # 1, the halt is standing and the lane has been shut since the first
+        # transition. Both arms are decidable from the same field, which is the
+        # whole point of recording it.
+        self._scheduler_halt_transitions: int = 0
         self.positions: Dict[str, Dict[str, Any]] = {}
         self.stable_bank: float = 0.0
         self.total_profit: float = 0.0
@@ -1041,6 +1061,8 @@ class TradingBot:
             self._last_bus_signature = None
         if not hasattr(self, "_scheduler_halted"):
             self._scheduler_halted = False
+        if not hasattr(self, "_scheduler_halt_transitions"):
+            self._scheduler_halt_transitions = 0
         if not hasattr(self, "_savings_ready_ratio"):
             self._savings_ready_ratio = float(
                 os.getenv("SAVINGS_READY_RATIO", os.getenv("STABLE_CHECKPOINT_RATIO", "0.15"))
@@ -6548,6 +6570,7 @@ class TradingBot:
                 self._propagate_horizon_bias()
                 if risk_budget <= 0:
                     if not self._scheduler_halted:
+                        self._scheduler_halt_transitions += 1
                         self.metrics.feedback(
                             "scheduler",
                             severity=FeedbackSeverity.WARNING,
@@ -6556,6 +6579,19 @@ class TradingBot:
                                 "reason": plan_flags.get("halt_reason") or plan_flags.get("ghost_halt_reason") or "risk_budget_zero",
                                 "ghost_multiplier": ghost_multiplier,
                                 "bus_actions_pending": bool(plan_flags.get("bus_actions_pending")),
+                                # WHICH bot halted, and whether it had ever run
+                                # before. Without these the row is
+                                # unattributable and a census of it cannot tell
+                                # a standing halt from a flapping one -- see
+                                # _scheduler_halt_transitions in __init__ for
+                                # the measurement that forced this.
+                                #
+                                # `halt_transitions` is the value AFTER the
+                                # increment, so the first halt of a bot's life
+                                # reads 1 and anything >= 2 is proof that
+                                # scheduler.evaluate() ran in between.
+                                "symbol": str(getattr(self, "primary_symbol", "") or ""),
+                                "halt_transitions": int(self._scheduler_halt_transitions),
                             },
                         )
                     self._scheduler_halted = True
