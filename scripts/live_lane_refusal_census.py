@@ -308,14 +308,101 @@ def section_env() -> None:
     for key in keys:
         print(f"     {key:<32} {os.getenv(key)!r}")
     print()
-    print("   _live_trades_dry_run() (bot.py):")
-    print("     EXECUTE_LIVE_TRADES unset  -> does not return False")
-    print("     LIVE_TRADES_DRY_RUN unset  -> hinges on _auto_execute_approved")
-    print("     _auto_execute_approved is set only by _refresh_auto_execute(),")
-    print("     which _maybe_transition_to_live() returns BEFORE reaching when")
-    print("     halt_live or bus_actions_pending is set. Both are set today.")
-    print("     => default '1' wins: the executor is in DRY RUN.")
+    _section_resolved_arm()
+    _section_ledger_identity()
+
+
+def _persisted_auto_execute() -> bool | None:
+    """The PERSISTED ``auto_execute_approved`` flag, or None if unreadable.
+
+    Read from the same place ``bot.py`` rehydrates it from, by the same query
+    ``scripts/check_live_arm_state.py`` uses, so the two diagnostics cannot
+    drift apart again.
+    """
+    db_path = _db_path()
+    try:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as db:
+            row = db.execute(
+                "SELECT value FROM kv_store WHERE key='state'"
+            ).fetchone()
+        if not row:
+            return None
+        ghost = json.loads(row[0]).get("ghost_trading") or {}
+        return bool(ghost.get("auto_execute_approved", False))
+    except Exception as exc:  # noqa: BLE001
+        print(f"     could not read the persisted flag: {exc!r}")
+        return None
+
+
+def _section_resolved_arm() -> None:
+    """Resolve ``_live_trades_dry_run()`` from STATE, never from reachability.
+
+    WHY THIS DOES NOT INFER FROM ``_refresh_auto_execute`` ANY MORE
+    --------------------------------------------------------------
+    This section used to reason only about ``_refresh_auto_execute``
+    (``bot.py:1883``), correctly find that path unreachable while ``halt_live``
+    is set, and conclude DRY RUN. That conclusion was FALSE, and false in the
+    dangerous direction: it tells an operator no real money can move when the
+    resolver says it can.
+
+    The flag has TWO writers, and naming only the runtime one is the whole
+    defect:
+
+      bot.py:13106  ``_load_state`` boot restore --
+                    ``self._auto_execute_approved = bool(ghost.get(
+                    "auto_execute_approved", False))``. UNGUARDED: its
+                    neighbouring restores (``sim_native_balances`` :13099,
+                    ``active_exposure`` :13103) are all gated on
+                    ``accounting_version >= ACCOUNTING_VERSION`` and this line
+                    is not, so a stale persisted True is restored whatever the
+                    accounting version says.
+      bot.py:1893   ``_refresh_auto_execute`` runtime promotion.
+
+    ``_refresh_auto_execute`` early-returns at ``bot.py:1883`` PRECISELY
+    BECAUSE the flag is already True. The old census read that early return as
+    a closed door; it is the opposite -- it is the door already being open.
+    """
+    flag = _persisted_auto_execute()
+    dry_env = os.getenv("LIVE_TRADES_DRY_RUN")
+
+    print("   _live_trades_dry_run() (bot.py:1557), RESOLVED FROM STATE:")
+    print(f"     LIVE_TRADES_DRY_RUN env                  = {dry_env!r}")
+    print(f"     kv_store[state][ghost_trading]")
+    print(f"         [auto_execute_approved]              = {flag!r}")
     print()
+    print("     BOTH writers of _auto_execute_approved (naming one is the bug):")
+    print("       bot.py:13106  _load_state boot restore  <- UNGUARDED by")
+    print("                     accounting_version, unlike its neighbours")
+    print("                     (:13099 sim_native, :13103 active_exposure)")
+    print("       bot.py:1893   _refresh_auto_execute runtime promotion")
+    print()
+    if dry_env is not None:
+        explicit = dry_env.lower() in {"1", "true", "yes", "on"}
+        verdict = "DRY RUN" if explicit else "LIVE"
+        why = (f"LIVE_TRADES_DRY_RUN={dry_env!r} is SET EXPLICITLY and wins as "
+               "the manual kill switch (bot.py:1559)")
+    elif flag is None:
+        verdict = "UNKNOWN"
+        why = ("the persisted flag could not be read, so this script REFUSES "
+               "to guess a verdict -- an unreadable arm state is not a safe "
+               "one. Run scripts/check_live_arm_state.py")
+    elif flag:
+        verdict = "LIVE"
+        why = ("LIVE_TRADES_DRY_RUN unset AND the persisted flag is True, so "
+               "bot.py:1557 returns False = REAL MONEY. bot.py:1557 tests "
+               "'is None', so UNSET DOES NOT PROTECT YOU")
+    else:
+        verdict = "DRY RUN"
+        why = ("LIVE_TRADES_DRY_RUN unset and the persisted flag is False, so "
+               "the '1' default at bot.py:1560 wins")
+    print(f"     => _live_trades_dry_run() RESOLVES TO: {verdict}")
+    print(f"        because: {why}.")
+    if verdict == "LIVE":
+        print("        To pin dry-run: set LIVE_TRADES_DRY_RUN=1 EXPLICITLY.")
+    print()
+
+
+def _section_ledger_identity() -> None:
     print("   Ledger identity check (the id the entry path actually matches):")
     try:
         from trading.strategies.ledger import StrategyLedger
