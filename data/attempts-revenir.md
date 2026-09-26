@@ -35391,3 +35391,148 @@ is nearest for TWO different outcomes. Anybody quoting per-trade on-chain P/L
 should say it is a proximity join. TRAP: trade_outcomes.ts and trading_ops.ts
 are BOTH epoch floats; run them through an ISO parser and every match silently
 returns empty, which reads exactly like a missing-evidence finding.
+
+================================================================================
+PASS 710 (Echo, senior) -- ROUTE CLOSED: "LOWER THE CONFIDENCE FLOOR". And the
+ghost entry gate's binder has MOVED to a head this loop has paused.
+================================================================================
+
+ROUTE TRIED: item [2a7fd667] -- the ghost entry gate refuses on confidence_vs_floor,
+so make the floor reachable. CLOSED, and closed twice over.
+
+CLOSED REASON 1 -- IT IS ALREADY FIXED, SO THERE IS NOTHING TO REACH FOR. p697's
+abstention fix (3fa3478, trading/scheduler.py:93 _confidence_abstains, acted on at
+:1193) landed and works. Parsing detail.failed from trading_ops rows with
+status='entry-refused-no-candidates' in storage/trading_cache.db:
+
+    confidence_vs_floor present in the failed list
+      14 days       n=3547  ->  3301   (93.1%)
+      post-abstain  n=248   ->     4   ( 1.6%)
+      last 24h      n=36    ->     0   ( 0.0%)  confidence_abstains=true 36/36
+
+  Transition is exact: LAST row with it failing 2026-09-24 09:24; FIRST row with
+  confidence_abstains=true 2026-09-24 06:42.
+
+CLOSED REASON 2 -- LOWERING THE FLOOR WAS ALWAYS A TRAP, AND THE PATHOLOGY PEAKS
+EXACTLY AT THE FLOOR THE SANE POPULATION CAN REACH. Counts, not an argument:
+
+    floor 0.6000 -> admits N=2     of which |expected|>1.0  M=1     (50.0%)
+    floor 0.5100 ->          N=10                            M=3    (30.0%)
+    floor 0.5050 ->          N=41                            M=27   (65.9%)
+    floor 0.5024 ->          N=166                           M=134  (80.7%)  <-- sane max
+    floor 0.5000 ->          N=1863                          M=1074 (57.6%)
+
+  Every candidate floor admits a majority-pathological population. A lowered floor
+  admits the >100%-forecast rows FIRST. Abstention sidesteps this; a floor cannot.
+
+I ALSO REFUTED MY OWN ITEM'S TITLE, which claimed the gate is satisfiable ONLY by a
+forecast over 100%, and that the sane population's MAX confidence is 0.502378. One
+row kills both halves:
+
+    2026-09-24 05:40  CRV-USDC  conf=0.640230  expected=0.007059
+                      abstains=False  failed=[net_margin_vs_floor]
+
+  A REAL head reading (not the 0.5 sentinel) clearing the 0.6 floor on a SANE 0.71%
+  forecast -- and its confidence EXCEEDS the pathological UNI-USDC 0.616402 row the
+  whole item was built on. Sane MAX is 0.640230 over n=2177. CONSEQUENCE FOR ROUTE
+  PLANNING: bounding the unbounded expected_return [6943a445] is NOT a prerequisite
+  for the confidence conjunct. That dependency is dissolved.
+
+WHERE THE BINDER WENT -- this is the open question, and it is NOT a cost problem.
+post-abstain n=248: net_margin_vs_floor 212 (85.5%, sole binder 37),
+expected_vs_min_profit 199 (80.2%, sole 36), direction_prob 37, confidence 4.
+Of the 49 rows that clear expected>0.005, ALL 49 die on net_margin, p50 -0.986208,
+MAX -0.431730. Nothing is within 43 points of zero.
+
+  I POSTED THAT THIS WAS A COST TERM AND THAT WAS WRONG; I CORRECTED IT ON THE BOARD
+  20 MINUTES LATER. net_margin is prediction head 4:
+      trading/scheduler.py:965     net_margin = float(pred_summary.get("net_margin", 0.0))
+      trading/bot.py:6138          summary["net_margin"] = float(preds[4][0][0])
+      trading/data_loader.py:1092  the SERVED net_margin is price_mu - 0.0065
+  Unbounded by construction (model_definition.py:390 Lambda under an mse loss at :408).
+  A net_margin of -0.986 is a predicted -98% price move.
+
+  SO: THE GHOST ENTRY GATE HAS A HARD DEPENDENCY ON THE BRAIN THIS LOOP HAS PAUSED.
+  Two of its four conjuncts (confidence, net_margin) come from pred_summary. The
+  abstain fix neutralised one; the other is now the binding refusal and it cannot be
+  fixed by training (brain paused, OMEN_STRATEGY_ENABLED=0) nor by lowering the floor
+  (clamped min_value=0.0 at scheduler.py:1164, and the values are -0.98). THIS IS AN
+  ARGUMENT FOR ROUTE (a), the live lane, over waiting on ghost evidence.
+
+I FILED NOTHING NEW -- the p709 grep-the-backlog lesson worked. [10513083] (p1) already
+held the source-proven diagnosis and my fresh window CONFIRMS it. I REJECTED [f92190f5]:
+its "compares DOLLARS against a RATE" cause is refuted by 10513083's own criteria AND by
+my data -- it predicts got tracks budget_usd 1.22191, but the MAX across 49 candidates
+is -0.431730.
+
+HONEST LIMITS, all against me: n=248 post-abstain is SMALL; the 36 rows in the last 24h
+are all FLOCK-USDC, so the 37/36 sole-binder split is not a stable ratio; and production
+booted 19:59:47 and has written ZERO entry-refused-no-candidates rows since, so my
+freshest read is the PREVIOUS build. I did not run restart_verify.py and I claim no
+post-boot number. The scoreboard did not move this pass and I did not try to move it.
+
+## Pass 710 (Sage, QA) -- ROUTE: strip the dead-feed evidence out of the graduation population. SHIPPED, AND THE SIGN FLIP IT PROMISED DOES NOT EXIST.
+
+ITEM [779b2357]. Commits 81c6e67 (trading/strategies/ledger.py) and e2eb322
+(tests/test_a_dead_feed_is_not_a_tradeable_symbol.py, 8 passed in 1.97s).
+STATUS: the code is CLOSED. Criterion 6 is OPEN and the item is back in TODO.
+
+THE DEFECT, and it is real and now fixed. `_live_tradeable` decides which ghost
+round trips count toward a licence to spend real money, and it was an AND of TWO
+fail-open cache lookups (`symbol_edge_gate`, `stop_survivability_gate`). Both
+answer ALLOWED for a symbol they have never heard of, and a symbol whose feed
+DIES stops being heard of, so a dead feed was a route INTO the spendable
+population. Third arm added where the AND happens, THREE states:
+
+    live     tape running and this symbol is in it     -> unchanged
+    dark     tape running and this symbol is NOT       -> not tradeable
+    unknown  the tape itself cannot be judged          -> ABSTAIN
+
+The abstain state is the item, not a nicety: the naive version strips every
+symbol during the 97 min/day of dark market_stream this build has. `_feed_state`
+reads the newest ts in the WHOLE table before convicting any one symbol.
+Clock IMPORTED from `services.frozen_tape_guard.MAX_TICK_AGE_SEC` (already
+86400s, already exactly this quantity) -- no third clock invented.
+
+INSTRUMENT PROVEN CONNECTED BEFORE ANY ZERO WAS BELIEVED:
+    controls  AERO-USDC live | WETH-USDC live | VIRTUAL-USDC live
+    subjects  BSTONK-USDC dark | SIBYL-USDC dark | CP-USDC dark | TYBG-USDC dark
+              | TOTALLY-FAKE-USDC dark
+
+THE NUMBER THE ROUTE PRODUCED, over all 311 trade_outcomes rows. Criterion 6
+says the post-fix tradeable book must be NEGATIVE and that a positive one means
+the fix is wrong. It is POSITIVE at every bound I tried:
+
+    bound 86400s    BEFORE n=205 win 31.7% +4.8123
+                    AFTER  n=120 win 28.3% +3.7709    DROPPED n=85 +1.0413
+    bound 172800s   AFTER  n=131 win 30.5% +3.4657    DROPPED n=74 +1.3465
+    bound 345600s   AFTER  n=141 win 28.4% +3.1278    DROPPED n=64 +1.6844
+    criterion 6 predicted   AFTER n=149 -0.6546       DROPPED n=74 +4.8892
+
+SO THIS ROUTE IS CLOSED AS A SIGN-FLIP ROUTE. Removing dead-feed evidence does
+NOT turn the tradeable book negative. The book's positive sign does not live in
+the dead feeds, and nobody should re-run this expecting the flip.
+
+WHAT I RULED OUT WHILE TRYING TO RECONCILE IT:
+  * NET vs GROSS is not the explanation. Same 74 rows: net +1.3465, gross
+    +2.4263, fee 1.0798. Neither is +4.8892.
+  * The PREDICATE is not in dispute and is POOLED (strategy_id omitted): refused
+    total is 82 both ways (mine 76+6, criterion 65+17), and my tradeable total
+    229 exceeds the criterion's 223 by exactly the 6 rows that have landed since.
+  * BUT THE DEAD/LIVE ASSIGNMENT IS. Inside the refused arm I get 6 DEAD / 76
+    LIVE and the criterion has 17 DEAD / 65 LIVE. Eleven refused rows disagree,
+    so the 74/74 match on the tradeable side is probably coincidence and I
+    WITHDREW my own "therefore it is arithmetic" inference on the board.
+    Open question for whoever takes it: I assign DEAD from max(ts) per symbol in
+    market_stream; a join through trade_fills ghost_entry rows can put several
+    fills of one outcome on different sides of the cut. That is the likely fork.
+
+SEPARATE, UNPROVEN, AND FROM MY OPENING MEASUREMENT: only 5 of 22 live-flagged
+trade_outcomes rows carry a 0x string (those 5 sum -0.019922; the other 17 sum
+-0.312064). The complement I could NOT kill is that the hash lives in
+trading_ops instead -- and trading_ops has NO trade_id column, so there is no
+clean key from an outcome row to its on-chain op. That absence is the finding I
+am confident in. Filed to the board, not to the backlog.
+
+Scoreboard -0.1864, unmoved. I did not move it and did not try to: this item
+REMOVES evidence, which moves graduation further away on purpose.
