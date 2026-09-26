@@ -86,8 +86,22 @@ class _DB(_Stub):
 
 
 class _Ledger(_Stub):
+    """The double must answer the question the money path actually asks.
+
+    ``_strategy_live_approved`` calls ``may_place_live_order``, not
+    ``is_live_approved`` -- the ledger grew the first as a conjunction of the
+    licence and the measured book (``ledger.py:1809``) and the old name stopped
+    being the question. A double that only answers the old name does not fail
+    loudly: it falls through to ``_Stub``, ``entry_is_live`` computes False, and
+    every assertion about a LIVE entry is quietly made about a ghost one. That
+    is what made this file's wallet assertion read 'ghost' == 'live'.
+    """
+
     def is_live_approved(self, strategy_id):
         return True
+
+    def may_place_live_order(self, strategy_id):
+        return self.is_live_approved(strategy_id)
 
 
 class _Portfolio(_Stub):
