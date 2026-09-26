@@ -218,12 +218,6 @@ MAX_JUMP_RATIO = float(os.getenv("STOP_SURVIVE_MAX_JUMP_RATIO", "2.0"))
 #: Locked in by test_a_jump_nobody_could_trade_through_cannot_ban_a_symbol.py.
 MAX_TICK_GAP_SEC = float(os.getenv("STOP_SURVIVE_MAX_TICK_GAP_SEC", "120"))
 
-#: How far a single print may sit from its own symbol's median before it is
-#: treated as feed contamination rather than a price. See ``_tick_jumps`` for
-#: the measurement and for why this gate DROPS such prints where
-#: ``money_button.py:170-174`` REFUSES on them. 0 disables the filter.
-PRICE_SCALE_LIMIT = float(os.getenv("STOP_SURVIVE_MAX_PRICE_SCALE", "50"))
-
 #: Symbols never refused regardless of feed. Empty by default.
 NEVER_BAN = {
     s.strip().upper()
@@ -272,56 +266,6 @@ def _tick_jumps(conn: sqlite3.Connection, symbol: str,
                 points.append((when, value))
     except Exception:  # noqa: BLE001
         return []
-
-    # Drop prints that are not a price for this symbol at all.
-    #
-    # MEASURED 2026-09-26 over 30 days of ``market_stream``: 1553 of 199220
-    # rows (0.78%) across 49 of 496 symbols sit more than 50x above or below
-    # their own symbol's median, and the newest is 0.58 days old, so the
-    # writer still produces them. ``db.py:1588 insert_market_sample``
-    # validates nothing between the caller and the INSERT.
-    #
-    # The gap cap above bounds how far apart two prints may be in TIME. It
-    # does not bound MAGNITUDE, so a fabricated print landing within 120s of
-    # its neighbours is scored at full size -- twice, once in and once out.
-    # A p99 cannot survive that: measured against this module's own
-    # ``refusal_reason``, NINE such rows ban PEPE-USDC (p99 99.99%), fifteen
-    # ban TRUMP-USDC (291400142.57%) and thirty-nine ban DOT-USDC
-    # (12472.24%). Removing only these rows takes the same three symbols to
-    # 0.607%, 1.053% and 2.094% against a 4.00% ceiling -- inside it with
-    # room, not marginally. That is tradeable universe deleted by garbage
-    # rather than by volatility.
-    #
-    # The threshold and the median-ratio form are taken from
-    # ``money_button.py:170-174``, which already refuses this exact shape as
-    # ``mixed_denomination`` and is currently the ONLY consumer of
-    # ``market_stream`` in the repo that checks the feed at all.
-    #
-    # This drops rather than refusing, which is the opposite of what
-    # money_button does, and the difference is deliberate: money_button
-    # decides whether to TRADE a symbol, so a broken feed is a reason to
-    # stand aside. This gate decides whether to BAN one, so a broken feed
-    # must not be allowed to manufacture a ban. Failing open here and closed
-    # there is the same policy -- do not act on a price you cannot trust.
-    #
-    # It does NOT exonerate everything, which is what makes it worth having:
-    # XRP-USDC stays banned at 5.755% with its 3 bad prints removed, and
-    # SPIKE-USDC does not move at all (2845.02% either way). The filter
-    # separates a broken feed from a symbol genuinely too jumpy to hold a 2%
-    # stop through.
-    if PRICE_SCALE_LIMIT > 0 and len(points) >= 3:
-        ordered_prices = sorted(value for _when, value in points)
-        middle = len(ordered_prices) // 2
-        if len(ordered_prices) % 2:
-            median_price = ordered_prices[middle]
-        else:
-            median_price = 0.5 * (ordered_prices[middle - 1] + ordered_prices[middle])
-        if median_price > 0.0:
-            points = [
-                (when, value)
-                for when, value in points
-                if max(value / median_price, median_price / value) <= PRICE_SCALE_LIMIT
-            ]
 
     gap_cap = MAX_TICK_GAP_SEC if MAX_TICK_GAP_SEC > 0 else float("inf")
     jumps: List[float] = []
