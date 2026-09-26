@@ -221,6 +221,23 @@ def check_signals(now: float) -> Link:
 
 
 def check_ghost(now: float) -> Link:
+    """Report the number that is ZERO, not the mechanism that might explain it.
+
+    This link used to fail with "no ghost activity in 1h" whenever it counted
+    zero ghost-entry and zero ghost-exit rows. That label was measurably false
+    for most of the hours it printed in: at p674, 15 ghost enter rows landed in
+    the hour it called silent, and at p722 the same query hour carried 49 ghost
+    enter rows (28 ghost_candidate_quote_ok + 21 ghost_candidate) against 0
+    ghost-entry and 0 ghost-exit. Ghost activity was never the thing that was
+    zero. CONVERSION was.
+
+    The distinction matters because the two states have different fixes and the
+    old label pointed at the wrong one. If no candidates arrive, the fault is
+    upstream in discovery/strategy refresh. If candidates arrive and none of
+    them become a ghost-entry, the fault is in the entry path, and the refusal
+    rows say which gate ate them. The conversion defect itself is owned by
+    [1accb139]; this function only has to stop mislabelling it.
+    """
     link = Link(3, "GHOST")
     try:
         c = _db()
@@ -230,12 +247,39 @@ def check_ghost(now: float) -> Link:
         exits = list(c.execute(
             "SELECT COUNT(*) FROM trading_ops WHERE status='ghost-exit' AND ts > ?",
             (now - 3600,)))[0][0]
+        # Candidates are the INPUT to the entry path. They are written by the
+        # ghost lane under action='enter' with a ghost_candidate* status, which
+        # is a different string from the ghost-entry that marks a CONVERSION.
+        candidates = list(c.execute(
+            "SELECT COUNT(*) FROM trading_ops WHERE action='enter' "
+            "AND status LIKE 'ghost_candidate%' AND ts > ?",
+            (now - 3600,)))[0][0]
+        # The top refusal status in the same window names the gate that is
+        # eating them, so the operator does not have to go and find it.
+        refusals = list(c.execute(
+            "SELECT status, COUNT(*) FROM trading_ops WHERE action='hold' "
+            "AND status LIKE 'entry-%' AND ts > ? "
+            "GROUP BY status ORDER BY COUNT(*) DESC LIMIT 1",
+            (now - 3600,)))
     except Exception as exc:
         return link.unknown("db unreadable: %s" % exc)
-    if entries <= 0 and exits <= 0:
-        return link.failed("no ghost activity in 1h",
-                           "check position cap / feed corroboration refusals")
-    return link.passed("%d entries, %d exits in 1h" % (entries, exits))
+    if entries > 0 or exits > 0:
+        return link.passed("%d entries, %d exits in 1h (from %d candidates)"
+                           % (entries, exits, candidates))
+    if candidates <= 0:
+        # Genuinely nothing arriving: the old label is correct in THIS branch
+        # only, and it is the branch that almost never fires.
+        # NB: Link.failed() ASSIGNS self.fix, so the fix must be passed as its
+        # second argument -- setting link.fix before the call is silently wiped.
+        return link.failed(
+            "0 ghost candidates in 1h: none arriving",
+            "check discovery + strategy refresh; nothing is reaching the entry path")
+    top = (" top refusal %s x%d" % (refusals[0][0], refusals[0][1])) if refusals else ""
+    return link.failed(
+        "%d candidates in 1h, 0 converted to ghost-entry;%s"
+        % (candidates, top or " no entry-* refusal rows logged"),
+        "candidates arrive and do not convert -- read the entry-* refusal statuses "
+        "in trading_ops, not the position cap; conversion defect is [1accb139]")
 
 
 def check_ledger() -> Link:
