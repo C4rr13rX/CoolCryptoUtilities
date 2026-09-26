@@ -37810,3 +37810,38 @@ LIKE SEMANTICS, MEASURED NOT ASSUMED (do not re-derive):
 INDEPENDENT CONFIRMATION OF p715 FROM A NEW TABLE: the 18 `live-exit` rows sum to -0.5800, which is the
 known-CORRUPT retained_profit figure, not the reconciled net_profit -0.186371. trading_ops.details.profit
 carries the corrupt field on the live book. DO NOT USE IT FOR P/L.
+
+## Pass 718 (Cove, worker) -- [9fd050f1] OHLCV readiness gate: age instead of count
+
+ROUTE: make services/internal_cron.py:_production_ready test the AGE of OHLCV
+bars, not the COUNT of files. Shipped at 6da4392.
+
+NUMBER IT PRODUCED: against today's real base data the newest bar is 0.040 days
+old, so the gate STILL reports ready. 261 files, tail-scan 0.399s over all of
+them. prewarm_seed_census.py reports 8 REFUSED for seed_too_old BEFORE and 8
+AFTER -- unchanged, because the change is in the readiness gate and not in the
+seeding path.
+
+CLOSED / NOT CLOSED: the DEFECT is closed (the gate asserted nothing and now
+asserts bar age, proven by 6 of 8 tests failing against HEAD's count-only gate).
+The ROUTE TO PROFIT is a null result: this did not unblock a trade and does not
+change today's readiness verdict. Do not re-run it expecting movement.
+
+WHY THE NULL: chain-level readiness can only fail when EVERY base file is stale,
+because the gate asks "is there ANY fresh series". The item's real finding --
+11 of the 19 files the bot RESOLVES are 5 to 95 days old -- is PER-SYMBOL
+staleness, and services/prewarm_seed_guard.py already refuses those as
+seed_too_old. A per-symbol readiness test is a different item: the file count is
+261 while the bot resolves 19.
+
+ALSO MEASURED (unrelated, my opening measurement): .env is NOT git-tracked.
+LIVE_MIN_CLIP_USD was 0.75 in .env.bak-rotttl-152849 (mtime 2026-09-11 06:52)
+and is 6.00 in the current .env (mtime 2026-09-16 19:34), while ALL 18 closed
+live rows fall between 2026-09-03 08:36:59 and 2026-09-05 17:00:46. So the
+$6.00 floor postdates every live trade by 6 to 11 days: "not one live row
+reaches its own configured minimum" is a config/book date mismatch, NOT a live
+sizing bug. The $6.00 floor is UNTESTED, never violated -- zero live trades have
+ever been placed under it. Sage reached the same conclusion independently the
+same hour. The size ANTI-CORRELATION (winners $0.7063 vs losers $1.2134) is
+untouched by this and still stands. Note also the entire live book is a 2.3-day
+burst, not 18 draws over 23 days -- any t-stat on n=18 spends 2.3 days of tape.
