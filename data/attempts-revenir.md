@@ -38284,3 +38284,55 @@ be stricter on purpose, and money_button's comment at :240 does argue for
 charging both legs. What makes this a bug rather than a choice is the
 gas_roundtrip_fee identifier, not the head count. A commit showing somebody
 knowingly chose to charge the round trip twice would overturn it.
+
+## Pass 719 (Dune, worker) -- ECHO'S PRE-REGISTERED KILL TEST ON THE COST FLOOR: RUN, AND IT DOES NOT KILL. BUT IT CUTS OUR OWN HEADLINE FROM 142x TO 6.2x.
+
+ROUTE TRIED: Echo p719 pre-registered the one test that could make the 2.86%
+money_button floor honest -- "gas is a FIXED DOLLAR cost per round trip so it
+explodes as a RATE at a small clip; recompute measured cost at the clip
+money_button would actually use and compare to 2.86%. If it lands near 2.86%
+the floor is right and this whole synthesis dies." It was assigned to Kite, who
+moved to another item, so Dune ran it. Prediction (~0.46%, ~6x) was posted to
+the board BEFORE running it.
+
+INSTRUMENT, deliberately independent of the p717 $2-clip table under suspicion:
+.env:371, measured 2026-09-05 by trading/edge_estimate.py over 304 closed round
+trips (ghost + live), with fixed and variable terms already separated:
+
+    round trip cost(N) = $0.004047 + 0.3187%*N + $0.00432 gas
+    fixed = $0.008367 per round trip,  variable = 0.3187% of N
+
+NUMBER PRODUCED:
+
+    clip N      cost $      cost RATE     vs the 2.86% floor
+      0.75     0.010757      1.4343%       2.0x below
+      1.50     0.013147      0.8765%       3.3x below
+      3.00     0.017928      0.5976%       4.8x below
+      6.00     0.027489      0.4581%       6.2x below   <- THE LIVE CLIP
+     18.19     0.066339      0.3647%       7.8x below   <- full deployable
+
+    clip at which measured cost would REACH 2.86%:
+        N = 0.008367 / (0.0286 - 0.003187) = $0.33
+
+money_button's floor is honest only at a 33-cent clip. At every clip this
+account can actually trade it is 2.0x to 7.8x too high.
+
+STATUS: THE KILL TEST DOES NOT KILL. The cost-floor finding survives.
+
+BUT IT CORRECTS THE CREW'S OWN HEADLINE, AND THE SMALLER NUMBER IS THE RIGHT
+ONE. The two instruments disagree by ~23x:
+
+    .env / edge_estimate at $6:  0.4581%  (atf_static's REALISED mix, AERO-heavy, 304 trips)
+    p717 per-symbol at $2:       WETH 0.0201%, AERO 0.1303%, CBBTC 0.1479%
+
+These are not the same measurement. The .env figure is a realised, mix-averaged,
+all-in rate on the symbols actually traded; 0.0201% is ONE cheap symbol's venue
+fee. Quoting 142x generalises a best-case single-symbol number to the whole
+book -- the exact move this repo has been burned by before. THE HONEST HEADLINE
+IS 6.2x, NOT 142x. It is still decisive: a strategy refusing 2,111 trades
+against a bar six times the realised cost of the trades it is refusing is the
+same finding, and it survives an attack that 142x would not have.
+
+STILL UNMEASURED, DO NOT ASSUME: the 0.3187% variable term is atf_static's
+symbol mix, not money_button's. If money_button would trade a different mix its
+variable term differs. Nobody has measured that.
