@@ -34147,3 +34147,48 @@ worth ~60bp and is worth having *whenever* a positive-gross strategy does appear
 **must not be shipped as a profit lever on its own**, because today it would multiply a
 negative. Filed as [6672819c].
 
+
+### p707 THIRD ADDENDUM (Echo) -- **THE $0.75 CLIP IS NOT A BUG. IT IS A PLAN VALUE AND AN ENV CAP, WHICH MAKES THE 62.9bp TAX A DECISION RATHER THAN A FIX -- AND MY OWN PASS SAYS DO NOT TAKE IT YET.**
+
+I named "why is the live lane sizing at 75 cents out of a $23.18 wallet" as the most
+valuable unclaimed thing in my pass. I chased it. **Found, and it is not an off-by-one.**
+
+    trading/bot.py:2111-2112   capital_plan.recommended_live_usd = 0.75
+                               capital_plan.min_clip_usd         = 0.75
+    trading/bot.py:1650,:2268  os.getenv("GHOST_MIN_TRADE_USD", "0.75")
+    trading/bot.py:552         max_trade_share = min(0.5, max(0.05, MAX_QUOTE_SHARE))
+    .env:395                   LIVE_MAX_BOOTSTRAP_USD=6.00
+
+**The measured live median notional is EXACTLY $0.7500** -- it matches
+`recommended_live_usd` to the cent, so the plan value is what reaches the swap. The
+`_live_clip_usd` docstring records that this path was *already repaired once*: sizing used
+to be computed a second, unrelated way and **disagreed with the plan by 18x** (a units
+error squaring the wallet fraction). That repair is why the clip now tracks the plan
+exactly. **Nothing is broken here.**
+
+**SO THE 62.9bp FIXED-GAS TAX IS A DELIBERATE RISK CAP, NOT A DEFECT.** `.env:395` caps
+*total* live exposure at **$6.00** with an in-file comment that says to raise
+`LIVE_MAX_BOOTSTRAP_USD` toward $18.19 once entry frequency allows. **The lever exists, is
+documented, and is one value.**
+
+**AND I AM RECOMMENDING AGAINST PULLING IT, on my own pass's evidence.** Raising the clip
+multiplies gross P/L linearly and leaves fixed gas alone. Live gross is **negative on both
+measures p695 asks for** (median -0.003250, outlier-stripped -0.09079, 7/18 rows positive).
+**Raising the clip today scales a loss.** The correct sequencing is the reverse of the
+intuitive one:
+
+1. **FIRST** get a strategy with **positive gross** on the live lane. Nothing on the ledger
+   has it today.
+2. **THEN** raise `LIVE_MAX_BOOTSTRAP_USD` and the plan clip together, which is worth
+   **~60bp** of recovered fixed-gas drag the moment step 1 holds.
+
+**Doing 2 before 1 is the single most expensive mistake available on this repo right now**,
+because it is the one change that *looks* like a profit lever, is genuinely worth 60bp, and
+multiplies a negative today. Recording it here so the next pass that rediscovers the 62.9bp
+number does not ship the clip raise on the strength of it.
+
+**ROUTE STATUS after this pass:** (a) hand-approve at minimum clip -- **the clip is already
+at minimum and that is precisely the problem**; (b) attack the cost floor -- **OPEN and now
+quantified at 57.6bp realised vs 12.4bp modelled, [6672819c]**; (c) shorten the hold --
+untouched this pass; (d) raise the evidence rate -- closed at p698.
+
