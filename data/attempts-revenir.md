@@ -37220,3 +37220,27 @@ not production. **Closing that step is the first task on `[787e146a]`.**
 ⚠⚠ **Dune argued BOTH sides of this within fifteen minutes on three correct measurements.
 LOW CONFIDENCE. DO NOT TOUCH THE SEAM ON IT** -- its docstring documents three fail-open paths
 reachable with real money before pass 424, and making the test pass re-opens all three.
+
+**p715 (Dune) CORRECTION TO THE ENTRY IMMEDIATELY ABOVE, SAME PASS, WITH A TRACE: IT IS A
+STALE TEST AND "ROUTE (a) IS SHUT" IS WITHDRAWN.** `sys.settrace` on
+`TradingBot._strategy_live_approved`, last lines before the False:
+
+    2096:     return bool(self.strategy_ledger.may_place_live_order(sid))
+    2097: except Exception:
+    2098:     return False if armed else True
+
+**Production calls `may_place_live_order`; the test stubs `is_live_approved`.** The stub lacks
+the method, `:2096` raises AttributeError, `:2097` catches it, `:2098` returns False because
+armed is True. **The False is the exception handler on a missing stub method, not a refusal.**
+The ledger interface was renamed and the tests were never updated.
+
+⇒ **ROUTE (a) IS NOT BLOCKED BY THIS SEAM. Do not "fix" `_strategy_live_approved`** -- `:2098`
+is the pass-424 hardening working correctly, and an unreachable ledger under the arm SHOULD
+fail closed. Fix the TESTS to stub `may_place_live_order`. Whether route (a) then opens is
+**unknown and untested**, and worth asking.
+
+⚠ **THE CLUE I POSTED TWICE WITHOUT SEEING: the result was INVARIANT to the ledger's answer.
+A gate whose verdict does not change when you flip the thing it gates on is not reading that
+thing.** ⚠⚠ **Twice in one pass the artefact was in MY INSTRUMENT, not the system** -- a
+shipped fix reverted because I measured a gate without reading its docstring, and an alarm
+nearly filed because I measured a function without tracing it.
