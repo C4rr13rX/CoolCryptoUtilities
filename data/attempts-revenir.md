@@ -34192,3 +34192,46 @@ at minimum and that is precisely the problem**; (b) attack the cost floor -- **O
 quantified at 57.6bp realised vs 12.4bp modelled, [6672819c]**; (c) shorten the hold --
 untouched this pass; (d) raise the evidence rate -- closed at p698.
 
+
+### p707 FOURTH ADDENDUM (Echo) -- **ROUTE (c) MEASURED, AND THE BRIEFING'S STANDING CLAIM IS REFUTED. "POSITIVE INSIDE 15 MINUTES" IS NOT REPRODUCIBLE -- BUT THE <15m BUCKET IS STILL THE INTERESTING ONE, FOR A DIFFERENT REASON.**
+
+The standing instructions have asserted for many passes: *"SHORTEN THE HOLD. The tradeable
+book is POSITIVE inside 15 minutes and negative after."* **Nobody had re-measured it. I
+did, and it does not hold.**
+
+**FIRST, THE INSTRUMENT, because my first attempt failed.** `trade_outcomes.details`
+carries a derivable entry timestamp on only **10 of 307** rows -- useless. The right source
+is **`trade_fills`**, which carries `trade_id` on **1556 of 1562** sampled rows with
+explicit `ghost_entry` / `ghost_exit` / `live_entry` / `live_exit` modes. Pair first entry
+to last exit on `trade_id`, join to censored `trade_outcomes`: **280 pairs, n=287 joined.**
+
+    bucket    n     sum        median      stripped-sum   win
+    <15m      31   -0.84366   +0.000229     -0.64067      61%
+    15-60m   128   -1.93792   -0.021925     -2.02673      24%
+    1-4h     105   -1.99984   -0.009891     -2.50754      25%
+    4-24h     21   +0.55531   -0.005443     -0.02679      33%
+    >24h       2   -0.07177   -0.035886     +0.00000       0%
+
+**THE CLAIM IS REFUTED. `<15m` SUMS −0.84366 -- NEGATIVE -- and its outlier-stripped sum is
+−0.64067, also negative.** The median is +0.000229, which is zero to three decimals. There
+is no "positive inside 15 minutes" in this book. **The one positive sum is `4-24h`
+(+0.55531), the opposite end from the claim -- and it is ONE ROW: stripped to −0.02679.**
+Do not replace one unreproducible claim with another.
+
+**BUT THE `<15m` BUCKET IS GENUINELY DIFFERENT, AND IT IS NOT THE DIFFERENCE ANYONE
+CLAIMED.** Its **win rate is 61% against 24-33% in every other bucket** -- more than double
+the 15-60m rate on n=31 -- while its median is ~0 and its sum is negative. **Short holds
+WIN MORE OFTEN AND LOSE BIGGER.** A 61% win rate that still sums negative is the signature
+of **tail losses, not of a missing edge**.
+
+**SO ROUTE (c) IS REFRAMED, NOT CLOSED, AND IT POINTS SOMEWHERE ELSE:** the lever under the
+`<15m` bucket is **a stop-loss / tail-control problem, not a hold-time problem**. Shortening
+the hold has already been done by whatever produced these 31 rows; it bought a 61% win rate
+and gave it all back in the tail. **n=31 is thin -- this is a LEAD, not a result.** The
+honest status of route (c) is: **the briefing's version is REFUTED; a tail-control version
+is UNMEASURED and is the better question.**
+
+**AND UPDATE THE STANDING INSTRUCTIONS.** They have been steering passes toward route (c)
+on a number that does not reproduce. That is worse than an open question, because it looks
+settled.
+
