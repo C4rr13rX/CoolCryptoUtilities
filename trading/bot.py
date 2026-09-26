@@ -6559,6 +6559,22 @@ class TradingBot:
                         "entry_risk_budget": float(risk_budget),
                         "global_risk_budget": float(self.global_risk_budget),
                         "entry_lane_halted": 1.0 if risk_budget <= 0 else 0.0,
+                        # The boolean that DECIDES the multiplier, recorded
+                        # beside it. Pass 718 proved by arithmetic that the
+                        # multiplier cannot reach 0.0 through its own product:
+                        # every factor at pipeline.py:6280-6285 is floored
+                        # (>=0.25, >=0.20, >=0.25, >=0.20, >=0.20), so the
+                        # product's minimum is 0.0005, brute-forced over 900
+                        # input combinations including negatives and
+                        # loss_rate=2.0. The only path to zero is the else at
+                        # pipeline.py:6291-6292, whose condition reduces to
+                        # `mini_ready OR ghost_ready`. Recording the
+                        # multiplier without this flag tells you the lane is
+                        # shut and nothing about why, which is the state four
+                        # passes were spent in.
+                        "ghost_collection_ready": (
+                            1.0 if plan_flags.get("ghost_collection_ready") else 0.0
+                        ),
                     },
                     category="entry_budget",
                 )
@@ -6592,6 +6608,32 @@ class TradingBot:
                                 # scheduler.evaluate() ran in between.
                                 "symbol": str(getattr(self, "primary_symbol", "") or ""),
                                 "halt_transitions": int(self._scheduler_halt_transitions),
+                                # `reason` above is SHADOWED and has been for
+                                # every halt row ever written: `halt_reason`
+                                # wins that `or` chain, and it is the LIVE
+                                # block reason (pipeline.py:6776), which is why
+                                # all 42 rows since boot read
+                                # `ghost_validation_block` and no census could
+                                # tell them apart. The reason the multiplier
+                                # was zeroed is a DIFFERENT string built at
+                                # pipeline.py:6704-6709 and published at
+                                # :6806, and it is only ever non-empty when
+                                # collection is not ready -- so it names the
+                                # failing conjunct directly
+                                # (`insufficient_accuracy` from the mini
+                                # accuracy gate at pipeline.py:5999, or
+                                # `model_not_ready` when readiness published
+                                # nothing). Recorded unshadowed, beside the
+                                # flag, so ONE row answers which of
+                                # `mini_ready` / `ghost_ready` is false.
+                                "ghost_collection_ready": bool(
+                                    plan_flags.get("ghost_collection_ready")
+                                ),
+                                "ghost_halt_reason": str(
+                                    plan_flags.get("ghost_halt_reason")
+                                    or plan_flags.get("ghost_collection_reason")
+                                    or ""
+                                ),
                             },
                         )
                     self._scheduler_halted = True
