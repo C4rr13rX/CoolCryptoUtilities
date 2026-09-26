@@ -116,6 +116,13 @@ def load_fills(con):
                 # Every fill recorded before that has none, and an absent route
                 # is reported as absent rather than guessed from the swap row.
                 "route": d.get("route") or None,
+                # Written from pass 711 onward (same helper). UPPER BOUND on
+                # the quote-to-submit gap, not the gap: the clock is read
+                # after the swap settles, so it contains submit plus one or
+                # two Base blocks. Small KILLS staleness, large does not
+                # convict it. Absent stays absent -- never coerced to 0.0,
+                # which would read as "decided this instant".
+                "decision_gap_sec": d.get("decision_to_fill_sec"),
             }
         )
     return out
@@ -264,6 +271,51 @@ def main():
         for r, xs in sorted(byroute.items(), key=lambda kv: -len(kv[1])):
             print("     %-28s %s" % (r, _dist(xs)))
         print("     (%d of %d live fills carry a route)" % (len(withr), len(live)))
+
+    # ---- 2c. how stale the price was that the fill decided on
+    print("\n[2c] SLIPPAGE BY DECISION-TO-FILL GAP -- the OTHER arm of the same")
+    print("     mechanism. [2b] asks whether we priced the wrong POOL; this asks")
+    print("     whether we priced the right pool at the wrong TIME.")
+    print("     THE GAP IS AN UPPER BOUND ON QUOTE-TO-SUBMIT, NOT THE GAP: the")
+    print("     clock is read after settlement, so submit plus one or two Base")
+    print("     blocks are inside it. A SMALL gap kills staleness outright; a")
+    print("     large one does not convict it, because settlement is in the number.")
+    withg = [
+        f for f in live
+        if f.get("decision_gap_sec") is not None and f["cost_bp"] is not None
+    ]
+    if not withg:
+        print("     NO live fill carries a decision time. The field is written from")
+        print("     pass 711 onward (trading/bot.py _leg_cost_fields); every fill in")
+        print("     this book predates it. THE STALENESS ARM CANNOT BE RUN YET -- it")
+        print("     needs one live fill recorded after that change. Not estimated.")
+    else:
+        gaps = sorted(float(f["decision_gap_sec"]) for f in withg)
+        print("     gap sec        %s" % _dist(gaps))
+        # Two buckets, not a regression: n is small and a median split is the
+        # only cut that does not invent structure. The boundary is stated so a
+        # later pass can see it move rather than reading a fitted line.
+        # _pct takes q in PERCENT, not as a fraction. Passing 0.5 here silently
+        # returns the MINIMUM and the split degenerates to 1-vs-rest.
+        mid = _pct(gaps, 50)
+        fast = [f["cost_bp"] for f in withg if float(f["decision_gap_sec"]) <= mid]
+        slow = [f["cost_bp"] for f in withg if float(f["decision_gap_sec"]) > mid]
+        if not fast or not slow:
+            # This is criterion 1 of [3f942885] applied to the time axis: the
+            # clip-size buckets looked flat only because 14 of 38 legs sat at
+            # exactly $0.7500. A median split that puts every row on one side
+            # is a DEGENERATE AXIS, and printing its buckets would read as
+            # evidence of flatness. Say so instead.
+            print("     DEGENERATE AXIS -- the median split leaves one side EMPTY,")
+            print("     so every gap here is effectively the same number. This")
+            print("     cannot adjudicate the staleness arm. Do not read the")
+            print("     bucket above as evidence the toll is gap-invariant.")
+        else:
+            print("     gap <= %.1fs    %s" % (mid, _dist(fast)))
+            print("     gap >  %.1fs    %s" % (mid, _dist(slow)))
+        print("     (%d of %d live fills carry a decision time)" % (len(withg), len(live)))
+        print("     A toll that does NOT rise with the gap leaves [2b]'s pool/tier")
+        print("     arm as the only survivor on this axis.")
 
     # ---- 3. by clip size, because route (a) is a clip-size argument
     print("\n[3] BY CLIP SIZE -- route (a) claims $20 beats $6 because fixed gas dilutes.")
