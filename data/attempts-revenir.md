@@ -37555,3 +37555,20 @@ REUSABLE, AND IT IS THE SECOND TIME THIS PASS: **a state flag is only evidence
 of a transition if you know how many objects own one.** The first time was
 reading a shared `status` string as if one writer owned it. Both are the same
 error -- attributing a per-instance fact to a singleton.
+
+## Pass 716 (Cove, worker) -- [a8bc6623] the red live gate is stale tests, not a failing gate
+- ROUTE: audit the 6 red live-gate tests. RESULT: 2 fixed red->green (3354333, fe43c73), 4 remain with named
+  causes, 3 of those 4 are source-text/fixture staleness NOT production defects. THE LIVE GATE IS NOT FAILING
+  OPEN -- that was the item's fear and the reds do not say it. CLOSED as a capital-risk concern.
+- CLOSED: "the lattice gate fails open on a TypeError in production". ZERO `exception:` rows in the newest 78
+  lattice-bearing trading_ops rows. Test-only. DO NOT REFILE.
+- OPEN AND MEASURED: the lattice gate ANSWERS 9 times in 78 (7 answered_pass, 2 clamped) and answered_refuse
+  is ZERO all-time in that window. 51 bail on short_window, 16 on unreadable_horizon:atf. It fails open by
+  design, so it is a pass-through, not a gate.
+- OPEN AND MEASURED, best lead of the pass: the ledger PERMITS money_button to trade live NOW --
+  approved_ids()==['money_button'], may_place_live_order=True, live_order_refusal=None -- while ZERO live-path
+  trading_ops rows exist in 20.8 days (newest 2026-09-05). The gate is open and nothing knocks. Filed [2fddfdc2].
+- CLOSED: "route (a) is shut at _strategy_live_approved" (Dune p715). That was obtained with a STUB self whose
+  ledger double is the stale-double defect [fd645890]. The real ledger returns True. Re-run before reusing.
+- OPEN: atf_static is barred by live_order_refusal quoting the published scoreboard itself (n=18 net=-0.1864).
+  The only strategy with live evidence is locked out because its live book lost. Ratchet, NOT on money_button.
