@@ -38937,3 +38937,55 @@ and volume-fade, so it is MORE permissive than production and its pass rates are
 BOUND -- the expectancy is negative at the upper bound. Production emitted 0 candidates in
 19,188 arbitration rows while this harness clears the built floor on 0.30% of
 momentum-eligible endpoints; that gap is UNEXPLAINED and may be a fifth term nobody has named.
+
+## Pass 720 (Dune) -- three routes attacked, two closed by their own author
+
+**Route: "repair ghost_ready and the entry-lane halt clears" -- OPEN, and
+strengthened.** Recomputed all nine `halt_live` disjuncts from the logged
+booleans rather than the `halt_reason` label, over 1350 `trading_ops` rows
+carrying `risk_flags.halt_live` (1050 with `halt_live` true). Reproducer
+`scripts/halt_disjunct_census.py`, read-only, no restart. `not ghost_ready` is
+true on 1028 all-time (97.9%) and on **68 of 68 since 2026-09-16 (100.0%)**.
+Every halt ghost_ready cannot explain predates 09-16; there are zero since.
+
+**Route: "the risk budget is a second, independent blocker" -- CLOSED, refuted
+by its own author inside the pass.** `recommended_ratio <= 0` is true on
+1050/1050 and `risk_budget_cap` is the literal 0.0 on every row, which I first
+read as a blocker that survives repairing ghost_ready. It is not. The only two
+sites that raise the ratio off its 0.0 initialiser (`pipeline.py:6274`) both
+require ghost_ready -- a conjunct of `safe_to_live` at `:6265`, tested directly
+in the bootstrap elif at `:6316` -- so the ratio is zero *by construction* when
+ghost_ready is false. It is one cause expressed twice. **A term caused by the
+thing you are fixing is not evidence against fixing it**, and the 100% is not
+an independent finding. Do not re-derive this.
+
+**Route: "the min clip floor is what zeroes the risk budget" -- CLOSED,
+negative.** `min_clip_block` is true on **1 of 1050 halts (0.1%) all-time and
+0.0% since 09-16**. Plausible from the sizing arithmetic, absent from the tape.
+`LIVE_MIN_CLIP_USD` is not a zeroing path.
+
+**Route: "halt_reason shadows the firing disjunct, so instrument it" -- CLOSED,
+not worth shipping.** Pre-registered that `halt_live` would often be true with
+an empty `halt_reason`. It is empty on **1 row in 1050**. The or-chain at
+`:6776` can name only four of the nine disjuncts and the defect is real in the
+code, but it is immaterial in the data, so the instrumentation was not built.
+Note it points at the right culprit only because ghost_ready is upstream of it.
+
+**Bound worth carrying: tail_block is a fossil.** 44.9% in the 2026-09-03 burst,
+13.5% elsewhere, **0.0% since 09-16**; likewise `loss_streak_block`,
+`wallet_sparse`, `capital_deficit` and `native_starved`. 79% of all rows that
+publish a halt fall on that one day, so any all-time percentage off this table
+is mostly a description of 2026-09-03. `loss_rate_block` (7.4%) is the only
+non-ghost term with recent life. `drawdown_breach` has never fired.
+
+**Correction to pass 718 (mine):** I claimed the only route to a zero
+`ghost_risk_multiplier` is the `(mini_ready or ghost_ready)` else-branch at
+`pipeline.py:6291-6292`. `ghost_collection_ready` is true on 972 of 1050, so
+that branch explains **78 halts (7.4%)**. Narrowing a search to it misses 92%.
+
+**Capital sizing, filed as `[91d7fb10]`:** the `$23.18 deployable` quoted every
+pass is current (block 51827791) and **mispriced**. It is USDC's inflated
+`usd_amount` 18.18649773 added to USDT's raw `quantity` 4.997367 -- two
+different columns. `18.18649773 / 14.662954 = 1.2403`, so USDC is valued at
+$1.24; ETH checks out at $2680.86, so it is not a global pricing fault. **True
+base stable is $19.66**, an overstatement of 17.9%. Size clips against 19.66.
