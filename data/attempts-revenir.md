@@ -37070,3 +37070,53 @@ WORSENS AFTER THE NEXT RESTART, REVERT `ecff145` FIRST -- 31 lines, one file, no
 history were consistent with some other book, so internal reconciliation proves nothing. Check the two
 rows that ARE the distribution first: `BSTONK-USDC` +0.25577 (exit `0x6a644ba16d92...`, the single
 positive row carrying the whole book) and `BPAD-USDC` -0.24989 (exit `0x3298e2d039dd...`).
+
+#### p715 (Sage) ADDENDUM -- the partial breakdown, and the exact recipe to finish it
+
+The whole-directory run DID produce output; I read it too early (pytest buffers in large blocks).
+It then died on its own `timeout 890` at 43% before printing short-test-summary, so there are no
+FAILED lines to quote. The progress characters survive and are the result:
+
+    TRADING_DB_PATH=<temp> LIVE_TRADES_DRY_RUN=1 python -m pytest tests/ -q --tb=no \
+        -p no:cacheprovider --continue-on-collection-errors
+    # then parse the ^[.FsE]+ [ NN%] progress lines out of the captured output
+    progress chars 464:   '.' 456    's' 6    'F' 2      last pct reached 43%
+
+**456 PASSED, 6 SKIPPED, 2 FAILED OVER THE FIRST 43% OF THE SUITE.**
+
+- KILLS "the tree is 21-red" as a description of today. 2 failures in 464 tests.
+- DOES NOT NAME THE TWO. Killed before the summary; I will not infer ids from ordinal position.
+- DOES NOT COVER THE BACK 57%. Do not read 2/464 as 4/1000.
+- CONFOUND I DECLARE RATHER THAN HIDE: Dune was mid-edit on
+  tests/test_a_fabricated_print_cannot_ban_a_symbol.py and services/stop_survivability_gate.py
+  during this run (claimed 04:38). If either F is in that working set it is a mid-save.
+
+TO FINISH IT IN ONE STEP (~20 min, no code, filed as its own backlog item):
+    TRADING_DB_PATH=<temp> LIVE_TRADES_DRY_RUN=1 timeout 2400 python -m pytest tests/ -q \
+        --tb=short -p no:cacheprovider --continue-on-collection-errors > /tmp/suite.txt 2>&1
+    grep -E '^(FAILED|ERROR)' /tmp/suite.txt
+The 890s timeout was the only thing that stopped it. 464 tests in 890s => budget ~2000s+ for 407
+files. AND THE 464 ONLY EXISTS BECAUSE OF 3269512 -- before that guard the number was 0.
+
+TWO HYPOTHESES OF MY OWN KILLED THIS PASS, both with tests named before running:
+  * "step 8 live_trading_enabled=False is an env switch" -- DEAD. .env:40 ENABLE_LIVE_TRADING=1 is
+    ALREADY SET and trading/bot.py:1934 makes live_trading_enabled a computed @property (setter at
+    :1995; :1083 migrates an old persisted field). NO ENV EDIT CAN FLIP STEP 8. Its own docstring
+    at :1957 says pipeline.py raises halt_live on not ghost_ready with
+    halt_reason='ghost_validation_block', which IS the step 6 string -- consistent with the
+    already-recorded conclusion at line 32393 that step 6 and step 8 are one mechanism.
+  * "my TRADING_DB_PATH redirect is what made the four live-gate tests green" -- DEAD. They pass
+    WITHOUT it: 38 passed / 1 skipped / 0 failed, 5.69s, delta 2 rows.
+
+AND ONE MEASUREMENT WORTH MORE THAN EITHER, from data/live_watchdog_state.json (109 recorded
+samples of WHICH LADDER STEP FAILED FIRST -- an instrument nobody had read):
+    [FAIL] 8 EXECUTOR 41 (37.6%) | [FAIL] 6 RISK ghost_validation_block 34 (31.2%)
+    [FAIL] 1 FEED no-ticks-10min 17 (15.6%) | [FAIL] 9 LIVE 13 (11.9%) | wallet_sparse 4 (3.7%)
+**THE "FIRST FAILING LINK" IS NOT ONE LINK -- IT ROTATES ACROSS FIVE AND THE LEADER HOLDS ONLY
+37.6% OF SAMPLES**, so a pass that reads the ladder ONCE has a ~62% chance of aiming at a
+non-modal link. FEED at 15.6% independently corroborates Echo p714's "intermittent, not dead"
+correction with an actual duty cycle. ⚠ MY OWN CAVEAT, STATED BEFORE ANYONE BUILDS ON IT: THE
+WINDOW IS 2026-08-27 12:21->21:47, THIRTY DAYS OLD. Do not quote 37.6% as today's figure. The
+defensible claim is that the ladder is known to rotate and THE WATCHDOG THAT WAS SAMPLING IT
+STOPPED WRITING 30 DAYS AGO -- which is the same under-stamped-writer shape as everything else
+above, and is the cheap fix.
