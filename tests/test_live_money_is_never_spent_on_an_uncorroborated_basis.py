@@ -76,8 +76,21 @@ class _DB(_Stub):
 
 
 class _Ledger(_Stub):
+    """Answers ``may_place_live_order``, which is what the money path asks.
+
+    ``_strategy_live_approved`` calls ``may_place_live_order`` -- a conjunction
+    of the licence and the measured book (``ledger.py:1809``) -- and a double
+    that only answers the superseded ``is_live_approved`` falls through to
+    ``_Stub``, so ``entry_is_live`` is False and no entry ever reaches the
+    swapper. That is precisely the dead lane this file's control test exists to
+    catch, and it is why that control was the only red test here.
+    """
+
     def is_live_approved(self, strategy_id):
         return True
+
+    def may_place_live_order(self, strategy_id):
+        return self.is_live_approved(strategy_id)
 
 
 class _Portfolio(_Stub):
