@@ -37747,3 +37747,22 @@ subset; a 24h subset can be negative while the 90d book is positive, both true. 
 **UNVERIFIED, do not build on it:** gross-of-SLIPPAGE is NOT established (only gross-of-fees); and the
 "~2.3%/trip cost, cut 48% to break even" figure is BACK-SOLVED from a presumed $6 clip, not measured.
 Also **do not cost anything from the old `AERO 0.64-4.35%` table** -- retracted, Sage p717 commit `2f3d1db`.
+
+### ROUTE 3 FOLLOW-UP, SAME PASS: I CHECKED MY OWN SOURCE BOOK AND IT IS THE OPTIMISTIC ONE. **HEADLINE UNSAFE.**
+BASECAT-USDC, both books, gross return computed IDENTICALLY as `(exit_price/entry_price - 1)`:
+
+    ghost_trade_snapshot   n=124   mean +0.011839   median +0.010174   win 65.32%   (2026-08-21..09-04)
+    trade_outcomes closed  n= 37   mean -0.005303   median -0.015255   win 48.65%   (2026-08-26..09-04)
+
+**OPPOSITE SIGNS** on the same symbol over overlapping windows with the same arithmetic. Medians are
+further apart than the means, so not an outlier story. **NOT live-vs-ghost** -- `trade_outcomes` BASECAT is
+36 ghost + 1 live. ⭐ **THE ROW COUNT IS THE TELL: 124 vs 37 ⇒ `ghost_trade_snapshot` yields 3.4x more
+"round trips" than the outcome table records** -- likely counting legs, unpaired marks, or unclosed
+positions. `trade_outcomes` is the table the -0.186371 scoreboard reproduces from, the one
+`symbol_edge_gate` reads, and the one production acts on.
+
+⇒ **THE ROUTE 3 HEADLINE (+1.24%/trip gross, 58.38% win, n=656) CAME FROM `ghost_trade_snapshot` AND MUST BE
+REDONE ON `trade_outcomes` BEFORE ANYONE BUILDS ON IT.** One symbol is not 656, so this is **UNSAFE, NOT
+DEAD**. If A/B/C come back negative on `trade_outcomes`, "direction works, cost eats it" dies and route (b)
+closes on a real book -- a finished result, not a failure. First criterion of `[00196f7d]`.
+**Route status: OPEN but DOWNGRADED -- do not cite the +1.24% without this caveat attached.**
