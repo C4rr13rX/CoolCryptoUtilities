@@ -1,39 +1,57 @@
 """Cross-verification of Echo's p721 [137d3c5a] claim, by Bay. READ-ONLY.
 
 Echo posted: "the whole atf_static route reduces to ONE failing term that is a
-WIN RATE. Not a cost, not a gate, not a scoping bug." I did not take that on
-trust -- I checked all three bar terms independently against data/strategy_ledger.json
-and against the gate's own win-rate definition.
+WIN RATE. Not a cost, not a gate, not a scoping bug." Checked independently
+against data/strategy_ledger.json rather than taken on trust.
 
-VERDICT: CONFIRMED. Two of the three bar terms pass and the win rate is the only
-one that fails.
+VERDICT: CONFIRMED, AND STRENGTHENED. Two of the three bar terms pass, the win
+rate is the only failure, and it is not an artifact of anything -- I went looking
+for a denominator bug that would rescue it and found the opposite.
 
-But the margin is not what it looks like, and that is the part worth carrying:
+READ THIS BEFORE THE NUMBERS. An earlier revision of this file (commit 0e11324)
+framed the result as "two counters disagree and one of them puts atf_static
+exactly on the bar". THAT FRAMING WAS WRONG AND ITS AUTHOR KILLED IT IN THE SAME
+PASS. What follows is the corrected reading.
 
-  The ledger keeps THREE counters for the ghost book -- trades 71, wins 33,
-  losses 27. Those do not add up: 33 + 27 = 60, so ELEVEN of the 71 rows (15.5%)
-  are recorded as NEITHER a win nor a loss.
+THE SHAPE OF THE DATA. The ledger keeps trades 71, wins 33, losses 27 for the
+atf_static ghost book, and 33 + 27 = 60, so ELEVEN rows are recorded as neither.
+The gate does not read those counters: trading/bot.py:5222 takes
+``ghost_metrics["win_rate"]``, which trading/metrics.py:626 defines as
+``len(wins) / len(trades)``. So the same 71 rows read 46.4789% through the gate
+and 55.0000% through the ledger's own wins/(wins+losses).
 
-  The gate does not use the ledger's counters. trading/bot.py:5222 reads
-  ``ghost_metrics["win_rate"]``, which trading/metrics.py:626 defines as
-  ``len(wins) / len(trades)`` with ``wins = [p for p in profits if p > 0]`` --
-  an ALL-ROWS denominator that counts every flat row against the strategy.
+WHAT THE ELEVEN ROWS ACTUALLY ARE -- the part that inverts the reading.
+trading/strategies/ledger.py:959-974 is a STRICT if/else: every recorded outcome
+increments ``trades`` AND exactly one of ``wins``/``losses``. No live path can
+produce a gap. The comment at :964 gives the answer outright -- "losses was never
+incremented here, and was not even a field in _blank_mode(), so it read 0 forever
+... Graduation survived that (it scores wins/trades)". The counter was added by
+86ae43f, 2026-09-02, "Stop losing 95% of the outcomes that decide graduation".
 
-  So the same book reads 46.4789% through the gate and EXACTLY 55.0000% through
-  the ledger's own wins/(wins+losses). The bar is 55%.
+So the eleven are a FOSSIL: LOSSES recorded before 2026-09-02, when the losses
+counter did not exist. ``trades`` counted them, ``wins`` correctly did not,
+``losses`` could not.
 
-HOW TO READ THAT, because it can be read two ways and only one of them is honest:
+THEREFORE:
 
-  The 55.0000% is a COINCIDENCE OF EXCLUSION, not a hidden pass. A flat round
-  trip is not a win. Charging it to the denominator is defensible and arguably
-  correct, and "drop the 11 rows that did not make money and the strategy clears
-  the bar by exactly zero margin" is the shape this repo has been burned by
-  before. I am NOT recommending the denominator be changed, and nobody should
-  quote the 55.0000% as evidence atf_static is ready.
+    wins/trades        = 33/71 = 46.4789%   IS CORRECT. Those eleven rows are
+                         real losses and they belong in the denominator.
+                         THE GATE IS RIGHT.
 
-  What IS a real defect is that two counters in one system disagree about the
-  same 71 rows and neither says so. Whichever denominator is right, the ledger
-  should not be reporting wins and losses that silently fail to sum to trades.
+    wins/(wins+losses) = 33/60 = 55.0000%   IS WRONG. It does not exclude flat
+                         rows -- it excludes ELEVEN LOSSES, which inflates the
+                         win rate by construction.
+
+atf_static is 8.5211pp below the bar and no reading of this data says otherwise.
+Do not "fix" the denominator: the one in use is already the correct one. The only
+real defect left is that pre-09-02 rows still sit in the ledger with a short
+losses count, so any reader using wins/(wins+losses) -- or a human eyeballing the
+file -- gets an inflated win rate on the 4 affected books. Backfill or warn.
+
+BANNED NUMBER: atf_static_scout reads 206/225 = 91.56% on the broken denominator
+against 77.44% on the correct one. MEMORY.md already bans the 77.44 as
+quarantine-contaminated; the 91.56 is that banned number with 41 uncounted losses
+removed on top, so it is wrong twice.
 
 Run:  python scripts/atf_static_bar_denominator.py
 """
@@ -85,10 +103,14 @@ def main() -> None:
     print("  Margin against the bar: %+.4f pp on the gate's number, %+.4f pp on the ledger's."
           % ((gate_rate - BAR_WIN_RATE) * 100, (ledger_rate - BAR_WIN_RATE) * 100))
     print()
-    print("DO NOT read the 55.0000% as a hidden pass. A flat round trip is not a win,")
-    print("and clearing a bar by exactly zero margin after dropping every row that made")
-    print("no money is the shape this repo has shipped before. The defect worth fixing is")
-    print("that wins + losses != trades and nothing reports it.")
+    print("THE %d ARE A FOSSIL, NOT FLAT TRADES. ledger.py:959-974 is a strict if/else --" % neither)
+    print("  every outcome bumps trades AND exactly one of wins/losses, so no live path can")
+    print("  produce a gap. The losses counter was ADDED by 86ae43f, 2026-09-02; rows before")
+    print("  that date bumped trades but could not bump losses. The %d are UNCOUNTED LOSSES." % neither)
+    print()
+    print("  => wins/trades %8.4f%% IS CORRECT -- those rows belong in the denominator." % (gate_rate * 100))
+    print("  => wins/(wins+losses) %8.4f%% IS WRONG -- it drops %d real losses and inflates" % (ledger_rate * 100, neither))
+    print("     the win rate by construction. DO NOT change the denominator; the gate is right.")
     print()
 
     live = json.loads(LEDGER.read_text())["atf_static"]["live"]
