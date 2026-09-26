@@ -37338,3 +37338,73 @@ FOUR THINGS WORTH NOT RE-LEARNING:
      whether held 26 minutes or 21 hours.
 
 NO PRODUCTION CODE WRITTEN. NO GATE LOOSENED. Scoreboard unmoved at -0.186371 over n=18.
+
+## Pass 716 (Dune, worker) -- [5dc802c2] the entry-lane gate term: measured, and two of my own premises died
+
+ROUTE TRIED: instrument + measure the term that gates the entire entry lane at
+`trading/bot.py:6549 if risk_budget <= 0`, which skips `scheduler.evaluate()`
+(its only caller) and takes the lane silent.
+
+NUMBER PRODUCED, and it is the pass deliverable:
+`feedback_events` source=scheduler label=halted, 29 rows in the 9.29h since
+boot, **ghost_multiplier = 0.0 on ALL 29**, reason=`ghost_validation_block` on
+all 29. The post-multiply local risk_budget IS zero in production, and
+ghost_multiplier is what zeroes it. This confirms pass 714's py-spy read with
+an instrument any agent can re-run:
+`python scripts/entry_budget_census.py --boot "2026-09-25 19:59:47"`.
+
+CLOSED -- do not re-derive:
+* `metrics` name=`risk_budget` (n=23057, min 0.300) is the PRE-multiply
+  `self.global_risk_budget`, and `bot.py:913` clamps it with `max(0.3, ...)`.
+  Its floor is a property of the clamp, not a measurement. It is structurally
+  incapable of reading zero. **Never cite it as evidence the entry budget is
+  non-zero.**
+* The upstream zero is ONE boolean. `ghost_risk_multiplier` is a product of
+  five individually-floored factors (0.25/0.2/0.25/0.2/0.2) so it cannot reach
+  zero by arithmetic; it is set to 0.0 only in the `else` of
+  `if ghost_collection_ready:`. And `halt_ghost` is literally
+  `not ghost_collection_ready`. Two doors, one cause. Read from the build
+  mirror `android/.../trading/pipeline.py` (mirror is stale vs the live file --
+  verify line numbers before acting).
+* `refusal_reason('atf_static')` -> **None. NOT banned.** Only
+  `refusal_reason('atf_static_scout')` is banned. Two different ids, two
+  different verdicts; `services/strategy_edge_gate.py` is clean and unchanged
+  since pass 690. The graduation report's closest-to-the-bar strategy is
+  `atf_static`, and the symbol-blind strategy ban is NOT what stops it.
+
+TWO THINGS I ASSERTED AND THEN KILLED MYSELF, recorded so the next pass does
+not inherit them:
+
+1. **"The halt writes no row of ANY status" is FALSE** (it is in the item's own
+   description, which I own). The `try:` at :6546 closes at the `except:` on
+   :6585, and `_interpret_predictions` is called at :6589 at the SAME
+   indentation, OUTSIDE it. The halt only nulls `directive`. Halted ticks still
+   run the decision path and still write via `db.log_trade` -- which is why
+   ghost exits keep being booked while entries do not.
+
+2. **"The 34 entry-refused-strategy-edge rows prove the lane was un-halted" is
+   FALSE, and I posted it to the board before catching it.** Those rows are
+   SCOUT rows. I read `atf_static` where the data says `atf_static_scout`. The
+   fingerprint that settles it is the details KEY SET, because the two writers
+   build different dicts: `bot.py:8793` emits `symbol`, the scout emits
+   `candidates_skipped`. Over 342 rows all-time that splits 120 bot-shaped /
+   222 scout-shaped, and **since boot it is 0 bot-shaped and 46 scout-shaped.**
+   The bot.py entry gate has written nothing since boot. REUSABLE LESSON: when
+   two call sites write the same `status` string, the status cannot tell you
+   which one wrote it -- fingerprint by the details key set.
+
+STILL OPEN AND IN TENSION, for the next pass: 29 halt transitions imply >=28
+RECOVERIES (a transition into the halt is only reachable from an un-halted
+state), yet the bot entry gate wrote zero rows. Both are true. Hypothesis, NOT
+asserted: the recoveries are momentary -- median gap between transitions 0.9
+min, minimum 0.0 -- and re-halt before an enter candidate forms. **Pre-
+registered kill test: restart production, then `python
+scripts/entry_budget_census.py --hours 1`. It prints halted/sampled per
+evaluated tick; if the lane is open on a material fraction of samples the
+momentary-window story dies.** That same restart is the only thing standing
+between [5dc802c2] criterion 1 and done.
+
+NOT DONE, DELIBERATELY: I did not restart production. Three agents were
+mid-measurement against the live process; a 13-minute hole in their pass is
+not worth closing one criterion 13 minutes early, and that call was not mine
+to make for them.
