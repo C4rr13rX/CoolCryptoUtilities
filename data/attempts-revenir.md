@@ -34521,3 +34521,117 @@ arrive. NOT closed -- this is the live diagnosis, and [eaa7e134] is the next mea
 SCOREBOARD: **-0.1864 over 18 live rows. UNMOVED. No live trade was placed and none was attempted** --
 this pass was measurement, list ownership and two refutations, by a senior who does not write
 production code.
+
+### Pass 708 (Sage, quant) -- CORRECTION TO MY OWN ENTRY ABOVE. The path-2 verdict is WITHDRAWN, and there is a FOURTH cost gate nobody named.
+
+Commit `8687463` (the entry immediately above) said both scheduler cost models
+have never refused a candidate. **The path-2 half is refuted. I verified the
+refutation from source rather than taking it from Echo's board post.**
+
+    trading/scheduler.py:1892   def _mb_gate_refusal(self, symbol, gate) -> None
+        docstring: "Count a money-button refusal by NAME, then refuse exactly as before."
+
+It increments a counter and flushes to `data/money_button_gate_census.json`. **It
+never writes to `trading_ops`.** So my "0 rows all-time" was measured in a table
+that refusal path does not write to -- a zero that could never have been a one.
+The rule that catches this is one I posted THIRTY MINUTES EARLIER in the same
+pass, applied to path 3 and then not applied to path 2:
+
+    "Before counting a refusal string, confirm it is PERSISTED."
+
+The correct instrument, `data/money_button_gate_census.json`, mtime 2026-09-25
+21:25, 229 bytes:
+
+    evaluations 1   passed 0   refused_total 1
+    by_gate { round_trip_cost_above_max: 1 }     last_symbol DRB-USDC
+
+**THE FOURTH COST GATE.** The item named three cost paths, I counted three, and
+the one that actually fired is none of them:
+
+    trading/scheduler.py:2011
+        if symbol_cost > max_round_trip:
+            return self._mb_gate_refusal(state.symbol, "round_trip_cost_above_max")
+
+Symbol-aware (`symbol_cost`, not a scalar), and the only scheduler cost refusal
+ever observed firing. Three agents spent this pass arguing about `:1009` (125bp)
+and `:1640` (65bp). **The live line is `:2011`, and BOTH sprint items are aimed
+at the wrong ones.**
+
+**CAVEAT ON THE REPLACEMENT INSTRUMENT, so nobody quotes "1" as a lifetime
+figure:** `_mb_gate_counts = {}` at `:378` in the constructor and the flush opens
+mode `'w'` with no load-on-start, so the census **resets every process and
+overwrites its own history**. `evaluations: 1` means 1 *since boot*. `:2011` is
+proven LIVE and its volume is proven UNKNOWABLE from this file.
+
+**I ALSO DOWNGRADE MY OWN PATH-3 CLAIM, unprompted.** The 7-day-stale
+`logs/services/bus-scheduler.log` proves no LEGS were created. It does NOT prove
+no legs were REFUSED, because `schedule.rejected` is never logged either -- the
+same defect. Honest statement: **path 3 has produced no legs in 21 days; whether
+its 65bp floor refuses is UNMEASURED, not zero.**
+
+WHAT SURVIVES:
+  * "DO NOT EDIT `:1009` or `:1640`" -- still right, now for a better reason:
+    the live scheduler cost gate is `:2011` and it is already symbol-aware.
+    Zero edits were made to `trading/scheduler.py`; `git status` clean on it.
+  * The 14,389-row funnel decomposition below -- a persisted instrument.
+WHAT DOES NOT:
+  * "path 2 DEAD, 0 all-time" -- WITHDRAWN.
+  * "path 3 DEAD" -- downgraded to UNMEASURED.
+  * "editing `scheduler.py` cannot move the scoreboard" -- its refusal RATE is
+    unmeasured, not zero.
+
+## Pass 708 (Sage, quant) -- the cost floor is money_button's LAST gate: 66.3% of its evaluations die on momentum_not_aligned, four gates earlier
+
+ROUTE TRIED: decompose money_button's skip REASON across every persisted
+arbitration row, then check the gate ORDER in source, to find out whether the
+286bp cost floor is the first thing that refuses or the last.
+
+H: the cost floor holds money_button shut, so correcting 286bp releases candidates.
+COMPLEMENT: the cost floor is the LAST gate, most ticks die before reaching it,
+and correcting it releases ~nothing.
+
+MEASURED. 14,389 `entry-arbitration` rows, 7 days, full scan, json-parsed, no
+sampling. `money_button` absent from both `offered` and `skipped` in 1,527
+(10.6%); present in 12,862 (89.4%). Its skip reason, of those present:
+
+    momentum_not_aligned                 8,525    66.3%   <-- money_button.py:279
+    edge_below_cost  (the 286bp floor)   1,833    14.2%   <-- money_button.py:319
+    slope_not_positive                     901     7.0%   <-- :287
+    move_exhausted                         874     6.8%   <-- :283
+    too_few_samples                        581     4.5%   <-- :115
+    feed_frozen 77, window_too_short 45, window_exceeds_lookback 14,
+    mixed_denomination 7, feed_too_sparse_for_hold 5
+
+Source order is what makes this a FUNNEL and not a pie: `:279` fires **40 lines
+before** `:319`, so those 8,525 ticks **never evaluate cost at all**.
+
+**THE COMPLEMENT WINS ON MAGNITUDE.** `momentum_not_aligned` refuses **4.65x**
+more often than the cost floor and is upstream of it. Both p708 sprint items are
+aimed at the terminal gate of a funnel that loses two thirds of its volume four
+gates earlier. **The cost route is bounded at ~14% of money_button ticks even
+with a perfect constant.**
+
+RECONCILES rather than contradicts Dune's "edge_below_cost 100.00%": his
+denominator is ticks that REACHED the cost check, mine is ticks EVALUATED. Both
+right. Of what reaches it, the cost floor refuses essentially everything (1,833
+refused against 5 money_button entries all-time) -- so the constant IS an
+absolute wall, on 14.2% of the traffic.
+
+NOT CLAIMED: that `momentum_not_aligned` is wrong. I have not looked at it and it
+may be refusing correctly. Claimed only that it is 4.65x the volume and has never
+been measured, while the 12.7% gate has had two sprint items and three passes.
+Filed as **`[b49a30bd]`**, priority 1, with the kill test pre-registered: take
+the forward return over the strategy's own hold horizon for a sample of
+`momentum_not_aligned` refusals and compare to
+`services.roundtrip_cost.roundtrip_cost_rate(notional, symbol)`; if the median
+does not clear the per-symbol toll, the gate is CORRECT and the item closes.
+
+VERIFIED (someone else's claim, not mine): `[eaa7e134]`'s "the refusal is BARE"
+-- CONFIRMED and worse. All 2,016 `edge_below_cost` matches are
+`hold`/`entry-arbitration` rows; **0** have a top-level `reason` of
+`edge_below_cost`; 2,016 carry it inside `skipped['money_button']`; **0** other
+strategies carry it, so the count is uncontaminated but **there is no
+money_button refusal ROW to join to for edge/cost/notional.** Also: all 2,016 are
+arbitration rows, so a tick where money_button is refused and nothing else
+offered leaves NO row -- **1,833 is a lower bound, not a count.** It cannot be
+fixed by reading; the numbers must be WRITTEN at the refusal site.
