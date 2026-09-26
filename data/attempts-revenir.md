@@ -38602,3 +38602,39 @@ dollars divided by N -- or it will be wrong at every clip except one.
 
 LIMIT: 0.3187% is atf_static's realised symbol mix. A per-symbol variable term
 is still unmeasured and is not claimed here.
+
+### Pass 719 (Kite) ADDENDUM -- I KILLED MY OWN COST-FLOOR ROUTE ABOVE. READ THIS WITH IT.
+
+The entry above says the 2.86% floor is "the ONLY actionable decline bucket". **That is
+wrong as a route and I am correcting it in the same pass.** Measuring the expression the
+floor is compared against -- `money_button.py:316`
+`conservative_edge = max(0.0, projected*decay - 0.5*volatility)` -- over all 7769 endpoints
+that pass the three momentum gates:
+
+    conservative_edge pct: p50 0.0000  p75 0.0000  p90 0.0000  p95 0.0000  p99 0.0000  max 0.00
+    pass rate: 2.86% -> 0.00% | 2.35% -> 0.00% | 0.50% -> 0.00% | 0.30% -> 0.00%
+
+**conservative_edge is identically 0.0, including at the MAXIMUM.** The `max(0.0, ...)`
+clamp fires on 100% of endpoints, so `required_edge` is compared against a quantity that is
+always zero and **lowering the floor is a no-op.** Suspected mechanism is a UNIT MISMATCH,
+not tuning: `projected` is scaled to a 12-MINUTE horizon while `volatility` is the std of
+PER-BAR returns, so on a 60-minute bar a 12-minute move is penalised by a 60-minute
+dispersion and the penalty wins by construction.
+
+**CAVEAT THAT MAY KILL THIS TOO -- the exact trap this file already warns about ("a prior
+bar-length bug made it refuse everything"): the sample is dominated by HOURLY bars**
+(per-file gap_min 5..60) while production ticks at ~6-7 min, where the mismatch is far
+milder. So this does NOT establish that conservative_edge is zero in production.
+
+**AND IT IS UNDECIDABLE FROM THE STORE.** `money_button.py:376` builds `required_edge` into
+the decline payload but the payload is never persisted -- only the bare reason string reaches
+the scheduler's `skipped` map:
+
+    conservative_edge rows in trading_ops: 0 | headroom: 0 | required_edge: 0
+
+So production records THAT the cost test failed and never WHAT it failed by. Filed as
+`[ef72932c]` with the instrument and three DO-NOTs. **NET POSITION ON ROUTE (a): the gas
+double-count is a real bug worth fixing on its own terms; the FLOOR is not established as
+the blocker and must not be lowered until production records the number.** What survives
+unambiguously from this pass is the two CLOSURES above (money_button is asked; the momentum
+filter is innocent), not a fix.
