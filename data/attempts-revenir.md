@@ -39938,3 +39938,53 @@ longer prints the bare mechanism `ghost_validation_block` -- it leads with the s
 (`2213692`). **The remaining blocker on `[4d095eda]` is a HUMAN DECISION, not a defect:** every
 route to one live round trip runs through widening the candidate set or hand-approving a demoted
 strategy, and `pipeline.py:4772-4783` rejects the former in writing.
+
+### Pass 722 (Dune) closing -- WIDENING THE GATE'S CANDIDATE SET GRADUATES NOTHING, so the user decision has no payoff today
+
+ROUTE TRIED: "the gate's NARROWNESS is the blocker -- it judges `approved_ids()` only, currently
+`['money_button']`, so widening the candidate set is the lever." Sage p722 established the
+narrowness (`pipeline.py:4730` `_live_gate_candidates()` = `approved_ids()`, `:4785` judges only
+those) and correctly escalated widening it as a USER DECISION. Nobody had run the number that
+decision turns on: **if the gate could see every strategy, would any of them pass?** Bar is 20
+tradeable trades AND 55% win AND P/L > 0.
+
+NUMBER, via `services.tradeable_evidence.reconstruct()` -- the de-contaminated reader installed
+by `[cf169af6]`, using the ledger's own `_live_tradeable` / horizon / implausible predicates,
+not a predicate of mine. Read-only:
+
+    strategy               trades  wins  loss       net     win%    verdict
+    atf_static_scout           42    19    23   +0.0690   45.24%    FAILS (win rate ONLY)
+    atf_static                 18     3    15   -0.1886   16.67%    FAILS (all three)
+    rsi_reversal@12h            5     1     4   -0.0949   20.00%    FAILS (all three)
+    money_button                0     0     0    0.0000        -    0 TRADEABLE TRADES (2 exits)
+    -- no other strategy has >= 5 tradeable trades --
+
+**CLOSED: widening the candidate set moves the count of qualifying strategies from 0 to 0.**
+The hypothesis was (H) narrowness is the blocker; the complement (C) is that the LEDGER is the
+blocker and nothing qualifies on merit. **This table is that test and it says (C).**
+
+Read the first row carefully, it is the whole answer: **`atf_static_scout` CLEARS TWO OF THE
+THREE TERMS** -- 42 trades against a floor of 20, and P/L **+0.0690, POSITIVE** -- and fails on
+**win rate alone, 45.24% vs 55%, missing by 9.76pp.** Everything else fails all three. And the
+one that comes closest **cannot spend it**: `atf_static_scout` is the strategy already recorded
+as STRUCTURALLY BLOCKED (ghost-only executor, no live branch), which is `[9ef737d3]` -- the
+system holds its best evidence in the one strategy that cannot trade.
+
+CONSEQUENCE FOR SEQUENCING: nobody should plan a pass around getting the candidate set widened,
+and the operator should not be treated as blocking the lane. The lever is a **win rate**, in
+every strategy that has enough trades -- which agrees with Echo p721's independent result that
+atf_static's single failing term is its win rate, arrived at from the re-arm rule instead.
+
+DISCREPANCY DECLARED, NOT PAPERED OVER: this reader gives `atf_static` **18 trades / 16.67%**,
+while Echo p721 measured **23 / 26.09%** from the ledger's re-arm path and the briefing's table
+says 23 / 26%. Different windows, and this reader drops implausible rows. **I am not claiming
+either is wrong and this is not a defect finding** -- both say FAIL on all three terms, so the
+closure above is robust to whichever you prefer. **Do not quote 16.67% and 26.09% as the same
+measurement.** (cf. the standing warning: two numbers that disagree are not automatically a
+defect in the one you care about.)
+
+INCIDENTAL, printed by the symbol edge gate as a side effect of that one call and not sought:
+it refused **six** symbols with reasons in a single run -- CBXRP (6 trips, mean -0.084% vs
+0.561% cost), **COMP (15 trips, mean +0.029% vs 2.381% cost)**, DRB, OP, PEPE, VVV. COMP is the
+instructive one: a **POSITIVE** mean return refused because cost is 82x it. Consistent with Bay
+p720's cost pincer; no action implied.
