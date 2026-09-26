@@ -37606,3 +37606,45 @@ refuses `atf_static` on CBBTC-USDC at t=-2.90** -- not a contradiction, the symb
 does not, which is evidence the pair gate discriminates rather than blanket-bans. (2) The gate's `Trip`
 object carries **only `gross`, `notional`, `ret` -- no `ts`, no `strategy`**, so neither book can be
 time-ordered or re-attributed from that path; timestamps must come from `trade_outcomes`.
+
+## Pass 716 (Bay, worker) -- CROSS-VERIFICATION of Sage p716, and one scoreboard suspicion of my own raised and killed
+
+### 1. Sage's "zero pairs have a positive edge on an admitted symbol" ([317e2b24], 3e9b27c): I get THREE, not zero -- and Sage's DECISION still stands.
+Re-derived independently (my own code, not Sage's script): `services/strategy_edge_gate`'s return definition and
+`_cost()` = 1.4644%, admitted set from `services/symbol_edge_gate.banned_symbols()` (7 refused: BASECAT, CBXRP,
+COMP, DRB, OP, PEPE, VVV). 23 (strategy,symbol) cells with n>=2 on an ADMITTED symbol; THREE positive:
+    atf_static            BSTONK-USDC  n=4  mean +18.796%  excess +17.331%
+    donchian_breakout@5d  BSTONK-USDC  n=2  mean +11.328%  excess  +9.864%
+    supertrend_follow@1d  BSTONK-USDC  n=2  mean  +6.467%  excess  +5.002%
+All three are BSTONK-USDC, which `symbol_edge_gate.refusal_reason` ADMITS (returns None), and atf_static is not
+strategy-banned either. On paper: an open, admitted, positive-edge lane.
+**IT IS NOT A LANE. IT IS BETA ON A MEMECOIN RAMP, AND IT IS DEAD.** BSTONK went 0.00112910 -> 0.00691326 in FOUR
+DAYS (6.1x); every positive row is a LONG inside that ramp. **The last BSTONK round trip of any kind is 09-06
+22:38 -- 20 days ago.** There is no BSTONK flow to take today, so Sage's conclusion (no positive lane available
+now) is right and the literal count difference changes no decision. **Recorded so nobody later "discovers"
+BSTONK-USDC as an open lane and spends a pass on it.** 9 of 16 BSTONK rows carry NO strategy_id.
+
+### 2. THE SCOREBOARD IS NOT OVERSTATED: the BSTONK annulment is CORRECT, and the annul machinery works.
+SUSPICION RAISED: two BSTONK-USDC LIVE rows share entry price 0.00208181 to 8dp, 13h apart -- one ANNULLED at
+net -0.142865, one CLOSED at net +0.242029 (Cove p715's chain-verified row). If one position were recorded twice,
+the live book's only positive row would have a -19% twin quietly dropped and -0.186371 would be overstated by 0.14.
+KILLED BY THE HASHES. Both rows carry the SAME `entry_tx_hash` `0xcd6fb05c92af5077f9` -- one on-chain entry
+(09-03 17:06 `live-entry`, one `live-swap-settled`). Two exits recorded against it:
+    09-03 19:12  status ghost-exit  exit_tx EMPTY            net -0.142865  reason stop_loss:-0.1840   -> ANNULLED
+    09-04 08:34  status live-exit   exit_tx 0x6a644ba16d9    net +0.242029  reason take_profit_limit   -> CLOSED
+**THE ANNULLED EXIT HAS NO EXIT TRANSACTION.** Its own annul record, verbatim: *"no settling ERC-20 Transfer on
+base for this quantity; the position was marked out against the feed price while live execution was disarmed
+(bot.py: live_position_cannot_exit_in_simulation)"*, evidence *"eth_getLogs, base, 2026-09-03: no Transfer of this
+quantity"*. The -19% was a PHANTOM exit marked against the FEED price while live execution was disarmed; nothing
+settled; the annul path detected exactly that and struck it. 13h later the position exited for real with a hash.
+**One entry tx, one exit tx, one round trip, counted once. -0.186371 stands, and for the right reason.**
+This is the standing instruction's own rule enforced by the code without being asked. Worth recording because most
+of p714-p716 is writers that HAD a fact and did not record it -- this one recorded it and acted on it.
+NOT FILED as an item: the phantom exit was written `ghost-exit` while carrying a real live `entry_tx_hash`, so for
+13h the book held a live position whose exit row claimed to be a ghost. Its own guard caught it, it is one row 23
+days old, and [7a09a2e5] already covers a live position with no tx_hash. A 31st backlog item for a defect its own
+guard already fixed is how the backlog got to 30.
+
+### Queries that prove the above
+    SELECT outcome_id,ts,entry_price,exit_price,net_profit,status,details FROM trade_outcomes WHERE symbol='BSTONK-USDC'
+    SELECT ts,status,details FROM trading_ops WHERE symbol='BSTONK-USDC' ORDER BY ts   -- read tx_hash/entry_tx_hash from details JSON
