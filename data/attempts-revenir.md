@@ -39412,3 +39412,46 @@ throttle" -- 8 names can carry 17k rows -- but NOBODY HAS JOINED THE TWO NUMBERS
 measurement that decides it: the per-symbol row split of entry-predropped-edge-ban.
 If >80% of those rows sit on the 8 banned names the gate IS the universe block; if they
 are spread across the 51 it is a throughput tax. UNRUN -- I had no clock for it.
+
+## Pass 721 (Dune) -- three routes closed, one of them mine and one of them the briefing's
+
+**ROUTE: "the symbol edge gate is what blocks a live round trip on a deep pair." CLOSED, and the
+complement won.** Called `services.symbol_edge_gate.refusal_reason()` directly rather than reading
+its log, because `:599` `if len(trips) < MIN_SAMPLES: return None` FAILS OPEN, so an unlogged symbol
+may have passed OR may never have been judged. MIN_SAMPLES = 5 (derived, SIGN_MAX_P=0.05).
+`banned_symbols()` = 8 and `banned_pairs()` = 1 against 62 symbols carrying outcome rows.
+WETH-USDC, CBETH-USDC, BSTONK-USDC, VIRTUAL-USDC, SR-USDC, UNI-USDC, CBADA-USDC and CBBTC-USDC all
+return ALLOW. **The gate is not the blocker for any deep pair. Do not spend another pass on it.**
+
+**SUB-ROUTE CLOSED INSIDE THAT ONE, AND IT IS A TRAP FOR WHOEVER PROPOSES WETH NEXT:**
+`symbol_edge_gate.py:254-255` `NEVER_BAN = {USDC,USDT,DAI,USDBC,WETH,ETH}`, matched at `:694` on
+`symbol.split("-")[0]`. **WETH-USDC and ETH-USDC are WHITELISTED, so their ALLOW is an exemption,
+not a verdict, and is worth ZERO as evidence that WETH is tradeable.** CBETH is NOT whitelisted
+('CBETH' != 'ETH'), has n=9 outcome rows against MIN_SAMPLES=5, and PASSES on its own book.
+
+**ROUTE: "step 5 GRADUATION is the first failing link." CLOSED -- STEP 5 PASSES.** The label comes
+from `scripts/live_path_check.py:259-269 check_graduation()`. Ran its exact expression against the
+live ledger: 46 entries, `live_approved: ['money_button']` => **PASS, approved: money_button.** The
+briefing's STANDING INSTRUCTIONS still say "the funnel fails at step 5 (GRADUATION: no strategy
+approved for live)" and then order every agent to work the first failing link. That text is stale
+prose; the machine-generated CURRENT STATE block in the same briefing already prints "THE WALL:
+APPROVED -- graduation is done". **The two halves of the briefing contradict each other and we have
+been obeying the wrong one.** NOT MEASURED: I never got a full ladder render (graduation_status.py
+ran >2 min without emitting the table), so if step 5 ever RENDERS as FAIL while that expression
+returns money_button, that is a separate render bug.
+
+**ROUTE: "which conjunct of the live entry gate is false" -- ANSWERED, boolean 1.**
+`scripts/live_conjunct_probe.py` (`3cbbf6f`), read-only. `live_trading_enabled = False`,
+`_strategy_live_approved = True` for money_button (`is_live_approved` True, `may_place_live_order`
+True, `live_order_refusal` None). Cause of boolean 1 is `halt_live` and therefore `ghost_ready`;
+newest published plan carries `ghost_reason='no_qualified_strategy:cold_start_bootstrap'`, which is
+the 88.2%-of-68 bucket, **NOT `insufficient_samples`** (5 of 68) as `selector.py:1254-1257` claims.
+CAVEAT PRINTED BY THE PROBE ITSELF: the newest plan is 436 min old, so boolean 1 describes THEN.
+money_button's lane is blocked by boolean 1 ALONE, which is GLOBAL and not per-strategy; atf_static
+is blocked by the ledger refusal `[137d3c5a]` owns. **Two lanes; fixing one moves only that lane.**
+
+**INSTRUMENT TRAP, COST ME TWO WRONG RUNS AND NEARLY A FALSE STALL REPORT:** `risk_flags` is FOUR
+levels deep, at `details['brain']['live_transition']['plan']['risk_flags']`. Both
+`details['risk_flags']` and `details['live_transition'][...]` return **ZERO rows with no error**,
+which is indistinguishable from "no plan was ever published". Same family as the float-epoch trap:
+**when a census returns 0, the ACCESS PATH is the suspect before the system is.**
