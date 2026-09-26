@@ -15,6 +15,21 @@ not dilute the estimate, it *defines it to be zero*.  Only the non-ghost fills
 carry signal, and there are 44 of them (20 live_entry, 18 live_exit, 6
 gas_refill with no prices).
 
+The round trip is the unit, NOT the leg
+--------------------------------------
+The first version of this census reported the median of POOLED LEGS and it was
+misleading, badly enough to reverse a per-symbol conclusion.  A median of legs
+is not the median of round-trip sums: entry and exit slippage do not cancel
+pairwise just because their pooled medians nearly cancel, and 8 of the 20 entry
+legs have no matching exit leg, so a pooled median measures unclosed positions
+against closed ones.  AERO reads -1.38bp per pooled leg and +25.24bp per
+round trip paired on ``trade_id``.  The paired figure is the one to quote.
+
+At book level the two agree -- 31.82bp paired against 27.07bp from doubling the
+pooled leg median -- so the aggregate term is robust.  It is the PER-SYMBOL
+ranking that the pooled statistic fabricated, and that is exactly the number
+somebody would use to choose a pair.
+
 Sign convention -- this is the whole measurement
 ------------------------------------------------
 Reported cost is POSITIVE when money was LOST to slippage:
@@ -105,6 +120,47 @@ def load_legs(path: str) -> tuple[list, list]:
     return good, censored
 
 
+def round_trips(good: list, censored: list) -> tuple[list, dict]:
+    """Pair legs on trade_id. Returns (complete round trips, leg-census counts).
+
+    A round trip is complete only when BOTH legs are present and neither was
+    censored -- a trade whose entry leg carries the units bug has no usable
+    round-trip cost even though its exit leg is fine.
+    """
+    by_trade: dict = collections.defaultdict(dict)
+    for leg in good:
+        tid = leg.get("trade_id")
+        if not tid:
+            continue
+        by_trade[tid][leg["mode"]] = leg["cost_bp"]
+        by_trade[tid]["symbol"] = leg["symbol"]
+    for leg in censored:
+        tid = leg.get("trade_id")
+        if tid:
+            by_trade[tid]["censored"] = True
+            by_trade[tid]["symbol"] = leg["symbol"]
+
+    complete = []
+    counts = {"trade_ids": len(by_trade), "entry_only": 0, "exit_only": 0, "censored": 0}
+    for tid, v in by_trade.items():
+        if v.get("censored"):
+            counts["censored"] += 1
+            continue
+        has_in, has_out = "live_entry" in v, "live_exit" in v
+        if has_in and has_out:
+            complete.append(
+                dict(trade_id=tid, symbol=v["symbol"], entry_bp=v["live_entry"],
+                     exit_bp=v["live_exit"], rt_bp=v["live_entry"] + v["live_exit"])
+            )
+        elif has_in:
+            counts["entry_only"] += 1
+        elif has_out:
+            counts["exit_only"] += 1
+    counts["complete"] = len(complete)
+    complete.sort(key=lambda r: (r["symbol"], r["trade_id"]))
+    return complete, counts
+
+
 def describe(values: list, label: str) -> str:
     if not values:
         return "%-22s n=  0" % label
@@ -140,17 +196,32 @@ def main(argv: list) -> int:
     for leg in good:
         by_symbol[leg["symbol"]].append(leg["cost_bp"])
 
+    trips, counts = round_trips(good, censored)
+    rts = [t["rt_bp"] for t in trips]
+    rt_by_symbol = collections.defaultdict(list)
+    for t in trips:
+        rt_by_symbol[t["symbol"]].append(t["rt_bp"])
+
     if args.json:
         out = {
             "db": path,
             "legs": len(good),
             "censored": len(censored),
             "implausible_ret": IMPLAUSIBLE_RET,
+            "leg_counts": counts,
+            # the headline: paired round trips, the correct unit
+            "round_trip_paired_n": len(rts),
+            "round_trip_paired_median_bp": st.median(rts) if rts else None,
+            "round_trip_paired_mean_bp": (sum(rts) / len(rts)) if rts else None,
+            "round_trip_by_symbol": {
+                sym: {"n": len(v), "median_bp": st.median(v), "mean_bp": sum(v) / len(v)}
+                for sym, v in rt_by_symbol.items()
+            },
+            # kept for comparison only -- see the module docstring on why the
+            # pooled-leg statistic fabricates a per-symbol ranking
             "median_leg_bp": st.median(costs),
             "mean_leg_bp": sum(costs) / len(costs),
-            "round_trip_median_bp": 2 * st.median(costs),
-            "round_trip_mean_bp": 2 * sum(costs) / len(costs),
-            "by_symbol": {
+            "leg_by_symbol": {
                 sym: {"n": len(v), "median_bp": st.median(v), "mean_bp": sum(v) / len(v)}
                 for sym, v in by_symbol.items()
             },
@@ -170,6 +241,26 @@ def main(argv: list) -> int:
     if not censored:
         print("   (none)")
     print()
+    print("=== HEADLINE: PAIRED ROUND TRIPS (the correct unit) ===")
+    print("trade_ids %d | complete %d | entry-only %d | exit-only %d | censored %d"
+          % (counts["trade_ids"], counts["complete"], counts["entry_only"],
+             counts["exit_only"], counts["censored"]))
+    print()
+    print("%-14s %10s %10s %10s" % ("symbol", "entry_bp", "exit_bp", "rt_bp"))
+    for t in trips:
+        print("%-14s %10.2f %10.2f %10.2f"
+              % (t["symbol"], t["entry_bp"], t["exit_bp"], t["rt_bp"]))
+    print()
+    if rts:
+        print("PAIRED ROUND TRIP  n=%d  median=%.2fbp  mean=%.2fbp"
+              % (len(rts), st.median(rts), sum(rts) / len(rts)))
+        print()
+        print("%-14s %3s %10s %10s" % ("symbol", "n", "median_rt", "mean_rt"))
+        for sym, v in sorted(rt_by_symbol.items(), key=lambda kv: -len(kv[1])):
+            print("%-14s %3d %10.2f %10.2f" % (sym, len(v), st.median(v), sum(v) / len(v)))
+    print()
+    print("=== POOLED LEGS (for comparison only -- do NOT read a per-symbol")
+    print("    ranking off this; see the module docstring) ===")
     print(describe(costs, "ALL LEGS"))
     print(describe(entries, "  live_entry"))
     print(describe(exits, "  live_exit"))
@@ -178,12 +269,12 @@ def main(argv: list) -> int:
     for sym, v in sorted(by_symbol.items(), key=lambda kv: -len(kv[1])):
         print("%-14s %3d %10.2f %10.2f" % (sym, len(v), st.median(v), sum(v) / len(v)))
     print()
-    print("PER ROUND TRIP (2 legs) at the median leg: %.2f bp" % (2 * st.median(costs)))
-    print("PER ROUND TRIP (2 legs) at the mean   leg: %.2f bp" % (2 * sum(costs) / len(costs)))
-    print()
-    print("CAVEAT: four of seven symbols have n=2, i.e. one round trip each.")
+    print("CAVEAT: five of six symbols have exactly ONE complete round trip.")
+    print("        No per-symbol slippage number here survives its own sample")
+    print("        size except AERO-USDC at n=6.")
     print("CAVEAT: WETH-USDC and ETH-USDC have ZERO live fills, so the pair that")
-    print("        decides route (a) is NOT measurable here -- CBBTC/CBETH is a proxy.")
+    print("        decides route (a) is NOT measurable here -- CBBTC/CBETH is a proxy")
+    print("        resting on one round trip each.")
     return 0
 
 
