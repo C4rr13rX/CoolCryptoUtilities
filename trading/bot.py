@@ -2412,7 +2412,28 @@ class TradingBot:
             # 53.8% at a 5-minute cap, 23.9% at 10, 18.6% at 15. The leg is
             # refusing the HOLD POLICY, which is why that spread matters more
             # than this parse does.
-            hold_ceiling_sec = float(os.getenv("MAX_HOLD_SECONDS", "3600") or 0.0)
+            # PASS 720 (Bay), handed over by Cove off their [51969494] census:
+            # the clamp above shipped at pass 680 reading MAX_HOLD_SECONDS,
+            # AND THAT VARIABLE IS NOT SET IN .env. So it has been falling back
+            # to its code default of 3600 and judging a SIXTY-minute hold,
+            # while the var the operator DID set -- MAX_HOLD_FORCE_SECONDS=2700
+            # at .env:169, the forced exit this bot actually performs -- was
+            # ignored by this leg entirely. The gate was refusing a hold the
+            # bot cannot produce, which is the exact defect pass 680 set out to
+            # fix and only half fixed.
+            #
+            # Take the SMALLEST positive ceiling rather than preferring one
+            # name: both are real exits and whichever fires first is the hold
+            # the lattice should be judging. MAX_HOLD_FORCE_SECONDS's code
+            # default is 0 = off (bot.py:10596), so an unset value must not be
+            # allowed to clamp anything to zero.
+            _ceilings = [
+                c for c in (
+                    float(os.getenv("MAX_HOLD_SECONDS", "3600") or 0.0),
+                    float(os.getenv("MAX_HOLD_FORCE_SECONDS", "0") or 0.0),
+                ) if c > 0
+            ]
+            hold_ceiling_sec = min(_ceilings) if _ceilings else 0.0
             if hold_ceiling_sec > 0 and horizon_sec > hold_ceiling_sec:
                 horizon_sec = hold_ceiling_sec
                 self._lattice_horizon_clamped = True
