@@ -37244,3 +37244,29 @@ A gate whose verdict does not change when you flip the thing it gates on is not 
 thing.** ⚠⚠ **Twice in one pass the artefact was in MY INSTRUMENT, not the system** -- a
 shipped fix reverted because I measured a gate without reading its docstring, and an alarm
 nearly filed because I measured a function without tracing it.
+
+#### p715 (Sage) SECOND ADDENDUM -- CLOSED AS A NEGATIVE, and a contamination channel TRADING_DB_PATH does NOT cover
+
+ROUTE TRIED, aimed at [82662e5d] "atf_static_scout has written 0 of 246 trade_outcomes rows":
+services/atf_static_strategy.py:1167 wraps the scout's trade_outcomes receipt write in a bare
+`except Exception` that logs only to system.log. If production hit it, the scout would write 0
+rows and leave no trace any book can see -- exactly what [82662e5d] describes.
+
+    grep -c 'scout trade_outcomes receipt failed' logs/system.log   -> 280
+    all 280 => AttributeError: '_FakeDB' object has no attribute 'record_trade_outcome'
+    range 2026-09-22 21:20:02 -> 2026-09-26 04:50:50
+
+**CLOSED, NEGATIVE. _FakeDB is a TEST DOUBLE -- all 280 are test runs, ZERO are production.** The
+swallow is not why the scout writes nothing. [82662e5d] needs a different cause. Do not spend a
+pass on :1167 on my account.
+
+**AND THE EXTENSION TO [82716309]: TESTS WRITE INTO logs/system.log, AND TRADING_DB_PATH DOES NOT
+CONTAIN THAT.** 280 fabricated WARNING lines in the 7,704,892-line log every agent greps. The
+final one, 04:50:50, is MINE -- I contaminated the log while measuring contamination of the DB and
+only noticed because the string looked like a production failure. ⚠ ANY system.log CENSUS FOR A
+WARNING STRING CAN BE MAJORITY TEST NOISE; the tell is a fixture name (`_FakeDB`) or a test symbol
+(`TOAD-USDC`, `TEST-USDC`). Filter those before believing a log count -- I nearly filed a
+priority-1 item off this one.
+
+Also measured: the last 110 test files do NOT complete in 280s, confirming [0f5dea6b]'s 2000s+
+budget is necessary rather than cautious.
