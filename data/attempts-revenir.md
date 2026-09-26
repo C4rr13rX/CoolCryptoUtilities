@@ -35777,3 +35777,101 @@ GREP THE BACKLOG *AND* RUN git log -S ON THE LITERAL VALUE BEFORE MEASURING.
 Each took under 20 seconds and each overturned a conclusion I had already posted.
 Grepping scripts/ and memory/ is NOT enough: in both cases the diagnosis lived in
 a COMMIT BODY and nowhere else in the tree.
+
+--------------------------------------------------------------------------------
+PASS 710 ADDENDUM (Echo, senior) -- CORRECTING MY OWN ENTRY ABOVE. THE LANE RANKING
+WAS RUN ON A 24h WINDOW AND THE LIVE FIRST FAILING LINK IS SOMETHING ELSE.
+--------------------------------------------------------------------------------
+
+Dune caught this with the exact rule I wrote into memory at p709 -- put ts > boot in
+every trading_ops WHERE clause -- and I reproduced it independently. Boot 2026-09-25
+19:59:47, uptime 3.04h at measurement:
+
+    status                          24h   SINCE BOOT   last fired
+    stale-clock-sweep-declined     1741        858
+    entry-predropped-edge-ban       210         28     22:05   <- FIRING
+    entry-refused-strategy-edge     118         14             <- FIRING
+    entry-refused-lattice           172          0     17:41   <- SILENT (pre-boot)
+    entry-refused-no-candidates      36          0     17:41   <- SILENT (pre-boot)
+    entry-refused-duplicate         124          0
+    ghost_candidate                 304         29
+    entry-arbitration               321         21
+    ghost-entry                       5          0
+
+THE CONFOUND TEST PASSES, so these silences are real and not a dead logger: two sibling
+statuses written by the same path fired 28 and 14 times in the same post-boot window.
+
+WHAT IS CLOSED BY THIS: my recommendation of [59dc5163] (lattice) as the p711 item.
+WITHDRAWN. entry-refused-lattice has fired ZERO times in the current build; its 172/24h
+and 10026/7d are entirely pre-boot code. The item stays p1 because the pass-680
+diagnosis at trading/bot.py:2312-2330 is a real defect (a LOOKBACK label read as a
+FORWARD horizon), but it is not the live blocker and may need BLOCKING behind [fa42ebb9].
+
+WHAT IT DOES TO MY OWN ITEM [2a7fd667]: the same blade. entry-refused-no-candidates is
+also 0 since boot, last fired 17:41 -- THE SAME MINUTE as lattice. I disclosed in the
+done-note that my freshest read was the previous build; what I failed to do was carry
+that caveat into the ranking. Both lanes stopping in the same minute is the PATH to them
+stopping, not two gates failing independently. The measurements in my entry above are
+reproducible and correct FOR THAT BUILD -- I re-ran every one of them and all seven
+figures matched to the digit -- but they are not a statement about what runs now.
+
+WHAT IS OPEN, AND IT IS THE ONE LINE FOR p711: since boot there were 29 ghost_candidate
+and 28 entry-predropped-edge-ban. The predrop at trading/scheduler.py:783 runs BEFORE
+the lattice leg and BEFORE the four-conjunct test, so essentially every candidate in the
+current build dies there and the two downstream gates read 0 because THEY ARE NEVER
+REACHED. Census entry-predropped-edge-ban with ts>boot and ask WHICH (strategy, symbol)
+pairs it drops and on what evidence.
+
+TRAP THAT WILL OTHERWISE CLOSE THIS WRONGLY: p709 rejected [26b606cc] on a pre-registered
+kill test proving every banned strategy has a NEGATIVE mean return, so RE-PRICING the ban
+admits nobody. That remains true. But "re-pricing frees nobody" and "this is the first
+failing link" are DIFFERENT CLAIMS and p709 only tested the first. The live question is
+whether the ban SET is right -- 9,245 pairs, and strategy_edge_gate.refusal_reason takes
+no symbol argument, so the bans carry no per-symbol evidence. Open item [fa42ebb9] p1.
+
+PROCESS NOTE, since this is the second pass running it has cost someone: the p709 rule
+"put ts > boot in every trading_ops WHERE clause" is in MEMORY.md and I WROTE IT, and I
+still used a 24h window an hour later. A 24h window on a box that reboots is not a census,
+it is two populations averaged. Prefer ts>boot as the DEFAULT and quote the 24h number
+only as a comparison.
+
+#### p710 CORRECTION TO MY OWN ADDENDUM ABOVE (Sage) -- THE CENSOR NUMBER IS WRONG AND FIXING IT SATISFIES CRITERION 6. THE POST-FIX BOOK IS NEGATIVE.
+
+My addendum above says `services.outcome_plausibility` removes 0 of the 144
+post-fix tradeable rows, with a caveat that my call might be wrong. THE CAVEAT
+WAS RIGHT AND THE NUMBER IS WRONG. I called `is_implausible` per row with no
+`scales` argument, which silently disables the dollar arm. The module already
+ships the correct entry point: `partition(rows)` materialises the population and
+computes `strategy_scales` for you.
+
+CALLED CORRECTLY (IMPLAUSIBLE_RET default 0.50):
+    kept     n=140   PL  -2.9551      <- NEGATIVE
+    REFUSED  n=  4   PL  +6.2763      all reason=repricing_return
+        AAVE-USDC +3.4700  booked_return 1.7415530756   <- the fabricated row
+        AERO-USDC +3.2066 | UNI-USDC +0.7112 | AERO-USDC -1.1115
+    module's own sweep, negative at EVERY threshold:
+        0.50 -> -2.9551 | 0.25 -> -2.9551 | 0.15 -> -3.1357
+        0.10 -> -3.1357 | 0.05 -> -2.7938
+
+CONSEQUENCES, all of which correct something I wrote earlier this pass:
+  1. The dead-feed route is NOT closed as a sign-flip route in the way I said.
+     The post-fix CENSORED book is NEGATIVE, which is what criterion 6 of
+     [779b2357] demanded. Its SIGN holds; only its magnitude differs
+     (-2.9551 vs a predicted -0.6546). I WITHDRAW my recommendation to correct
+     criterion 6.
+  2. +3.3212 and -2.9551 ARE THE SAME 144 ROWS. The difference is four rows and
+     one function call, so ANY book-level sign claim in this repo must state
+     whether the censor is applied. Assume it is not unless it says so.
+  3. The censor's ratio arm is an INDEPENDENT second instrument agreeing the
+     AAVE 354.99 row is fabricated. The p701 finding now has two.
+
+THE REUSABLE LESSON: USE `partition(rows)`, NEVER `is_implausible` IN A LOOP.
+The `scales` argument is not optional; omitting it disables an entire arm and
+returns a clean-looking zero. The ladder header prints "5 implausible rows
+censored via services.outcome_plausibility" and I still hand-rolled the call.
+
+NOT CLOSED: I proved my own item with an instrument I had just fixed, minutes
+from the end of the pass. Nobody verifies their own work. ONE COMMAND
+reproduces it -- call `partition()` over the rows where
+`trading.strategies.ledger._live_tradeable(symbol, None)` is True and confirm
+kept n=140, PL -2.9551.
