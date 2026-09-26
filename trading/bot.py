@@ -6512,6 +6512,37 @@ class TradingBot:
                 risk_budget = min(risk_budget, 0.25)
             if plan_flags.get("halt_ghost") and not self._ghost_halt_is_per_strategy():
                 risk_budget = 0.0
+            # Record the term that gates the WHOLE entry lane, per evaluated
+            # sample. `risk_budget <= 0` three lines below skips
+            # scheduler.evaluate() entirely, so a zero here writes no
+            # arbitration row, no no-candidates row, and no row of any status
+            # -- the lane goes silent and every census reads that silence as
+            # "the market offered nothing". Pass 714 could only get this value
+            # by attaching py-spy --locals to the live process, and pass 715
+            # measured that the halt branch's own feedback row is a CENSORED
+            # sample: it fires only inside the halt AND only on the transition
+            # into it (1814 rows all-time, 27 since boot, every one reading
+            # ghost_multiplier 0.0), so it can prove the multiplier is zero
+            # when the lane is dead and can say nothing about its value when
+            # the lane is running. This is the unconditional row. It is the
+            # POST-multiply local, which is the value the gate actually tests
+            # -- deliberately NOT self.global_risk_budget, whose own metric at
+            # :924 is clamped by max(0.3, ...) at :913 and is therefore
+            # structurally incapable of reading zero.
+            try:
+                self.metrics.record(
+                    MetricStage.GHOST_TRADING,
+                    {
+                        "ghost_multiplier": ghost_multiplier,
+                        "entry_risk_budget": float(risk_budget),
+                        "global_risk_budget": float(self.global_risk_budget),
+                        "entry_lane_halted": 1.0 if risk_budget <= 0 else 0.0,
+                    },
+                    category="entry_budget",
+                )
+            except Exception:  # noqa: BLE001
+                # Instrumentation must never take the entry lane down with it.
+                pass
             try:
                 allocation_map = self._compute_base_allocation(sample)
                 self._propagate_horizon_bias()
