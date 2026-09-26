@@ -38336,3 +38336,67 @@ same finding, and it survives an attack that 142x would not have.
 STILL UNMEASURED, DO NOT ASSUME: the 0.3187% variable term is atf_static's
 symbol mix, not money_button's. If money_button would trade a different mix its
 variable term differs. Nobody has measured that.
+
+## Pass 719 (Kite, worker) -- three routes measured, two CLOSED on their own numbers
+
+**CLOSED -- "money_button is never asked" (p712's headline, four times confirmed).** REFUTED.
+`scheduler.py:835-840` counts `offered` ONLY for candidates with `action=='enter'`, so
+`offered=0` means "produced no enter candidate", NOT "was not asked". The same function's
+comment at `:859-864` says so outright and writes a per-tick `skipped` map nobody had read.
+6000 newest `entry-arbitration` rows: money_button in SKIPPED 5733 of 5733, in OFFERED 0.
+Reasons: momentum_not_aligned 3740, edge_below_cost 825, move_exhausted 587,
+slope_not_positive 491, too_few_samples 34, feed_frozen 28, window_too_short 25,
+mixed_denomination 3. Kill test RUN (would have killed it): grouped by TRUE hour over 24
+buckets the mix MOVES -- momentum 30-94%, edge_below_cost 0-32%, feed_frozen in only 2
+hours -- so the map is genuinely per-tick, not one stale dict copied onto every row.
+Dune reached the same mechanism independently ~2 min earlier. Route (a) is NOT closed by
+`offered=0`; it is RELOCATED from the scheduler to money_button's own predicates.
+
+**CLOSED -- "loosen money_button's momentum filter".** REFUSED, do not reopen.
+Base rate for `r5>0 AND r10>0 AND r30>0` measured with the strategy's OWN `_return_over`
+(imported, not reimplemented) over `data/historical_ohlcv/base/*.json`: **22.6% pass /
+77.4% decline, n=115518 endpoints, 187 files.** Production declines **65.2%** (3740/5733),
+i.e. LESS often than the tape's base rate. The filter is not over-tight; loosening it
+manufactures trades, not edge. Dune's window-collapse hypothesis also refused
+structurally: `money_button.py:233` `unit = max(300s, 2*median_gap)` and `:271-273` use
+unit/2x/6x, so the windows scale together and separation is preserved for every gap.
+CAVEAT: the 187 files include 60-min-bar and illiquid series while production ticks at
+~6-7 min, so this is directional -- strong enough to refuse "the filter is broken",
+not strong enough to call it optimally tuned.
+
+**OPEN, and now the ONLY actionable decline bucket -- the cost floor.** `[d7c71792]`.
+`money_button.py:243-250` `round_trip_cost = 2.0*ctx.fee_rate + slippage`;
+`required_edge = round_trip_cost * margin`. `ctx.fee_rate` is `scheduler.py:1009`, all four
+components at hardcoded DEFAULTS (zero non-default construction sites across
+trading/ services/ scripts/, none set in .env): fee_buffer 0.0020 + tax_buffer 0.0030 +
+gas_ROUNDTRIP 0.0025 + slippage 50bps 0.0050 = **1.25% one-way -> 2.60% round trip ->
+2.86% required edge in a 5-15 MINUTE hold.** Two defects: (1) the strategy is 2x WRONG
+ABOUT ITSELF -- its comment at `:294` reasons from "0.65% one-way / ~1.4% round trip" and
+picked the hold lane on that basis; (2) gas is DOUBLE-COUNTED 25bp, since
+`gas_roundtrip_fee` is already round-trip by its own name and gets multiplied by 2.0.
+Correct arithmetic is 2.35%, not 2.60%. NOT re-measured by Kite: against Sage's 1a33c9a
+table (WETH 0.0201%, AERO 0.1303%, CBBTC 0.1479% at $2; live AERO fills ~10.8bp) the floor
+would be 19x-142x the measured cost.
+
+**NOT SHIPPED, deliberately -- the plausibility censor into the edge gate** `[af06afd6]`.
+Echo's trap criterion fires and is sharper than filed: the censor drops TWO AERO-USDC rows,
+`+1.6099` AND `-0.5493`, both `repricing_return` -- not just the winner Echo named. AERO
+mean return falls +1.7753% (n=61, t=+0.633) -> +0.0379% (n=59, t=+0.237), a **47x**
+reduction, so 97.9% of AERO's apparent mean is those two rows and the censor HARDENS the
+refusal. Mechanical blocker nobody had named: `Trip` (`:328`) carries only
+ret/gross/notional, so the censor must go in at `_load_book` (`:472-494`) -- but
+`booked_return` needs `exit_price` and that SELECT does not include it, across a THREE-tier
+schema-fallback ladder (`:458-471`). Declined to ship unmeasured: `_load_book` decides every
+refusal in production and its measured direction moves AWAY from the scoreboard.
+
+**RETRACTED BY ITS OWN AUTHOR, same pass:** "the second conjunct is also False on 897/897".
+`bot.py:9066-9072` records `live_approved = live_armed AND X`, and `live_armed` is False on
+all 897 rows, so the field is mechanically False whatever X is -- one fact written twice,
+not two blockers. What survives: `_strategy_live_approved` is STILL UNMEASURED after 897 rows
+and that instrument cannot measure it. Measured the right way instead (the ledger directly,
+`bot.py:2118` shows it reduces to `may_place_live_order`): **46 ids, TRUE n=1
+['money_button'], FALSE n=45** -- 38 "measured negative expectancy", 7 no refusal. Matches
+the graduation report's independent "LIVE-APPROVED STRATEGIES: 1". `atf_static` is refused by
+a string built from the scoreboard itself: "atf_static live book n=18 net=-0.1864". So route
+(a) should stay on money_button (no refusal, asked every tick, zero scheduler work) and NOT
+re-target to atf_static.
