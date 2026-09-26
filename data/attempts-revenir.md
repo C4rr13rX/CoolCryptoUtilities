@@ -34235,3 +34235,54 @@ is UNMEASURED and is the better question.**
 on a number that does not reproduce. That is worse than an open question, because it looks
 settled.
 
+
+### p707 FIFTH ADDENDUM (Echo) -- **I RAN [536e0318]'S OWN KILL TEST AND IT DID NOT KILL THE LEAD. THREE ROWS CARRY 97% OF THE <15m LOSS. BUT THE STOP THAT WOULD FIX IT IS INSIDE THE COST FLOOR.**
+
+I said the tail characterisation was the most interesting thing I was leaving unmeasured.
+I got to it.
+
+    <15m bucket, n=31, sum -0.84366, win 19/31 = 61%
+
+    WORST ROWS                                                    cumulative
+      1  OMARCHY-USDC   -0.31179   $2.00 notional   hold  0.3m     37% of loss
+      2  UNI-USDC       -0.27222   $5.21            hold  1.1m     69%
+      3  OMARCHY-USDC   -0.23668   $2.00            hold  3.1m     97%
+      4  UNI-USDC       -0.13998   $5.20            hold  2.5m    114%
+      5  BASECAT-USDC   -0.08522   $2.00            hold  7.4m    124%
+      6  VIRTUAL-USDC   -0.07887   $5.20            hold 14.8m    133%
+
+**THREE ROWS CARRY 97% OF THE ENTIRE LOSS, and two of them are the same symbol
+(OMARCHY-USDC).** The other 28 rows are collectively positive.
+
+**THE PRE-REGISTERED KILL TEST, run as written on the item:**
+
+    truncate every loss at -0.01  ->  sum  +0.28860   POSITIVE
+    truncate every loss at -0.02  ->  sum  +0.19463   POSITIVE
+    truncate every loss at -0.05  ->  sum  -0.01890   ~break-even
+    truncate every loss at -0.10  ->  sum  -0.28299
+
+**The lead SURVIVES its own kill test: a stop turns this bucket positive.** By the item's
+own criterion ("if no truncation makes it positive the tail-control lead is DEAD"), it is
+not dead.
+
+**⚠ AND HERE IS THE CAVEAT THAT MATTERS MORE THAN THE SURVIVAL, which I am putting in the
+same breath so nobody quotes the +0.28860 alone.** A stop is only implementable if it sits
+OUTSIDE the round-trip cost. Against this pass's measured **57.6bp realised cost**:
+
+    -0.01 on the $2.00 rows  = 50bp   <- INSIDE the 57.6bp cost floor. NOT IMPLEMENTABLE.
+    -0.01 on the $5.20 rows  = 19bp   <- far inside it. NOT IMPLEMENTABLE.
+    -0.05 on the $5.20 rows  = 96bp   <- implementable, and it yields -0.01890, BREAK-EVEN.
+
+**So the honest landing point is BREAK-EVEN, not profit.** The stops that produce +0.29 are
+tighter than the cost of trading and would be hit by the spread alone. The tightest
+*implementable* stop brings −0.84366 to **−0.01890**.
+
+**WHICH PUTS THE TWO FINDINGS OF THIS PASS ON THE SAME AXIS, and that is the real result:**
+tail control gets `<15m` to break-even **only while the cost floor is 57.6bp**. Fix the
+cost floor to the 12.4bp the wallet clip would give, and the implementable stop moves
+inward by ~45bp — **which is exactly where the +0.19 to +0.29 lives.** **[6672819c] and
+[536e0318] are not two routes; they are one route and the cost item is the prerequisite.**
+
+**OMARCHY-USDC is worth one query by itself:** two rows, both at $2.00, together −0.54847,
+**65% of the bucket's entire loss**. A symbol exclusion may beat any stop.
+
