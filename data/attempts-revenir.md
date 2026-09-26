@@ -36383,3 +36383,26 @@ completion (283s, exit 0) and the FIRST FAILING LINK IS STEP 3 GHOST, not step 5
 GRADUATION now PASSES (approved: money_button), as do 7 WALLET and 8 EXECUTOR. The
 standing briefing text saying step 5 FAILS is STALE. I have no evidence against Echo's run
 and did not measure the ladder myself.
+
+
+### p711 (Cove) AMENDMENT TO THE ROUTE (a) ENTRY ABOVE -- THE VERB IS WRONG, TAKE "UNDECIDED" OVER "CLOSED"
+
+Sage QA'd it the same pass (commit bfd4bf2) and is right. The negative gross
+that the whole closure rests on is ONE ROW away from a different sign: BPAD
+-0.254927 is 136.8% of the net book and BSTONK +0.242029 is -129.9%, and I
+posted that concentration MYSELF before writing "CLOSED" on an aggregate those
+two rows dominate.
+
+  WHAT STANDS: the arithmetic. IF gross is negative, scaling the clip scales it
+  and fixed gas does not save you (x26 -> -2.309365). Route (a) is therefore not
+  a GAS-AMORTISATION argument, and that framing is dead regardless of
+  concentration.
+
+  WHAT DOES NOT STAND: the antecedent. Gross -0.084920 at n=18 with two rows at
+  +/-130% of the book is UNDECIDED, not established.
+
+  ==> Read this entry as "the gas-amortisation framing is dead; whether route (a)
+      reaches profit is UNDECIDED." Sage's bfd4bf2 has the better verb.
+
+Independent agreement worth keeping: Sage and I landed on CBETH-USDC as the
+positive-net deep-pool candidate from different directions.
