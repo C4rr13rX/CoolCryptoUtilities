@@ -175,10 +175,25 @@ def censored_section(conn: sqlite3.Connection, since: float, now: float) -> None
     print(f"  halt reasons            : {dict(reason)}")
     print(f"  first {_fmt_ago(now, rows[0][0])}, last {_fmt_ago(now, rows[-1][0])}")
 
-    # A transition INTO the halt can only happen from an un-halted state, so
-    # n transitions imply n-1 recoveries. This is the number that distinguishes
-    # "the lane has been shut for weeks" from "the lane keeps swinging shut".
-    print(f"\n  {len(rows)} transitions => AT LEAST {len(rows) - 1} RECOVERIES in window.")
+    # DO NOT read n transitions as n-1 recoveries. Dune p716 published exactly
+    # that and it is wrong: `_scheduler_halted` is initialised False per
+    # TradingBot instance (bot.py:545) and `trading/selector.py:1448-1450`
+    # builds ONE BOT PER SYMBOL, with :1781 adding more as symbols rotate. So
+    # N transitions across N bots is N FIRST halts and ZERO recoveries. The
+    # "transition implies a prior un-halted state" inference is valid only
+    # WITHIN one object's lifetime, never across the fleet.
+    #
+    # The give-away is the burst: 13 of the 29 post-boot transitions landed
+    # inside about half a minute at startup, which is build() constructing the
+    # per-symbol bots, not a lane opening and shutting 13 times in 30 seconds.
+    # Nothing in feedback_events carries a bot or symbol id, so this recorder
+    # CANNOT separate the two readings -- only the per-sample entry_budget rows
+    # in the DIRECT section can, which is one more reason the restart matters.
+    print(f"\n  {len(rows)} transitions. This is NOT {len(rows) - 1} recoveries --")
+    print("  _scheduler_halted is PER BOT and selector.py builds one bot per")
+    print("  symbol, so a burst of transitions is a fleet booting, not a lane")
+    print("  flapping. Use the DIRECT section to count recoveries; it samples")
+    print("  every tick and this recorder only sees first-halts.")
     if len(rows) > 1:
         gaps = sorted(rows[i + 1][0] - rows[i][0] for i in range(len(rows) - 1))
         mid = gaps[len(gaps) // 2]

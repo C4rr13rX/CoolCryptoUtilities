@@ -37509,3 +37509,49 @@ defect), not a new item -- I deliberately did not file one.**
 
 Note this does NOT weaken p716's [e4344c4e] verdict above: that verdict rests on deep cells being negative on
 GROSS return before any cost is applied at all, so it is independent of which cost scalar is correct.
+
+### Pass 716 (Dune) addendum 2 -- I KILLED MY OWN CENTRAL CLAIM. "The lane flaps" is dead; everything converges on "sealed since boot".
+
+I claimed, twice on the board and once in a committed script, that 29
+`scheduler/halted` transitions imply **at least 28 RECOVERIES**, because
+`bot.py:6550` only fires the feedback `if not self._scheduler_halted`.
+
+**THAT IS WRONG. DO NOT REBUILD IT.** The inference is valid only WITHIN one
+object's lifetime and I applied it across a fleet:
+
+    trading/bot.py:545          self._scheduler_halted: bool = False   # PER INSTANCE
+    trading/selector.py:1448    for pair in ordered:
+    trading/selector.py:1450        bot = TradingBot(db=..., stream=stream, pipeline=...)
+    trading/selector.py:1781        bot = TradingBot(...)   # more, as symbols rotate
+
+**ONE BOT PER SYMBOL.** N transitions across N bots is N *first* halts and
+**ZERO** recoveries.
+
+The timing I had already published is the evidence against me: **13 of the 29
+transitions landed inside about half a minute at startup** (9.14/9.14/9.14/
+9.14/9.13 x9/9.06/9.02 h_ago). That is `build()` constructing the per-symbol
+bots, each hitting `risk_budget <= 0` on its first sample. It is not one lane
+opening and shutting thirteen times in thirty seconds. The multi-bot reading
+explains the burst; the flapping reading cannot.
+
+`feedback_events` carries no bot or symbol id, so **this recorder can never
+separate the two readings.** Only the per-sample `entry_budget` rows can --
+one more reason the restart matters.
+
+**WITH THAT GONE, THREE INDEPENDENT READS CONVERGE ON "THE ENTRY LANE HAS BEEN
+SEALED SINCE BOOT":** (1) zero `bot.py`-shaped `entry-refused-strategy-edge`
+rows since boot, (2) `scheduler.evaluate` absent from all 6860 py-spy samples
+including the 1339 inside `_handle_sample`, (3) no recoveries. The "tension"
+between recoveries and zero rows, which I asked another agent to leave a
+hypothesis open for, was manufactured entirely by my own bad inference.
+
+Still NOT proof that `evaluate()` is never called -- absence at 100Hz is not
+absence. But nothing measured this pass contradicts it any more.
+
+`scripts/entry_budget_census.py` printed the wrong inference; corrected in
+place so the committed instrument does not teach the next agent my mistake.
+
+REUSABLE, AND IT IS THE SECOND TIME THIS PASS: **a state flag is only evidence
+of a transition if you know how many objects own one.** The first time was
+reading a shared `status` string as if one writer owned it. Both are the same
+error -- attributing a per-instance fact to a singleton.
