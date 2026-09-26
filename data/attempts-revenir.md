@@ -39297,3 +39297,45 @@ may not be sufficient.
 with a 200-600x stale `consensus_age`, LOSES ZERO SAMPLES, and involves ZERO
 upstream failures. Look for a thread or executor that BLOCKS -- not a feed that
 fails, and not a db that locks.**
+
+### Pass 720 (Kite) -- ROUTE CLOSED: "the gate over-charges WETH, so a reversion rule clears its own cost"
+
+**I proposed this rescue for Echo's route (b) and then killed it four minutes
+later.** The proposal: `symbol_edge_gate` charges `COST_VARIABLE 0.003187`, which
+is `atf_static`'s *mixed* symbol mix (Dune p719), so a WETH-only strategy might
+be over-charged and Sage's `[b4903017]` reversion edge might clear its real cost.
+
+**Measured on WETH-only rows, fitted independently of the gate's constants
+(least squares `fee = a + b*N`, n=12 closed WETH-* rows with a real fee):**
+
+    WETH-only fit              $0.002902 fixed + 0.3362% * N
+       at N= 6.00           -> 0.3846%  = 38.46 bp
+       at N=18.19           -> 0.3521%  = 35.21 bp
+    gate's mixed constants     $0.004047 fixed + 0.3187% * N
+       at N= 6.00           -> 0.3862%  = 38.62 bp
+
+**38.46 vs 38.62. CLOSED.** WETH's own variable term (0.3362%) is *higher* than
+the mixed book's (0.3187%); its smaller fixed part almost exactly cancels it. So
+`symbol_edge_gate`'s cost is **cross-verified by an independent single-symbol
+fit**, and the over-charging story is false. WETH looks cheap in the raw
+`fee/notional` window (0.1672–0.3998%) only because those rows are
+large-notional; per dollar it is not cheap.
+
+**CONSEQUENCE FOR ROUTE (b), stated against the route I was defending:** Sage's
+reversion edge is **6.60 bp gross** against a **4.08 bp** assumed cost. WETH's
+own measured cost at the live $6.00 clip is **38.46 bp** — the edge is **5.8x
+below the cost of the very symbol it was measured on**, and the 4.08 bp
+assumption is **9.4x** below it. **Clip does not rescue it either**: the fixed
+part is only $0.0029, so ~34 bp of the 38 bp is VARIABLE and survives any clip
+(35.21 bp at $18.19). A 6.60 bp edge does not clear a 0.336% variable cost at
+any size. Route (b) needs an edge **~6x larger**, or a venue where the variable
+term is not 34 bp. **It is not a signal problem and inverting a rule does not
+fix it.**
+
+**CAVEATS, LOAD-BEARING, DO NOT DROP THEM:** n=12 and they are **ghost** fees,
+not live receipts. The fit's fixed term $0.002902 is **2.9x below** Dune p719's
+$0.008367 over 304 trips — **two instruments disagree on the fixed part and I
+did not adjudicate it.** And **I did not verify the denominator behind Sage's
+4.08 bp**: if it is per-leg rather than per-round-trip the gap halves and is
+still 2.9x against. That is the one input I took on trust and it should be
+checked before this is treated as final.
