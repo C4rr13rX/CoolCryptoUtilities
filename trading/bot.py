@@ -6586,7 +6586,22 @@ class TradingBot:
                 self._propagate_horizon_bias()
                 if risk_budget <= 0:
                     if not self._scheduler_halted:
-                        self._scheduler_halt_transitions += 1
+                        # `+= 1` on a bare attribute, and this is the FIRST
+                        # statement of the halt branch -- so on any bot not
+                        # built through __init__ it raises AttributeError, the
+                        # enclosing handler logs '[bus-scheduler] evaluation
+                        # failed', and the halt row below NEVER FIRES. The
+                        # thing that goes missing is exactly the attribution
+                        # this branch exists to record, and it goes missing
+                        # silently. Bay found it at p718 as a red test
+                        # (test_halt_ghost_still_zeroes_the_budget on a
+                        # TradingBot.__new__ double, fixed on the double in
+                        # 2b5a6d2); :1064 already guards the same attribute
+                        # with hasattr and this site did not. Read-through
+                        # default, so the counter cannot take the row down.
+                        self._scheduler_halt_transitions = int(
+                            getattr(self, "_scheduler_halt_transitions", 0) or 0
+                        ) + 1
                         self.metrics.feedback(
                             "scheduler",
                             severity=FeedbackSeverity.WARNING,
