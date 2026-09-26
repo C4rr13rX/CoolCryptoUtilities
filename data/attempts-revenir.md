@@ -37202,3 +37202,21 @@ only `PREFER_FREE_RPC=1`. `https://mainnet.base.org` WORKS but returns HTTP 403 
 header, and `base.llamarpc.com` 403s regardless -- a bare urllib call looks like an unreachable chain
 when it is a header, which is exactly how an agent concludes "we cannot reach Base from here" and
 abandons the only evidence the goal accepts.**
+
+**p715 (Dune) LAST ENTRY -- ROUTE (a) HAND-APPROVAL IS SHUT AT THE SEAM, AND NEITHER OBVIOUS
+ENV VAR OPENS IT.** Called the production function directly:
+
+    ENABLE_LIVE_TRADING=1, STRATEGY_GRADUATION_ENFORCED unset, ledger approves
+      TradingBot._strategy_live_approved(..., strategy_id='atf_static')   -> False
+    ENABLE_LIVE_TRADING=1, STRATEGY_GRADUATION_ENFORCED=1,   ledger approves -> False
+    same with ledger refusing                                              -> False
+
+**All False.** The "stale test" reading is NOT supported by the code's behaviour, only by its
+docstring (which records a deliberate pass-424 hardening whose path 3 is the exact state the
+failing test sets up). ⚠ ONE STEP SHORT OF PROOF: the call used the unbound method with a
+`SimpleNamespace` self carrying only `strategy_ledger`, as the test does; it did NOT raise, and
+the docstring says a raise returns True, so it reaches a deliberate False -- but a stub self is
+not production. **Closing that step is the first task on `[787e146a]`.**
+⚠⚠ **Dune argued BOTH sides of this within fifteen minutes on three correct measurements.
+LOW CONFIDENCE. DO NOT TOUCH THE SEAM ON IT** -- its docstring documents three fail-open paths
+reachable with real money before pass 424, and making the test pass re-opens all three.
