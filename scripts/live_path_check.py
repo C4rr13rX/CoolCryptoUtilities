@@ -313,6 +313,50 @@ def check_graduation() -> Link:
     return link.passed("approved: %s" % ", ".join(approved))
 
 
+def risk_block_detail(flags: Dict[str, Any]) -> str:
+    """Render step 6's blocked-detail naming the number that is ZERO.
+
+    live_blocked_reason is a MECHANISM name. For weeks step 6 printed
+    "blocked: ghost_validation_block", which says which subsystem said no and
+    says nothing about why, so three passes were aimed at the wrong link. The
+    same risk_flags dict already carries the actual reason and the actual
+    shortfall, and they do not agree with the mechanism name:
+
+        live_blocked_reason  ghost_validation_block
+        ghost_reason         no_qualified_strategy:cold_start_bootstrap
+        ghost_samples        0
+        ghost_min_trades     20
+
+    Measured over 68 halt rows since 2026-09-16, ghost_reason is
+    no_qualified_strategy:cold_start_bootstrap on 60 (88.2%) and
+    insufficient_samples on 5 (7.4%) -- so "insufficient samples", the reason a
+    selector.py docstring gives, is the minority case and the label nobody
+    should be working from. A docstring is a claim with a date on it.
+
+    Kept as a pure function of the flags dict so it can be proven against real
+    stored risk_flags without a multi-minute TrainingPipeline build.
+
+    ORDER MATTERS AND IS NOT COSMETIC: graduation_status.py renders this
+    truncated, so whatever leads is the only part guaranteed to survive. The
+    shortfall leads, the measured reason is second, and the mechanism name --
+    the least actionable of the three and the one that has been printing alone
+    -- goes last.
+    """
+    reason = str(flags.get("live_blocked_reason") or "")
+    ghost_reason = str(flags.get("ghost_reason") or "")
+    parts = []
+    # The shortfall is the number that is zero. It leads, because it is the
+    # only part of this line anybody can act on.
+    samples = flags.get("ghost_samples")
+    need = flags.get("ghost_min_trades")
+    if samples is not None and need:
+        parts.append("ghost_samples=%s of %s needed" % (samples, need))
+    if ghost_reason and ghost_reason != reason:
+        parts.append("ghost_reason=%s" % ghost_reason)
+    parts.append("blocked: %s" % reason)
+    return "; ".join(parts)
+
+
 def check_risk() -> Link:
     link = Link(6, "RISK")
     try:
@@ -327,7 +371,7 @@ def check_risk() -> Link:
     reason = flags.get("live_blocked_reason") or ""
     usd = float(flags.get("recommended_live_usd") or 0.0)
     if reason:
-        return link.failed("blocked: %s" % reason, "see scripts/live_gate_map.py")
+        return link.failed(risk_block_detail(flags), "see scripts/live_gate_map.py")
     if usd <= 0:
         return link.failed("recommended_live_usd = $0.00",
                            "sizing collapsed; check SAVINGS_/LIVE_MIN_CLIP_USD")

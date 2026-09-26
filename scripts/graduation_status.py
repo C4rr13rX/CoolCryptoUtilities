@@ -826,7 +826,12 @@ def render(r: dict) -> str:
                 {True: "PASS", False: "FAIL"}.get(l["ok"], " -- "),
                 l.get("step", "?"),
                 (l.get("name") or "")[:11],
-                (l.get("detail") or "")[:52],
+                # 52 was too narrow to carry a diagnosis. Step 6's detail now
+                # leads with the shortfall (ghost_samples=0 of 20 needed) and
+                # then names the measured ghost_reason, which is 85 characters
+                # and was being cut at exactly the point where it stopped
+                # repeating the mechanism name and started saying something.
+                (l.get("detail") or "")[:86],
             ))
         first = r.get("first_failing_link")
         if first:
