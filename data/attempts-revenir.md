@@ -39683,3 +39683,76 @@ WETH-USDC (n=9) and CBETH-USDC (n=7) with `refusal_reason()` None -- so no plan 
 "first get a symbol past symbol_edge_gate". Cove measured the same independently this pass.
 (e) The two `main.py --action start_production` processes are a PARENT AND ITS CHILD
 (11104's ppid is 21232, same create_time); there is ONE bot, no duplicate writer.
+
+### Pass 722 (Dune, worker) -- TWO ROUTES CLOSED, ONE OF THEM MINE AND KILLED TWICE
+
+ROUTE TRIED: "the live lane is bleeding slowly, so cost/edge work moves the scoreboard."
+NUMBER: read-only sqlite on `storage/trading_cache.db`. `trade_outcomes` all-time 312 rows,
+2026-08-26 10:27 -> 2026-09-26 11:22 UTC. Rows with `details.mode='live'`: **22, newest
+2026-09-05 21:00 UTC**; live rows since 2026-09-16: **0**. Gap between newest outcome and
+newest live row: **20.60 DAYS**, during which **137 non-live rows landed** (all 137 not live).
+Cross-checked on `trading_ops`, which retains 36.13 days (165,695 rows, 2026-08-21 ->
+2026-09-26) and therefore CAN see the live era: every live-lane status is zero in the last
+24h and none newer than 2026-09-05 --
+`live-entry` 20 (newest 09-05 20:14), `live-exit` 18 (09-05 21:10), `live-swap-settled` 46
+(09-05 21:02), `live-entry-failed` 11, `live-entry-blocked` 6, `guard-blocked-live` 62,
+`entry-refused-live-held` 326. **CLOSED AS A FRAMING:** the book is not bleeding, it is
+FROZEN. The three statuses that would record an ATTEMPT-AND-REFUSAL (`live-entry-failed`,
+`live-entry-blocked`, `guard-blocked-live`) are also zero, so "the gate refuses it every
+tick" would be VISIBLE in this table and is NOT happening. Meanwhile 24h `enter` rows = 996,
+every one of them ghost (`ghost_candidate` 622, `ghost_candidate_quote_ok` 372,
+`ghost-entry` 1). Do not quote -0.1864 or -0.331986 as a trend; it is a 21-day-old constant.
+
+ROUTE TRIED: "`risk_flags.ghost_samples` is BROKEN -- it reads 0 while the book fills."
+NUMBER: `details.brain.transition_plan.risk_flags.ghost_samples` (checked BOTH that path and
+the four-deep `details.brain.live_transition.plan.risk_flags` -- present on the SAME rows,
+agreeing row for row). A clean step function: **2026-08-22..09-16 = 1835 rows non-zero, 22
+zero; 2026-09-18..09-26 = 79 rows zero, 0 non-zero.** Last non-zero **2026-09-16 16:57 UTC**.
+On all 79: `ghost_win_rate` 0.0, `ghost_validation_margin` -0.55, `live_safe` False,
+`live_mode` 'blocked', `halt_live` True, `halt_reason` 'ghost_validation_block'. Same window
+`trade_outcomes` wrote 91 rows, 17 of them `strategy_id=atf_static`.
+**REFUTED TWICE, AND THE ROUTE IS CLOSED.**
+  (1) Already in THIS FILE at line 32403, Echo p700: the count is scoped to a ROLLING 48h
+      (`GHOST_VALIDATION_LOOKBACK_SEC` -> 172800s) and money_button's one ghost row is 477.5h
+      old, so **0 is CORRECT and is not an attribution bug**. I did not grep before measuring.
+  (2) My own fallback -- "then it is per-strategy and atf_static's 5-in-48h cannot read 0" --
+      rested on the plan reading 26 on 09-03 while atf_static's best-ever 48h count is exactly
+      26. **That match is a coincidence: across all 410 plan rows carrying
+      `strategy_id=atf_static`, the plan value equals atf_static's own 48h count on 6 of 410
+      = 1.5%**, and on 2026-08-31 19:27 the plan said 19 while atf_static's own 48h count was
+      ZERO. So `ghost_samples` is NOT keyed to the row's strategy; it is pooled or scoped to
+      the approved strategy.
+  Also NOT a code edit: `git log -S ghost_samples --since=2026-09-10` returns no commit across
+  the cliff, so **do not revert 821daa1 or 9b5cb78 on this evidence** even though both land in
+  the 09-16..09-18 window and both have titles that smell right.
+
+WHAT SURVIVES, and it redirects a standing-instruction route. Rolling-48h census of
+`trade_outcomes` by `strategy_id`, reference now 2026-09-26 11:22 UTC, window 172800s:
+
+    strategy_id            cur 48h   best-ever 48h   rate/day
+    atf_static                   5              26       1.70   <- CLEARS the floor of 5
+    atf_static_scout             2              10       1.00
+    tf_forecast                  4               4       0.40
+    stochastic_reversal@5d       4               4       0.40
+    every other strategy         0             <=9      <=0.70
+
+Echo p700 sized the rate gap at 0.05/day against a 2.5/day floor, 50x short, "a rate gap that
+waiting cannot close". That is true **of money_button** and **false of the ledger**:
+atf_static already meets `min_trades = max(5, min_ghost_trades)` in the CURRENT window and has
+historically hit 26 in a 48h window, which clears 20 as well. **ROUTE (d), "raise the evidence
+RATE rather than lower the bar", is therefore ALREADY SATISFIED for the strategy closest to
+the bar and cannot buy anything there** -- atf_static's binding term is the one Echo measured
+at p721, win rate 6/23 = 26.09% against 0.55. One failing term, and it is neither a rate nor
+a cost.
+
+OPEN, AND IT DECIDES WHETHER THAT 5 IS WORTH ANYTHING: is `ghost_samples` pooled, or scoped to
+the APPROVED strategy? If the latter, atf_static's rate never reaches the gate no matter how
+high it goes. Result (2) above proves it is not the ROW's strategy but does not distinguish
+pooled from approved-scoped. The answer is at the computation site in `trading/pipeline.py`,
+which is [4d095eda]'s declared file and was Sage's this pass, so I did not open it.
+
+LESSON, and it is the same one twice: **SEARCH FIRST, MEASURE SECOND.** At p720 I duplicated
+my own item from p695; at p722 I re-measured a route this file had already closed at p700.
+Both times the measurement was sound and the pass was still partly wasted. Grep
+attempts-revenir.md for the key SYMBOL, not for the prose -- "ghost_samples" found it in one
+command, and I ran that command after posting the finding instead of before.
