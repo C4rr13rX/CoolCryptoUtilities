@@ -135,6 +135,14 @@ def _bot(*, armed: bool, plan: dict):
     bot.db = _Stub()
     bot.positions = {}
     bot._scheduler_halted = False
+    # Production sets this in __init__ (bot.py:565) and increments it on the
+    # halt edge (bot.py:6573) BEFORE it writes `self._scheduler_halted = True`
+    # at :6597. This double is built with TradingBot.__new__, so __init__ never
+    # runs: without this line :6573 raises AttributeError, the enclosing handler
+    # swallows it as "[bus-scheduler] evaluation failed", :6597 is never reached
+    # and the ghost-halt test reads a halt that did not stick. The defect was in
+    # the double, not the halt path -- production is correct.
+    bot._scheduler_halt_transitions = 0
 
     # Tick plumbing.
     bot._processing_sample = False

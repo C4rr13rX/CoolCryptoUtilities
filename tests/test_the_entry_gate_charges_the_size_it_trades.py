@@ -124,8 +124,19 @@ def test_the_gate_reads_a_size_aware_binding_not_the_clip_one():
     import inspect
 
     src = inspect.getsource(TradingBot._interpret_predictions)
+    # Whitespace-normalised, because the ONE thing this assertion must not do is
+    # go red on a reformat. It did exactly that: the call gained a `symbol=`
+    # kwarg and wrapped onto two lines (bot.py:7570-7571), which is a strictly
+    # better call, and the exact-single-line match below could not see it. A
+    # source guard that fails on an improvement stops being consulted, so this
+    # one spent that whole period protecting nothing. Match the BINDING, not the
+    # formatting -- `test_the_notional_is_computed_before_the_fee_that_prices_it`
+    # below already used the robust prefix form and stayed green throughout.
+    flat = " ".join(src.split())
 
-    assert "entry_fees = self._roundtrip_fee_rate(notional_hint=trade_notional_usd)" in src
+    assert "entry_fees = self._roundtrip_fee_rate(notional_hint=trade_notional_usd" in flat, (
+        "the size-aware fee binding is gone: entry_fees must be priced off "
+        "trade_notional_usd, not off the clip")
     # The four readers that decide whether an entry happens.
     assert "min_margin_required = max(entry_fees * 1.5, MIN_NET_MARGIN)" in src
     assert "expected_profit_units = max(0.0, margin - entry_fees) * trade_notional_usd" in src
