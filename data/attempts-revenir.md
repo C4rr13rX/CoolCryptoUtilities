@@ -39143,3 +39143,50 @@ and an unchanged-or-partly-improved duty cycle. **The next place to look is the
 SAMPLER path -- data_stream AND live_trading both stop while trading_ops keeps
 going, so it is one task or one await, not the shared db.** And loop_lag_sec
 still has to be ADDED before any before/after exists.
+
+### Pass 720 (Kite) -- CORRECTION TO MY OWN ENTRY ABOVE, SAME PASS, 20 MINUTES LATER
+
+**The `[036f2d82]` entry above names the wrong file and I am withdrawing its
+headline example. Read this before it.** The 1.9555% **never reaches
+`symbol_edge_gate`'s verdict.** `:627` computes it and hands it to
+`_trip_cost_fraction` as `flat`, which uses it **only on the `notional<=0`
+branch that its own docstring calls "unreachable from the production path"**.
+What the symbol gate actually charges is `COST_FIXED 0.004047 + COST_VARIABLE
+0.003187 * notional`, over the trip's own notional: **1.3837% at N=0.38,
+0.3967% at N=5.19, 0.3862% at N=6.00, 0.3409% at N=18.19.** That reproduces the
+production log exactly, and **it is already the right shape** -- fixed dollars
+plus a rate, with `0.003187` being exactly Dune p719's measured 0.3187%.
+**`symbol_edge_gate` was fixed before I got there.** So "AERO pays a measured
+0.2499% and is asked to clear a floor built from VIRTUAL's 1.9556%" is
+**WITHDRAWN**: AERO is asked to clear **0.3967%** at its own clip.
+
+**What survives, unchanged in arithmetic and narrower in scope:** the one LIVE
+consumer of the contaminated flat rate is **`services/strategy_edge_gate.py`** --
+`:359` `_cost() -> round_trip_cost()`, `:379` `cost = _cost()`, `:386`
+`if mean >= cost: continue`. It uses the number **raw**: no clip term, no fixed
+part, no per-token term. The VIRTUAL contamination is live **there**.
+
+**SECOND FINDING, FREE: THE TWO GATES HAVE DIVERGED 5.1x.** `symbol_edge_gate`
+charges 0.3862% for a $6.00 clip; `strategy_edge_gate` charges 1.9555% for the
+same round trip. `strategy_edge_gate.py:353-356` claims it uses "exactly the
+accessor `symbol_edge_gate._verdict` uses, so the two gates cannot answer one
+question at two different bars again". **The accessor is the same; the
+expression it feeds is not.** True when written, false now. The repair is that
+`strategy_edge_gate` adopts the other's **shape**, not that its number is
+nudged -- and `test_both_edge_gates_charge_the_same_cost` guards the wrong
+invariant, because the two SHOULD differ once one is clip-aware.
+
+**HOW I CAUGHT IT, which is the transferable part.** I posted the discrepancy --
+my read said 1.9555% and production's log said AERO 0.772%, which is *below* it
+and therefore inconsistent -- and explicitly **refused to explain it away**,
+writing "I did not resolve it, nobody should quote 1.9555% as what production
+charges today". Twenty minutes later that unexplained number is what killed my
+own headline. **THE LESSON: I traced a number to its CALL SITE and stopped. A
+call site is not a use.** `:627` looked live and is not. Grep found the caller;
+only reading what the callee does with the argument found the truth.
+
+**ALSO CLOSED, by its own author:** the fork "the flat term double-charges venue
+fee on top of a per-token term". `token_round_trip_cost` is **never imported or
+called** by either edge gate (`grep` -> no match in both). `trading/scheduler.py
+:2006-2011` is the only per-token consumer. Not double-charging; in the one live
+site it is the *only* venue fee, which is the worse fork.
