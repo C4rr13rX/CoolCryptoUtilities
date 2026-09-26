@@ -39190,3 +39190,71 @@ fee on top of a per-token term". `token_round_trip_cost` is **never imported or
 called** by either edge gate (`grep` -> no match in both). `trading/scheduler.py
 :2006-2011` is the only per-token consumer. Not double-charging; in the one live
 site it is the *only* venue fee, which is the worse fork.
+
+ROUTE "the lattice chaos wall is a BAR-LENGTH ARTIFACT, so [51969494] is a
+one-pass fix" -- CLOSED, REFUTED, AND IT WAS MY OWN PRE-REGISTERED HYPOTHESIS.
+  p720 (Cove). `web/tradingagent/chaos.py:187` computes
+  `usable = 1.0/exponent_per_sec == bar_sec/per_step` -- LINEAR in bar_sec --
+  and :209-211 hard-clamps it to `observed_span = len(series)*bar_sec`,
+  returning None above. That is the shape of a censored estimator, so the
+  ~2.8-min wall should BE the ceiling of a 64-sample buffer (bot.py:2425).
+  MEASURED over 11,877 `entry-refused-lattice` rows / 14d: decay min 0.200,
+  p05 1.200, p50 3.500, p95 38.100, MAX 248.400 min, **714 DISTINCT VALUES**,
+  0.01% sitting at the maximum. A censored value piles up at one ceiling and
+  does not reach 4.1 hours. `bar_sec` is also honestly measured -- bot.py:2471
+  `_median_tick_gap_sec`, span-over-count off real stamps, with a docstring
+  naming this exact failure. DEAD. Do not re-open it by reading the clamp.
+
+ROUTE "the chaos gate refuses because its NUMERATOR is a lookback label, so
+correcting it is worth 3.9% of refused candidates" -- HALF CLOSED. THE DEFECT
+IS REAL AND ALREADY FIXED; MY PAYOFF NUMBER WAS WITHDRAWN BY ITS OWN AUTHOR.
+  p720 (Cove). `lattice.py:141` refuses when `proposed_horizon_sec > usable`.
+  Pre-boot the numerator has **ELEVEN distinct values in 11,556 rows** --
+  {3,6,20,45,60,300,720,1440,4320,7200,10080} -- every one a strategy-id SUFFIX
+  in minutes, median 1440 = ONE DAY, against `.env:169
+  MAX_HOLD_FORCE_SECONDS=2700` = 45 min. Confirms
+  `scripts/chaos_gate_horizon_census.py` / c813f5fe independently 14 days later.
+  BUT I PRICED IT WITHOUT SPLITTING AT THE BOOT, breaking this file's own rule.
+  Boot = epoch 1790380787 (2026-09-25 19:59:47); pass 680's clamp (74d5671,
+  2026-09-23) IS in the running build. SINCE BOOT the numerator is **ONE
+  distinct value, 60.0, on all 321 rows**. The clamp WORKS and 97% of my sample
+  was stale code. "458 of 11,877 = 3.9%" IS WITHDRAWN.
+  THE HONEST FORM IS A RANGE, and it closes standing route (c) at its stated
+  size: share of refused candidates clearing chaos, since-boot / pre-boot --
+  60 min 0.00%/1.91%, 45 min 0.00%/3.96%, 15 min **0.00%/12.73%**,
+  5 min 5.92%/34.09%, 3 min 61.37%/58.92%. Since-boot decay MAX is **8.60 min**,
+  so every ceiling from 9 min upward is the same ceiling.
+  ⇒ "SHORTEN THE HOLD TO 15 MINUTES" REACHES AT BEST 1 CANDIDATE IN 8 AND AT
+  WORST NONE. Route (c) is "shorten it to THREE", which is a different strategy,
+  not a config change. Bay's 9be7eb0 (60 -> 45 min) is CORRECT CODE -- the leg
+  really did read an unset `MAX_HOLD_SECONDS` and judge an hour the bot
+  force-exits at 45 -- with a MEASURED PAYOFF OF ZERO CANDIDATES on this tape.
+  Unexplained and left open: the p95 tail does not reconcile across the boot
+  (38.10 vs 5.00) and restricting to the same 4 symbols only reaches 28.90, so
+  it is NOT symbol mix. Reproducer cf239cb + e02d1d8,
+  `python -X utf8 scripts/lattice_horizon_census.py`.
+
+ROUTE "the candidate universe COLLAPSED from 37 symbols to 5 across the 09-25
+reboot" -- CLOSED, REFUTED BY THE CRITERION I WROTE TO KILL IT, IN THE SAME
+PASS I FILED IT. A WINDOW-LENGTH ARTIFACT.
+  p720 (Cove). I compared a FOURTEEN-DAY distinct-symbol count (254 tape / 37
+  gate) against an EIGHTEEN-HOUR one (47 / 5). A distinct-count accumulates
+  with window length. This is the error MEMORY.md already warns about ("never
+  read the census 11 -> 8 as progress: different denominator") and it is the
+  SECOND instance of the same lesson in this sprint.
+  CONTROL, distinct symbols on the tape per 6-HOUR bucket, 10 days, matched
+  throughout: 37 / 39 35 31 26 / 31 28 21 38 / 31 32 26 25 / 22 20 21 19 /
+  19 18 18 21 / 29 23 24 24 / 16 25 38 28 / 21 30 22 18 / 15 17 32 39 /
+  29 19 26 15. **FLAT at 15-39, straddling the reboot with no dip and no
+  recovery ramp.** No collapse, no warm-up transient.
+  WHAT SURVIVES, AND IT WAS ALWAYS MATCHED: in the SAME 18.2h window the tape
+  carried **47 distinct symbols over 17,573 market_stream rows** and **FIVE**
+  appear in a lattice refusal. Same clock, no denominator trick. THE 9.4x
+  NARROWING IS REAL AND IS NOT THE FEED -- the feed is alive. Only the claim
+  that it is NEW is dead; it is a STANDING property of whatever selects entry
+  candidates. Filed as [a7ec8489] p2, criteria rewritten to say so.
+  ⇒ THIS REFRAMES STANDING ROUTE (b). A selector has already narrowed us 9.4x
+  and picked FLOCK, DRV, HYDX, VELVET and LAPTOP -- near the thinnest end of
+  what we carry -- while WETH-USDT sits on the tape with 1,015 rows in 18.2h and
+  reaches the gate FIVE TIMES. "Restrict to deep pools" would be a SECOND
+  selector arguing with the first. NAME THE FIRST ONE BEFORE BUILDING ANOTHER.
