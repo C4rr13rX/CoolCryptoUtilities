@@ -45,3 +45,12 @@
 {"t": 1790445907.9794226, "utc": "18:05:07", "data_stream_per_min": 100.0, "live_trading_per_min": 77.0, "trading_ops_per_min": 8.0, "data_stream_age_sec": 7.2, "trading_ops_age_sec": 3.1}
 {"t": 1790445922.9804916, "utc": "18:05:22", "data_stream_per_min": 200.0, "live_trading_per_min": 135.0, "trading_ops_per_min": 14.0, "data_stream_age_sec": 8.3, "trading_ops_age_sec": 1.0}
 {"t": 1790445937.9873307, "utc": "18:05:37", "data_stream_per_min": 230.0, "live_trading_per_min": 182.0, "trading_ops_per_min": 19.0, "data_stream_age_sec": 0.0, "trading_ops_age_sec": 1.7}
+{"t": 1790445952.988657, "utc": "18:05:52", "data_stream_per_min": 250.0, "live_trading_per_min": 204.0, "trading_ops_per_min": 20.0, "data_stream_age_sec": 3.6, "trading_ops_age_sec": 0.5}
+{"t": 1790445968.0419824, "utc": "18:06:08", "data_stream_per_min": 290.0, "live_trading_per_min": 231.0, "trading_ops_per_min": 21.0, "data_stream_age_sec": 2.2, "trading_ops_age_sec": 5.4}
+{"t": 1790445983.0429115, "utc": "18:06:23", "data_stream_per_min": 280.0, "live_trading_per_min": 221.0, "trading_ops_per_min": 18.0, "data_stream_age_sec": 11.7, "trading_ops_age_sec": 2.0}
+{"t": 1790445998.2805507, "utc": "18:06:38", "data_stream_per_min": 280.0, "live_trading_per_min": 222.0, "trading_ops_per_min": 16.0, "data_stream_age_sec": 7.5, "trading_ops_age_sec": 2.2}
+{"t": 1790446013.2915485, "utc": "18:06:53", "data_stream_per_min": 290.0, "live_trading_per_min": 210.0, "trading_ops_per_min": 14.0, "data_stream_age_sec": 1.4, "trading_ops_age_sec": 0.7}
+{"t": 1790446028.2922096, "utc": "18:07:08", "data_stream_per_min": 240.0, "live_trading_per_min": 161.0, "trading_ops_per_min": 11.0, "data_stream_age_sec": 14.3, "trading_ops_age_sec": 13.3}
+{"t": 1790446043.303331, "utc": "18:07:23", "data_stream_per_min": 150.0, "live_trading_per_min": 117.0, "trading_ops_per_min": 8.0, "data_stream_age_sec": 29.3, "trading_ops_age_sec": 28.3}
+{"t": 1790446058.3038602, "utc": "18:07:38", "data_stream_per_min": 110.0, "live_trading_per_min": 65.0, "trading_ops_per_min": 4.0, "data_stream_age_sec": 44.3, "trading_ops_age_sec": 43.3}
+{"t": 1790446073.628768, "utc": "18:07:53", "data_stream_per_min": 30.0, "live_trading_per_min": 14.0, "trading_ops_per_min": 1.0, "data_stream_age_sec": 59.7, "trading_ops_age_sec": 58.6}
