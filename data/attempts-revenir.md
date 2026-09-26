@@ -35942,3 +35942,74 @@ argued loss exception for the AERO -1.1115 repricing artifact, 21 tests passing)
 summary line is stale and criterion 5 of this item was written from it.
 
 LINE NUMBER DRIFT: the guard is applied at ledger.py:863, not :688. Stop quoting :688.
+
+
+## Pass 711 (Cove, worker) -- ZERO COST IS STILL A LOSING LIVE BOOK ON EVERY COHORT
+
+ROUTE TRIED: route (b), attack the cost floor, tested for whether it can reach a
+POSITIVE scoreboard rather than merely a smaller negative one.
+
+HYPOTHESIS AND COMPLEMENT, pre-registered on the board before the measurement:
+  H          the cost floor (gas + slippage + venue fee) is what makes the live
+             book negative; attack cost and the sign flips.
+  COMPLEMENT cost is a TAX ON AN ALREADY-LOSING BOOK. Gross is negative on its
+             own, so zeroing every cost term still leaves it negative and route
+             (b) cannot reach positive.
+  KILL TEST  sum gross_profit alone over the live rows. If gross > 0, H lives.
+
+THE NUMBER. 22 rows in trade_outcomes with details.mode='live':
+
+    cohort                    n   GROSS      FEE      NET      fee/|gross|
+    ALL live                 22  -0.21796  0.11402  -0.33199     52.3%
+    DEEP AERO/CBBTC/CBETH    17  -0.04414  0.07976  -0.12391    180.7%
+    MICRO the other four      5  -0.17382  0.03426  -0.20808     19.7%
+
+    set EVERY cost term to zero:  ALL  -> -0.21796  STILL NEGATIVE
+                                  DEEP -> -0.04414  STILL NEGATIVE
+
+THE COMPLEMENT WINS, AND IT WINS ON BOTH COHORTS. The cohort cut was the test
+that should have killed it -- if the micro pools carried the whole negative, the
+deep book would have been positive before cost. It is not.
+
+WHAT THE COHORT CUT DID CHANGE, and it matters: on the FULL book cost is 52% of
+|gross| and SELECTION is the problem; on the DEEP book COST DOMINATES at 181% of
+|gross|. So route (b) is aimed at the right cohort. It still cannot reach
+positive there, because zero cost leaves -0.04414.
+
+  CLOSED: "cutting the cost floor turns the live book positive." It does not, on
+          any cohort available today. Cost work makes the deep book
+          SMALLER-NEGATIVE, which is worth doing and is not the same claim.
+  OPEN:   the live book needs GROSS to flip sign. That is a selection question
+          -- which pair, which hold time -- not a cost question.
+
+PER SYMBOL, LIVE, gross / fee / net:
+
+    AERO-USDC     n=9  -0.03896  0.03196  -0.07092
+    CBBTC-USDC    n=4  -0.01758  0.03735  -0.05492
+    CBETH-USDC    n=4  +0.01239  0.01046  +0.00194
+    CBXRP-USDC    n=1  -0.01259  0.00649  -0.01908
+    BASECAT-USDC  n=1  -0.02911  0.00413  -0.03324
+    BSTONK-USDC   n=2  +0.11778  0.01861  +0.09916
+    BPAD-USDC     n=1  -0.24989  0.00503  -0.25493
+
+BSTONK is the largest net-positive symbol in the LIVE book as well as the ghost
+book, and [779b2357] is stripping it for a feed dark 17 days. Strip it and the
+ONLY net-positive symbol in the entire live book is CBETH-USDC, +0.00194 on n=4.
+AERO is the most-traded live symbol at n=9 and is negative on gross AND net.
+
+NOT CLOSED, STATED AS A STARTING POINT NOT A RESULT: if anything is hand-approved
+onto the live lane at a minimum clip, CBETH-USDC is the only pair with a
+net-positive live record, and it is positive AFTER cost rather than before it.
+n=4 with one row at exactly 0.00000 gross is not evidence.
+
+CAVEATS. (1) This is the 22-row details.mode='live' set, NOT the 18-row
+scoreboard set: net here is -0.33199 against the scoreboard's -0.1864, so a
+filter I did not reproduce sits between them. The claim is about SIGNS and
+RANKING, not the level. (2) The p689 note on [3f942885] says excluding micro
+makes the 18-row scoreboard WORSE; on this 22-row set it makes it better
+(-0.33199 -> -0.12391). Different sets, so it is not a refutation -- somebody
+should reconcile which set that claim was measured on.
+
+COMMAND THAT REPRODUCES IT: read trade_outcomes, filter json.loads(details)
+['mode'] == 'live', sum gross_profit / fee_cost / net_profit by symbol. There is
+no strategy column and no mode column -- both live in details.
