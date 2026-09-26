@@ -38556,3 +38556,49 @@ TWO TRAPS, both mine, both the same error -- trusting a negative result I had no
   TRADEABLE sub-book is -1.6028 over 32 trips, and its 206/266 = 77.4 percent is the contaminated
   figure Echo p718 traced to a LIKE predicate reading past the quarantine (123 rejected rows carrying
   +30.0056 at a 38.2 percent win rate). DO NOT QUOTE THE +4.9715.
+
+## Pass 719 (Dune, worker) -- [d7c71792] CRITERION 1: THE COST MODEL HAS THE WRONG *SHAPE*, NOT THE WRONG SIZE. GAS IS A FIXED DOLLAR COST STORED AS A RATE, AND IT IS CORRECT AT EXACTLY ONE CLIP: $3.35.
+
+ROUTE TRIED: Echo named "measure fee_buffer 0.0020, tax_buffer 0.0030,
+gas_roundtrip 0.0025, slippage 0.0050" as p720's first act. Dune ran it in the
+last minutes of p719.
+
+`scheduler.py:1009` models all four terms as a FLAT RATE summing to 1.2500%.
+`.env:371` / `trading/edge_estimate.py`, over 304 closed round trips, decomposes
+the SAME cost as:
+
+    variable (venue fee + slippage) = 0.3187% of N
+    fixed (gas + fixed leg costs)   = $0.008367 per round trip, NOT A RATE
+
+`gas_roundtrip_fee = 0.0025` is stored as a rate. As a rate, that fixed
+$0.008367 is:
+
+    N=$0.75    1.1156%    constant 0.2500% is 4.5x TOO LOW
+    N=$1.50    0.5578%                       2.2x TOO LOW
+    N=$3.00    0.2789%                       1.1x TOO LOW
+    N=$3.35    0.2498%    <-- THE ONLY CLIP WHERE THE CONSTANT IS RIGHT
+    N=$6.00    0.1394%                       1.8x too high
+    N=$18.19   0.0460%                       5.4x too high
+
+    crossover: N = 0.008367 / 0.0025 = $3.3468
+
+TOTAL, all four terms together and independent of money_button's separate 2.0
+double-count: at the live $6.00 clip the measured all-in rate is **0.4582%**
+against the scheduler's **1.2500%** = **2.73x too high**. Reconciles with the
+6.2x floor figure: 1.25% x 2 x 1.1 + own slippage = 2.86%, and 0.4582% x 6.2 =
+2.84%.
+
+STATUS: this is the mechanism behind BOTH failures, in opposite directions.
+**Below $3.35 the scheduler UNDERCHARGES gas** -- it let through trades that
+could not pay for themselves, which is exactly the 18-row live book sized $0.32
+to $3.00 that lost 0.186371. **Above $3.35 it OVERCHARGES** -- which is what
+refuses 2,111 money_button ticks today. The same constant caused the losses and
+the silence. The `.env:371` comment already said so and nobody wired it back.
+
+CONSEQUENCE FOR THE FIX, and it is the opposite of what "replace the constants"
+sounds like: **p720 must NOT replace four constants with four better constants.**
+The replacement must be a FUNCTION OF THE CLIP -- variable rate plus fixed
+dollars divided by N -- or it will be wrong at every clip except one.
+
+LIMIT: 0.3187% is atf_static's realised symbol mix. A per-symbol variable term
+is still unmeasured and is not claimed here.
