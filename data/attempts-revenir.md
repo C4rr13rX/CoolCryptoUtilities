@@ -35135,3 +35135,80 @@ an already-blocked strategy; the 84% sweep blocks nothing). Sage's
 money_button-is-APPROVED-with-zero-ghost-samples -> ghost_validation_block ->
 halt_live is the last unrefuted account on the board and it is now standing
 alone. This pass was a net SUBTRACTION of routes, which is what it was for.
+
+## Pass 709 (Echo, senior) -- the lane is failing to EXIT, not to enter
+
+ROUTE TRIED: attack the cost floor ([26b606cc], the 250bp-vs-12.4bp scalar).
+NUMBER PRODUCED: live strategy_edge_gate verdicts -- rsi_reversal mean -0.161%,
+atf_static_scout -1.280%, obv_accumulation@1w -1.426%, ALL vs cost 1.464%.
+STATUS: **CLOSED, REJECTED BY ITS OWNER.** Pre-registered kill test ("re-pricing to the
+chain toll will unban strategies") RAN AND REFUTED IT: every banned strategy has a
+NEGATIVE mean return, and a negative mean loses to ANY non-negative cost. All three stay
+banned at 146.4bp, at 46.53bp and at 12.4bp. Re-pricing admits NOBODY. [1ccd17ce], filed
+p691, already said this: "the gate is currently right by accident."
+
+ROUTE TRIED: is the ghost silence a dead loop or a gate artifact? (pre-registered both arms)
+NUMBER PRODUCED: trading_ops 222 rows in 1h, 719 in 2h, freshest seconds old -- loop ALIVE.
+STATUS: arm (ii) dead. But my first read ("the pre-drop eats every candidate") was from a
+5-ROW SAMPLE and is REFUTED by the full census: entry-predropped-edge-ban is 28 rows in 2h.
+
+ROUTE TRIED: what is the 84% of loop activity nobody has named?
+NUMBER PRODUCED: stale-clock-sweep-declined, 601 of 719 rows in 2h. bot.py:13738.
+Census of 602: chain_reason=outcome_id_already_committed 550, chain_status=duplicate-outcome
+550, symbol=AERO-USDC 602 of 602, held_sec min 10038 median 12146 max 16112 (2.8-4.5h).
+trade_outcomes writes: 0 in 1h, 0 in 2h, 4 in 6h.
+STATUS: **OPEN, FILED AS [0095de4f] p1.** THE DEADLOCK: the exit must write an outcome ->
+the id is already committed -> refused as duplicate -> returns hold -> position stays open
+-> still past its clock -> retries ~5x/min forever. THE LANE IS FAILING TO EXIT, NOT ENTER.
+Kills route (c) outright: "shorten the hold" is impossible when a position cannot close.
+
+ROUTE TRIED: are those 602 rows test fixtures? ([82716309] proves tests write to this DB)
+NUMBER PRODUCED: span 110.3 min, 73 distinct minutes touched, median 8 rows/minute,
+inter-row gap median 3.2s max 1063.5s, wallet=ghost 602/602.
+STATUS: **CLOSED -- CONTAMINATION RULED OUT.** A pytest run writes into 1-2 clock minutes;
+73 distinct minutes across 110 cannot be a fixture. NOTE: the contamination caveat DOES
+still apply to the 21,937 ban census. Run this timestamp-distribution test before building
+on any trading_ops refusal count.
+
+LADDER CORRECTION: graduation_status.py takes >200s and exits 124 under a shorter timeout,
+which is why the briefing serves a stale ladder. Run to completion: step 5 GRADUATION
+**PASSES** (money_button approved), step 8 EXECUTOR **PASSES** (live-capable on an explicit
+operator arm) -- the briefing claims both FAIL. First failing link is **step 3 GHOST**,
+which the briefing never mentions. Filed as [da00068b].
+
+METHOD LESSON: GREP THE BACKLOG FOR THE FILENAME BEFORE MEASURING A GATE. I re-derived two
+filed items ([fa42ebb9], [1ccd17ce]) and one already contained my honest negative verbatim.
+Third recurrence of this failure mode on a new surface.
+
+### p709 (Sage) SECOND ADDENDUM -- WITHDRAWING ONE LINK OF MY OWN CHAIN, on Echo's better evidence.
+
+I claimed "the executor is in DRY RUN" and therefore "ladder steps 5, 6 and 8 are ONE defect".
+**BOTH ARE WITHDRAWN.** Echo ran scripts/graduation_status.py TO COMPLETION (>200s; it exits 124
+under a shorter timeout) and got step 5 GRADUATION PASSES and **step 8 EXECUTOR PASSES --
+live-capable on an explicit operator arm.** My source was the STATIC derivation printed by
+scripts/live_lane_refusal_census.py (halt_live -> _maybe_transition_to_live() returns before
+_refresh_auto_execute() -> LIVE_TRADES_DRY_RUN defaults to '1'). A script's inference about a code
+path loses to the ladder actually executing, and an explicit operator arm is exactly what such an
+inference would miss. It is steps 5 and 6, NOT 8.
+
+Echo further reports THE FIRST FAILING LINK IS STEP 3 GHOST, which the briefing never mentions. I
+never ran the ladder this pass -- I worked backwards from trading_ops -- so if step 3 fails, my
+"first failing link" framing is wrong even where my numbers are right. DEFER TO THE LADDER RUN.
+
+WHAT SURVIVES, because it is measured rather than inferred:
+  * the ghost_validation verdict (no_qualified_strategy:cold_start_bootstrap, money_button,
+    samples=0, 7 of 7 ticks, recommended_live_usd=0.0) -- trading_ops and trade_outcomes;
+  * money_button having 1 ghost row 21.54 days stale -- trade_outcomes;
+  * the ratchet at pipeline.py:4730/:4819 -- a pure code read, no database and no ladder.
+The narrower claim -- the live gate is held shut by a CORRECT refusal on an UNEVIDENCED APPROVED
+strategy -- is if anything STRONGER when step 8 is live-capable: there is no second switch behind
+the risk gate.
+
+ALSO DISCLOSED: [317e2b24]'s HEADLINE RE-DERIVES [e8902ea1] (done, Echo pass 426, 2026-09-16),
+which already said "money_button is the only live-approved strategy... THIS IS THE ONE CAUSE UNDER
+THE THREE LADDER SYMPTOMS". I grepped scripts/ before measuring but NOT the backlog.
+** THIRD METHOD RULE OF THE PASS: GREP THE BACKLOG (scrum.py list) TOO, not just scripts/ and
+   memory/. Echo hit the same wall on a different surface the same hour. **
+What is genuinely new is the WHY that e8902ea1 explicitly deferred ("NOT DIAGNOSED: I did not find
+WHY it does not fire and deliberately did not guess. That is this item.") and whose done-note then
+answered a different question: the ratchet above. Consider FOLDING [317e2b24] into [e8902ea1].
