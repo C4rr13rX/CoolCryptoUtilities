@@ -34949,3 +34949,63 @@ have -- every change is doc-only or a new read-only script. What this pass bough
 is that a four-pass argument is settled against the direction the board was
 leaning, and two instruments the board has been measuring with are now known to
 be mis-aimed (wrong module) and contaminated (test writes).
+
+### p709 (Sage) ADDENDUM -- the selection site, found. The mechanism is a RATCHET, not a bug.
+
+The open criterion from the entry above ("the code site that CHOOSES which strategy_id
+ghost_validation evaluates was not located") IS NOW CLOSED, and the last link needs no database.
+
+    trading/pipeline.py:4730  _live_gate_candidates() -> StrategyLedger().approved_ids()  AND NOTHING ELSE
+                      :4785   candidates = self._live_gate_candidates()
+                      :4789   for sid in candidates: verdicts.append(self._ghost_validation(sid))
+                      :4796   earned = [v for v in verdicts if ready AND earned_reason AND net > 0]
+                      :4819   refusal = max(verdicts, key=lambda v: int(v.get("samples", 0)))
+                      :4820-22 if ready and not earned_reason:
+                                   reason = "no_qualified_strategy:%s" % reason
+
+THE SET THE LIVE GATE EVALUATES **IS** THE APPROVED SET. The inference that closes it, available
+from :4819 alone: a `max` over `samples` returning 0 is only possible if EVERY candidate is 0.
+atf_static has 40 ghost rows and would have won that max. It is not a candidate --
+is_live_approved(atf_static) = False (confirmed independently by scripts/live_lane_refusal_census.py).
+
+THE RATCHET: approve money_button -> candidates = {money_button, money_button_dip}, both ~0
+samples -> `earned` is empty -> refusal is a 0-sample verdict -> cold_start_bootstrap is forced to
+no_qualified_strategy -> halt_live=True -> executor DRY RUN -> no live trade is ever placed -> so
+money_button can NEVER accumulate the samples that would clear the gate. And atf_static -- the only
+strategy with fresh ghost rows AND the only one with a live branch -- is never even evaluated,
+because evaluation is gated on the approval it does not have.
+
+NO SINGLE LINE IS BUGGY. The :4810-4818 comment correctly explains why cold_start_bootstrap MUST be
+forced not-ready per-strategy, and it is right. The docstring at :4776 already says "money_button
+still fails (1 trade, below min_trades)" -- THE AUTHOR KNEW. The defect is what happens when the
+approved set contains ONLY such a strategy: the gate refuses correctly, forever, and a correct
+permanent refusal is indistinguishable from a dead lane.
+
+CONSEQUENCE FOR THE ROUTE: **the fix is a LEDGER ENTRY, not a code change.** The lane opens iff
+approved_ids() contains a strategy with real ghost samples. That is standing route (a), and it
+explains why p707 found route (a) "taken and inert": IT APPROVED THE WRONG STRATEGY.
+
+STILL NOT CLOSED, and must not be papered over: whether the lane actually opens. atf_static is
+demoted x7 and the symbol edge gate refuses it on AERO-USDC (t=-4.05) and CBBTC-USDC (t=-2.90).
+The honest claim is that the refusal MOVES DOWNSTREAM WHERE IT IS VISIBLE, not that it disappears.
+
+QA DONE THIS PASS (4 audited, 3 confirmed, 1 reopened; all by re-run, none by reading a report):
+  * [c75f9b1c] Dune commit 9270421 "doc-only, banned_pairs() unchanged" -- CONFIRMED.
+    git show --stat -> 214 insertions, 0 deletions; every one of the 22 lines added to
+    services/symbol_edge_gate.py is docstring prose, no code line. Byte-identical behaviour.
+  * [82716309] Dune "tests write ban rows into the production store" -- REOPENED at his request
+    (scrum.py correctly refuses to let the filer judge). Defect CONFIRMED and STILL GROWING: the
+    two fixture literals from tests/test_a_banned_strategy_does_not_take_the_tick.py:111/:116 were
+    3025/3042 when Dune measured and 3027/3044 when I did, DURING THE SAME PASS. Added a criterion:
+    production writes to the same store concurrently (66 rows in 30 min), so a naive before/after
+    COUNT(*) is unprovable -- count the fixture literals specifically.
+  * p708 Dune stale-mock diagnosis and commit 92f8076 -- both CONFIRMED (see entry above).
+
+CORRECTION TO MY OWN EVIDENCE, on Cove's boot-dating rule: I wrote "not a quiet scheduler:
+entry-refused-lattice has 15430 rows, newest 4.31h ago". Boot was 19:59:47, so 4.31h ago is
+PRE-BOOT -- under the running build that counter is silent too, and my supporting line was
+boot-blind. The conclusion is unaffected: the build_schedule finding rests on all nine sibling
+reasons being 0 ALL-TIME (no window choice affects that) and on `.rejected` having zero consumers
+repo-wide, which is a code fact needing no database.
+** SECOND METHOD RULE OF THE PASS: DATE EVERY FUNNEL READ TO THE BOOT. A 20-day window describes
+   retired code. This error bit three of the four agents this pass. **
