@@ -33919,3 +33919,102 @@ be a better censor. I rejected [92af90ab] for being a *worse* censor; this is th
 reason **the whole category was wrong**. A write-time accumulator needs a **write-time
 guard, or a rebuild-from-source**. That is a different shape of work from anything tried
 on this problem and it is unclaimed. It is **not** the item for p706 -- [779b2357] is.
+
+---
+
+## Pass 707 -- Echo (senior) -- [3f82769b] THE CLIP-SIZE ROUTE IS **CLOSED**. The clip arithmetic was right; the edge it was multiplying is not a measurement.
+
+**Route:** AERO-USDC 1h directional, sized by CLIP rather than by signal -- the one lever
+nobody had pulled. **Number it produced: realised median gross move +8.1bp against a
+12.4bp toll, net -0.99087 over 48 round trips. CLOSED.**
+
+### 1. The item's last open criterion was already answered in this file, 2000 lines up
+
+[3f82769b]'s surviving criterion: run the LOOKBACK GRID, and *it survives only if ALL
+cells carry one sign AND the magnitude is stable across a 4x lookback range.* I went to
+build the instrument. **It already existed.** Sage measured it in p696 and it sits at line
+31610 of this file -- **inside the same addendum block the item quotes its own +19.90
+headline from**:
+
+    AERO-USDC 1h    LB=6  +8.54    LB=12  +11.22    LB=24  +19.90     n 89-153
+
+The item took the LB=24 cell as its headline. The other two cells of its own grid were on
+the page the whole time. **Cross them with p703's toll model**
+`margin(clip) = edge - 10.0bp fee - (0.004718/clip)*10000`:
+
+     LB     edge     clip6    clip15    19.66    23.18      INF
+      6     8.54     -9.32     -4.61    -3.86    -3.50    -1.46
+     12    11.22     -6.64     -1.93    -1.18    -0.82    +1.22
+     24    19.90     +2.04     +6.75    +7.50    +7.86    +9.90
+
+**CONTROL:** this model reproduces p703's independently-computed +7.50 at the 19.66 wallet
+and +7.86 at 23.18 to the last decimal. The arithmetic is sound; the input was selected.
+
+**AT LB=6 THE TRADE IS NEGATIVE AT AN INFINITE CLIP.** No clip size exists that makes it
+pay. At LB=12 it is negative at every real clip. **The clip lever -- the entire subject of
+this item -- works in exactly one of three cells, the longest-lookback one.** The magnitude
+moves 2.33x across a 4x lookback range and the swing STRADDLES THE TOLL: the free
+parameter decides whether you trade at all. The stability criterion fails.
+
+### 2. I could NOT reproduce Sage's cells, and the disagreement is itself the result
+
+Independent reconstruction (donchian breakout, 1h bars, 1-bar forward return,
+contiguous-bar guard, excess over the unconditional baseline). Same shape -- monotone
+increasing 6 -> 24 -- but **2-4x Sage's magnitudes**:
+
+     LB      n   mean_excess   median_excess   (median-vs-median baseline)
+      6    130        +21.81          +16.33
+     12     93        +31.27          +20.16
+     24     73        +37.43          +26.43
+     48     57        +30.64          +26.57
+
+**LB=48 does not collapse; it goes flat.** By my pre-registered kill test that is *not* the
+selection signature -- so I am NOT closing this route on lookback selection. I am closing
+it on §3. Two honest things this block does show: **(a) mean 49.77 vs median 29.15 at
+LB=24 -- the arm is right-skewed, so the mean-based headline overstates the typical trade**
+(standing p695 rule: never the mean alone); **(b) n falls 130 -> 57 as the lookback grows,
+so the cell that crosses has the least evidence behind it.**
+
+**Two defensible reconstructions of the SAME signal on the SAME bars differ by 2-4x.** That
+is p696's lesson restated: the instrument's definitional instability is as large as the
+12.4bp quantity it is being used to judge.
+
+### 3. THE KILL -- realised AERO round trips, and the tape loses in SIGN
+
+`trade_outcomes`, `symbol LIKE 'AERO%'`, **deduped on trade_id** (p705: 12 duplicate rows
+were all winners) and passed through `services.outcome_plausibility.is_implausible`
+(p705: always call the censor in an ad-hoc join):
+
+    n = 48 round trips
+      gross move   median  +8.1bp     mean  -10.0bp     outlier-stripped mean  -3.1bp
+      net_profit   sum  -0.99087      median  -0.00718
+
+**The median realised gross move is +8.1bp against a 12.4bp toll. The real trade does not
+cover its costs on the median row, and the book agrees: it sums to -0.99.** Every tape
+reconstruction of this pair -- Sage's +19.90, mine +16.4 to +26.4 -- **overstates the
+realised move by 8-18bp**, and mean/stripped-mean are outright negative.
+
+**THIS IS THE FIFTH TIME A `market_stream` FORWARD-RETURN HAS DIED ON CONTACT WITH
+REALISED P/L** (p705 counted four). Treat that as a standing prior, not an anecdote.
+
+**The filter cannot rescue it either.** These 48 rows are not donchian-filtered, which is a
+real caveat -- but p705 already measured the firing arm and it is **WORSE than the silent
+arm in all 12 cells**. Filtering moves this number down, not up.
+
+### 4. Verdict, and what I withdraw
+
+**CLOSED.** Not "unmeasured", not "blocked on the operator". The clip model is correct and
+validated; **the +19.90bp it multiplies is one cell of an unstable grid, contradicted in
+sign by 48 real round trips on the same pair.**
+
+**I WITHDRAW THE OPERATOR ASK I PUT UP IN p703 AND AGAIN IN p704** -- the request to
+authorise a $15-20 live clip on AERO-USDC 1h. It asked the operator to decide a clip size
+on a cell I had selected. The question is moot: at the realised +8.1bp median the trade is
+**negative at every clip**, and criterion 3's own escape hatch ("if the answer is nothing
+above a few dollars, CLOSE the clip route") is reached from the other side. **Nobody should
+size a trade on this pair off the tape.**
+
+**The SYMBOL EDGE GATE refusing atf_static on AERO-USDC at t=-4.05 is CORRECT** -- that is
+now the third independent confirmation (p705's dedupe, p705's censor, this pass's realised
+median). The gate is not the blocker and never was.
+
