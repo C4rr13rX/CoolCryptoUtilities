@@ -37698,3 +37698,52 @@ uncensored. Proven instance of the class: CBBTC-USDC 09-04 04:04, `retained_prof
 **NOT DONE, deliberately: the censor was not wired in.** It changes which symbols the live lane may touch,
 flips bans in both directions at once, and cannot be tested without a restart. One-change pass of its own
 with a before/after symbol diff. **Route status: OPEN -- the one route this pass opened rather than closed.**
+
+---
+
+## Pass 717 (Echo, senior) -- TWO OF MY OWN HYPOTHESES DIED; THE THIRD REOPENS THE COST ROUTE ON A 656-ROW BOOK
+
+### ROUTE TRIED 1: unapprove `money_button` so the live gate falls through to the POOLED book. **CLOSED.**
+`pipeline.py:4785-4787` -- an EMPTY approved set returns the pooled `_ghost_validation()`; a non-empty one
+replaces the pooled book with the approved strategy's own. I predicted unapproving would open the gate.
+Measured in-process against the real db:
+
+    POOLED   _ghost_validation(None)           ready=FALSE  no_tradeable_edge  n=52  net -1.885239  win 28.85%  PF 0.340
+    MB       _ghost_validation('money_button') ready=TRUE   cold_start_bootstrap  n=0
+    LIVEGATE _ghost_validation_for_live()      ready=FALSE  no_qualified_strategy:cold_start_bootstrap
+
+**BOTH BRANCHES REFUSE, for different and individually correct reasons. There is no value of `live_approved`
+that yields ready=True.** Route (a) hand-approve is structurally dead, not merely dead on `atf_static`.
+`[317e2b24]` REJECTED on this. **Do not re-run.**
+
+### ROUTE TRIED 2: widen the gate's evidence window. **CLOSED.**
+The window is **5 DAYS** -- `.env:263 GHOST_VALIDATION_LOOKBACK_SEC=432000`. The `172800` (48h) at
+`pipeline.py:4848` is a DEFAULT PRODUCTION NEVER USES (I published 48h first and corrected it; p712's
+*read the assignment, not the default* firing again). Same call, only the env changed:
+
+    48h  (forced)       n=20   net  -0.436825   win 15.00%  PF 0.245  negative_margin
+    5d   (PRODUCTION)   n=52   net  -1.885239   win 28.85%  PF 0.340  no_tradeable_edge
+    90d  (forced)       n=656  net -43.403502   win 38.41%  PF 0.603  no_tradeable_edge
+
+**NOTHING flips to ready at any window.** Widening the lookback is closed. **Do not re-run.**
+
+### ROUTE TRIED 3: denominate the ghost book honestly. **OPEN -- and it reopens route (b).**
+Same 656 rows, three denominations:
+
+    A) RAW recorded dollars                 net  +19.063238
+    B) CLIP-NORMALISED (the gate, charges cost at the live clip)  net -43.403502  win 38.41%
+    C) EQUAL-WEIGHT MEAN RETURN (notional-free)  mean +0.012386 (+1.24%/trip)  median +0.000940  win 58.38%
+
+The same rows are **58.38% winners on return and 38.41% after cost** -- a rescale cannot flip a sign, so
+~131 rows are directionally right and killed by cost. **`return_pct` is GROSS, verified at the writer:**
+`trading/metrics.py:561-565` computes `(exit_price/entry_price - 1.0)`, no fee/gas/cost term.
+⇒ **DIRECTION WORKS, COST EATS IT.** 58.38% is ABOVE the 55% graduation bar: the book fails on COST, not
+direction. **The briefing's long-standing `pooled +3.9834` is a CLIP-SIZE ARTIFACT** (`price_book_at_live_clip`,
+`pipeline.py:4862`; implied notionals span $0.031-$39.573, a factor of 1276).
+
+**p714's blanket closure of route (b) does not cover this book** -- it was measured on a 137-row fresh-24h
+subset; a 24h subset can be negative while the 90d book is positive, both true. Successor `[00196f7d]`.
+
+**UNVERIFIED, do not build on it:** gross-of-SLIPPAGE is NOT established (only gross-of-fees); and the
+"~2.3%/trip cost, cut 48% to break even" figure is BACK-SOLVED from a presumed $6 clip, not measured.
+Also **do not cost anything from the old `AERO 0.64-4.35%` table** -- retracted, Sage p717 commit `2f3d1db`.
