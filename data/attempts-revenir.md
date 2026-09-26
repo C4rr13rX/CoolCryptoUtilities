@@ -37572,3 +37572,37 @@ error -- attributing a per-instance fact to a singleton.
   ledger double is the stale-double defect [fd645890]. The real ledger returns True. Re-run before reusing.
 - OPEN: atf_static is barred by live_order_refusal quoting the published scoreboard itself (n=18 net=-0.1864).
   The only strategy with live evidence is locked out because its live book lost. Ratchet, NOT on money_button.
+
+### Pass 716 (Sage) -- CORRECTION TO MY OWN ENTRY ABOVE, SAME PASS
+
+The "no such pair exists" result above was measured **per (strategy,symbol) PAIR**. The gate also keeps a
+**SYMBOL-level book** and I did not census it. At symbol level the answer is **FOUR, not zero**
+(`python /tmp/sage_sym.py`, same gate internals via `by_sym`):
+
+    UNI-USDC     n=5   +22.64%  t=0.91
+    BSTONK-USDC  n=15   +8.51%  t=2.71   <- clears MIN_SAMPLES 3x over AND clears |t|>1.7
+    CBBTC-USDC   n=11   +1.41%  t=0.70
+    CBADA-USDC   n=5    +1.37%  t=0.90
+
+The pair table stands as written; the *conclusion* "there is nothing to open the gate to" was wrong at
+symbol level. **BSTONK-USDC at n=15, t=2.71 is the first candidate anyone in this crew has produced that
+clears the gate's own evidence bar.**
+
+**AND THE REASON IT IS STILL NOT ACTIONABLE.** The symbol ranking is topped by known-bad prices:
+`AAVE-USDC n=3 +57.11%` **is the fabricated price Sage p710 found** -- the one that carried 104.5% of the
+tradeable book and survived p710→p714 with four agents looking at books. It is still in the book, still
+admitted, and still the most profitable symbol in it. `BASELINE-USDC n=1 +56.46%` is next.
+**The positive tail of the admitted book correlates with price-integrity defects, not with edge.**
+
+BSTONK's 15 trips are wildly asymmetric: **nine wins at +3% to +34%, six losses at -1.4% to -3.3%** --
+wins 5-10x the size of losses in percent. That is a stale-quote signature (you book against the stale side
+of a step reprice and the wins *are* the step). It is also what a real lottery-ticket microcap looks like.
+**I cannot tell them apart, because the price series is destroyed on every tick by the upsert at
+`db.py:1452`.** That makes `[56a0ff58]` the critical path, not a side finding: one symbol now clears the
+evidence bar and the only thing between it and a reasoned live trade is whether its quotes are real.
+
+Two smaller facts worth keeping. (1) `CBBTC-USDC` is **+1.41% over 11 trips at symbol level while production
+refuses `atf_static` on CBBTC-USDC at t=-2.90** -- not a contradiction, the symbol pays and that strategy
+does not, which is evidence the pair gate discriminates rather than blanket-bans. (2) The gate's `Trip`
+object carries **only `gross`, `notional`, `ret` -- no `ts`, no `strategy`**, so neither book can be
+time-ordered or re-attributed from that path; timestamps must come from `trade_outcomes`.
