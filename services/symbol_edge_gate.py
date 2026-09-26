@@ -514,10 +514,25 @@ def _load_book(limit: int = 500) -> Tuple[Dict[str, List[Trip]], Dict[Tuple[str,
         # stays auditable, the graduation report censors at read the same way,
         # and the two now agree by construction rather than by coincidence.
         #
-        # FAILS OPEN TO UNCENSORED. If the module cannot be imported the book is
-        # built exactly as it was before, because this function decides every
-        # symbol refusal in production and an exception here would ban the
-        # universe.
+        # FAILS OPEN TO UNCENSORED, ON BOTH ARMS. If the module cannot be
+        # imported the book is built exactly as it was before, because this
+        # function decides every symbol refusal in production.
+        #
+        # The CALL needs its own guard and did not have one until p721 QA
+        # measured what happens without it. ``implausible_reason`` is invoked
+        # once per row inside the same ``try`` whose handler is the
+        # ``return {}, {}`` below, so ONE raise on ONE row discarded the whole
+        # book -- and an empty book is not a closed gate, it is an OPEN one:
+        # ``_rebuild`` iterates ``book.items()``, so zero rows produce zero
+        # verdicts and ``_cache_built_at`` then caches allow-everything for the
+        # cache TTL. Measured, with a synthetic raise substituted for
+        # ``implausible_reason`` and the cache invalidated:
+        #
+        #     baseline        banned_symbols()=8   AERO-USDC refused t=-4.59
+        #     censor raises    banned_symbols()=0   AERO/BASECAT/COMP ALLOWED
+        #
+        # The comment this replaces guarded against banning the universe. The
+        # direction it actually failed was the other one.
         try:
             from services.outcome_plausibility import (
                 implausible_reason as _implausible_reason,
@@ -546,14 +561,30 @@ def _load_book(limit: int = 500) -> Tuple[Dict[str, List[Trip]], Dict[Tuple[str,
 
         censored = 0
         if _implausible_reason is not None and _strategy_scales is not None:
-            scales = _strategy_scales(judged)
-            kept: List[Dict[str, Any]] = []
-            for row in judged:
-                if _implausible_reason(row, scales=scales) is None:
-                    kept.append(row)
-                else:
-                    censored += 1
-            judged = kept
+            try:
+                scales = _strategy_scales(judged)
+                kept: List[Dict[str, Any]] = []
+                for row in judged:
+                    if _implausible_reason(row, scales=scales) is None:
+                        kept.append(row)
+                    else:
+                        censored += 1
+                judged = kept
+            except Exception:  # noqa: BLE001 - see FAILS OPEN above
+                # Uncensored is the pre-change book and the pre-change book is
+                # a safe answer. An empty one is not: it unbans every symbol.
+                censored = 0
+                log_message(
+                    "trading",
+                    "SYMBOL EDGE GATE: the plausibility censor raised and was "
+                    "skipped for this rebuild -- judging the UNCENSORED book "
+                    "(services.outcome_plausibility). The verdicts below are "
+                    "the pre-censor ones, not an absence of refusals.",
+                    severity="warning",
+                )
+        # Set unconditionally, and on the failure arm too: this global feeds an
+        # operator log line, and a stale value made that line report a censor
+        # that had dropped 6 rows from a book holding zero.
         globals()["_censored_rows"] = censored
 
         for row in judged:

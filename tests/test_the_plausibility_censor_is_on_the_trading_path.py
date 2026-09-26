@@ -150,3 +150,58 @@ def test_the_censor_does_not_touch_the_stored_tape(tmp_path):
         ).fetchone()[0] == 1
     finally:
         conn.close()
+
+
+def test_a_raising_censor_falls_back_to_the_uncensored_book(tmp_path, monkeypatch):
+    """QA p721 (Sage), reopening this item against its own commit c465d1b.
+
+    The shipped fail-open wrapped the IMPORT of ``implausible_reason`` and not
+    the per-row CALL, which sat inside the ``try`` whose handler is
+    ``return {}, {}``. One raise on one row therefore discarded the whole book
+    -- and an empty book is not a closed gate. ``_rebuild`` iterates
+    ``book.items()``, so zero rows produce zero verdicts and the cache then
+    serves allow-everything. Measured against the production store before the
+    guard: ``banned_symbols()`` went 8 -> 0 and AERO-USDC, BASECAT-USDC and
+    COMP-USDC all read ALLOWED.
+
+    So this pins the DIRECTION the code failed, which is the opposite of the
+    one its comment guarded against.
+    """
+    rows = [_ordinary(i) for i in range(12)] + [_repricing(99)]
+    gate, _ = _gate(tmp_path, rows)
+
+    import services.outcome_plausibility as plausibility
+
+    def boom(row, scales=None):
+        raise ValueError("synthetic failure inside the censor")
+
+    monkeypatch.setattr(plausibility, "implausible_reason", boom)
+
+    book, pairs = gate._load_book()
+
+    assert book, "a raising censor emptied the book -- that UNBANS every symbol"
+    # The pre-change book is 13 rows: uncensored, which is the safe answer.
+    assert len(book["FOO-USDC"]) == 13
+    assert len(pairs[("unit_test", "FOO-USDC")]) == 13
+    # And the operator-facing counter must not keep a stale value: the log line
+    # it feeds said "dropped 6 row(s)" about a book holding zero.
+    assert gate._censored_rows == 0
+
+
+def test_a_raising_scales_call_also_falls_back(tmp_path, monkeypatch):
+    """``strategy_scales`` is called once, outside the row loop, and was inside
+    the same unguarded ``try``. Same blast radius, different line."""
+    rows = [_ordinary(i) for i in range(12)]
+    gate, _ = _gate(tmp_path, rows)
+
+    import services.outcome_plausibility as plausibility
+
+    def boom(judged):
+        raise ValueError("synthetic failure building the scales")
+
+    monkeypatch.setattr(plausibility, "strategy_scales", boom)
+
+    book, _pairs = gate._load_book()
+
+    assert len(book["FOO-USDC"]) == 12
+    assert gate._censored_rows == 0
