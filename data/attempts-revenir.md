@@ -38221,3 +38221,66 @@ this system ever placed. demotions=7, rearms=1.
 STILL OPEN AND NOT A CLAIM: whether the lifetime read is the bug or the licence
 read is too loose. The two comments in ledger.py do not agree and neither cites
 the other. Whoever takes [137d3c5a] must settle that before changing either.
+
+## Pass 719 (Dune, worker) -- THE COST FLOOR'S PROVENANCE AND ITS DOUBLE COUNT. NEITHER IS THE CAUSE; THE CONSTANTS ARE.
+
+Follow-on to the ladder above, and to Kite's [d7c71792] which Echo made the top
+item. Two acceptance criteria answered here so nobody re-derives them.
+
+### PROVENANCE OF THE FOUR CONSTANTS -- none was ever measured
+
+    git log -S 'fee_buffer: float = 0.002' -- trading/scheduler.py
+    git log -S 'tax_buffer: float = 0.003' -- trading/scheduler.py
+      -> 3a8bb51  2025-11-04  "Working on the trading scheduler"
+
+    git log -S 'GAS_ROUNDTRIP_FEE_RATIO' -- trading/scheduler.py
+    git log -S 'SCHEDULER_SLIPPAGE_BPS'  -- trading/scheduler.py
+      -> e854912  2025-12-01  "A lot of changes in everly focused on getting it
+                               to start Ghost training faster and still be
+                               accurate and getting ready to start live trading"
+
+Two commits, ten and eleven months old. Neither subject references a cost
+measurement, a venue, a clip size or a symbol. These are placeholder defaults
+from before this project had any measured cost data, and they have been the bar
+every strategy is scored against ever since. The repo's per-symbol cost
+measurement (1a33c9a) postdates them by months and was never wired back in.
+
+### THE DOUBLE COUNT -- real, and worth a factor of 1.93, not 142
+
+    grep -rn 'ctx.fee_rate' trading/strategies/*.py | grep -v money_button | wc -l   -> 33
+    grep -rn '2.0 \* ctx.fee_rate' trading/strategies/*.py                           -> nothing
+    trading/strategies/money_button.py:243
+        round_trip_cost = 2.0 * float(ctx.fee_rate) + slippage
+
+33 consumers subtract ctx.fee_rate ONCE (atf_static:49, bollinger_squeeze:59,
+discovered:216, donchian_breakout:51/:68, dust_micro_swing:79, ema_cross:42/:57,
+genome_champion:114, macd_momentum:53/:74, mean_reversion:49/:73,
+momentum_breakout:46/:64, obv_accumulation:60/:81, omen_reversion:262,
+rsi_reversal:44, and base.py:438/:486/:494 which is the shared candidate builder
+every strategy inherits). Exactly one doubles it.
+
+Independent of the head count: one of the four components is
+``gas_roundtrip_fee``, from env ``GAS_ROUNDTRIP_FEE_RATIO``. The identifier and
+the env key both say ROUNDTRIP. money_button doubles a rate its own author named
+round-trip. money_button ALSO adds MONEY_BUTTON_SLIPPAGE 0.001 on top of the
+SCHEDULER_SLIPPAGE_BPS 50 = 0.005 already inside fee_rate, so slippage is
+counted twice as well.
+
+    as-is                     (2*0.0125 + 0.001) * 1.1 = 2.8600%
+    2.0 removed               (  0.0125 + 0.001) * 1.1 = 1.4850%
+    own-slippage dedup too              0.0125 * 1.1   = 1.3750%
+
+### THE WARNING THAT MATTERS MORE THAN EITHER FINDING
+
+Removing the 2.0 does NOT fix this. Against the measured round trips:
+WETH 0.0201% -> still 73.9x | AERO 0.1303% -> 11.4x | CBBTC 0.1479% -> 10.0x.
+The double count is worth 1.93x. The gap is 142x. THE 2.0 IS A REAL BUG AND IT
+IS NOT THE CAUSE. Anyone who deletes it and stops will have halved a bar that
+is still an order of magnitude too high, and the decline ladder will barely
+move. The cause is the four unmeasured constants summing to 1.25%.
+
+HONEST LIMIT: 33-vs-1 is a CONVENTION count, not proof of intent. A strategy may
+be stricter on purpose, and money_button's comment at :240 does argue for
+charging both legs. What makes this a bug rather than a choice is the
+gas_roundtrip_fee identifier, not the head count. A commit showing somebody
+knowingly chose to charge the round trip twice would overturn it.
