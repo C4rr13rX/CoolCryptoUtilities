@@ -34635,3 +34635,51 @@ money_button refusal ROW to join to for edge/cost/notional.** Also: all 2,016 ar
 arbitration rows, so a tick where money_button is refused and nothing else
 offered leaves NO row -- **1,833 is a lower bound, not a count.** It cannot be
 fixed by reading; the numbers must be WRITTEN at the refusal site.
+
+### Pass 708 addendum (Echo, senior) -- the absolute N, and two wrong conclusions from reading a zero
+
+**ROUTE (b) COST FLOOR: PROMOTED TO FIRST, AND NO LONGER CONDITIONAL.** `N = 12,860` money_button
+evaluations in 7d, attributed via `skipped[money_button]` on `entry-arbitration` rows (`mode=ro`):
+
+    momentum_not_aligned      8524   66.3%      too_few_samples        580   4.5%
+    edge_below_cost           1833   14.3%      feed_frozen             77   0.6%
+    slope_not_positive         901    7.0%      window_too_short        45   0.3%
+    move_exhausted             874    6.8%      window_exceeds_lookback 14   0.1%
+
+Reproduces Sage's independently-derived 66.3%/14.2% to a tenth of a point, from the **persisted table**
+rather than the resetting census. **1833 in 7d = 262 fully-qualified candidates per day reaching the
+cost floor and ALL refused** -- they had already passed momentum, slope, exhaustion, sample count and
+feed freshness; the floor is the LAST gate they meet. Current admission rate: 5 in a lifetime, 0 in 21
+days. **1% of 262/day = 2.6 admissions/day.**
+
+**ORDERING CALL (Echo, senior): COST FLOOR BEFORE MOMENTUM, despite momentum being 66.3% vs 14.3%.**
+The floor is TERMINAL and refuses 100% of arrivals, so widening momentum first only ships more
+candidates into a closed valve -- refusals rise, admissions stay 0, and it reads as a regression.
+
+**BOTH SPRINT ITEMS NAME THE WRONG SCHEDULER LINE** (Sage, off Echo's census read). The scheduler's live
+cost gate is `scheduler.py:2011 round_trip_cost_above_max`, **already symbol-aware**, and the only
+scheduler cost refusal ever observed firing (DRB-USDC). `:1009` (125bp) and `:1640` (65bp) are not it.
+The one live blind scalar is `money_button.py:243` at 286bp.
+
+**CLOSED AS UNSOUND -- TWO CONCLUSIONS, BOTH FROM READING A ZERO AS A FACT:**
+
+1. Echo: "`no_reversion_headroom` = 0 rows ⇒ the scheduler copy is DEAD ⇒ editing `scheduler.py` is a
+   no-op." **WITHDRAWN.** `:2101` refuses via `_mb_gate_refusal`, which at `:1892` writes nothing to
+   `trading_ops` ("pure bookkeeping", its own docstring). A 1 was never observable. The gate census,
+   read 36s after mtime, shows that path refusing on a COST gate.
+2. Sage, commit 8687463: "neither scheduler cost model has ever refused a candidate." **WITHDRAWN by
+   Sage**, same mechanism, verified rather than taken on trust. `[bd00f3dd]` reopened by Echo at Sage's
+   request. *Still correct and NOT reopened: zero edits to `trading/scheduler.py` was the right call.*
+
+**NO LIFETIME COUNT EXISTS for the scheduler path:** `_mb_gate_counts = {}` at `:378`, flush is mode
+`'w'` with no load-on-start ⇒ the census resets per process and overwrites its own history. Scoped into
+`[eaa7e134]`.
+
+**METHOD, and it is the difference between the two halves of this pass:** `1833` attributed via
+`skipped[]` is sound; `chosen 0 all-time` via `details LIKE '%money_button%'` was not -- same database,
+same evening. `skipped{}` embeds RIVAL strategy names, so a substring count is inflated by every
+arbitration row that REJECTED the strategy, worst for the strategy that never trades. It also refuted
+`[b14d0627]`'s p674 headline (33 entries -> really 5; its "buckets sum to 33" criterion was
+unsatisfiable). All 7 shipped `details LIKE` sites match FIELD NAMES, so **zero shipped sites affected.**
+
+SCOREBOARD: **-0.1864 over 18 live rows. UNMOVED, no trade attempted.**
