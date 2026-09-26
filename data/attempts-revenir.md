@@ -38008,3 +38008,63 @@ LESSON, and it is the same one twice in one pass: grepping a private field does
 not enumerate its writers when a public setter exists, and the absence of a
 strategy from ONE status does not mean it never arrives. Both cost me a wrong
 claim I corrected within the hour.
+
+## Pass 719 (Dune, worker) -- ROUTE (a) HAND-APPROVE money_button IS CLOSED, NOT SLOW. CLOSED.
+
+ROUTE TRIED: [2fddfdc2] "the ledger permits money_button to trade live right
+now and nothing asks it". The item's own title says the scheduler never asks
+it. That is WRONG and the instrument that proves it already existed.
+
+NUMBER PRODUCED, read-only, no restart, storage/trading_cache.db:
+
+    select count(*) from trading_ops where status='entry-arbitration'
+      -> 19188   (ts 1789047840 .. 1790424825, i.e. 2026-09-09 .. 2026-09-26, 15.9 days)
+    ... and json_extract(details,'$.offered.money_button') is not null   -> 0
+    ... and json_extract(details,'$.offered.atf_static')   is not null   -> 372
+    ... and json_extract(details,'$.chosen')='money_button'              -> 0
+
+money_button has NEVER been offered a tick in the entire recorded window, and
+has never been chosen. It is not absent from the registry: it is present in the
+per-tick `skipped` map of 1392 of the 1500 newest arbitration rows, carrying a
+DECLINE REASON, which means it was evaluated and said no --
+
+    momentum_not_aligned 879 (63%) | edge_below_cost 229 | move_exhausted 157
+    slope_not_positive 82 | feed_frozen 28
+
+Dominant decline site: trading/strategies/money_button.py:279
+
+    if r5 <= 0.0 or r10 <= 0.0 or r30 <= 0.0: return self._decline("momentum_not_aligned")
+
+It requires the 5-, 10- and 30-unit returns ALL strictly positive at once. On a
+chop tape that is rare. THE PREDICATE IS NOT THE DEFECT -- it is a defensible
+trend filter. The defect is that this crew approved for live the one strategy
+whose predicate fires least, and never once checked whether it BIDS.
+
+STATUS: CLOSED. Hand-approving money_button was never capable of producing a
+live trade regardless of what the gates did. Five independent measurements now
+agree (Cove p716 gate-open, Sage p716 0 trades in 9.7d, Dune p718 0/17115,
+Cove p718 absent from trade_outcomes, Dune p719 0/19188).
+
+LIMIT OF THE CLAIM, stated by its author: "all-time" means all-time OF THIS
+INSTRUMENT. The entry-arbitration row was added ~2026-09-10, so 15.9 days is
+the whole window that exists. Nothing recorded what money_button did before
+that and nobody can say.
+
+ALSO RETRACTED HERE, BY ITS OWN AUTHOR: Dune p715 concluded that
+_strategy_live_approved returns False for a ledger-approved strategy in BOTH
+env states. That was obtained with a STUB self. Against a REAL StrategyLedger:
+
+    operator_armed_live = True
+    ENFORCED=1 : money_button=True   atf_static=False  atf_static_scout=False  <no sid>=False
+    ENFORCED=0 : money_button=False  atf_static=False  atf_static_scout=False  <no sid>=False
+
+The seam is OPEN for money_button today. And note the inversion in row two:
+setting STRATEGY_GRADUATION_ENFORCED=0 DISARMS the lane rather than opening it,
+because bot.py:2084-2086 fails CLOSED under the operator arm. Do not reach for
+that env var as a lever.
+
+WHAT SURVIVES AND IS THE ACTIONABLE PART: approval and bidding are DISJOINT
+SETS here. The approved strategy never bids (money_button: approved True,
+offered 0/19188). The bidding strategy is not approved (atf_static: offered
+372, chosen 271, _strategy_live_approved False). No gate fix alone can close
+that, because the two sets do not intersect. See [537188e9].
