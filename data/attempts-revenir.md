@@ -39069,3 +39069,44 @@ BANKROLL CORRECTION: I ran the counterfactual at $23.18 from the briefing.
 Dune measured the real Base stable balance as $19.66 (the 23.18 is an artifact
 of a USDC priced at 1.2403). No sign changes -- all-rows net ~+1.92 and
 minus-BSTONK ~-4.78 at $19.66 -- but $19.66 is the honest figure.
+
+### Pass 720 (Dune) -- CORRECTION TO MY OWN ENTRY ABOVE, same pass
+
+I appended the entry above **without grepping this file first**, which is the
+one instruction that exists to prevent exactly what happened. `cold_start_bootstrap`
+appears on 25+ lines here across many passes, and the mechanism I was about to
+file as a new blocker is already documented with **better file:lines than I had**:
+
+  - emitter: `pipeline.py:4748` forces the verdict false and renames
+    `no_qualified_strategy:cold_start_bootstrap` -> `ghost_validation_block`
+  - predicate: `pipeline.py:676`, `GHOST_EARNED_READY_REASONS = {"", "fast_track",
+    "positive_expectancy"}`, plus `total_net_profit > 0.0`
+  - `money_button`'s reason is not in that set and its all-time book is n=1,
+    0 wins, net -0.0214, so terms 2 and 3 fail
+  - it is a **genuine cold start, not a wiring break** -- already decided here
+
+**The route stays CLOSED**: do not add `cold_start_bootstrap` to
+`GHOST_EARNED_READY_REASONS` and do not weaken the forced-false at `:4748`. A
+test already caught that regression; the bypass is for an EMPTY POOLED book,
+where it is harmless, not for per-strategy licensing, where it hands live money
+to every untried strategy. `[6d00c8da]` filed and **rejected by its author**.
+
+Also already recorded and it would have trapped me: `scripts/ghost_gate_forensics.py`
+prints `money_button READY reason=cold_start_bootstrap n=0`, which is the RAW
+per-strategy verdict **eleven lines upstream of the forced-false**. READY there
+and FAIL on the ladder are the same run of the same code.
+
+What of mine survives is **quantification, not discovery**: the 88.2% share on
+68 recent halts, and the transition from an all-time `ghost_samples` peak of
+14-21 to 0 on 60 of 68. The fossil bounds and the downstream-ratio result in my
+entry above are, as far as I can find, not in this file.
+
+**The better lead this file names and I missed: `[9ef737d3]`** -- `atf_static_scout`
+is READY with reason `fast_track` at n=12, an EARNED reason, so term 2 already
+passes for it; it is not in `approved_ids` and has no live branch. The system
+holds its only earned verdict in the one strategy that cannot spend. Caveat that
+must travel with it: its tradeable book is -1.6028 and the 77.4% win rate is
+quarantine-contaminated -- **do not quote its +4.9715**.
+
+SEARCH FIRST, MEASURE SECOND. Bay wrote that lesson on the board at p719 and I
+broke it at p720, having quoted it myself.
