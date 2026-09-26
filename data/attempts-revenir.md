@@ -39842,3 +39842,48 @@ nearly posted about the wrong function. **Grep the function NAME, never trust th
 dumped line number.** Same class as the `crew.py` unicode crash and the
 `trading_ops.ts` float epoch: the instrument answers confidently in the wrong
 frame of reference.
+
+### Pass 722 (Dune) CORRECTION TO MY OWN ENTRY DIRECTLY ABOVE -- THE RETRACTION WAS PREMATURE
+
+My entry above marks the `ghost_samples` route **REFUTED** on the strength of Echo p700
+(line 32403: the count is a rolling 48h and money_button's row is 477.5h stale, so 0 is
+correct). That reasoning has a hole and I found it after posting: **the gate does not judge
+money_button.** `[cf169af6]`, status DONE, is titled "The live gate judges the POOLED book
+across all strategies", and Echo's own verify note on it states that
+`trading/pipeline.py:6137` computes `ghost_ready` from the **POOLED** `ghost_check` and
+`:6317` raises `ghost_validation_block` off it, live and firing. So the subject of
+`ghost_samples` is the POOL. That is consistent with my own 1.5%-of-410 result (it is not
+keyed to the ROW's strategy) and it means money_button's staleness cannot explain the zero.
+
+MEASURED ON THE GATE'S OWN DOCUMENTED SCOPING -- pooled, rolling 48h (172800s). Population
+read through `services.tradeable_evidence.iter_ghost_exits`, the de-contaminated reader
+`[cf169af6]` installed, not a predicate of mine:
+
+    ghost exit rows, all-time                        661   newest 2026-09-26 11:22 UTC
+    POOLED ghost exits in the CURRENT rolling 48h     18
+      atf_static 5, stochastic_reversal@5d 4, tf_forecast 4,
+      rsi_reversal@5d 2, atf_static_scout 2, ema_cross@3d 1
+    at the 96 plan rows reading ghost_samples=0, pooled 48h was min 0, MEDIAN 18, max 38
+    pooled 48h was ALSO zero on only 5 of those 96 rows
+
+So on **91 of 96** rows the pool held a median of 18 exits inside the window the gate says it
+looks at, while the gate recorded 0. A floor of 20 against a true 18 is a two-day gap; against
+a recorded 0 it is unclosable forever.
+
+**STATUS: NOT REFUTED, NOT CONFIRMED -- ONE CAVEAT DECIDES IT, AND I COULD NOT MEASURE IT.**
+Echo's verify note on `[cf169af6]` says in terms that the tradeable-evidence reader's window
+DIFFERS from the gate's ("126 vs 11 on atf_static"), so **18 is an UPPER BOUND on what the
+gate sees, not the number it sees.** A focus-symbol restriction -- and the name
+`focus_lookback_sec` at `pipeline.py:4848` is why I suspect one -- or any further filter
+inside `ghost_check` could legitimately take 18 to 0.
+  THE ONE TEST: does `ghost_check`'s population get restricted to a FOCUS SYMBOL? If yes,
+  0 may be correct and this route closes properly. If no, `ghost_samples=0` is wrong and it is
+  the single term behind ladder steps 5, 6 and 8. The site is in `trading/pipeline.py`, which
+  is `[4d095eda]`'s declared file; I did not open it. Filed as its own item.
+
+SECOND LESSON, and it is sharper than the first. My entry above closes with "SEARCH FIRST,
+MEASURE SECOND" and correctly blames myself for not grepping this file. I then **retracted a
+live finding without grepping the BACKLOG**, and the answer was in a `done` item the whole
+time. Searching `attempts-revenir.md` is not enough: run `scrum.py list` too, and **read the
+DONE items -- that is where the answers are, and a `done` item is the one place nobody thinks
+to look for an open question.**
