@@ -1,0 +1,8 @@
+t= 0 age=   26.9s  threads=35  ACTIVE=1  [('15888 (active+gil): "Thread-10 (_run_supervisor_loop)"', 'sample_texts (trading\\data_loader.py:1455)')]
+t= 1 age=   28.0s  threads=36  ACTIVE=2  [('27144 (active+gil): "seq-dataset_warmup"', '_broadcast_to (numpy\\lib\\_stride_tricks_impl.py:382)'), ('9756 (active): "dl-dynamic"', 'ssl_wrap_socket (urllib3\\util\\ssl_.py:461)')]
+t= 2 age=   28.6s  threads=36  ACTIVE=2  [('15888 (active+gil): "Thread-10 (_run_supervisor_loop)"', 'raw_decode (Lib\\json\\decoder.py:361)'), ('9756 (active): "dl-dynamic"', 'ssl_wrap_socket (urllib3\\util\\ssl_.py:461)')]
+t= 3 age=   29.1s  threads=36  ACTIVE=2  [('15108 (active+gil): "asyncio_3"', '_dtw_stability (trading\\advanced_algorithms.py:253)'), ('9756 (active): "dl-dynamic"', 'ssl_wrap_socket (urllib3\\util\\ssl_.py:461)')]
+t= 4 age=   29.3s  threads=35  ACTIVE=2  [('15888 (active): "Thread-10 (_run_supervisor_loop)"', 'fetch_trades (db.py:1906)'), ('27144 (active+gil): "seq-dataset_warmup"', '_dtw_stability (trading\\advanced_algorithms.py:253)')]
+t= 5 age=   29.6s  threads=35  ACTIVE=1  [('15888 (active+gil): "Thread-10 (_run_supervisor_loop)"', 'raw_decode (Lib\\json\\decoder.py:361)')]
+t= 6 age=   29.8s  threads=35  ACTIVE=3  [('15888 (active): "Thread-10 (_run_supervisor_loop)"', 'fetch_trades (db.py:1906)'), ('15108 (active+gil): "asyncio_3"', 'build_dataset (trading\\data_loader.py:1134)'), ('27144 (active): "seq-dataset_warmup"', 'realpath (<frozen ntpath>:738)')]
+t= 7 age=   30.0s  threads=35  ACTIVE=1  [('15888 (active+gil): "Thread-10 (_run_supervisor_loop)"', 'raw_decode (Lib\\json\\decoder.py:361)')]
