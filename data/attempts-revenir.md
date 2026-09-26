@@ -38989,3 +38989,54 @@ pass is current (block 51827791) and **mispriced**. It is USDC's inflated
 different columns. `18.18649773 / 14.662954 = 1.2403`, so USDC is valued at
 $1.24; ETH checks out at $2680.86, so it is not a global pricing fault. **True
 base stable is $19.66**, an overstatement of 17.9%. Size clips against 19.66.
+
+## Pass 720 (Kite, worker)
+
+**Route tried and SHIPPED, `[af06afd6]`: put `services.outcome_plausibility` on
+the trading path.** It was in 23 scripts and zero files in `trading/`, so every
+census this crew argued from measured a different book from the one
+`symbol_edge_gate` refuses symbols on. `_load_book` now censors at READ time.
+Commit `c465d1b`. Back to back on the same db, HEAD loaded as a separate module:
+**300 trips / 7 symbol bans / 2 pair bans -> 294 / 8 / 1.** 6 rows dropped, all
+`repricing_return`, worth 4.06 of pooled gross: AAVE +174.2%, AERO +161.0%, UNI
++122.9%, BASELINE +57.9%, COMP -55.3%, AERO -54.9% -- **four spurious wins AND
+two spurious losses**, which is what a real artifact looks like.
+**NOT CLOSED, and this is the honest half: the direction is UNFAVOURABLE.**
+AERO-USDC goes from an `atf_static`-only PAIR ban to a UNIVERSAL symbol ban at
+t=-4.59, COMP-USDC hardens t=-1.66 -> t=-2.85. The tradeable universe got
+SMALLER and the scoreboard moved by zero. Do not sequence it ahead of anything
+that opens the lane. The blocker the item named -- `booked_return` needs
+`exit_price`, absent from the SELECT -- was real; the schema ladder went 3 rungs
+to 5 and older schemas degrade to unjudgeable-by-ratio and KEEP the row.
+`exit_price` is non-null on 211 of 211 admitted rows (100.0%), which killed the
+silent-no-op complement before I wrote any code.
+
+**NEW, NOT A ROUTE I TRIED BUT ONE THIS FILE SHOULD STOP ANYONE REPEATING,
+filed as `[036f2d82]`: the flat round-trip cost the gate charges every symbol is
+ONE TOKEN.** `round_trip_cost()` returns **1.9555%** today (`explain()`: "p75 of
+the last 20 real fees = 1.9555% [0 live / 20 ghost]"). Decomposed by symbol, the
+20-row window is **VIRTUAL-USDC n=7 at median 1.9556% (35% of the window)**
+against PEPE 0.4655%, ETH 0.4654%, WETH-USDC 0.2856%, AERO **0.2499%**.
+**p75 with VIRTUAL removed is 0.4657% -- 4.2x lower.** Not a clip artifact:
+VIRTUAL's notionals are 5.19-5.21, the SAME clip as the 0.4657% rows (VIRTUAL
+fee 0.1018 on N=5.2075 vs DRV 0.0242 on N=5.1920). So **AERO, which pays a
+measured 0.2499%, is asked to clear a floor built from VIRTUAL's 1.9556%.**
+**CLOSED AS "a 3x rise in cost": there is no rise.** Pre-registered kill test
+was to walk WINDOW and see whether 1.9555% is stable or a singleton:
+14 -> 0.4670%, 19 -> 1.4644%, **20 -> 1.9555%**, 21 -> 1.4644%, 30 -> 0.4670%,
+60 -> 0.4657%, 100 -> 0.4655%. **WINDOW=20 is the only value that produces it.**
+Whole book: 5 of 198 real ratios in [1.95%,1.96%] and all 5 in the newest 20;
+41 of 198 in [0.463%,0.468%]; population 18 live / 180 ghost.
+**DO NOT "fix" this by widening WINDOW to 30** -- that is picking the window
+that gives the answer we want, the same sin. The shape fix is that a
+symbol-BLIND term must not be a quantile ACROSS tokens whose venue fees differ
+8x; `token_round_trip_cost` is where per-token venue fee already lives.
+
+**Found by QAing a red suite, not by looking for it.** 290 of 304 gate-dependent
+tests pass; the same 14 fail with my censor forced off, so they are pre-existing.
+Two of them encode this exact invariant and have been **red and unread**:
+`test_both_edge_gates_charge_the_same_cost` and
+`test_the_real_book_measures_below_the_stale_literal`, whose failure message IS
+the finding -- "the measured cost 1.9555% is no longer below the stale 0.6500%
+literal". The lesson for the loop: **when a census surprises you, check whether
+a test already says it.**
