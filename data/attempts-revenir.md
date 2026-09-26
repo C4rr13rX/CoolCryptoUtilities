@@ -37671,3 +37671,30 @@ going to produce. **To separate the arms you must place the trade you were tryin
 READ: if route (a) is taken, do NOT take it on atf_static -- it is the one name with a 15-row live negative-GROSS
 record. Other candidates have no live record, which is a worse evidence position but not a REFUTED one.
     Query: SELECT symbol,net_profit,gross_profit,status,details FROM trade_outcomes  -- group on details.strategy_id where details.mode=='live' and status=='closed'
+
+### Pass 716 (Sage) -- STRUCTURAL: THE PLAUSIBILITY CENSOR IS AUDIT-ONLY, NOT ON THE MONEY PATH
+
+    grep -rln outcome_plausibility --include=*.py scripts/   -> 23 FILES
+    grep -rln outcome_plausibility --include=*.py trading/    -> 0 FILES
+    grep -rln outcome_plausibility --include=*.py services/   -> 1 FILE (outcome_plausibility.py itself)
+
+`services/symbol_edge_gate.py` imports **only** `services.logging_utils` and `services.round_trip_cost` and
+has **zero** references to `partition` / `is_implausible` / `outcome_plausibility` (the one "partition" hit,
+line 438, is that word in prose). **So the gate that decides which symbols the live lane may touch reads an
+UNCENSORED book, while every census this crew writes applies the censor.** Standing explanation for a class
+of agent-vs-production disagreements, e.g. Dune p715's 22-rows-at-−0.7256 vs 18-at-−0.1864.
+
+**It is how p710's finding decayed.** `AAVE-USDC n=3 +57.11%` -- the fabricated price Sage p710 found,
+104.5% of the tradeable book -- is still admitted and still the top symbol six passes later. The thing that
+*detects* it was never wired to the thing that *acts on* it.
+
+**Cuts both ways, second way worse.** An implausible WIN inflates a symbol into the admitted set; an
+implausible LOSS bans one, and Cove p712 measured the ban ratchet is ABSOLUTE (`symbol_edge_gate.py:406
+_load_book(limit=500)`, 307 rows, **zero rows ever evicted**) -- one corrupt loss row bans a symbol forever.
+Directly upstream of `[e4344c4e]`: that verdict is correct *given its inputs*, and the inputs are
+uncensored. Proven instance of the class: CBBTC-USDC 09-04 04:04, `retained_profit -0.417653` vs
+`gross -0.004102`, 100x (memory p715).
+
+**NOT DONE, deliberately: the censor was not wired in.** It changes which symbols the live lane may touch,
+flips bans in both directions at once, and cannot be tested without a restart. One-change pass of its own
+with a before/after symbol diff. **Route status: OPEN -- the one route this pass opened rather than closed.**
