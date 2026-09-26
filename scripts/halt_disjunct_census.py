@@ -66,6 +66,7 @@ Read-only. Touches nothing but the trading store.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import os
 import sqlite3
@@ -73,6 +74,11 @@ import sys
 from collections import Counter
 
 DB = os.environ.get("TRADING_DB_PATH", "storage/trading_cache.db")
+
+# 2026-09-03 alone carries 79% of every row that publishes a halt, so an
+# all-time percentage here is mostly a description of that one day.
+BURST_DAYS = {"2026-09-03", "2026-09-04"}
+SPLITS = ("BURST 09-03/04", "ELSE", "SINCE 09-16")
 
 # The nine disjuncts of pipeline.py's halt_live, each paired with how to recover
 # it from a published plan. They do not all live under risk_flags: ghost_ready is
@@ -123,6 +129,8 @@ def main() -> int:
     caps = Counter()
     cap_missing = 0
     ghost_ready_but_halted = []
+    split_fired = {k: Counter() for k in SPLITS}
+    split_n = Counter()
 
     rows = conn.execute(
         "select ts, details from trading_ops where details like '%halt_live%'"
@@ -151,6 +159,16 @@ def main() -> int:
         for name, is_on in on.items():
             if is_on:
                 fired[name] += 1
+
+        day = _dt.datetime.fromtimestamp(ts, _dt.UTC).strftime("%Y-%m-%d")
+        keys = ["BURST 09-03/04" if day in BURST_DAYS else "ELSE"]
+        if day >= "2026-09-16":
+            keys.append("SINCE 09-16")
+        for key in keys:
+            split_n[key] += 1
+            for name, is_on in on.items():
+                if is_on:
+                    split_fired[key][name] += 1
         if transition.get("ghost_ready") is True:
             ghost_ready_but_halted.append((ts, flags.get("halt_reason") or ""))
 
@@ -199,10 +217,40 @@ def main() -> int:
     # ghost_ready TRUE, printed above. Those are the halts ghost_ready cannot
     # explain, and that count is the honest measure of how much of the halt
     # lies elsewhere.
+    # The concentration check, which is the one that nearly killed this census.
+    # 79% of the rows carrying risk_flags.halt_live fall on 2026-09-03 alone, so
+    # every percentage above is at risk of describing one day rather than the
+    # system. Splitting it three ways is what turns the headline from a claim
+    # into a result -- and it moves some of the terms a long way.
+    print("\nCONCENTRATION CHECK -- 79% of these rows are one day, so split them:")
+    header = f"  {'disjunct':<24}" + "".join(
+        f"{k:>16}" for k in ("BURST 09-03/04", "ELSE", "SINCE 09-16")
+    )
+    print(header)
+    print(f"  {'n =':<24}" + "".join(f"{split_n[k]:>16}" for k in SPLITS))
+    for name in disjuncts({}):
+        line = f"  {name:<24}"
+        for k in SPLITS:
+            n = split_n[k]
+            line += f"{(100.0 * split_fired[k][name] / n if n else 0):>15.1f}%"
+        print(line)
+    print(
+        "\n  Read this before quoting any all-time percentage above it. tail_block\n"
+        "  goes 44.9% -> 13.5% -> 0.0%: it is a fossil of the burst, not a live\n"
+        "  term, and so are loss_streak_block, wallet_sparse, capital_deficit and\n"
+        "  native_starved. not ghost_ready goes the other way, to 100.0%."
+    )
+
     unexplained = len(ghost_ready_but_halted)
+    recent_unexplained = sum(
+        1
+        for ts, _ in ghost_ready_but_halted
+        if _dt.datetime.fromtimestamp(ts, _dt.UTC).strftime("%Y-%m-%d") >= "2026-09-16"
+    )
     print(
         f"\nhalts NOT attributable to ghost_ready: {unexplained} of {halted} "
-        f"({100.0 * unexplained / halted:.1f}%)"
+        f"({100.0 * unexplained / halted:.1f}%) all-time, "
+        f"{recent_unexplained} since 2026-09-16"
     )
     print(
         "  recommended_ratio <= 0 is downstream of ghost_ready (both raise-sites\n"
