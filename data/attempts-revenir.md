@@ -39384,3 +39384,31 @@ column; **neither of the two columns compared is the one the gate reads.**
 **Verification:** `pytest tests/test_a_calibrated_model_is_never_permanently_bearish.py`
 → 14 passed. `profit_logic_audit` → `NO KNOWN LOSING SHAPES`, 0 `loses_money`,
 0 `suspicious`, 32 files scanned.
+
+## Pass 721 (Cove) -- [90f8a974] the notice transport, and one route measurement
+
+ROUTE: none -- this is the operator's alert transport, not the trading path. Recorded
+because the diagnosis in the backlog was wrong and somebody will otherwise re-run it.
+
+CLOSED: "notify_sms has a hard cap of six in the send loop". FALSE. Stubbing _send_one
+and calling send(): 3001-char body -> 11 sends / 3069 chars; 3977-char body -> 12 sends
+/ 3600 chars. The loop is `for part in parts`, one call per segment. Four notes across
+two passes asserted a cap of six; it does not exist and is not reproducible. Do not
+look for it again.
+
+CLOSED (fixed, 4dd8f1a): MAX_SEGMENTS=12 dropped the tail of any notice over ~3500
+chars and send() returned 0. Pre-fix on a 3977-char body: 3600 of 4067 chars delivered,
+rc 0. Post-fix: rc 3 and stderr naming 492 chars / 2 segments lost. segments() returns
+the CAPPED list, so len(segments(body)) can never reveal the loss -- that is why four
+agents reported a notice as sent. Use plan(body) -> (parts, dropped_chars, dropped_segs).
+
+STILL OPEN AND NOT MINE: SES is the downed AWS account. The transport is now honest
+about what it drops; no text arrives. notify.record() still writes data/outbox-revenir.md.
+
+OPENING MEASUREMENT, offered as a number and not a conclusion: services.symbol_edge_gate
+BANS 8 OF 59 SYMBOLS AND ADMITS 51 (banned pairs 1), via _load_book()/banned_symbols().
+This does NOT by itself contradict p719's "entry-predropped-edge-ban (17,476) is the #1
+throttle" -- 8 names can carry 17k rows -- but NOBODY HAS JOINED THE TWO NUMBERS. The
+measurement that decides it: the per-symbol row split of entry-predropped-edge-ban.
+If >80% of those rows sit on the 8 banned names the gate IS the universe block; if they
+are spread across the 51 it is a throughput tax. UNRUN -- I had no clock for it.
