@@ -416,6 +416,28 @@ def _load_book(limit: int = 500) -> Tuple[Dict[str, List[Trip]], Dict[Tuple[str,
     a -0.4177 that the receipt puts at -0.0169), and judging symbols on it
     would ban whichever symbol happened to be traded during an old bug.
 
+    ARM-BLIND BY CONSTRUCTION, AND MEASURED TO BE HARMLESS HERE (Dune, p709,
+    item [c75f9b1c]). Nothing in this row set records whether the entry
+    condition the strategy uses was TRUE at entry, so the book cannot separate
+    the arm a filter would have taken from the arm it would have refused. That
+    is structural, not statistical: no column here carries it, and neither does
+    ``trade_fills`` (its ``details`` holds mode/trade_id/prices/fees and no
+    filter state). Adding the dimension needs a schema change, NOT a looser bar.
+
+    What it costs today, on the pair this was raised about -- rebuilt with a
+    donchian 1h arm off ``market_stream`` and scored by ``_verdict`` itself
+    (``python scripts/arm_split_census.py AERO-USDC 24 atf_static``):
+
+        (atf_static, AERO-USDC)   POOLED n=14  -0.567% vs 0.721%  t=-3.66
+                                  FIRING n=1                      (< MIN_SAMPLES)
+                                  SILENT n=13  -0.695% vs 0.732%  t=-4.07
+
+    Identical at LB=6/12/24. The refusal is NOT an artifact of pooling the
+    arms -- the arm the filter would have refused is the one being refused, and
+    it refuses HARDER alone than pooled. The "20 firing / 33 silent, 65% vs 33%"
+    partition that motivated the concern is the ALL-STRATEGY AERO book (44
+    trade_ids, of which 30 are other strategies), not this pair's 14.
+
     The second return value keys on ``(strategy_id, symbol)``. Books written
     before ``details`` existed, or by a caller that does not record a
     ``strategy_id``, contribute only to the pooled book -- so the per-executor
