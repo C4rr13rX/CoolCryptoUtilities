@@ -37952,3 +37952,59 @@ AFTER the last live trade. WHAT SURVIVES AND IS STILL OPEN: against the 0.75 flo
 actually in force, 6 of 18 rows are below it (min 0.3158 = 42% of the floor), so the
 floor is UNENFORCED. The backwards-sizing finding (winners $0.7063 vs losers $1.2134)
 is untouched -- it never used the 6.00 number.
+
+### Pass 718 (Dune) -- CLOSING ADDENDUM, run in the last five minutes, no restart
+
+MEASURED, AND IT RE-TARGETS ROUTE (a). Census of the 'offered' dict across ALL
+17115 entry-arbitration rows since 2026-09-16 -- the fourth instrument on this
+question and the widest window used so far:
+    money_button      offered=0     chosen=0
+    atf_static_scout  offered=0     chosen=0
+    atf_static        offered=372   chosen=271
+Top of the offer set: rsi_reversal@12h 3454, rsi_reversal 2886,
+rsi_reversal@5h 2526, donchian_breakout@5d 2082, donchian_breakout@3d 1781.
+
+CLOSED: 'money_button is refused somewhere earlier than the lattice' is NOT an
+open alternative. Arbitration is where offers are COUNTED and money_button is
+not in the offered dict once in 10 days. It is NEVER OFFERED. p712 had 0 of
+18865 over 4.3h; this is 0 of 17115 over 10 days.
+
+CORRECTION TO MY OWN POST THE SAME HOUR: I said 'atf_static: ZERO' from the 897
+entry-refused-lattice rows and implied the approved lane is never asked. FALSE
+for atf_static -- it is offered 372 and CHOSEN 271. Its absence from the lattice
+rows means it is refused somewhere OTHER than the lattice. I over-read an
+absence in the same post where I warned against it.
+
+ALSO MEASURED, no restart: 897 of the 11877 entry-refused-lattice rows since
+09-16 carry live_trading_enabled AND live_approved as separate fields, and both
+are False on all 897 (newest 2026-09-26 08:13:45). So the bots are demoted at
+DECISION time, not only at build. But the 15 strategy_ids in those rows exclude
+money_button, atf_static and atf_static_scout, so live_approved=False there is
+the ledger answering CORRECTLY about unapproved strategies -- it is NOT evidence
+against the approval machinery.
+
+SELECTOR DISARM ELIMINATED as a candidate: selector.py:1459/:1794 fire only
+when 'not _operator_armed_live()', and _operator_armed_live (selector.py:1248)
+returns ENABLE_LIVE_TRADING unless LIVE_REQUIRE_MODEL_READY is truthy. Neither
+LIVE_REQUIRE_MODEL_READY nor STRATEGY_GRADUATION_ENFORCED is in .env, so
+defaults 0 and 1 apply and with .env:40=1 the disarm CANNOT fire.
+
+STALE LINE NUMBER, do not chase it: selector.py:1265's docstring cites
+bot.py:6715 for the money seam. The four real seams are bot.py:7282, 7558, 7735
+and 9261. bot.py:9071's 'live_armed' looks like a fifth with weaker gating and
+is NOT -- it is a local alias inside an explicitly instrumentation-only block at
+:9066-9075.
+
+RECOMMENDATION FOR THE NEXT PASS, and it reverses six passes of assumption:
+route (a) should target atf_static, NOT money_button. money_button is
+approved-but-never-offered; atf_static is offered-chosen-271-times and books
+every win as ghost. atf_static is the only candidate whose offer path already
+works, so it is the only one where a minimum-clip live test is even possible.
+COUNTER-ARGUMENT THAT MUST TRAVEL WITH IT: atf_static carries 101.0% of the
+live loss (n=15, net -0.188244, gross -0.098747) and is refused by the symbol
+edge gate on AERO (t=-4.05) and CBBTC (t=-2.90). Do NOT arm it blind.
+
+LESSON, and it is the same one twice in one pass: grepping a private field does
+not enumerate its writers when a public setter exists, and the absence of a
+strategy from ONE status does not mean it never arrives. Both cost me a wrong
+claim I corrected within the hour.
