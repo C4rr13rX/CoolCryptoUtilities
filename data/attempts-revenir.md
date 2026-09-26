@@ -37766,3 +37766,47 @@ REDONE ON `trade_outcomes` BEFORE ANYONE BUILDS ON IT.** One symbol is not 656, 
 DEAD**. If A/B/C come back negative on `trade_outcomes`, "direction works, cost eats it" dies and route (b)
 closes on a real book -- a finished result, not a failure. First criterion of `[00196f7d]`.
 **Route status: OPEN but DOWNGRADED -- do not cite the +1.24% without this caveat attached.**
+
+## Pass 718 (Echo, senior) -- [3fb9834d] premise refuted; the quarantine leak found instead
+
+ROUTE TRIED: explain the 54-trade `trades != wins + losses` gap in data/strategy_ledger.json as a live
+classification bug, per [3fb9834d] criteria 1-2.
+
+CLOSED -- THE PREMISE IS FALSE, THREE WAYS:
+  1. NO CODE PATH EXISTS. Both writers are exhaustive if/else: trading/strategies/ledger.py:959-974 and
+     scripts/split_scout_from_bot_ledger.py:139-145. The gap is a FOSSIL of the bug fixed at 86ae43f;
+     ledger.py:964-972 is a comment documenting that fix.
+  2. THE GAP IS ZERO IN THE BOOK GRADUATION READS. tradeable totals 139 trades = 33W + 106L, GAP 0,
+     win rate 23.74% either way. The 54 live entirely in pooled ghost, which graduation does not score.
+     => the item was promoted p2->p1 as "load-bearing on the first failing link". It is not.
+  3. CRITERION 2 WAS DANGEROUS. "Stop counting it in trades so wins/trades stops being deflated" has the
+     arithmetic backwards: trades is the DENOMINATOR and the gap is already in it, so removing the gap
+     RAISES the win rate (atf_static_scout 206/266 = 77.4% -> 206/225 = 91.6%). It would loosen the
+     graduation bar on fossil data. The gap is conservative. DO NOT IMPLEMENT IT.
+
+COMPLEMENT TESTED AND KILLED: "trading_ops is retention-pruned, so 149 exits vs 266 counters is an
+artifact of the window." FALSE -- trading_ops spans 2026-08-21 -> 2026-09-26 (36 days, unpruned);
+scout rows span 09-02 -> 09-24, matching the scout's creation date.
+
+WHAT REPLACED IT, filed as [aabdc6e8] 3pt p1 -- OPEN, NOT CLOSED:
+  scripts/split_scout_from_bot_ledger.py:99 selects exits with `status LIKE '%exit%'`, which MATCHES
+  `quarantined-ghost-exit`. Decomposed over trading_ops for atf_static/atf_static_scout:
+      scout  ghost-exit              n=383   +4.3334   64.5% win
+      scout  quarantined-ghost-exit  n=123  +30.0056   38.2% win   <- 87.4% of gross
+      bot    ghost-exit              n= 75   +1.4638   45.3% win
+      bot    live-exit               n= 18   -0.5800   33.3% win
+  The ledger entry built from that replay reads 266 / 206W / 19L / +4.9715 against a source of 383 exits
+  / 64.5% / +4.3334: win rate INFLATED by 12.9 points, losses 19 vs ~136. The 41-trade gap is the
+  RESIDUE of the missing losses -- a witness to a bad replay, not a counter bug.
+
+LIKE SEMANTICS, MEASURED NOT ASSUMED (do not re-derive):
+  'quarantined-ghost-exit' LIKE '%exit%' -> 1 ;  LIKE '%-exit' -> 1 ;  LIKE 'ghost-exit' -> 0
+  Across trading_ops: '%exit%' = 843 rows / 129 quarantined ; '%-exit' = 808 rows / the SAME 129.
+  Quarantined statuses are exactly two: quarantined-ghost-exit 129, quarantined-ghost-entry 124.
+  => FOUR leaking call sites, not one: split_scout_from_bot_ledger.py:99, loop_status.py:115,
+     web/tradingagent/theorems.py:373, web/tradingagent/bus_bridge.py:92. Only an exact-status
+     allowlist excludes quarantined rows. bus_bridge/theorems are UNVERIFIED as on/off the decision path.
+
+INDEPENDENT CONFIRMATION OF p715 FROM A NEW TABLE: the 18 `live-exit` rows sum to -0.5800, which is the
+known-CORRUPT retained_profit figure, not the reconciled net_profit -0.186371. trading_ops.details.profit
+carries the corrupt field on the live book. DO NOT USE IT FOR P/L.
