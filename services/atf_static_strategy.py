@@ -1061,7 +1061,18 @@ def _run_ghost_quote_scout(
         #
         # ``profit_unit`` is written so a reader can tell a corrected row from a
         # legacy one by fact rather than by guessing from its magnitude.
-        profit_usd = _net_profit_usd(profit, clip_usd)
+        # The symbol goes in here too, for the same reason it goes into the
+        # exit GATE at the top of this function. Measured 2026-09-25 (p708) over
+        # the 10 closed scout rows in trade_outcomes: every stored fee_cost is
+        # EXACTLY the token-blind default ($0.004047 + $0.003187 x $6 clip =
+        # $0.023169), because the 2026-09-17 symbol fix reached line ~974 and
+        # these three booking sites were left asking blind. Symbol-aware, the
+        # same ten round trips cost $0.345770 against $0.231690 booked -- the
+        # book was UNDER-charging by $0.114080, so the scout's ghost P/L has
+        # been FLATTERED, not penalised. That is the direction that matters:
+        # this is a strategy near the graduation bar being helped by a fee it
+        # never paid. Correcting it makes the number worse and true.
+        profit_usd = _net_profit_usd(profit, clip_usd, symbol)
         details = {
             "source": SOURCE,
             "strategy_id": SCOUT_STRATEGY_ID,
@@ -1073,7 +1084,7 @@ def _run_ghost_quote_scout(
             "profit_unit": "usd",
             "return_pct": profit,
             "clip_usd": clip_usd,
-            "roundtrip_cost_usd": _roundtrip_cost_usd(clip_usd),
+            "roundtrip_cost_usd": _roundtrip_cost_usd(clip_usd, symbol),
             "age_sec": age,
             "reason": reason,
             # The risk layer reads exits through MetricsCollector, which keys on
@@ -1134,7 +1145,7 @@ def _run_ghost_quote_scout(
                 # construction, because ``profit_usd`` is defined that way in
                 # ``_net_profit_usd``.
                 gross_profit=float(profit) * clip_usd,
-                fee_cost=_roundtrip_cost_usd(clip_usd),
+                fee_cost=_roundtrip_cost_usd(clip_usd, symbol),
                 # Ghost rows never checkpoint: there is no stable to move.
                 checkpoint=0.0,
                 net_profit=profit_usd,
