@@ -91,13 +91,13 @@ class WizardTrainer:
         self._regime_inflight: Dict[str, float] = {}  # symbol -> launch ts
         self._latest_candles: Dict[str, Dict[str, float]] = {}
         try:
-            self._regime_ttl = float(os.getenv("WIZARD_REGIME_TTL_SEC", "20"))
+            self._regime_ttl = float(os.getenv("WIZARD_REGIME_TTL_SEC", "45"))
         except Exception:
-            self._regime_ttl = 20.0
+            self._regime_ttl = 45.0
         try:
-            self._regime_timeout = float(os.getenv("WIZARD_REGIME_TIMEOUT_SEC", "1.5"))
+            self._regime_timeout = float(os.getenv("WIZARD_REGIME_TIMEOUT_SEC", "15.0"))
         except Exception:
-            self._regime_timeout = 1.5
+            self._regime_timeout = 15.0
         # Capability + observability: set when the node 404s the learning
         # endpoint; last_push_stats feeds health displays.
         self._consolidate_unsupported_ts: float = 0.0
@@ -146,6 +146,11 @@ class WizardTrainer:
     _RANGE_EDGES = (.001, .002, .004, .007, .012, .02, .04)
     _POS_EDGES = (.12, .25, .38, .5, .62, .75, .88)
 
+    # 5-minute quantized buckets (+/- 10 bps to 150 bps)
+    _RET_EDGES_5M = (-0.015, -0.007, -0.003, -0.001, 0.001, 0.003, 0.007, 0.015)
+    _VEL_EDGES_5M = (-0.0005, -0.0002, -0.00005, 0.00005, 0.0002, 0.0005)
+    _JERK_EDGES_5M = (-0.0001, -0.00002, 0.00002, 0.0001)
+
     @staticmethod
     def _outcome_token(ret: float) -> str:
         """Byte-disjoint outcome label (shares no substring across classes,
@@ -159,6 +164,49 @@ class WizardTrainer:
         if ret >= -0.02:
             return "drop"
         return "plunge"
+
+    @staticmethod
+    def _outcome_token_5m(ret: float) -> str:
+        """Byte-disjoint outcome for 5-minute horizon (+/- 10 bps to 30 bps)."""
+        if ret >= 0.003:
+            return "surge uptrend strong rally buy breakout"
+        if ret >= 0.001:
+            return "gain uptrend mild buy support"
+        if ret >= -0.001:
+            return "steady sideways neutral"
+        if ret >= -0.003:
+            return "drop downtrend mild sell resistance"
+        return "plunge downtrend strong dump reject"
+
+    def _format_5m_window_sample(
+        self,
+        symbol: str,
+        candle: Dict[str, float],
+        velocity: float,
+        jerk: float,
+        trend: str,
+        vol_regime: str,
+    ) -> str:
+        base = symbol.split("/")[0].split("-")[0].split("_")[0].upper()
+        quote = symbol.split("/")[-1].split("-")[-1].split("_")[0].upper() if ("/" in symbol or "-" in symbol) else "USD"
+        o = float(candle.get("open") or 0.0)
+        h = float(candle.get("high") or 0.0)
+        low = float(candle.get("low") or 0.0)
+        c = float(candle.get("close") or 0.0)
+        denom = o if o > 0 else (c or 1e-12)
+        bar_ret = (c - o) / denom
+        bar_range = (h - low) / denom if denom else 0.0
+        pos = ((c - low) / (h - low)) if h > low else 0.5
+        return (
+            f"market={base}/{quote} horizon=5m "
+            f"ret=b{self._bucket(bar_ret, self._RET_EDGES_5M)} "
+            f"vel=b{self._bucket(velocity, self._VEL_EDGES_5M)} "
+            f"jerk=b{self._bucket(jerk, self._JERK_EDGES_5M)} "
+            f"range=b{self._bucket(bar_range, self._RANGE_EDGES)} "
+            f"pos=b{self._bucket(pos, self._POS_EDGES)} "
+            f"trend={trend.replace(' ', '_')} "
+            f"volatility={vol_regime}"
+        )
 
     @staticmethod
     def _bucket(value: float, edges: Tuple[float, ...]) -> int:
@@ -295,6 +343,61 @@ class WizardTrainer:
         }
         return self._consolidate_pairs(pairs)
 
+    def push_5m_window_batch(
+        self,
+        symbol: str,
+        candles: Sequence[Any],
+        *,
+        max_items: int = 128,
+    ) -> int:
+        """Pushes 5-minute rolling window features and outcomes to the brain.
+
+        Extracts velocity, intra-window jerk, range compression, and quantizes
+        forward 5-minute returns so the Hebbian substrate learns short-horizon
+        reversion and momentum continuation.
+        """
+        if not self.is_online():
+            return 0
+        if not candles or len(candles) < 3:
+            return 0
+
+        norm_candles = [c for c in (self._normalise_candle(s) for s in candles) if c]
+        if len(norm_candles) < 3:
+            return 0
+
+        if len(norm_candles) > max_items:
+            step = len(norm_candles) / max_items
+            norm_candles = [norm_candles[int(i * step)] for i in range(max_items)]
+
+        pairs: List[Tuple[str, str]] = []
+        for i in range(1, len(norm_candles) - 1):
+            prev = norm_candles[i - 1]
+            curr = norm_candles[i]
+            nxt = norm_candles[i + 1]
+
+            history = [c["close"] for c in norm_candles[max(0, i - 5):i + 1]]
+            trend = self._classify_trend(history)
+            vol_regime = self._classify_vol(history)
+
+            denom = curr["close"] or 1e-12
+            v_curr = (curr["close"] - prev["close"]) / denom
+            v_prev = (prev["close"] - norm_candles[max(0, i - 2)]["close"]) / denom if i >= 2 else 0.0
+            jerk = v_curr - v_prev
+
+            fwd_ret = (nxt["close"] - curr["close"]) / denom
+            feature = self._format_5m_window_sample(symbol, curr, v_curr, jerk, trend, vol_regime)
+            outcome = f"outcome {self._outcome_token_5m(fwd_ret)}"
+            pairs.append((feature, outcome))
+
+        latest_history = [c["close"] for c in norm_candles[-6:]]
+        self._latest_candles[symbol] = {
+            **norm_candles[-1],
+            "trend": self._classify_trend(latest_history),
+            "volatility": self._classify_vol(latest_history),
+            "is_5m": 1.0,
+        }
+        return self._consolidate_pairs(pairs)
+
     def push_news_batch(
         self,
         items: List[Dict[str, Any]],
@@ -369,12 +472,29 @@ class WizardTrainer:
     # Regime query
     # ------------------------------------------------------------------
 
+    def _query_two_pool(self, text: str, timeout: float = 5.0) -> Optional[str]:
+        """Query the bidirectional associative two-pool memory on :8090/two_pool/ask."""
+        try:
+            url = f"{self._endpoint}/two_pool/ask"
+            payload = json.dumps({"text": text, "direction": "in_to_out", "min_strength": 0.01}).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            return data.get("answer") or None
+        except Exception:
+            return None
+
     def query_regime(
         self,
         symbol: str,
         current_price: float,
         *,
-        timeout: float = 2.0,
+        timeout: float = 6.0,
     ) -> Optional[str]:
         """
         Ask the W1z4rD node for a market-regime context string.
@@ -391,6 +511,17 @@ class WizardTrainer:
         query = self._format_ohlcv_sample(
             symbol, candle, str(candle.get("trend", "unknown")),
             str(candle.get("volatility", "unknown")))
+
+        # Fast path: check associative memory first
+        two_pool_ans = self._query_two_pool(query, min(timeout, 2.0))
+        if two_pool_ans:
+            return two_pool_ans
+
+        base = symbol.split("/")[0].split("-")[0].upper()
+        short_query = f"{base}/USDC horizon=5m"
+        short_ans = self._query_two_pool(short_query, min(timeout, 2.0))
+        if short_ans:
+            return short_ans
 
         if _brain_mode():
             return self._query_regime_brain(query, timeout)
@@ -452,6 +583,52 @@ class WizardTrainer:
             "regime_text":    text,
         }
 
+    def predict_horizon_5m(
+        self,
+        symbol: str,
+        current_price: float,
+        *,
+        target_margin: float = 0.003,
+        timeout: float = 15.0,
+    ) -> Optional[Dict[str, Any]]:
+        """Ask the brain whether `symbol` is likely to gain at least
+        `target_margin` (default 30 bps, covering Base swap costs)
+        within the next 5 minutes.
+        """
+        if not self.is_online():
+            return None
+        if not (current_price and current_price > 0):
+            return None
+        base = symbol.split("/")[0].split("-")[0].upper()
+        target_price = float(current_price) * (1.0 + float(target_margin))
+        query = (
+            f"market={base}/USD horizon=5m "
+            f"price={current_price:.6g} target={target_price:.6g} "
+            f"will {base} gain in 5m?"
+        )
+        text = self._query_two_pool(f"market={base}/USD horizon=5m", min(timeout, 2.0))
+        if not text:
+            text = self._query_two_pool(f"{base}/USDC horizon=5m", min(timeout, 2.0))
+        if not text:
+            text = (self._query_regime_brain(query, timeout)
+                    if _brain_mode() else self._query_regime_legacy(query, timeout))
+        if not text:
+            return None
+        try:
+            direction, confidence = _parse_regime_text(text)
+        except Exception:
+            direction, confidence = 0.5, 0.0
+        return {
+            "symbol": symbol,
+            "current_price": float(current_price),
+            "target_price": target_price,
+            "target_margin": float(target_margin),
+            "horizon_min": 5.0,
+            "direction_prob": float(direction),
+            "confidence": float(confidence),
+            "regime_text": text,
+        }
+
     def _query_regime_brain(self, query: str, timeout: float) -> Optional[str]:
         """Read-only market prediction; the query is never learned."""
         try:
@@ -502,7 +679,7 @@ class WizardTrainer:
         if self._consolidate_unsupported_ts and now - self._consolidate_unsupported_ts < _PROBE_CACHE_TTL * 5:
             self.last_push_stats = {"pushed": 0, "failed": len(pairs), "reason": "endpoint_unsupported"}
             return 0
-        conn = HTTPConnection(host, port, timeout=8)
+        conn = HTTPConnection(host, port, timeout=30)
         pushed = 0
         failed = 0
         reason = ""
@@ -525,7 +702,7 @@ class WizardTrainer:
                         conn.close()
                     except Exception:
                         pass
-                    conn = HTTPConnection(host, port, timeout=8)
+                    conn = HTTPConnection(host, port, timeout=30)
                     continue
                 if response.status == 404:
                     # Node build without the learning surface — pushing more
@@ -1126,9 +1303,9 @@ class BrainSignal:
 
 
 _BULL_TOKENS = {"bull", "bullish", "uptrend", "future_direction=up", "rally", "long", "buy", "breakout",
-                "rising", "strong", "accumulat", "support"}
+                "rising", "strong", "accumulat", "support", "surge", "gain"}
 _BEAR_TOKENS = {"bear", "bearish", "downtrend", "future_direction=down", "sell", "short", "breakdown",
-                "falling", "weak", "distribut", "resistance", "reject"}
+                "falling", "weak", "distribut", "resistance", "reject", "drop", "plunge"}
 
 
 # Minimum keyword evidence before a reply is allowed any conviction at all.
@@ -1214,6 +1391,19 @@ def _parse_regime_text(text: str) -> Tuple[float, float]:
     if not text:
         return 0.5, 0.0
     blob = text.lower()
+
+    # Authoritative quantized outcome recognition from the Hebbian substrate
+    if "outcome " in blob:
+        if "surge" in blob:
+            return 0.92, 0.85
+        if "gain" in blob:
+            return 0.80, 0.75
+        if "plunge" in blob:
+            return 0.08, 0.85
+        if "drop" in blob:
+            return 0.20, 0.75
+        if "steady" in blob:
+            return 0.50, 0.50
     # Count each keyword only when it is not already covered by a longer
     # match. "bullish" contains "bull", so the naive tally scored one word as
     # two pieces of evidence -- the same double-counting the senior brain
@@ -1263,6 +1453,8 @@ def regime_derived_state(text: str) -> dict:
 
     if not blob:
         reason = "empty_reply"
+    elif "outcome " in blob and any(k in blob for k in ("surge", "gain", "drop", "plunge", "steady")):
+        reason = "admitted"
     elif total == 0:
         reason = "no_keywords"          # off-topic or a refusal
     elif total < _MIN_REGIME_TOKENS:

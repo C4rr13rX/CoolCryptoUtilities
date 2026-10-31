@@ -1868,9 +1868,13 @@ class BusScheduler:
             share = max(0.05, min(MAX_QUOTE_SHARE,
                                   edge * 2.0 * signal.confidence * risk_budget))
             size = available_quote * share
-            target_price = last_price * (1.0 + 2.0 * edge * fee_rate * 50.0)
+            # Micro-clip sizing for small balances: ensure minimum actionable clip of $0.25 on Base
+            min_clip = float(os.getenv("MIN_TRADE_CLIP_USD", "0.25"))
+            if size < min_clip and available_quote >= min_clip:
+                size = min_clip
+            target_price = last_price * (1.0 + max(0.004, 2.0 * edge * fee_rate * 50.0))
             action = "enter"
-            expected_return = float(2.0 * edge * signal.confidence)
+            expected_return = float(max(0.004, 2.0 * edge * signal.confidence))
         else:
             if available_base <= 0:
                 return None

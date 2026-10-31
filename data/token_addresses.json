@@ -749,6 +749,11 @@
       "address": "0xb462a5039a540883508ee37b5cf3999647557ba3",
       "source": "geckoterminal",
       "ts": 1793441858.7902255
+    },
+    "ANTHROPIC": {
+      "address": "0xf7b9cf4dab32ce42f1e08c05f561ccc0e7b44cea",
+      "source": "geckoterminal",
+      "ts": 1793475403.1439774
     }
   }
 }

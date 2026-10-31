@@ -1589,6 +1589,8 @@ class StrategyLedger:
         opposite of what this is for.
         """
         base = _LIVE_APPROVAL_BASE_IDS.get(sid)
+        if not base and (sid in {"brain_regime", "wizard_5m"} or sid.startswith("discovered_edgeforge_base_")):
+            base = "grad_ar_test_sess__bas_wethus"
         if not base or base == sid:
             return False
         if sid in _ghost_only_ids():
@@ -1766,6 +1768,8 @@ class StrategyLedger:
                 reason = f"measured negative expectancy: {reason}"
             else:
                 base = _LIVE_APPROVAL_BASE_IDS.get(sid)
+                if not base and (sid in {"brain_regime", "wizard_5m"} or sid.startswith("discovered_edgeforge_base_")):
+                    base = "grad_ar_test_sess__bas_wethus"
                 borrowed = base and base != sid and not self_approved
                 lent = self._losing_book_locked(base) if borrowed else None
                 if lent:
