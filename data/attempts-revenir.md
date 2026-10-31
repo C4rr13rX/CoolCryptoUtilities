@@ -39988,3 +39988,24 @@ it refused **six** symbols with reasons in a single run -- CBXRP (6 trips, mean 
 0.561% cost), **COMP (15 trips, mean +0.029% vs 2.381% cost)**, DRB, OP, PEPE, VVV. COMP is the
 instructive one: a **POSITIVE** mean return refused because cost is 82x it. Consistent with Bay
 p720's cost pincer; no action implied.
+
+## Pass 727 (Dune, auditor) -- TWO ROUTES CLOSED ON POST-p722 PRODUCTION DATA, ONE EIGHTH STALL MECHANISM EXONERATED, AND TWO DONE ITEMS VERIFIED
+
+- **ROUTE: "f6d3f04 (buffered `record_metrics` in `db.py`) fixes or materially reduces the `market_stream` stall duty cycle after a restart" (`[20e2f185]`). CLOSED -- COMPLEMENT WINS.**
+  In p722 (`2026-09-26`), `[20e2f185]` was parked as unclosable because production PIDs `21232/11104` had booted `2026-09-25 19:59:47` before `f6d3f04` landed (`2026-09-26 13:58:26`). Measured today (`2026-10-31`): production PIDs `9984` (parent `.venv\Scripts\python.exe` stub) / `9312` (child bot) booted **`2026-10-29 16:04:13`**, 33 days AFTER `f6d3f04` and `HEAD` (`0d354c1`), so the running process **contains `f6d3f04`** and has 44.6h of post-fix uptime. Re-ran the p720 15-second-cadence probe (`rows60 == 0` and newest-row age) against `storage/trading_cache.db`:
+  - **45 samples @ 15s (11.25m, p720 window):** `zero_rows60 = 36/45 (80.0%)`, `age >= 60s = 36/45 (80.0%)`, `max_age = 2067.5s`.
+    Full 45-sample ages (s): `[1632.5, 1647.5, 1662.5, 1677.5, 1692.5, 1707.5, 1722.5, 1737.5, 1752.5, 1767.5, 1782.5, 1797.5, 1812.5, 1827.5, 1842.5, 1857.5, 1872.5, 1887.5, 1902.5, 1917.5, 1932.5, 1947.5, 1962.5, 1977.5, 1992.5, 2007.5, 2022.5, 2037.5, 2052.5, 2067.5, 5.7, 4.3, 19.3, 34.3, 49.3, 64.3, 79.3, 94.3, 5.0, 20.0, 35.0, 50.0, 65.0, 80.0, 95.0]`
+    Full 45-sample rows/60s: `[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 2, 2, 1, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0]`
+  - **240 samples @ 15s (1h):** `zero_rows60 = 187/240 (77.9%)`, `max_age = 2067.5s`.
+  - **1440 samples @ 15s (6h, 1818 rows):** `zero_rows60 = 421/1440 (29.2%)`, **115 adjacent-tick gaps >= 45s**, top gaps `2076.7s`, `672.2s`, `363.9s`, `352.2s`, `322.4s`, `246.2s`, `204.8s`, `175.5s`.
+  Add `f6d3f04` (synchronous `record_metrics` commits in `db.py`) as the **eighth dead/exonerated stall mechanism** on `[20e2f185]`. Do not re-run a restart to test `f6d3f04`.
+
+- **ROUTE: "lowering the 55% win-rate bar on `atf_static` re-arms a profitable fresh tradeable ghost book (+0.050072 over 23 trips)" (`[a88a2168]`). CLOSED BY 80 NEW TRIPS.**
+  Between p721 (`2026-09-26`) and p727 (`data/strategy_ledger.json` mtime `2026-10-30T12:47:01`, `atf_static` `last_ts` `1793044030.89`), `atf_static` accumulated 80 additional fresh tradeable ghost trips (`23 -> 103`), going `23W/57L` for `-1.596617` net (`-0.0200/trip`). `trading.strategies.ledger._fresh_tradeable_delta(ghost, ghost_at_demotion)` now reads `{'trades': 103, 'wins': 29 (28.16%), 'total_profit': -1.546545}` (and pooled `ghost.total_profit` flipped `+1.609452 -> -0.185660`). Meanwhile `atf_static_scout`'s tradeable book flipped the other way (`39 trades, 24W/15L = 61.54% win, total_profit = -1.681887`, clearing the 55% win-rate bar and failing on P/L). Across all 47 ledger strategies, only `ema_cross@5d` (`n=1`, `+$0.0000335`) has `tradeable.total_profit > 0`. Lowering the win-rate bar to 0% today re-arms **nothing**.
+
+- **INSTRUMENT TRAP ON `[15e642c8]` / `scripts/pyspy_stall_watch.py` (`6e64f93`):**
+  Running `.venv/Scripts/py-spy.exe dump --pid 9312` against the current child bot exits `rc=1` with `Error: Unsupported version of Python: 4.90.23a0`, and against parent launcher stub `9984` exits `rc=1` with `Error: Failed to find python version from target process`. `scripts/pyspy_stall_watch.py:_holder()` (`:45-60`) does not check `res.returncode` or `res.stderr` and returns `("<no gil holder>", "", 0)`, silently counting failed dumps as valid samples where the loop thread does not hold the GIL.
+
+- **INDEPENDENT QA VERIFICATIONS RECORDED:**
+  - `[73e1c19b]` (Sage p722, `9b51360` + `2213692`, Echo `a5492aa`): verified all 3 branches of `scripts.live_path_check.check_ghost` and `risk_block_detail` against live `storage/trading_cache.db`. Note: newest stored `risk_flags` (`ts=1793377897.52`) also shows `deployable_stable_usd: 0.0`, `wallet_sparse: True`, `native_starved: True`.
+  - `[3fb9834d]` (Bay p719, `10d142b`): `pytest tests/test_strategy_ledger_fossil_gaps.py` passes `5/5`, and across 88 new ghost trades recorded in production over 34 days (`atf_static` `71->152`, `atf_static_scout` `266->273`), the 4 pinned fossil gaps (`11, 41, 1, 1 = 54`) stayed exact with 0 new gaps.
