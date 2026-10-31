@@ -115,6 +115,25 @@ class GuardianSupervisor:
         request_guardian_run()
         return True
 
+    def trigger_error_remediation(self, error_info: str, source: str = "system") -> bool:
+        """Trigger Guardian remediation on error, automatically starting Guardian even if off."""
+        try:
+            update_guardian_settings({"enabled": True})
+            self.start()
+            diagnostic_prompt = (
+                f"Automatic Guardian Remediation triggered by {source}:\n\n"
+                f"Error Details:\n{error_info}\n\n"
+                "Diagnose the cause, perform the minimal safe repair, ensure all services are restored, "
+                "and verify that normal operation is resumed."
+            )
+            set_one_time_prompt(diagnostic_prompt)
+            request_guardian_run()
+            log_message("guardian", f"auto-remediation triggered by {source}: {error_info[:200]}", severity="warning")
+            return True
+        except Exception as exc:
+            log_message("guardian", f"failed to trigger auto-remediation: {exc}", severity="error")
+            return False
+
     def status(self) -> Dict[str, Any]:
         with self._status_lock:
             status = dict(self._status)

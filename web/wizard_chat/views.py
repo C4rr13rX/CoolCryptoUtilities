@@ -220,7 +220,7 @@ WIZARD_BRAIN_CHAT_PATH = (
         in {"0", "false", "no"}
     else "/brain/chat"
 )
-WIZARD_TIMEOUT = float(os.getenv("WIZARD_TIMEOUT_S", "8"))
+WIZARD_TIMEOUT = float(os.getenv("WIZARD_TIMEOUT_S", "45"))
 WEB_SEARCH_TIMEOUT = float(os.getenv("WIZARD_WEB_SEARCH_TIMEOUT_S", "3"))
 MAX_UPLOAD_MB = int(os.getenv("WIZARD_CHAT_MAX_MB", "50"))
 

@@ -224,4 +224,20 @@ class ApiEventLogMiddleware:
                     severity=severity,
                     details=details,
                 )
+                if status >= 500:
+                    try:
+                        from monitoring_guardian.auto_trigger import trigger_guardian_on_error
+                        trigger_guardian_on_error(f"api-error:{status}:{path}", f"HTTP {status} returned for {request.method} {path}")
+                    except Exception:
+                        pass
         return response
+
+    def process_exception(self, request, exception):
+        path = getattr(request, "path_info", "") or ""
+        msg = f"Unhandled exception on {getattr(request, 'method', 'UNKNOWN')} {path}: {exception}"
+        try:
+            from monitoring_guardian.auto_trigger import trigger_guardian_on_error
+            trigger_guardian_on_error(f"django-unhandled-exception:{path}", msg, exception)
+        except Exception:
+            pass
+        return None

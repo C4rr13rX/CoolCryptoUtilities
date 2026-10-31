@@ -44,6 +44,8 @@ class RecoveryCoordinator:
             "django": self._django_status(),
             "production_manager": self._production_status(),
             "branddozer": self._branddozer_status(),
+            "w1z4rd_node": self._w1z4rd_node_status(),
+            "w1z4rd_brain_training": self._w1z4rd_training_status(),
         }
         self._write_state(components)
         if components["django"]["status"] != "running":
@@ -55,6 +57,10 @@ class RecoveryCoordinator:
             self._recover_production(components["production_manager"])
         if components["branddozer"]["status"] == "enabled_without_keeper":
             self._ensure_branddozer_keeper()
+        if components["w1z4rd_node"]["status"] != "running":
+            self._recover_w1z4rd_node(components["w1z4rd_node"])
+        if components["w1z4rd_brain_training"]["status"] != "running":
+            self._recover_w1z4rd_training(components["w1z4rd_brain_training"])
         return components
 
     def _probe(self, url: str, timeout: float = 2.5) -> bool:
@@ -132,6 +138,29 @@ class RecoveryCoordinator:
         state = "running" if keeper and not stale else "enabled_without_keeper" if not keeper else "stale"
         return {"status": state, "attempts": self.attempts.get("branddozer", 0), "detail": f"enabled={len(enabled)} stale={stale}"}
 
+    def _w1z4rd_node_status(self) -> Dict[str, Any]:
+        node_url = os.getenv("WIZARD_NODE_URL", "http://127.0.0.1:8090")
+        ok = self._probe(f"{node_url}/health", timeout=2.0)
+        seen = self._process_matching("w1z4rd_node")
+        running = ok or seen
+        return {
+            "status": "running" if running else "down",
+            "attempts": self.attempts.get("w1z4rd_node", 0),
+            "detail": f"node_url={node_url}/health ok={ok} seen={seen}",
+        }
+
+    def _w1z4rd_training_status(self) -> Dict[str, Any]:
+        seen = (
+            self._process_matching("watch_programming_brain.py")
+            or self._process_matching("run_brain_feeder.py")
+            or self._process_matching("market_evolution_service.py")
+        )
+        return {
+            "status": "running" if seen else "down",
+            "attempts": self.attempts.get("w1z4rd_brain_training", 0),
+            "detail": f"senior_se_curriculum_seen={seen}",
+        }
+
     def _cooldown_ready(self, name: str, seconds: float = 10.0) -> bool:
         return time.time() - self.last_attempt.get(name, 0) >= seconds
 
@@ -202,6 +231,58 @@ class RecoveryCoordinator:
             )
         self.processes["branddozer"] = proc
         self._log(f"BrandDozer keeper started; pid={proc.pid}")
+
+    def _recover_w1z4rd_node(self, status: Dict[str, Any]) -> None:
+        if not self._cooldown_ready("w1z4rd_node", 30):
+            return
+        self.last_attempt["w1z4rd_node"] = time.time()
+        attempt = self.attempts.get("w1z4rd_node", 0) + 1
+        self.attempts["w1z4rd_node"] = attempt
+        self._log(f"W1z4rD Node recovery attempt {attempt}")
+        if attempt > 1 and attempt % 2 == 0:
+            self._ask_agent("w1z4rd_node", status)
+        node_dir = Path("D:/Projects/W1z4rDV1510n")
+        start_script = node_dir / "start_node.ps1"
+        if start_script.exists():
+            try:
+                proc = subprocess.Popen(
+                    ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(start_script)],
+                    cwd=str(node_dir),
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+                self.processes["w1z4rd_node"] = proc
+                self._log(f"W1z4rD Node start script launched; pid={proc.pid}")
+            except Exception as exc:
+                self._log(f"Failed to launch start_node.ps1: {exc}")
+
+    def _recover_w1z4rd_training(self, status: Dict[str, Any]) -> None:
+        if not self._cooldown_ready("w1z4rd_brain_training", 30):
+            return
+        self.last_attempt["w1z4rd_brain_training"] = time.time()
+        attempt = self.attempts.get("w1z4rd_brain_training", 0) + 1
+        self.attempts["w1z4rd_brain_training"] = attempt
+        self._log(f"W1z4rD Training recovery attempt {attempt}")
+        if attempt > 1 and attempt % 2 == 0:
+            self._ask_agent("w1z4rd_brain_training", status)
+        node_dir = Path("D:/Projects/W1z4rDV1510n")
+        watch_script = node_dir / "scripts" / "aws" / "watch_programming_brain.py"
+        if watch_script.exists():
+            try:
+                log_path = RUNTIME / "curriculum-training.log"
+                with log_path.open("a", encoding="utf-8") as handle:
+                    proc = subprocess.Popen(
+                        [resolve_python_bin(), str(watch_script), "--poll-seconds", "30"],
+                        cwd=str(node_dir),
+                        stdout=handle,
+                        stderr=subprocess.STDOUT,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                self.processes["w1z4rd_brain_training"] = proc
+                self._log(f"W1z4rD Senior SE Curriculum Watcher launched; pid={proc.pid}")
+            except Exception as exc:
+                self._log(f"Failed to launch watch_programming_brain.py: {exc}")
 
     def _terminate_matching(self, needle: str) -> None:
         try:
