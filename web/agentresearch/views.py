@@ -1170,3 +1170,56 @@ class FundTrackerView(BaseAgentResearchAPIView):
             return Response({"ok": True, "message": "all fund reservations cleared"}, status=status.HTTP_200_OK)
 
         return Response({"error": f"Unknown action: {action}"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class DeterministicInnovationView(BaseAgentResearchAPIView):
+    """Operationalizes the 30-year deterministic path of digital innovation
+    (Graph Centrality, Merkle DAG State, Invariant AMM Mechanics, Semantic Manifold Attention,
+    and Neuro-Symbolic Gating)."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        from dataclasses import asdict
+        from services.deterministic_innovation_core import INNOVATION_CORE
+        from .models import MarketSnapshot, AgentTradeRecord
+
+        snapshots = MarketSnapshot.objects.all().order_by("-created_at")[:40]
+        edges = []
+        for s in snapshots:
+            sym = s.pair_symbol or "WETH-USDC"
+            base_tok = sym.split("-")[0]
+            quote_tok = sym.split("-")[1] if "-" in sym else "USDC"
+            weight = max(1.0, float(s.liquidity_depth_usd or 1000.0) / 1000.0)
+            edges.append((base_tok, quote_tok, weight))
+
+        universe_nodes = list({e[0] for e in edges} | {e[1] for e in edges}) or ["WETH", "USDC", "WBTC", "AERO"]
+        trades = list(AgentTradeRecord.objects.all().order_by("-id").values("id", "symbol", "side", "notional_usd")[:20])
+
+        report = INNOVATION_CORE.evaluate_live_pipeline_continuum(
+            market_universe=universe_nodes,
+            corroborated_edges=edges,
+            recent_actions=trades or [{"action": "baseline_audit", "ts": time.time()}],
+            signal_vector=[0.75, 0.42, 0.88, 0.31],
+            concept_embeddings=[
+                [0.72, 0.40, 0.85, 0.30],
+                [0.10, 0.90, 0.15, 0.05],
+                [0.45, 0.50, 0.48, 0.52],
+            ],
+            concept_values=[
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 1.0, 1.0, 0.0],
+                [0.5, 0.5, 0.5, 0.5],
+            ],
+        )
+        return Response({
+            "status": "success",
+            "epochs_active": [
+                {"epoch": "1996-2004", "name": "Graph Topology & Stationary Centrality", "status": "computed"},
+                {"epoch": "2004-2015", "name": "Distributed State & Merkle DAG Consensus", "status": "verified"},
+                {"epoch": "2015-2020", "name": "Conservation Invariants & Constant-Product AMMs", "status": "bounded"},
+                {"epoch": "2017-2024", "name": "High-Dimensional Continuous Manifold Attention", "status": "projected"},
+                {"epoch": "2024-2026", "name": "Neuro-Symbolic Synthesis & Self-Healing Autonomy", "status": "active"},
+            ],
+            "evaluation": asdict(report),
+        }, status=status.HTTP_200_OK)

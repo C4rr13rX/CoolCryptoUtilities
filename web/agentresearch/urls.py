@@ -30,4 +30,5 @@ urlpatterns = [
     path("profit-markers/send-all/", views.SendAllProfitsView.as_view(), name="agentresearch-send-all-profits"),
     path("token-limits/", views.TokenLimitsView.as_view(), name="agentresearch-token-limits"),
     path("fund-tracker/", views.FundTrackerView.as_view(), name="agentresearch-fund-tracker"),
+    path("deterministic-innovation/", views.DeterministicInnovationView.as_view(), name="agentresearch-deterministic-innovation"),
 ]
