@@ -29,6 +29,7 @@ ledger.
 """
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -207,8 +208,28 @@ class MoneyButtonStrategy(Strategy):
         # changed no fire and no outcome. **Judge feed density inside the
         # evaluation window, never by an average over the whole history.**
         # ------------------------------------------------------------------
+        # Read EdgeForge GA & Alpha Wallet feedback overrides for this symbol
+        edge_override: Optional[Dict[str, Any]] = None
+        try:
+            from pathlib import Path
+            from services.atomic_json import read_json
+            _ov_path = Path(__file__).resolve().parents[2] / "data" / "money_button_edge_overrides.json"
+            if _ov_path.is_file():
+                _mb_d, _ok = read_json(_ov_path, default={})
+                _sym_k = str(getattr(state, "symbol", "") or "").upper()
+                if _ok and isinstance(_mb_d, dict):
+                    edge_override = (_mb_d.get("symbols") or {}).get(_sym_k)
+        except Exception:
+            pass
+
         median_gap = float(np.median(np.diff(ts))) if ts.size > 1 else 60.0
-        hold_minutes = env_float("MONEY_BUTTON_HOLD_MIN", 12.0, lo=5.0, hi=15.0)
+
+        # Rapid micro-horizon: EdgeForge GA estimated_hold_seconds or env override
+        override_hold_sec = float(edge_override.get("estimated_hold_seconds") or 0.0) if edge_override else 0.0
+        if 15.0 <= override_hold_sec <= 900.0:
+            hold_minutes = override_hold_sec / 60.0
+        else:
+            hold_minutes = env_float("MONEY_BUTTON_HOLD_MIN", 12.0, lo=0.25, hi=15.0)
         # ONE tick inside the hold, not two.
         #
         # Two was the first attempt and it rejected the production feed
@@ -238,15 +259,16 @@ class MoneyButtonStrategy(Strategy):
         # Cost floor. This is the whole point of the strategy.
         # ------------------------------------------------------------------
         slippage = env_float("MONEY_BUTTON_SLIPPAGE", 0.001, lo=0.0, hi=0.05)
-        # Both legs pay the fee; a "profitable" one-way move that cannot pay
-        # for its own exit is a loss that has not been realised yet.
-        round_trip_cost = 2.0 * float(ctx.fee_rate) + slippage
-        # Margin is small on purpose. The projected move is already discounted
-        # twice below (momentum decay, then a volatility penalty), so stacking
-        # a large margin on top means requiring roughly 3x the round trip in
-        # raw movement -- which rejects a clean 6%-in-40min trend and leaves
-        # the lane unable to produce the evidence it exists to produce.
-        margin = env_float("MONEY_BUTTON_MARGIN", 1.1, lo=1.0, hi=5.0)
+        # Measured symbol fee rate if provided by EdgeForge GA / Census, else standard 2*fee
+        if edge_override and float(edge_override.get("measured_fee_rate") or 0.0) > 0:
+            round_trip_cost = float(edge_override["measured_fee_rate"]) + slippage
+        else:
+            round_trip_cost = 2.0 * float(ctx.fee_rate) + slippage
+
+        # When EdgeForge GA or Alpha Wallet confirms positive edge, calibrate margin cleanly (1.05)
+        has_edge_boost = bool(edge_override and (float(edge_override.get("net_return_after_fees") or 0.0) > 0 or edge_override.get("has_alpha_signal")))
+        default_margin = 1.05 if has_edge_boost else 1.10
+        margin = env_float("MONEY_BUTTON_MARGIN", default_margin, lo=1.0, hi=5.0)
         required_edge = round_trip_cost * margin
 
         # ------------------------------------------------------------------
@@ -338,47 +360,59 @@ class MoneyButtonStrategy(Strategy):
         confidence += 0.06 if r30 > 0 and r10 > 0 else 0.0    # aligned windows
         confidence += min(0.08, max(0.0, slope_per_min) * 40.0)
         confidence -= min(0.15, volatility * 4.0)             # penalise noise
-        # EdgeForge GA feedback loop: credit symbols with verified post-fee rapid edges
-        try:
-            from pathlib import Path
-            from services.atomic_json import read_json
-            _ov_path = Path(__file__).resolve().parents[2] / "data" / "money_button_edge_overrides.json"
-            if _ov_path.is_file():
-                _mb_d, _ok = read_json(_ov_path, default={})
-                _sym_k = str(getattr(state, "symbol", "") or "").upper()
-                _ov = (_mb_d.get("symbols") or {}).get(_sym_k) if _ok and isinstance(_mb_d, dict) else None
-                if isinstance(_ov, dict) and float(_ov.get("net_return_after_fees") or 0.0) > 0:
-                    confidence += 0.03
-        except Exception:
-            pass
+        # Cross-App Feedback Loop: credit symbols with EdgeForge GA and Alpha Wallet signals
+        if edge_override and isinstance(edge_override, dict):
+            # 1. EdgeForge GA positive OOS return after fees
+            if float(edge_override.get("net_return_after_fees") or 0.0) > 0:
+                confidence += 0.05
+            # 2. Alpha Wallet on-chain signal (fresh within 30 min)
+            if edge_override.get("has_alpha_signal"):
+                alpha_ts = float(edge_override.get("alpha_timestamp") or 0.0)
+                if time.time() - alpha_ts <= 1800.0:
+                    confidence += 0.12
+            # 3. High holdout t-stat boost
+            if float(edge_override.get("holdout_t_stat") or 0.0) >= 2.0:
+                confidence += 0.04
+            # 4. Cross-DEX arbitrage radar boost
+            if edge_override.get("has_arbitrage_edge"):
+                confidence += 0.08
         confidence = max(0.01, min(0.95, confidence))
 
         min_confidence = env_float("MONEY_BUTTON_MIN_CONFIDENCE", 0.62, lo=0.5, hi=0.99)
         if confidence < min_confidence:
             return self._decline("confidence_below_floor")
 
-        # Snap to the lane this strategy is defined by: 5-15 minutes.
-        horizon_minutes = int(min(15, max(5, round(hold_minutes))))
+        # Snap to rapid horizon: sub-minute in seconds or 1-15 minutes
+        if hold_minutes < 1.0:
+            horizon_str = f"{int(round(hold_minutes * 60))}s"
+        else:
+            horizon_minutes = int(min(15, max(1, round(hold_minutes))))
+            horizon_str = f"{horizon_minutes}m"
 
-        target_price = float(ctx.last_price) * (1.0 + conservative_edge)
+        # Align target price with GA take-profit target if specified
+        tp_target_rate = float(edge_override.get("tp_pct") or 0.0) if edge_override else 0.0
+        if tp_target_rate > round_trip_cost:
+            target_price = float(ctx.last_price) * (1.0 + tp_target_rate)
+        else:
+            target_price = float(ctx.last_price) * (1.0 + conservative_edge)
+
+        reason_str = (
+            f"{horizon_str} rapid momentum {slope_per_min * 100:.3f}%/min; "
+            f"net edge {conservative_edge * 100:.2f}% vs round-trip {round_trip_cost * 100:.2f}%"
+        )
+        if edge_override and edge_override.get("has_alpha_signal"):
+            reason_str += f" [Smart Money Follow: {edge_override.get('alpha_alias', 'Alpha Wallet')}]"
 
         return self.make_candidate(
             state,
             ctx,
             action="enter",
-            # The CDCL solver compares expected_return against fee_rate; pass
-            # the conservative figure so a candidate can never look better to
-            # the solver than it did to the gate above.
             expected_return=conservative_edge,
             target_price=target_price,
             confidence=confidence,
             direction_prob=confidence,
-            reason=(
-                f"{horizon_minutes}m momentum {slope_per_min * 100:.3f}%/min; "
-                f"net edge {conservative_edge * 100:.2f}% vs round-trip "
-                f"{round_trip_cost * 100:.2f}%"
-            ),
-            horizon=f"{horizon_minutes}m",
+            reason=reason_str,
+            horizon=horizon_str,
             extra_meta={
                 "lane": "money_button",
                 "returns": {"5m": r5, "10m": r10, "30m": r30},
@@ -391,5 +425,8 @@ class MoneyButtonStrategy(Strategy):
                 "volatility": volatility,
                 "distinct_prices": distinct,
                 "window_sec": span_sec,
+                "has_alpha_signal": bool(edge_override and edge_override.get("has_alpha_signal")),
+                "alpha_alias": edge_override.get("alpha_alias") if edge_override else None,
+                "edge_formula": edge_override.get("formula") if edge_override else None,
             },
         )

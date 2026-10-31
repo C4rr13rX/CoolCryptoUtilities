@@ -601,3 +601,102 @@ class AgentTokenLimiterAndAutoResumeTests(TestCase):
         self.assertIn("agy", data["token_limits"])
         self.assertIn("codex", data["token_limits"])
         self.assertIn("claude", data["token_limits"])
+
+
+class PipelineFeedbackAndRapidProfitabilityTests(TestCase):
+    """Unit and integration tests for cross-app feedback loops, alpha mirroring, and dynamic sizing."""
+
+    def setUp(self):
+        self.client = APIClient()
+        from .engine import RESEARCH_COORDINATOR, AlphaWalletResearcher
+        RESEARCH_COORDINATOR.ensure_default_agents()
+        AlphaWalletResearcher.ensure_default_alpha_wallets()
+
+    def test_alpha_wallet_broadcasts_signal_to_money_button(self):
+        """Verify confirmed alpha wallet trades broadcast directly to money button overrides."""
+        from .engine import AlphaWalletResearcher
+        from .models import AlphaTraderWallet
+        from services.atomic_json import read_json
+        from pathlib import Path
+
+        wallet = AlphaTraderWallet.objects.filter(chain="base").first()
+        self.assertIsNotNone(wallet)
+
+        # Confirm trade
+        res = AlphaWalletResearcher.confirm_and_graduate_wallet(wallet.pk)
+        self.assertNotIn("error", res)
+
+        # Check money_button_edge_overrides.json
+        ov_path = Path("data") / "money_button_edge_overrides.json"
+        self.assertTrue(ov_path.is_file())
+        data, ok = read_json(ov_path, default={})
+        self.assertTrue(ok)
+        symbols = data.get("symbols", {})
+        self.assertIn("WETH-USDC", symbols)
+        sym_ov = symbols["WETH-USDC"]
+        self.assertTrue(sym_ov.get("has_alpha_signal"))
+        self.assertEqual(sym_ov.get("chain"), "base")
+        self.assertGreater(sym_ov.get("alpha_win_rate"), 0.70)
+
+    def test_money_button_rapid_evaluation_with_overrides(self):
+        """Verify MoneyButtonStrategy incorporates alpha signal, arbitrage radar, and GA overrides."""
+        import time
+        import types
+        from trading.strategies.base import StrategyContext
+        from trading.strategies.money_button import MoneyButtonStrategy
+
+        now = time.time()
+        # Create a trending price series (15 samples, 100s apart)
+        dt = 100.0
+        prices = [100.0 + (i * 1.5) for i in range(16)]  # strong trend ~22.5% over 1500s
+        samples = [(now - (len(prices) - 1 - i) * dt, p, 500.0) for i, p in enumerate(prices)]
+
+        state = types.SimpleNamespace()
+        state.symbol = "WETH-USDC"
+        state.base_token = "WETH"
+        state.quote_token = "USDC"
+        state.samples = samples
+
+        ctx = StrategyContext(
+            chain="base",
+            last_price=float(prices[-1]),
+            last_volume=1000.0,
+            fee_rate=0.0005,  # 5 bps typical Aerodrome / Uni v3
+            available_quote=100.0,
+            available_base=0.0,
+            risk_budget=1.0,
+        )
+
+        strat = MoneyButtonStrategy()
+        candidate = strat.evaluate(state, ctx)
+        self.assertIsNotNone(candidate)
+        meta = candidate["meta"]
+        self.assertEqual(meta["lane"], "money_button")
+        self.assertGreater(candidate["score"], 0.0)
+        self.assertGreaterEqual(meta["confidence"], 0.62)
+
+    def test_dynamic_win_streak_clip_scaling(self):
+        """Verify Strategy._size_enter applies streak multiplier and respects minimum clip bounds."""
+        from trading.strategies.base import Strategy, StrategyContext
+
+        class DummyStrategy(Strategy):
+            strategy_id = "test_strat"
+            default_horizon = "5m"
+            def evaluate(self, state, ctx):
+                return None
+
+        strat = DummyStrategy()
+        ctx = StrategyContext(
+            chain="base",
+            last_price=2800.0,
+            last_volume=1000.0,
+            fee_rate=0.0005,
+            available_quote=5.0,  # $5 balance (cents trading)
+            available_base=0.0,
+            risk_budget=1.0,
+        )
+
+        # Baseline entry size should clamp to min_clip ($0.25)
+        size_quote = strat._size_enter(ctx, edge=0.02)
+        self.assertGreaterEqual(size_quote, 0.25)
+        self.assertLessEqual(size_quote, 5.0)

@@ -345,11 +345,32 @@ class Strategy(ABC):
     # ------------------------------------------------------------------
 
     def _size_enter(self, ctx: StrategyContext, edge: float) -> float:
-        """Quote-denominated size: modest, edge-scaled fraction of quote."""
+        """Quote-denominated size: modest, edge-scaled fraction of quote with win-streak compounding."""
         min_frac = env_float("STRATEGY_MIN_QUOTE_FRAC", 0.03, lo=0.0, hi=0.5)
         max_frac = env_float("STRATEGY_MAX_QUOTE_FRAC", 0.12, lo=0.01, hi=0.5)
         frac = min(max_frac, max(min_frac, 0.04 + min(0.08, max(edge, 0.0) * 2.0)))
-        return ctx.available_quote * frac * max(0.0, min(1.0, ctx.risk_budget))
+        min_clip = env_float("STRATEGY_MIN_CLIP_USD", 0.25, lo=0.01, hi=100.0)
+
+        # Dynamic win-streak multiplier: asymmetric upside on hot streaks
+        streak_multiplier = 1.0
+        try:
+            from services.atomic_json import read_json
+            from pathlib import Path
+            ledger_path = Path(__file__).resolve().parents[2] / "data" / "strategy_ledger.json"
+            if ledger_path.is_file():
+                ledger_data, ok = read_json(ledger_path, default={})
+                if ok and isinstance(ledger_data, dict):
+                    strat_stats = ledger_data.get(self.strategy_id, {})
+                    wins = int(strat_stats.get("consecutive_wins") or 0)
+                    if wins >= 4:
+                        streak_multiplier = 4.0
+                    elif wins >= 2:
+                        streak_multiplier = 2.0
+        except Exception:
+            streak_multiplier = 1.0
+
+        raw_size = max(min_clip, ctx.available_quote * frac) * streak_multiplier * max(0.0, min(1.0, ctx.risk_budget))
+        return min(ctx.available_quote, raw_size)
 
     def _size_exit(self, ctx: StrategyContext, confidence: float) -> float:
         base_frac = env_float("STRATEGY_EXIT_BASE_FRAC", 0.5, lo=0.1, hi=1.0)

@@ -950,6 +950,35 @@ class AlphaWalletResearcher:
     ]
 
     @classmethod
+    def broadcast_alpha_signal(cls, wallet: Any, symbol: str, action: str, price: float) -> None:
+        """Broadcasts confirmed on-chain alpha wallet moves directly into the Money Button rapid execution lane."""
+        try:
+            from services.atomic_json import file_lock, read_json, write_json
+            with _file_lock(MONEY_BUTTON_OVERRIDES_PATH):
+                data, ok = read_json(MONEY_BUTTON_OVERRIDES_PATH, default={})
+                if not ok or not isinstance(data, dict):
+                    data = {}
+                symbols = data.setdefault("symbols", {})
+                sym_data = symbols.setdefault(symbol.upper(), {})
+                sym_data.update({
+                    "has_alpha_signal": True,
+                    "alpha_wallet_address": wallet.wallet_address,
+                    "alpha_alias": wallet.alias or f"Alpha {wallet.chain.upper()}",
+                    "alpha_win_rate": round(float(wallet.win_rate), 4),
+                    "alpha_months_winning": int(wallet.months_winning),
+                    "alpha_action": action,
+                    "alpha_entry_price": float(price),
+                    "alpha_timestamp": time.time(),
+                    "chain": wallet.chain,
+                    "symbol": symbol.upper(),
+                })
+                data["last_updated"] = time.time()
+                write_json(MONEY_BUTTON_OVERRIDES_PATH, data)
+                logger.info("[AlphaWallet] Broadcast signal for %s -> %s (action=%s, px=%.4f)", wallet.alias, symbol, action, price)
+        except Exception as exc:
+            logger.warning("Could not broadcast alpha signal: %s", exc)
+
+    @classmethod
     def ensure_default_alpha_wallets(cls) -> None:
         """Seed verified on-chain alpha trader wallets."""
         from .models import AlphaTraderWallet
@@ -1028,6 +1057,8 @@ class AlphaWalletResearcher:
             status=WalletFollowTrade.Status.CONFIRMING,
             notes=f"Detected live on-chain swap by {wallet.alias or wallet.wallet_address[:10]}",
         )
+        # Broadcast signal to Money Button and TradingAgent rapid execution lanes
+        cls.broadcast_alpha_signal(wallet, symbol, action, live_price)
 
         # Update confirmation stats
         wallet.live_confirm_trades_count += 1
@@ -1502,6 +1533,37 @@ class ResearchCoordinator:
                 )
             except Exception:
                 pass
+
+        # Publish profitable arbitrage to fast opportunity stream & money button overrides
+        profitable_opps = [o for o in opps if o.get("is_profitable_after_fees")]
+        if profitable_opps:
+            try:
+                from services.atomic_json import file_lock, write_json, read_json
+                arb_path = ROOT / "data" / "arbitrage_opportunities.json"
+                write_json(arb_path, {"updated_at": time.time(), "opportunities": profitable_opps[:20]})
+
+                # Wire top cross-DEX spreads into money button edge overrides
+                with _file_lock(MONEY_BUTTON_OVERRIDES_PATH):
+                    mb_state, mb_ok = read_json(MONEY_BUTTON_OVERRIDES_PATH, default={})
+                    if not mb_ok or not isinstance(mb_state, dict):
+                        mb_state = {}
+                    sym_dict = mb_state.setdefault("symbols", {})
+                    for top_op in profitable_opps[:5]:
+                        sym = f"{top_op['asset']}-USDC"
+                        sym_entry = sym_dict.setdefault(sym, {})
+                        sym_entry.update({
+                            "has_arbitrage_edge": True,
+                            "arbitrage_edge_pct": top_op["net_edge_pct"],
+                            "buy_dex": top_op["buy_dex"],
+                            "sell_dex": top_op["sell_dex"],
+                            "chain": top_op["buy_chain"],
+                            "symbol": sym,
+                            "updated_at": time.time(),
+                        })
+                    mb_state["last_updated"] = time.time()
+                    write_json(MONEY_BUTTON_OVERRIDES_PATH, mb_state)
+            except Exception as exc:
+                logger.warning("Could not publish arbitrage opportunities: %s", exc)
 
         self._last_scan_ts = time.time()
         return {
