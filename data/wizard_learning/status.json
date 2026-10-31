@@ -1,0 +1,459 @@
+{
+  "gate": {
+    "ready": false,
+    "stage": "foundation",
+    "blockers": [
+      "Configure the deployed model's immutable checkpoint ID before admission.",
+      "Foundation grounding, transfer, joint-prerogative, and retention assessments have not passed."
+    ],
+    "manifest_hash": "d56653ba052d8abb99af6567f67f2a7eb9053a9b747561950da4292cf17d9083",
+    "suite_hash": "29d9bf6e533734df1ed88e88a96d01725cd02904e45b1902b7ba252996a48d1b",
+    "revision": 0,
+    "assessment": {},
+    "scope": "Finite measured benchmark; not proof of unrestricted mature understanding."
+  },
+  "queue": [
+    {
+      "id": "2ae6a8788e9095e3d088f0781cb6d45ddb0304178a6dfb72bd05871baf70d455",
+      "kind": "source-discovery",
+      "state": "queued",
+      "payload": {
+        "collection": "marionstokesvideo",
+        "note": "TV recordings may include cartoons, advertisements, copyrighted inserts and inaccurate claims. No collection-wide commercial-training clearance is inferred.",
+        "real_footage_status": "needs-segment-review",
+        "reported_license": null,
+        "reported_rights": null,
+        "rights_status": "unverified",
+        "source_page": "https://archive.org/details/WCAU_Input04",
+        "title": "Input - #4 - The Anatomy of Violence - Part 4 - Violence for Breakfast [1\" tape]"
+      },
+      "eligible": false,
+      "blockers": [
+        "Discovery reference only; each clip needs separate rights and real-footage review.",
+        "Foundation assessments must pass before broad experience training.",
+        "Observed outcomes and all-prerogative associations need annotation."
+      ],
+      "error": ""
+    },
+    {
+      "id": "4fd4cf8240636aa8ebfd2ca630ee059937926186d8be9340359399a33bf67bff",
+      "kind": "source-discovery",
+      "state": "queued",
+      "payload": {
+        "collection": "marionstokesvideo",
+        "note": "TV recordings may include cartoons, advertisements, copyrighted inserts and inaccurate claims. No collection-wide commercial-training clearance is inferred.",
+        "real_footage_status": "needs-segment-review",
+        "reported_license": null,
+        "reported_rights": null,
+        "rights_status": "unverified",
+        "source_page": "https://archive.org/details/WCAU_Input34",
+        "title": "Input - #34 - Women - Part 2 - Out of the Frying Pan\u2026 [1\" tape]"
+      },
+      "eligible": false,
+      "blockers": [
+        "Discovery reference only; each clip needs separate rights and real-footage review.",
+        "Foundation assessments must pass before broad experience training.",
+        "Observed outcomes and all-prerogative associations need annotation."
+      ],
+      "error": ""
+    },
+    {
+      "id": "8b5cd1830e5a366dcc0b74fddffdc7fa53f69670e358d5ccd5fdbb237fc23601",
+      "kind": "source-discovery",
+      "state": "queued",
+      "payload": {
+        "collection": "marionstokesvideo",
+        "note": "TV recordings may include cartoons, advertisements, copyrighted inserts and inaccurate claims. No collection-wide commercial-training clearance is inferred.",
+        "real_footage_status": "needs-segment-review",
+        "reported_license": null,
+        "reported_rights": null,
+        "rights_status": "unverified",
+        "source_page": "https://archive.org/details/WCAU_Input24",
+        "title": "Input - #24 - The Anatomy of the Unknown - Dimensions\u2026 Religion Science Philosophy Art? - Part 2 - The Past [1\" tape]"
+      },
+      "eligible": false,
+      "blockers": [
+        "Discovery reference only; each clip needs separate rights and real-footage review.",
+        "Foundation assessments must pass before broad experience training.",
+        "Observed outcomes and all-prerogative associations need annotation."
+      ],
+      "error": ""
+    },
+    {
+      "id": "c794ed4855f32a6eac9d1a16b605df781b319d37131cf4a74eae1023c65945b0",
+      "kind": "source-discovery",
+      "state": "queued",
+      "payload": {
+        "collection": "marionstokesvideo",
+        "note": "TV recordings may include cartoons, advertisements, copyrighted inserts and inaccurate claims. No collection-wide commercial-training clearance is inferred.",
+        "real_footage_status": "needs-segment-review",
+        "reported_license": null,
+        "reported_rights": null,
+        "rights_status": "unverified",
+        "source_page": "https://archive.org/details/WCAU_Input17",
+        "title": "Input - #17 - Anatomy of Life - Part 4 - Survival Sweepstakes [1\" tape]"
+      },
+      "eligible": false,
+      "blockers": [
+        "Discovery reference only; each clip needs separate rights and real-footage review.",
+        "Foundation assessments must pass before broad experience training.",
+        "Observed outcomes and all-prerogative associations need annotation."
+      ],
+      "error": ""
+    },
+    {
+      "id": "62db28710aaf36034570003a012ef039644462d28e5b5a582a7293b3f9aafaca",
+      "kind": "source-discovery",
+      "state": "queued",
+      "payload": {
+        "collection": "marionstokesvideo",
+        "note": "TV recordings may include cartoons, advertisements, copyrighted inserts and inaccurate claims. No collection-wide commercial-training clearance is inferred.",
+        "real_footage_status": "needs-segment-review",
+        "reported_license": null,
+        "reported_rights": null,
+        "rights_status": "unverified",
+        "source_page": "https://archive.org/details/WCAU_Input49",
+        "title": "Input - #49 - Shhh! - The Silent American [1\" tape]"
+      },
+      "eligible": false,
+      "blockers": [
+        "Discovery reference only; each clip needs separate rights and real-footage review.",
+        "Foundation assessments must pass before broad experience training.",
+        "Observed outcomes and all-prerogative associations need annotation."
+      ],
+      "error": ""
+    },
+    {
+      "id": "a8f0fb03017fad320cbdbb5c2c79ccc23bab2d5cb77541273c10875105db8535",
+      "kind": "source-discovery",
+      "state": "queued",
+      "payload": {
+        "collection": "marionstokesvideo",
+        "note": "TV recordings may include cartoons, advertisements, copyrighted inserts and inaccurate claims. No collection-wide commercial-training clearance is inferred.",
+        "real_footage_status": "needs-segment-review",
+        "reported_license": null,
+        "reported_rights": null,
+        "rights_status": "unverified",
+        "source_page": "https://archive.org/details/1004593_Comedy-J_Leno_D_Letterman_1993-09-08_01",
+        "title": "Comedy-J Leno D Letterman"
+      },
+      "eligible": false,
+      "blockers": [
+        "Discovery reference only; each clip needs separate rights and real-footage review.",
+        "Foundation assessments must pass before broad experience training.",
+        "Observed outcomes and all-prerogative associations need annotation."
+      ],
+      "error": ""
+    },
+    {
+      "id": "5c4d5d31174ddc67cae5af023cdf5052378601eac7cd051d60e1405005b0e665",
+      "kind": "source-discovery",
+      "state": "queued",
+      "payload": {
+        "collection": "marionstokesvideo",
+        "note": "TV recordings may include cartoons, advertisements, copyrighted inserts and inaccurate claims. No collection-wide commercial-training clearance is inferred.",
+        "real_footage_status": "needs-segment-review",
+        "reported_license": null,
+        "reported_rights": null,
+        "rights_status": "unverified",
+        "source_page": "https://archive.org/details/WCAU_Input09",
+        "title": "Input - #9 - The Anatomy of Violence - Part 8 - Breakthrough [1\" tape]"
+      },
+      "eligible": false,
+      "blockers": [
+        "Discovery reference only; each clip needs separate rights and real-footage review.",
+        "Foundation assessments must pass before broad experience training.",
+        "Observed outcomes and all-prerogative associations need annotation."
+      ],
+      "error": ""
+    },
+    {
+      "id": "314655bc511e41ca28b42abde9f80d8e0cf1e152e81617bb46ea23e00bcf1dad",
+      "kind": "source-discovery",
+      "state": "queued",
+      "payload": {
+        "collection": "marionstokesvideo",
+        "note": "TV recordings may include cartoons, advertisements, copyrighted inserts and inaccurate claims. No collection-wide commercial-training clearance is inferred.",
+        "real_footage_status": "needs-segment-review",
+        "reported_license": null,
+        "reported_rights": null,
+        "rights_status": "unverified",
+        "source_page": "https://archive.org/details/WCAU_Input10",
+        "title": "Input - #10 - Wellsprings - The Open Community [1\" tape]"
+      },
+      "eligible": false,
+      "blockers": [
+        "Discovery reference only; each clip needs separate rights and real-footage review.",
+        "Foundation assessments must pass before broad experience training.",
+        "Observed outcomes and all-prerogative associations need annotation."
+      ],
+      "error": ""
+    },
+    {
+      "id": "ef8770a6926803b5f25c1654a32f55b81515bed8156ea1a3c78fa00b21f6a2f9",
+      "kind": "source-discovery",
+      "state": "queued",
+      "payload": {
+        "collection": "marionstokesvideo",
+        "note": "TV recordings may include cartoons, advertisements, copyrighted inserts and inaccurate claims. No collection-wide commercial-training clearance is inferred.",
+        "real_footage_status": "needs-segment-review",
+        "reported_license": null,
+        "reported_rights": null,
+        "rights_status": "unverified",
+        "source_page": "https://archive.org/details/WCAU_Input21",
+        "title": "Input - #21 - Astrology: Science or Superstition? - Part 1 [1\" tape]"
+      },
+      "eligible": false,
+      "blockers": [
+        "Discovery reference only; each clip needs separate rights and real-footage review.",
+        "Foundation assessments must pass before broad experience training.",
+        "Observed outcomes and all-prerogative associations need annotation."
+      ],
+      "error": ""
+    },
+    {
+      "id": "91889e6e4c1a6e827343183ee9ab945ad74268655b06a04164ecb2301940a741",
+      "kind": "source-discovery",
+      "state": "queued",
+      "payload": {
+        "collection": "marionstokesvideo",
+        "note": "TV recordings may include cartoons, advertisements, copyrighted inserts and inaccurate claims. No collection-wide commercial-training clearance is inferred.",
+        "real_footage_status": "needs-segment-review",
+        "reported_license": null,
+        "reported_rights": null,
+        "rights_status": "unverified",
+        "source_page": "https://archive.org/details/WCAU_Input23",
+        "title": "Input - #23 - The Anatomy of the Unknown - Dimensions\u2026 Religion Science Philosophy Art? - Part 1 - The Future [1\" tape]"
+      },
+      "eligible": false,
+      "blockers": [
+        "Discovery reference only; each clip needs separate rights and real-footage review.",
+        "Foundation assessments must pass before broad experience training.",
+        "Observed outcomes and all-prerogative associations need annotation."
+      ],
+      "error": ""
+    },
+    {
+      "id": "963a51085e95140e50de0c462a89d58e0cc6dcaa2eda14f5ae484b0ac8009267",
+      "kind": "video",
+      "state": "queued",
+      "payload": {
+        "content_review": {
+          "capture_type": "real-camera",
+          "animation_present": false,
+          "staged_fiction": false,
+          "review_status": "verified",
+          "reviewer": "Codex source-and-decoded-contact-sheet review",
+          "method": "Official source description and 24 timestamped decoded frames inspected; training restricted to the real-camera segment, excluding title cards.",
+          "start_seconds": 12.1,
+          "end_seconds": 55.0,
+          "video_sha256": "05811af87418f783fcc904af1c06e29f2453e7d7e32ba7934e0a93bcf6845e57"
+        },
+        "media_url": "https://usgs-ocapsv2-public-output-media.s3.us-west-2.amazonaws.com/assets/palladium/production/s3fs-public/atoms/video/multimediaFile-1803/MP4/multimediaFile-1803.mp4",
+        "reviewed_experience": {
+          "queue_id": "963a51085e95140e50de0c462a89d58e0cc6dcaa2eda14f5ae484b0ac8009267",
+          "video": "D:\\Projects\\CoolCryptoUtilities\\data\\wizard_learning\\video_review\\963a51085e95140e50de0c462a89d58e0cc6dcaa2eda14f5ae484b0ac8009267.mp4",
+          "sha256": "05811af87418f783fcc904af1c06e29f2453e7d7e32ba7934e0a93bcf6845e57",
+          "contact_sheet": "D:\\Projects\\CoolCryptoUtilities\\data\\wizard_learning\\video_review\\963a51085e95140e50de0c462a89d58e0cc6dcaa2eda14f5ae484b0ac8009267-contact.png",
+          "duration_seconds": 57.82443333333333,
+          "sampled_timestamps": [
+            0.0,
+            2.4093513888888887,
+            4.818702777777777,
+            7.2280541666666664,
+            9.637405555555555,
+            12.046756944444445,
+            14.456108333333333,
+            16.865459722222223,
+            19.27481111111111,
+            21.6841625,
+            24.09351388888889,
+            26.502865277777776,
+            28.912216666666666,
+            31.321568055555556,
+            33.730919444444446,
+            36.14027083333333,
+            38.54962222222222,
+            40.95897361111111,
+            43.368325,
+            45.77767638888889,
+            48.18702777777778,
+            50.59637916666666,
+            53.00573055555555,
+            55.415081944444445
+          ],
+          "timing_note": "Official description states playback is 2x real time; preserve this timing transformation.",
+          "source_page": "https://www.usgs.gov/media/videos/helicopter-overflight-kilauea-crater",
+          "source_license_evidence_sha256": "b790f49543a687951b6ec1e8960ce9e50818741f3146e4ac03f26399011623ca",
+          "review_status": "needs-review",
+          "learning": false,
+          "reviewer": "Codex source-and-decoded-contact-sheet review",
+          "method": "Official source description and 24 timestamped decoded frames inspected; training restricted to the real-camera segment, excluding title cards.",
+          "capture_type": "real-camera",
+          "animation_present": false,
+          "staged_fiction": false,
+          "checked_prerogatives": [
+            "P01",
+            "P02",
+            "P03",
+            "P04",
+            "P05",
+            "P06",
+            "P07",
+            "P08",
+            "P09",
+            "P10",
+            "P11",
+            "P12"
+          ],
+          "conflicts": [],
+          "outcome_verified": true,
+          "observed_outcome": {
+            "visible_observations": [
+              "Rocky crater terrain is visible.",
+              "The camera viewpoint changes during an aerial pass.",
+              "A pale plume extends from a depression."
+            ],
+            "source_identification": "USGS identifies the location as Kilauea caldera.",
+            "timing": "Published playback is twice real time."
+          },
+          "start_seconds": 12.1,
+          "end_seconds": 55.0
+        },
+        "rights": {
+          "attribution": "Courtesy U.S. Geological Survey / Hawaiian Volcano Observatory. Source URL retained with every clip and training record.",
+          "creator": "U.S. Geological Survey / Hawaiian Volcano Observatory",
+          "evidence_sha256": "b790f49543a687951b6ec1e8960ce9e50818741f3146e4ac03f26399011623ca",
+          "evidence_url": "https://www.usgs.gov/media/videos/helicopter-overflight-kilauea-crater",
+          "license_id": "USGS-PD",
+          "license_url": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits",
+          "restrictions_note": "Use this specific USGS-produced nature footage only; do not imply endorsement. Content review and outcome annotation remain required.",
+          "review_status": "source_verified",
+          "reviewed_at": "2026-10-24T16:04:47.945574+00:00",
+          "reviewer": "official-per-item-public-domain-declaration-v1",
+          "source_page": "https://www.usgs.gov/media/videos/helicopter-overflight-kilauea-crater",
+          "third_party_restrictions": "reviewed"
+        },
+        "stage": "general",
+        "timing_note": "Official description states playback is 2x real time; preserve this timing transformation.",
+        "title": "Helicopter Overflight of K\u012blauea Crater",
+        "next_seconds": 12.1
+      },
+      "eligible": false,
+      "blockers": [
+        "Foundation assessments must pass before broad experience training."
+      ],
+      "error": ""
+    },
+    {
+      "id": "a80dc854c284b9a49047b66f8a70aaf3f5031408c3b1d8abe059061ec51e33db",
+      "kind": "video",
+      "state": "queued",
+      "payload": {
+        "content_review": {
+          "capture_type": "real-camera",
+          "animation_present": false,
+          "staged_fiction": false,
+          "review_status": "verified",
+          "reviewer": "Codex source-and-decoded-contact-sheet review",
+          "method": "Official source description and 24 timestamped decoded frames inspected; training restricted to the real-camera segment, excluding title cards.",
+          "start_seconds": 11.5,
+          "end_seconds": 37.0,
+          "video_sha256": "2b0ddb815d7c32a647ea0528718c228c1c052ffac7f206ebc55f3424541fa46d"
+        },
+        "media_url": "https://usgs-ocapsv2-public-output-media.s3.us-west-2.amazonaws.com/assets/palladium/production/s3fs-public/atoms/video/multimediaFile-1352/MP4/multimediaFile-1352.mp4",
+        "reviewed_experience": {
+          "queue_id": "a80dc854c284b9a49047b66f8a70aaf3f5031408c3b1d8abe059061ec51e33db",
+          "video": "D:\\Projects\\CoolCryptoUtilities\\data\\wizard_learning\\video_review\\a80dc854c284b9a49047b66f8a70aaf3f5031408c3b1d8abe059061ec51e33db.mp4",
+          "sha256": "2b0ddb815d7c32a647ea0528718c228c1c052ffac7f206ebc55f3424541fa46d",
+          "contact_sheet": "D:\\Projects\\CoolCryptoUtilities\\data\\wizard_learning\\video_review\\a80dc854c284b9a49047b66f8a70aaf3f5031408c3b1d8abe059061ec51e33db-contact.png",
+          "duration_seconds": 38.60523333333333,
+          "sampled_timestamps": [
+            0.0,
+            1.6085513888888887,
+            3.2171027777777774,
+            4.825654166666666,
+            6.434205555555555,
+            8.042756944444443,
+            9.651308333333333,
+            11.259859722222222,
+            12.86841111111111,
+            14.476962499999999,
+            16.085513888888887,
+            17.694065277777778,
+            19.302616666666665,
+            20.911168055555553,
+            22.519719444444444,
+            24.128270833333332,
+            25.73682222222222,
+            27.34537361111111,
+            28.953924999999998,
+            30.562476388888886,
+            32.17102777777777,
+            33.779579166666664,
+            35.388130555555556,
+            36.99668194444444
+          ],
+          "timing_note": "Preserve source timing and verify any slow-motion or time-lapse transformations before annotation.",
+          "source_page": "https://www.usgs.gov/media/videos/spattering-kilaueas-summit-lava-lake",
+          "source_license_evidence_sha256": "690e47fcaf89e1ba9920a508b66fdd38be6813873e1a5239e92a9e69ea7da0ec",
+          "review_status": "needs-review",
+          "learning": false,
+          "reviewer": "Codex source-and-decoded-contact-sheet review",
+          "method": "Official source description and 24 timestamped decoded frames inspected; training restricted to the real-camera segment, excluding title cards.",
+          "capture_type": "real-camera",
+          "animation_present": false,
+          "staged_fiction": false,
+          "checked_prerogatives": [
+            "P01",
+            "P02",
+            "P03",
+            "P04",
+            "P05",
+            "P06",
+            "P07",
+            "P08",
+            "P09",
+            "P10",
+            "P11",
+            "P12"
+          ],
+          "conflicts": [],
+          "outcome_verified": true,
+          "observed_outcome": {
+            "visible_observations": [
+              "A bright orange molten-looking surface is visible against darker surroundings.",
+              "Bright spattering changes shape over time."
+            ],
+            "source_identification": "USGS identifies the event as spattering at Kilauea summit lava lake."
+          },
+          "start_seconds": 11.5,
+          "end_seconds": 37.0
+        },
+        "rights": {
+          "attribution": "Courtesy U.S. Geological Survey / Hawaiian Volcano Observatory. Source URL retained with every clip and training record.",
+          "creator": "U.S. Geological Survey / Hawaiian Volcano Observatory",
+          "evidence_sha256": "690e47fcaf89e1ba9920a508b66fdd38be6813873e1a5239e92a9e69ea7da0ec",
+          "evidence_url": "https://www.usgs.gov/media/videos/spattering-kilaueas-summit-lava-lake",
+          "license_id": "USGS-PD",
+          "license_url": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits",
+          "restrictions_note": "Use this specific USGS-produced nature footage only; do not imply endorsement. Content review and outcome annotation remain required.",
+          "review_status": "source_verified",
+          "reviewed_at": "2026-10-24T16:04:53.332703+00:00",
+          "reviewer": "official-per-item-public-domain-declaration-v1",
+          "source_page": "https://www.usgs.gov/media/videos/spattering-kilaueas-summit-lava-lake",
+          "third_party_restrictions": "reviewed"
+        },
+        "stage": "general",
+        "timing_note": "Preserve source timing and verify any slow-motion or time-lapse transformations before annotation.",
+        "title": "Spattering at K\u012blauea's Summit Lava Lake",
+        "next_seconds": 11.5
+      },
+      "eligible": false,
+      "blockers": [
+        "Foundation assessments must pass before broad experience training."
+      ],
+      "error": ""
+    }
+  ]
+}

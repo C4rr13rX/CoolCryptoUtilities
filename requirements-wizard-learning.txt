@@ -1,0 +1,3 @@
+# Optional local video review/decoder dependencies, verified in this workspace.
+opencv-python==4.13.0.92
+Pillow>=10.4,<13

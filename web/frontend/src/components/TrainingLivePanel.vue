@@ -177,7 +177,7 @@ interface Event {
   [k: string]: any
 }
 
-const open = ref(true)
+const open = ref(false)
 // Brain-viz mounts lazily: zero topology / activity polls until the
 // user opens it.  Defaults closed so the SPA boot is light.
 const brainOpen = ref(false)

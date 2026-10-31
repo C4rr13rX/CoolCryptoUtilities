@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:eye": "node --experimental-strip-types --test tests/wizardEye.test.mjs"
   },
   "overrides": {
     "glob": "^10.5.0"

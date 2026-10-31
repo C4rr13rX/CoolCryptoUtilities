@@ -53,6 +53,9 @@ class AgentTheFreeloaderSession:
         from .local_verifier import LocalCorrectionVerifier
         self._local_verifier = LocalCorrectionVerifier()
         specs = load_catalog(catalog_path)
+        if not catalog_path:
+            from .models import load_agy_strategic_specs
+            specs.extend(load_agy_strategic_specs())
         limits = merge_pool_limits(specs)
         # OpenRouter grants only 50 free requests/day until the account has
         # purchased at least $10 in credits.  Default conservatively; users who
@@ -299,6 +302,9 @@ class AgentTheFreeloaderSession:
     def probe(cls, catalog_path: str | Path | None = None) -> dict:
         try:
             specs = load_catalog(catalog_path)
+            if not catalog_path:
+                from .models import load_agy_strategic_specs
+                specs.extend(load_agy_strategic_specs())
         except Exception as exc:
             return {"online": False, "model": cls.MODEL_ID, "error": str(exc)}
         available = [spec for spec in specs if has_credential(spec)]

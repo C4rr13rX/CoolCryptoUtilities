@@ -58,6 +58,10 @@ class WizardChatAgentView(View):
                 {"error": "agent mode is restricted to localhost connections"},
                 status=403,
             )
+        from .views import _brain_for_request
+        from .learning_views import blocked_response
+        blocked = blocked_response(_brain_for_request(request))
+        if blocked is not None: return blocked
         try:
             body = json.loads(request.body)
         except Exception:

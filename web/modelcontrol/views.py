@@ -31,6 +31,7 @@ CONFIG_KEYS = frozenset({
 })
 BACKENDS = (
     {"id": "auto", "label": "Automatic", "description": "Use the first available configured backend."},
+    {"id": "agy", "label": "AGY (Antigravity)", "description": "Use Google Antigravity CLI & Research Agent."},
     {"id": "wizard", "label": "Wizard node", "description": "Use the local W1z4rD brain."},
     {"id": "bedrock", "label": "AWS Bedrock", "description": "Use the configured Bedrock model."},
     {"id": "claude", "label": "Anthropic", "description": "Use the Anthropic API directly."},
@@ -119,13 +120,27 @@ CURATED_MODELS = {
         "claude-haiku-4-5-20251001",
         "claude-fable-5",
     ],
+    "agy": [
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "claude-sonnet-4-5",
+        "claude-opus-4-5",
+    ],
 }
 
 # Agents that can *drive* a delivery run, as opposed to LLM backends that
 # merely answer prompts.  C0D3R V2 delegates to a selectable model
-# backend; the CLI agents (Codex, Claude Code) bring their own model
+# backend; the CLI agents (Codex, Claude Code, AGY) bring their own model
 # namespace and therefore ignore the backend picker.
 AGENTS = (
+    {
+        "id": "agy",
+        "label": "AGY (Antigravity)",
+        "description": "Google Antigravity CLI & Research Agent; guides GA evolution and autonomous research.",
+        "owns_model": True,
+        "models_key": "agy",
+        "requires_cli": "agy",
+    },
     {
         "id": "c0d3r",
         "label": "C0D3R V2",
@@ -154,6 +169,7 @@ AGENTS = (
 
 # Reasoning/effort vocabularies differ per agent.
 AGENT_REASONING = {
+    "agy": ["low", "medium", "high", "extra_high"],
     "c0d3r": ["low", "medium", "high", "extra_high"],
     "codex": ["low", "medium", "high", "extra_high"],
     "claude_code": ["low", "medium", "high", "extra_high"],
@@ -163,6 +179,7 @@ AGENT_REASONING = {
 def _agent_catalog() -> list[dict[str, Any]]:
     """Agents plus live CLI availability, so the UI can flag missing tools."""
     import shutil
+    from tools.agy_session import resolve_agy_executable
 
     out = []
     for agent in AGENTS:
@@ -170,7 +187,10 @@ def _agent_catalog() -> list[dict[str, Any]]:
         available = True
         detail = ""
         if cli:
-            resolved = shutil.which(cli)
+            if cli == "agy":
+                resolved = resolve_agy_executable()
+            else:
+                resolved = shutil.which(cli)
             available = resolved is not None
             detail = resolved or f"`{cli}` not found on PATH"
         out.append({
@@ -229,7 +249,7 @@ class ModelControlView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        backend = (_setting_value(request.user, "C0D3R_BACKEND") or "wizard").lower()
+        backend = (_setting_value(request.user, "C0D3R_BACKEND") or "agy").lower()
         model = _setting_value(request.user, "C0D3R_MODEL")
         selected_atf_models = [
             item.strip() for item in _setting_value(request.user, "AGENT_FREELOADER_MODELS").split(",") if item.strip()
@@ -300,7 +320,7 @@ class ModelOptionsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        backend = (_setting_value(request.user, "C0D3R_BACKEND") or "wizard").lower()
+        backend = (_setting_value(request.user, "C0D3R_BACKEND") or "agy").lower()
         model = _setting_value(request.user, "C0D3R_MODEL")
 
         catalog = []

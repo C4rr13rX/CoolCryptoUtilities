@@ -7,9 +7,13 @@
           <p>{{ t('settings.subtitle') }}</p>
         </div>
         <div class="header-actions">
+          <button type="button" class="btn" @click="openOpticalSync" style="background: rgba(56, 189, 248, 0.2); border-color: #38bdf8; color: #38bdf8;">
+            📱 Air-Gap QR Deck
+          </button>
           <button type="button" class="btn ghost" @click="refresh" :disabled="store.loading">
             {{ store.loading ? t('common.refreshing') : t('common.refresh') }}
           </button>
+
           <button
             v-if="wizardSteps.length"
             type="button"
@@ -398,9 +402,14 @@ watch(
   { immediate: true }
 );
 
+function openOpticalSync() {
+  window.dispatchEvent(new CustomEvent('open-optical-sync'));
+}
+
 function refresh() {
   store.load();
 }
+
 
 async function clearAll() {
   confirmingClear.value = false;

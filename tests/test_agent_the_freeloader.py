@@ -457,3 +457,111 @@ def test_atomic_implementation_rotates_after_two_calls_by_default(monkeypatch) -
         session.send("step", system=system)
     assert session.router.exclusions[:2] == [set(), set()]
     assert session.router.exclusions[2] == {"P:M"}
+
+
+def test_agy_strategic_models_prioritize_cheapest_working_tier_first(monkeypatch, tmp_path) -> None:
+    from tools.c0d3rV2.plugins.agent_the_freeloader.models import load_agy_strategic_specs
+
+    monkeypatch.setenv("AGENT_FREELOADER_PROVIDERS", "agy")
+    specs = load_agy_strategic_specs()
+    assert [s.model_id for s in specs] == [
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "claude-sonnet-4-5",
+        "claude-opus-4-5",
+    ]
+    limits = {pool_id: spec.limits for spec in specs for pool_id in spec.pool_ids}
+    router = FreeloaderRouter(
+        specs,
+        QuotaLedger(limits, state_path=tmp_path / "agy_quota.json"),
+        invoker=lambda s, **kw: ProviderResponse(
+            text='{"ok": true}',
+            headers={},
+            input_tokens=10,
+            output_tokens=10,
+        ),
+    )
+    fast_profile = classify_request(
+        "Return ONLY JSON with reformulated query for OHLCV edge search",
+        "Fast structured JSON helper",
+        max_tokens=256,
+    )
+    ranked_fast = router.rank(fast_profile)
+    assert ranked_fast[0].spec.model_id == "gemini-2.5-flash"
+
+
+def test_router_self_switches_on_invalid_json_output(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("TEST_FREE_KEY", "ok")
+    cheap = _spec("cheap-flash", pool="pool-a", coding=0.8, reasoning=0.8)
+    pro = _spec("escalated-pro", pool="pool-b", coding=0.8, reasoning=0.8)
+
+    calls = []
+
+    def fake_invoke(spec: ModelSpec, **kwargs) -> ProviderResponse:
+        calls.append(spec.model_id)
+        if spec.model_id == "cheap-flash":
+            return ProviderResponse(
+                text="Sorry, I cannot output JSON right now.",
+                headers={},
+                input_tokens=10,
+                output_tokens=5,
+            )
+        return ProviderResponse(
+            text='{"decision": "enter", "size_usd": 0.15}',
+            headers={},
+            input_tokens=15,
+            output_tokens=10,
+        )
+
+    limits = {"pool-a": cheap.limits, "pool-b": pro.limits}
+    router = FreeloaderRouter(
+        [cheap, pro],
+        QuotaLedger(limits, state_path=tmp_path / "json_quota.json"),
+        invoker=fake_invoke,
+    )
+    reply = router.send(
+        "Analyze pair and return only JSON decision object.",
+        system="Return ONLY JSON.",
+        max_tokens=256,
+    )
+    assert '"decision": "enter"' in reply
+    assert calls == ["cheap-flash", "escalated-pro"]
+    assert router.last_model_id == "escalated-pro"
+
+
+def test_single_agent_lock_serializes_concurrent_router_calls(monkeypatch, tmp_path) -> None:
+    import threading
+
+    monkeypatch.setenv("TEST_FREE_KEY", "ok")
+    spec = _spec("serial-model", pool="pool-serial")
+    active = 0
+    max_active = 0
+    counter_lock = threading.Lock()
+
+    def slow_invoke(s: ModelSpec, **kwargs) -> ProviderResponse:
+        nonlocal active, max_active
+        with counter_lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        with counter_lock:
+            active -= 1
+        return ProviderResponse(
+            text="ok",
+            headers={},
+            input_tokens=5,
+            output_tokens=5,
+        )
+
+    limits = {"pool-serial": spec.limits}
+    router = FreeloaderRouter(
+        [spec],
+        QuotaLedger(limits, state_path=tmp_path / "serial_quota.json"),
+        invoker=slow_invoke,
+    )
+    threads = [threading.Thread(target=lambda: router.send("ping")) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert max_active == 1

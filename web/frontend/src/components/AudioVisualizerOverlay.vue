@@ -17,6 +17,9 @@
 
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
+const emit = defineEmits<{ amplitude: [value: number]; playback: [value: { at_ms: number; present: boolean; messageId: string }] }>()
+let clockMedia: HTMLMediaElement | undefined
+let lastPlayback = ''
 
 // One shared AudioContext + analyser across the whole chat session.
 // Every <audio> element we attach to plumbs into this analyser via a
@@ -25,6 +28,7 @@ let audioCtx:    AudioContext | null = null
 let analyser:    AnalyserNode | null = null
 let mergerGain:  GainNode | null = null
 const attached:  WeakSet<HTMLMediaElement> = new WeakSet()
+const mediaCleanup: Array<() => void> = []
 
 const canvasEl = ref<HTMLCanvasElement | null>(null)
 let rafId = 0
@@ -67,18 +71,19 @@ function attachAudioElement(el: HTMLMediaElement) {
     const src = audioCtx.createMediaElementSource(el)
     src.connect(mergerGain)
     attached.add(el)
-  } catch { /* element already in another graph — leave it alone */ }
+  } catch { return /* element already in another graph — leave it alone */ }
   // Resume context on play (browsers gate autoplay until user gesture).
-  const resume = () => audioCtx?.resume().catch(() => {})
+  const resume = () => { clockMedia = el; void audioCtx?.resume().catch(() => {}) }
   el.addEventListener('play', resume, { passive: true })
+  mediaCleanup.push(() => el.removeEventListener('play', resume))
 }
 
 /** Scan the page for new audio/video elements and attach them. */
 function scanForMedia() {
-  const els = document.querySelectorAll<HTMLMediaElement>(
+  const els = canvasEl.value?.parentElement?.querySelectorAll<HTMLMediaElement>(
     'audio, video'
   )
-  els.forEach(attachAudioElement)
+  els?.forEach(attachAudioElement)
 }
 
 /** Draw one frame: read spectrum + RMS, render translucent bands.
@@ -89,6 +94,11 @@ function scanForMedia() {
 function drawFrame() {
   rafId = requestAnimationFrame(drawFrame)
   const canvas = canvasEl.value
+  if (!clockMedia?.isConnected || clockMedia.ended) clockMedia = undefined
+  const playback = { at_ms: (clockMedia?.currentTime || 0) * 1000, present: !!clockMedia,
+    messageId: clockMedia?.closest<HTMLElement>('[data-message-id]')?.dataset.messageId || '' }
+  const playbackKey = `${playback.messageId}:${playback.at_ms}:${playback.present}`
+  if (playbackKey !== lastPlayback) { emit('playback', playback); lastPlayback = playbackKey }
   if (!canvas || !analyser) {
     // No audio yet — clear and bail.
     if (canvas) {
@@ -115,6 +125,7 @@ function drawFrame() {
   let rms = 0
   for (let i = 0; i < bins; i++) rms += freq[i] * freq[i]
   rms = Math.sqrt(rms / bins) / 255
+  emit('amplitude', rms)
 
   const W = canvas.width, H = canvas.height
   const ctx = canvas.getContext('2d')
@@ -190,6 +201,8 @@ onBeforeUnmount(() => {
   if (scanIv) clearInterval(scanIv)
   resizeObs?.disconnect()
   mutationObs?.disconnect()
+  mediaCleanup.forEach(cleanup => cleanup())
+  void audioCtx?.close()
 })
 </script>
 

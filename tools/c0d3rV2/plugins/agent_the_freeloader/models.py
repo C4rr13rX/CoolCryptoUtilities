@@ -209,16 +209,20 @@ def _infer_capabilities(model_id: str, row: dict[str, str]) -> dict[str, float]:
         "speed": 0.55,
         "multilingual": 0.55,
         "structured": 0.55,
+        "quant_math": 0.50,
     }
     strength_tokens = ("120b", "235b", "550b", "70b", "pro", "large", "ultra", "r1")
     if any(token in text for token in strength_tokens):
         caps["general"] += 0.17
         caps["reasoning"] += 0.2
+        caps["quant_math"] += 0.2
         caps["speed"] -= 0.12
     if any(token in text for token in ("reason", "math", "thinking", "deepseek", "qwen3")):
         caps["reasoning"] += 0.2
+        caps["quant_math"] += 0.25
     if any(token in text for token in ("code", "coding", "software", "devstral", "codestral", "gpt-oss")):
         caps["coding"] += 0.35
+        caps["quant_math"] += 0.15
     if any(token in text for token in ("agent", "tool", "compound", "orchestration")):
         caps["tools"] += 0.35
     if any(token in text for token in ("image", "multimodal", "vision")):
@@ -230,6 +234,110 @@ def _infer_capabilities(model_id: str, row: dict[str, str]) -> dict[str, float]:
     if any(token in text for token in ("json", "extract", "classif", "structured")):
         caps["structured"] += 0.25
     return {key: max(0.0, min(1.0, value)) for key, value in caps.items()}
+
+
+def load_agy_strategic_specs() -> list[ModelSpec]:
+    """Return cost-tiered AGY (Google Antigravity CLI) specs ordered from least
+    expensive (`gemini-2.5-flash`) to higher-tier models (`gemini-2.5-pro`,
+    `claude-sonnet-4-5`, `claude-opus-4-5`)."""
+    return [
+        ModelSpec(
+            provider="AGY",
+            model_id="gemini-2.5-flash",
+            modalities=frozenset({"text"}),
+            best_at="Fast reformulation, structured JSON extraction, classification, and low-cost agent tasks",
+            base_url="agy://cli",
+            endpoint="gemini-2.5-flash",
+            api_style="AGY-CLI",
+            api_key_env="AGY_CLI_AVAILABLE",
+            pool_ids=("agy:tier1-flash",),
+            limits=PoolLimit(requests_per_minute=60, requests_per_day=5000, tokens_per_day=10_000_000),
+            capabilities={
+                "general": 0.90,
+                "reasoning": 0.84,
+                "coding": 0.85,
+                "tools": 0.88,
+                "multimodal": 0.80,
+                "speed": 0.98,
+                "multilingual": 0.90,
+                "structured": 0.96,
+                "quant_math": 0.86,
+                "cost_efficiency": 1.00,
+            },
+        ),
+        ModelSpec(
+            provider="AGY",
+            model_id="gemini-2.5-pro",
+            modalities=frozenset({"text"}),
+            best_at="Quantitative math, GA research, complex coding, multi-step planning, and tool orchestration",
+            base_url="agy://cli",
+            endpoint="gemini-2.5-pro",
+            api_style="AGY-CLI",
+            api_key_env="AGY_CLI_AVAILABLE",
+            pool_ids=("agy:tier2-pro",),
+            limits=PoolLimit(requests_per_minute=30, requests_per_day=2000, tokens_per_day=5_000_000),
+            capabilities={
+                "general": 0.96,
+                "reasoning": 0.97,
+                "coding": 0.96,
+                "tools": 0.96,
+                "multimodal": 0.90,
+                "speed": 0.82,
+                "multilingual": 0.95,
+                "structured": 0.97,
+                "quant_math": 0.98,
+                "cost_efficiency": 0.88,
+            },
+        ),
+        ModelSpec(
+            provider="AGY",
+            model_id="claude-sonnet-4-5",
+            modalities=frozenset({"text"}),
+            best_at="Escalation tier for complex code repair and verification when lower-cost tiers fail",
+            base_url="agy://cli",
+            endpoint="claude-sonnet-4-5",
+            api_style="AGY-CLI",
+            api_key_env="AGY_CLI_AVAILABLE",
+            pool_ids=("agy:tier3-sonnet",),
+            limits=PoolLimit(requests_per_minute=20, requests_per_day=1000, tokens_per_day=2_500_000),
+            capabilities={
+                "general": 0.95,
+                "reasoning": 0.95,
+                "coding": 0.97,
+                "tools": 0.96,
+                "multimodal": 0.85,
+                "speed": 0.78,
+                "multilingual": 0.92,
+                "structured": 0.96,
+                "quant_math": 0.94,
+                "cost_efficiency": 0.65,
+            },
+        ),
+        ModelSpec(
+            provider="AGY",
+            model_id="claude-opus-4-5",
+            modalities=frozenset({"text"}),
+            best_at="Top escalation tier reserved only when all cheaper models fail",
+            base_url="agy://cli",
+            endpoint="claude-opus-4-5",
+            api_style="AGY-CLI",
+            api_key_env="AGY_CLI_AVAILABLE",
+            pool_ids=("agy:tier4-opus",),
+            limits=PoolLimit(requests_per_minute=10, requests_per_day=300, tokens_per_day=1_000_000),
+            capabilities={
+                "general": 0.98,
+                "reasoning": 0.98,
+                "coding": 0.98,
+                "tools": 0.97,
+                "multimodal": 0.85,
+                "speed": 0.65,
+                "multilingual": 0.94,
+                "structured": 0.97,
+                "quant_math": 0.97,
+                "cost_efficiency": 0.40,
+            },
+        ),
+    ]
 
 
 def merge_pool_limits(specs: Iterable[ModelSpec]) -> dict[str, PoolLimit]:

@@ -69,7 +69,7 @@
         </button>
       </div>
 
-      <label v-if="form.backend === 'bedrock' || form.backend === 'openai' || form.backend === 'claude'" class="model-field">
+      <label v-if="form.backend === 'bedrock' || form.backend === 'openai' || form.backend === 'claude' || form.backend === 'agy'" class="model-field">
         <span>Model <small>(optional — blank uses the backend default)</small></span>
         <ModelSelect
           v-model="form.model"

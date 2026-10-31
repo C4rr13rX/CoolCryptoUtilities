@@ -31,7 +31,9 @@ import BusScheduleView from '@/views/BusScheduleView.vue';
 import WizardChatView from '@/views/WizardChatView.vue';
 import ModelControlView from '@/views/ModelControlView.vue';
 import TradingAgentView from '@/views/TradingAgentView.vue';
+import EdgeSearchView from '@/views/EdgeSearchView.vue';
 import MathView from '@/views/MathView.vue';
+import AgentResearchView from '@/views/AgentResearchView.vue';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -120,6 +122,18 @@ const routes: RouteRecordRaw[] = [
     path: '/trading-agent',
     name: 'trading-agent',
     component: TradingAgentView,
+  },
+  {
+    path: '/agent-research',
+    name: 'agent-research',
+    component: AgentResearchView,
+    meta: { title: 'Agent Market Research & Vault' },
+  },
+  {
+    path: '/edge-search',
+    name: 'edge-search',
+    component: EdgeSearchView,
+    meta: { title: 'EdgeForge GA Edge Search' },
   },
   {
     path: '/math',

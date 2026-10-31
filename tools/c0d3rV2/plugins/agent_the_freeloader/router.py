@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -12,11 +14,18 @@ from .models import ModelSpec
 from .quota import QuotaLedger
 from .feedback import ModelFeedbackStore
 
+try:
+    from tools.agy_session import SINGLE_AGENT_LOCK as _GLOBAL_SINGLE_AGENT_LOCK
+except Exception:
+    _GLOBAL_SINGLE_AGENT_LOCK = threading.RLock()
+
 
 @dataclass(frozen=True)
 class RequestProfile:
     weights: dict[str, float]
     estimated_tokens: int
+    expects_json: bool = False
+    job_tier: str = "general"
 
 
 @dataclass(frozen=True)
@@ -59,6 +68,28 @@ class FreeloaderRouter:
         self.last_model_id = "agent-the-freeloader"
 
     def send(
+        self,
+        prompt: str,
+        *,
+        system: str = "",
+        max_tokens: int = 2048,
+        temperature: float = 0.2,
+        preferred_identity: str = "",
+        excluded_identities: set[str] | None = None,
+    ) -> str:
+        # Enforce strict single-agent execution: only one agent works at a time
+        # across the entire system, switching its own model across cost tiers.
+        with _GLOBAL_SINGLE_AGENT_LOCK:
+            return self._send_locked(
+                prompt,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                preferred_identity=preferred_identity,
+                excluded_identities=excluded_identities,
+            )
+
+    def _send_locked(
         self,
         prompt: str,
         *,
@@ -119,6 +150,7 @@ class FreeloaderRouter:
                 "quality_tier": candidate.quality_tier,
                 "quota_headroom": round(candidate.headroom, 4),
                 "semantic_health": round(candidate.semantic_health, 4),
+                "job_tier": profile.job_tier,
             }
             try:
                 response = self._invoke_with_deadline(
@@ -128,8 +160,17 @@ class FreeloaderRouter:
                     max_tokens=max_tokens,
                     temperature=temperature,
                 )
-                if not response.text:
+                if not response.text or not response.text.strip():
                     raise ProviderError(502, "provider returned an empty response")
+                if profile.expects_json and not _contains_valid_json(response.text):
+                    if not spec.api_key_env.startswith("TEST_"):
+                        self.feedback.record(
+                            spec.provider,
+                            spec.model_id,
+                            success=False,
+                            reason="semantic:invalid_json_output",
+                        )
+                    raise ProviderError(422, "model returned malformed or non-JSON output when JSON was requested")
                 self.ledger.reconcile(reservation, response.total_tokens)
                 self.ledger.observe_headers(spec.pool_ids, response.headers)
                 self._record_success(spec)
@@ -175,6 +216,24 @@ class FreeloaderRouter:
         adapter still receives the same timeout so healthy calls clean up
         normally.
         """
+        # When invoking AGY CLI models directly on the caller thread, we are
+        # already holding _GLOBAL_SINGLE_AGENT_LOCK. Spawning a child thread
+        # that tries to acquire a threading.RLock owned by the parent thread
+        # would deadlock, and subprocess.run inside AgySession already enforces
+        # its own wall-clock timeout!
+        if spec.provider == "AGY" or spec.api_style == "AGY-CLI":
+            value = self.invoker(
+                spec,
+                prompt=prompt,
+                system=system,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout_s=self.timeout_s,
+            )
+            if not isinstance(value, ProviderResponse):
+                raise ProviderError(502, "provider adapter returned an invalid response type")
+            return value
+
         result: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
 
         def invoke_one() -> None:
@@ -319,6 +378,38 @@ def _diversified_attempt_list(ranked: list[RankedCandidate]) -> list[RankedCandi
     return diversified
 
 
+def _contains_valid_json(text: str) -> bool:
+    """Return True when `text` contains a parseable JSON object or array."""
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    # Strip markdown code fences if present
+    fenced = re.findall(r"```(?:json)?\s*([\s\S]*?)```", stripped, flags=re.IGNORECASE)
+    candidates = list(fenced) + [stripped]
+    for candidate in candidates:
+        cand = candidate.strip()
+        if not cand:
+            continue
+        try:
+            parsed = json.loads(cand)
+            if isinstance(parsed, (dict, list)):
+                return True
+        except Exception:
+            pass
+        # Also check first balanced {...} or [...] block
+        for open_ch, close_ch in (("{", "}"), ("[", "]")):
+            start = cand.find(open_ch)
+            end = cand.rfind(close_ch)
+            if start != -1 and end > start:
+                try:
+                    parsed = json.loads(cand[start : end + 1])
+                    if isinstance(parsed, (dict, list)):
+                        return True
+                except Exception:
+                    pass
+    return False
+
+
 def classify_request(prompt: str, system: str, *, max_tokens: int) -> RequestProfile:
     text = f"{system}\n{prompt}".lower()
     weights = {"general": 1.0}
@@ -332,25 +423,89 @@ def classify_request(prompt: str, system: str, *, max_tokens: int) -> RequestPro
         add("coding", 2.4, ("code", "repository", "function", "class ", "pytest", "debug", "refactor", "implement"))
         add("tools", 2.5, ("tool_calls", "available tools", "function calling", "call a tool", "executor", "file_write"))
     add("reasoning", 2.0, ("reason", "analy", "plan", "prove", "tradeoff", "architecture", "diagnose"))
-    add("structured", 1.8, ("return only json", "json object", "schema", "structured", "extract"))
+    add("structured", 1.8, ("return only json", "json object", "schema", "structured", "extract", "valid json"))
+    add(
+        "quant_math",
+        2.1,
+        (
+            "sharpe",
+            "t_stat",
+            "t-stat",
+            "z-score",
+            "genetic algorithm",
+            "edgeforge",
+            "ohlcv",
+            "drawdown",
+            "win_rate",
+            "kelly",
+            "volatility",
+            "expectancy",
+        ),
+    )
     if bounded_research:
         weights["reasoning"] = max(weights.get("reasoning", 0.0), 2.8)
         weights["structured"] = max(weights.get("structured", 0.0), 2.4)
     add("multimodal", 2.2, ("image", "screenshot", "visual", "video"))
     add("multilingual", 1.6, ("translate", "multilingual", "language"))
-    add("speed", 1.4, ("fast", "quick", "low latency", "classify", "route"))
+    add("speed", 1.4, ("fast", "quick", "low latency", "classify", "route", "reformulate", "summarize"))
+
+    expects_json = any(
+        marker in text
+        for marker in (
+            "return only json",
+            "return valid json",
+            "respond only with json",
+            "respond with valid json",
+            "output only json",
+        )
+    )
+
+    if "tools" in weights or "coding" in weights:
+        job_tier = "coding_and_tools"
+    elif "quant_math" in weights:
+        job_tier = "quant_research"
+    elif bounded_research or ("reasoning" in weights and "structured" in weights):
+        job_tier = "planning_and_audit"
+    elif "structured" in weights:
+        job_tier = "structured_extraction"
+    elif "speed" in weights:
+        job_tier = "fast_utility"
+    elif "reasoning" in weights:
+        job_tier = "general_reasoning"
+    else:
+        job_tier = "general"
+
+    # Prefer least expensive capable model for simpler/fast/structured/quant jobs
+    if job_tier in ("fast_utility", "structured_extraction", "general"):
+        weights["cost_efficiency"] = 1.6
+    elif job_tier in ("quant_research", "general_reasoning"):
+        weights["cost_efficiency"] = 1.1
+    else:
+        weights["cost_efficiency"] = 0.6
+
     input_tokens = max(1, (len(prompt) + len(system) + 3) // 4)
     # Reserve the full requested output budget. Providers that return usage
     # metadata reconcile this downward; providers that omit it retain the
     # conservative reservation so workday token limits cannot be bypassed.
     estimated_output = max(128, max_tokens)
-    return RequestProfile(weights=weights, estimated_tokens=input_tokens + estimated_output)
+    return RequestProfile(
+        weights=weights,
+        estimated_tokens=input_tokens + estimated_output,
+        expects_json=expects_json,
+        job_tier=job_tier,
+    )
 
 
 def _quality(spec: ModelSpec, profile: RequestProfile) -> float:
     weighted = 0.0
     total = 0.0
     for capability, weight in profile.weights.items():
+        if capability == "cost_efficiency":
+            if capability not in spec.capabilities:
+                continue
+            weighted += spec.capabilities[capability] * weight
+            total += weight
+            continue
         weighted += spec.capabilities.get(capability, spec.capabilities.get("general", 0.5)) * weight
         total += weight
     return weighted / total if total else 0.0

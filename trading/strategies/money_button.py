@@ -338,6 +338,19 @@ class MoneyButtonStrategy(Strategy):
         confidence += 0.06 if r30 > 0 and r10 > 0 else 0.0    # aligned windows
         confidence += min(0.08, max(0.0, slope_per_min) * 40.0)
         confidence -= min(0.15, volatility * 4.0)             # penalise noise
+        # EdgeForge GA feedback loop: credit symbols with verified post-fee rapid edges
+        try:
+            from pathlib import Path
+            from services.atomic_json import read_json
+            _ov_path = Path(__file__).resolve().parents[2] / "data" / "money_button_edge_overrides.json"
+            if _ov_path.is_file():
+                _mb_d, _ok = read_json(_ov_path, default={})
+                _sym_k = str(getattr(state, "symbol", "") or "").upper()
+                _ov = (_mb_d.get("symbols") or {}).get(_sym_k) if _ok and isinstance(_mb_d, dict) else None
+                if isinstance(_ov, dict) and float(_ov.get("net_return_after_fees") or 0.0) > 0:
+                    confidence += 0.03
+        except Exception:
+            pass
         confidence = max(0.01, min(0.95, confidence))
 
         min_confidence = env_float("MONEY_BUTTON_MIN_CONFIDENCE", 0.62, lo=0.5, hi=0.99)

@@ -25,6 +25,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 
+from services.token_limiter import TokenLimiter, is_token_or_rate_limit
+
+
+
 DEFAULT_MODEL       = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
 DEFAULT_TEMPERATURE = float(os.getenv("ANTHROPIC_TEMPERATURE", "0.2"))
 DEFAULT_MAX_TOKENS  = int(os.getenv("ANTHROPIC_MAX_TOKENS", "2048"))
@@ -51,8 +55,13 @@ class ClaudeSession:
         stream_default: bool = False,
         transcript_enabled: bool = False,
         system_prompt: str = "",
+
+        auto_wait_quota: bool = True,
+
         **_ignored: Any,
+
     ) -> None:
+
         self._client = None
         self.session_name      = session_name
         self.transcript_dir    = transcript_dir
@@ -63,6 +72,9 @@ class ClaudeSession:
         self.stream_default    = stream_default
         self.transcript_enabled = transcript_enabled
         self.system_prompt     = system_prompt
+
+        self.auto_wait_quota   = auto_wait_quota
+
         self._call_count       = 0
         self._last_usage: dict[str, Any] = {}
 
@@ -114,7 +126,12 @@ class ClaudeSession:
         **kwargs: Any,
     ) -> str:
         self._ensure_client()
+        if self.auto_wait_quota:
+
+            TokenLimiter.wait_until_available("claude")
+
         self._call_count += 1
+
 
         full_system = "\n\n".join(s for s in (self.system_prompt, system) if s.strip())
 
@@ -123,18 +140,26 @@ class ClaudeSession:
         return self._send_blocking(prompt, full_system)
 
     def _send_blocking(self, prompt: str, system: str) -> str:
+        if self.auto_wait_quota:
+            TokenLimiter.wait_until_available("claude")
+        kwargs = dict(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        if system:
+            kwargs["system"] = system
         try:
-            kwargs = dict(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            if system:
-                kwargs["system"] = system
             resp = self._client.messages.create(**kwargs)
         except Exception as exc:
+            if is_token_or_rate_limit("", exc=exc):
+                delay = TokenLimiter.record_rate_limit("claude", str(exc))
+                if self.auto_wait_quota:
+                    TokenLimiter.wait_until_available("claude")
+                    return self._send_blocking(prompt, system)
             raise RuntimeError(f"Anthropic API call failed: {exc}") from exc
+        TokenLimiter.record_success("claude")
         parts = []
         for block in resp.content or []:
             text = getattr(block, "text", None)
@@ -152,6 +177,8 @@ class ClaudeSession:
         return reply
 
     def _send_streaming(self, prompt: str, system: str) -> str:
+        if self.auto_wait_quota:
+            TokenLimiter.wait_until_available("claude")
         chunks: list[str] = []
         try:
             kwargs = dict(
@@ -166,7 +193,13 @@ class ClaudeSession:
                 for text in stream.text_stream:
                     chunks.append(text)
         except Exception as exc:
+            if is_token_or_rate_limit("", exc=exc):
+                delay = TokenLimiter.record_rate_limit("claude", str(exc))
+                if self.auto_wait_quota:
+                    TokenLimiter.wait_until_available("claude")
+                    return self._send_streaming(prompt, system)
             raise RuntimeError(f"Anthropic streaming call failed: {exc}") from exc
+        TokenLimiter.record_success("claude")
         reply = "".join(chunks).strip()
         self._maybe_log_transcript(prompt, system, reply)
         return reply

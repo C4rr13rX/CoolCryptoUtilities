@@ -55,7 +55,7 @@ const siteDefaultLabel = computed(() => {
 const premium = computed<string[]>(() => {
   const curated = options.value?.curated || {};
   const groups =
-    props.kind === 'codex' ? ['codex', 'openai'] : ['claude', 'bedrock', 'openai'];
+    props.kind === 'codex' ? ['codex', 'openai'] : ['agy', 'claude', 'bedrock', 'openai'];
   const out: string[] = [];
   for (const g of groups) for (const m of curated[g] || []) if (!out.includes(m)) out.push(m);
   return out;

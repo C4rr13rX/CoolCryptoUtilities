@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Wizard eye development preview</title>
+<style>html,body,#app{height:100%;margin:0}body{background:#050309;color:#eee;font-family:system-ui,sans-serif}*,*::before,*::after{box-sizing:border-box}</style></head>
+<body><div id="app"></div><script type="module">
+// Development-only mount for visual checks; API fixtures belong in the test driver.
+import { createApp } from 'vue';
+import WizardChatView from '/src/views/WizardChatView.vue';
+const app = createApp(WizardChatView);
+app.mount('#app');
+window.unmountEyePreview = () => app.unmount();
+</script></body></html>

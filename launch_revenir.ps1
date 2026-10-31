@@ -1,12 +1,18 @@
 # R3V3N!R Control Tower launcher -- idempotent full-stack bring-up.
 #
 # Brings up (or leaves alone) every service the trading stack needs:
-#   1. Brain substrate    (w1z4rd_node.exe on :8090)
-#   2. R3V3N!R web panel  (Daphne ASGI + WebSockets on :8000)
-#   3. Production manager (main.py --action start_production)
+#   0. W1z4rD Supervisor  (w1z4rd_supervisor.py master watchdog)
+#   1. Brain substrate    (latest w1z4rd_node.exe synced & serving :8090)
+#   2. R3V3N!R web panel  (Waitress 24-thread WSGI on :8001 + EdgeForge auto-start)
+#   2b. EdgeForge GA      (3 deterministic workers: micro_flow, nonlinear_chaos,
+#                          rapid_impulse + agy_research single-agent guidance)
+#   3. Production manager (main.py --action start_production --stay-alive)
 #   4. Brain feeder       (scripts/run_brain_feeder.py)  -- skipped if a
 #                          history supervisor is currently training
 #   5. Market evolution   (included W1z4rDV1510n protected-fold GA)
+#   6. TradingAgent (AGY) (manage.py tradingagent_worker, default agent='agy')
+#   6b. Strategy evolution(manage.py evolve_strategies --loop)
+#   7. Continuous refine  (ContinuousRefinement loop + console)
 #
 # Each check is by listening-port (brain, waitress) or by command-line
 # substring (prod_manager, brain_feeder). Already-running services are
@@ -18,8 +24,11 @@
 $projectRoot   = "D:\Projects\CoolCryptoUtilities"
 $python        = "$projectRoot\.venv\Scripts\python.exe"
 $brainBin      = "D:\Projects\W1z4rDV1510n\bin\w1z4rd_node.exe"
+$brainRelease  = "D:\Projects\W1z4rDV1510n\target\release\w1z4rdv1510n-node.exe"
 $brainProject  = "D:\Projects\W1z4rDV1510n"
+$supervisorScript = "$brainProject\scripts\w1z4rd_supervisor.py"
 $evolutionPython = "C:\Python313\python.exe"
+$evolutionPythonw = "C:\Python313\pythonw.exe"
 $evolutionScript = "$brainProject\scripts\market_evolution_service.py"
 $evolutionWatchdog = "$brainProject\scripts\market_evolution_watchdog.py"
 $evolutionState  = "$brainProject\runtime\market-evolution"
@@ -29,12 +38,14 @@ $logsDir       = "$projectRoot\logs"
 $panelHost     = "127.0.0.1"
 $panelPort     = 8001
 $brainPort     = 8090
-$threads       = 8
+$threads       = 24
 
 # Wallet identity -- public address, not a secret. Workaround for
 # default_env_user returning None outside the manage.py boot path,
 # which can leave PortfolioState unable to derive the wallet.
 $primaryWallet = "0x291c854811e92906a658fb94aa511bf919f968ad"
+
+New-Item -ItemType Directory -Force $logsDir | Out-Null
 
 # -- helpers ---------------------------------------------------------------
 
@@ -51,12 +62,57 @@ function Test-Port($port) {
 }
 
 function Find-PythonProcess($needle) {
-    Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -like "*$needle*" }
 }
 
 function Find-Process($name) {
     Get-Process -Name $name -ErrorAction SilentlyContinue
+}
+
+function Start-DetachedProcess {
+    param(
+        [string]$FilePath,
+        [string[]]$ArgumentList = @(),
+        [string]$WorkingDirectory = $projectRoot,
+        [string]$RedirectStandardOutput = "",
+        [string]$RedirectStandardError = ""
+    )
+    $quotedArgs = ($ArgumentList | ForEach-Object {
+        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+    }) -join ' '
+    $envPairs = @()
+    foreach ($key in @("WAITRESS_HOST","WAITRESS_PORT","WAITRESS_THREADS","EDGEFORGE_AUTOSTART","BRANDDOZER_SESSION_PROVIDER","PRIMARY_WALLET","SECURE_ENV_HYDRATED")) {
+        $val = [Environment]::GetEnvironmentVariable($key, "Process")
+        if ($null -ne $val) {
+            $envPairs += "set `"$key=$val`""
+        }
+    }
+    $envPrefix = if ($envPairs.Count -gt 0) { ($envPairs -join " && ") + " && " } else { "" }
+    $cmdInner = "${envPrefix}cd /d `"$WorkingDirectory`" && `"$FilePath`" $quotedArgs"
+    if ($RedirectStandardOutput) { $cmdInner += " >> `"$RedirectStandardOutput`"" }
+    if ($RedirectStandardError)  { $cmdInner += " 2>> `"$RedirectStandardError`"" }
+    $cmdLine = "cmd.exe /c `"$cmdInner`""
+    try {
+        $startup = ([wmiclass]"Win32_ProcessStartup").CreateInstance()
+        $startup.ShowWindow = 0  # SW_HIDE
+        $res = ([wmiclass]"Win32_Process").Create($cmdLine, $WorkingDirectory, $startup)
+        if ($res.ReturnValue -eq 0) {
+            return [int]$res.ProcessId
+        }
+    } catch {}
+    # Fallback to Start-Process if WMI is restricted
+    $spParams = @{
+        FilePath         = $FilePath
+        WorkingDirectory = $WorkingDirectory
+        WindowStyle      = "Hidden"
+        PassThru         = $true
+    }
+    if ($ArgumentList)           { $spParams["ArgumentList"]           = $ArgumentList }
+    if ($RedirectStandardOutput) { $spParams["RedirectStandardOutput"] = $RedirectStandardOutput }
+    if ($RedirectStandardError)  { $spParams["RedirectStandardError"]  = $RedirectStandardError }
+    $p = Start-Process @spParams
+    return $p.Id
 }
 
 function Wait-Port($port, $name, $maxSeconds = 60) {
@@ -83,36 +139,38 @@ function Wait-Port($port, $name, $maxSeconds = 60) {
 # way started a process that never bound :8090, so the previous 300 s
 # Wait-Port always timed out -- that was the "gets stuck" hang.
 
-Write-Host "[1/5] Brain substrate"
+Write-Host "[1/8] Brain substrate (W1z4rDV1510n latest)"
 $brainStarter = "$brainProject\start_node.ps1"
-# A PROCESS IS NOT A SERVICE. The check used to be "does a process named
-# w1z4rd_node exist", which a process that started and never bound :8090
-# passes forever -- so the launcher saw "already running", skipped it, and
-# the brain stayed unreachable indefinitely. Observed 2026-09-05: PID 1276
-# alive since 08:38 with nothing listening on 8090 and /health actively
-# refusing the connection, across several launcher runs that each reported
-# it healthy.
-#
-# The port is what callers actually need, so the port is what is checked. A
-# process that is up but not serving is treated as down and restarted --
-# after being stopped, because two of them would fight over the port.
+
+# Auto-sync latest compiled release binary into bin\w1z4rd_node.exe when the
+# node is not running or when a newer release build exists on disk.
 $brainProc = Find-Process "w1z4rd_node"
-$brainListening = $null -ne (Get-NetTCPConnection -LocalPort $brainPort -State Listen -ErrorAction SilentlyContinue)
+$brainListening = (Test-Port $brainPort) -or ($null -ne (Get-NetTCPConnection -LocalPort $brainPort -ErrorAction SilentlyContinue | Where-Object { $_.State -eq "Listen" -or ($_.RemotePort -eq 0 -and $_.OwningProcess -gt 0) }))
 if ($brainProc -and -not $brainListening) {
     Write-Host "  pid=$($brainProc.Id) is running but NOT listening on :$brainPort -- restarting it"
     Stop-Process -Id $brainProc.Id -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
     $brainProc = $null
 }
+if (-not $brainProc -and (Test-Path $brainRelease)) {
+    $syncNeeded = (-not (Test-Path $brainBin)) -or ((Get-Item $brainRelease).LastWriteTimeUtc -gt (Get-Item $brainBin).LastWriteTimeUtc) -or ((Get-Item $brainRelease).Length -ne (Get-Item $brainBin).Length)
+    if ($syncNeeded) {
+        try {
+            Copy-Item -LiteralPath $brainRelease -Destination $brainBin -Force
+            Write-Host "  synced latest release binary -> $brainBin"
+        } catch {
+            Write-Host "  WARN: could not sync release binary: $_"
+        }
+    }
+}
 if ($brainProc -and $brainListening) {
     $rssGb = [math]::Round($brainProc.WorkingSet64 / 1GB, 2)
     Write-Host "  already running -- pid=$($brainProc.Id) RSS=${rssGb}GB, serving :$brainPort"
 } elseif (Test-Path $brainStarter) {
     Write-Host "  starting via start_node.ps1 (background, non-blocking)..."
-    Start-Process -FilePath "powershell.exe" `
-        -ArgumentList "-ExecutionPolicy","Bypass","-WindowStyle","Hidden","-File",$brainStarter `
-        -WorkingDirectory $brainProject `
-        -WindowStyle Hidden
+    Start-DetachedProcess -FilePath "powershell.exe" `
+        -ArgumentList @("-ExecutionPolicy","Bypass","-WindowStyle","Hidden","-File",$brainStarter) `
+        -WorkingDirectory $brainProject | Out-Null
     # Courtesy probe only -- do NOT block the stack on it. If it's slow to
     # bind, trading proceeds anyway and the brain joins when ready.
     if (Wait-Port $brainPort "brain" 15) {
@@ -124,28 +182,47 @@ if ($brainProc -and $brainListening) {
     Write-Host "  WARN: start_node.ps1 not found at $brainStarter (skipping brain)"
 }
 
-# -- 2. R3V3N!R web panel --------------------------------------------------
+# -- 2. R3V3N!R web panel + EdgeForge 3-worker GA --------------------------
 
-Write-Host "[2/5] R3V3N!R web panel"
+Write-Host "[2/8] R3V3N!R web panel + EdgeForge GA workers"
+$env:WAITRESS_HOST               = $panelHost
+$env:WAITRESS_PORT               = "$panelPort"
+$env:WAITRESS_THREADS            = "$threads"
+$env:EDGEFORGE_AUTOSTART         = "1"
+$env:BRANDDOZER_SESSION_PROVIDER = "agy"
+$env:PRIMARY_WALLET              = $primaryWallet
 if (Test-Port $panelPort) {
     Write-Host "  already running on :$panelPort"
 } else {
-    Write-Host "  starting Waitress Django server..."
-    $env:WAITRESS_HOST    = $panelHost
-    $env:WAITRESS_PORT    = "$panelPort"
-    $env:WAITRESS_THREADS = "$threads"
-    Start-Process -FilePath $python `
-        -ArgumentList "run_waitress.py" `
+    Write-Host "  starting Waitress Django server ($threads threads)..."
+    Start-DetachedProcess -FilePath $python `
+        -ArgumentList @("run_waitress.py") `
         -WorkingDirectory $webRoot `
-        -WindowStyle Hidden `
         -RedirectStandardOutput "$logsDir\web_waitress_8001.log" `
-        -RedirectStandardError  "$logsDir\web_waitress_8001.err"
+        -RedirectStandardError  "$logsDir\web_waitress_8001.err" | Out-Null
     Wait-Port $panelPort "panel" 30 | Out-Null
+}
+
+# Ensure EdgeForge 3-worker GA (micro_flow, nonlinear_chaos, rapid_impulse) +
+# agy_research guidance are actively running inside the web panel process.
+if (Test-Port $panelPort) {
+    try {
+        $efBody = '{"action":"start"}'
+        $efResp = Invoke-RestMethod -Uri "http://${panelHost}:${panelPort}/api/edge-search/control/" `
+            -Method Post -ContentType "application/json" -Body $efBody -TimeoutSec 8 -ErrorAction Stop
+        $workerCount = 0
+        if ($efResp.status -and $efResp.status.workers) {
+            $workerCount = @($efResp.status.workers.PSObject.Properties).Count
+        }
+        Write-Host "  EdgeForge GA active -- workers=$workerCount (micro_flow, nonlinear_chaos, rapid_impulse) + agy_research"
+    } catch {
+        Write-Host "  EdgeForge GA auto-start signalled via Waitress AppConfig"
+    }
 }
 
 # -- 3. Production manager (trading bot) -----------------------------------
 
-Write-Host "[3/5] Production manager"
+Write-Host "[3/8] Production manager"
 $prodProc = Find-PythonProcess "start_production"
 if ($prodProc) {
     Write-Host "  already running -- count=$($prodProc.Count)"
@@ -163,12 +240,11 @@ if ($prodProc) {
     # -X utf8: see Restart-Production in GetToLiveTrading.ps1. Startup UTF-8
     # mode is what makes a bare open(path,"w") in library code UTF-8;
     # ensure_utf8_mode() can only fix this process's own stdout.
-    Start-Process -FilePath $python `
-        -ArgumentList "-X","utf8","-u","main.py","--action","start_production","--stay-alive" `
+    Start-DetachedProcess -FilePath $python `
+        -ArgumentList @("-X","utf8","-u","main.py","--action","start_production","--stay-alive") `
         -WorkingDirectory $projectRoot `
-        -WindowStyle Hidden `
         -RedirectStandardOutput "$logsDir\prod_direct.log" `
-        -RedirectStandardError  "$logsDir\prod_direct.err"
+        -RedirectStandardError  "$logsDir\prod_direct.err" | Out-Null
     Start-Sleep -Seconds 5
     $prodProc = Find-PythonProcess "start_production"
     if ($prodProc) {
@@ -180,7 +256,7 @@ if ($prodProc) {
 
 # -- 4. Brain feeder (skipped while a supervisor is training) --------------
 
-Write-Host "[4/5] Brain feeder"
+Write-Host "[4/8] Brain feeder"
 $supervisorRunning = Find-PythonProcess "brain_history_supervisor"
 if ($supervisorRunning) {
     Write-Host "  history supervisor is training -- skipping feeder to avoid lock contention"
@@ -190,18 +266,17 @@ if ($supervisorRunning) {
         Write-Host "  already running -- count=$($feederProc.Count)"
     } else {
         Write-Host "  starting..."
-        Start-Process -FilePath $python `
-            -ArgumentList "scripts/run_brain_feeder.py" `
+        Start-DetachedProcess -FilePath $python `
+            -ArgumentList @("scripts/run_brain_feeder.py") `
             -WorkingDirectory $projectRoot `
-            -WindowStyle Hidden `
             -RedirectStandardOutput "$logsDir\feeder_direct.log" `
-            -RedirectStandardError  "$logsDir\feeder_direct.err"
+            -RedirectStandardError  "$logsDir\feeder_direct.err" | Out-Null
     }
 }
 
 # -- 5. Protected market-brain evolution ---------------------------------
 
-Write-Host "[5/5] Protected market-brain evolution"
+Write-Host "[5/8] Protected market-brain evolution"
 $evolutionProc = Find-PythonProcess "market_evolution_watchdog.py"
 if ($evolutionProc) {
     Write-Host "  supervisor already running -- count=$($evolutionProc.Count)"
@@ -213,16 +288,15 @@ if ($evolutionProc) {
     }
     New-Item -ItemType Directory -Force $evolutionState | Out-Null
     Write-Host "  starting persistent RAM-aware supervisor..."
-    Start-Process -FilePath $evolutionPython `
-        -ArgumentList "-u",$evolutionWatchdog,"--python",$evolutionPython,"--service",$evolutionScript,"--state-dir",$evolutionState,"--min-free-memory-gb","3.5","--memory-poll-seconds","15","--restart-delay-seconds","30","--","--population","8","--workers","1","--brain-gate-every","1","--test-days","28" `
+    Start-DetachedProcess -FilePath $evolutionPython `
+        -ArgumentList @("-u",$evolutionWatchdog,"--python",$evolutionPython,"--service",$evolutionScript,"--state-dir",$evolutionState,"--min-free-memory-gb","3.5","--memory-poll-seconds","15","--restart-delay-seconds","30","--","--population","8","--workers","1","--brain-gate-every","1","--test-days","28") `
         -WorkingDirectory $brainProject `
-        -WindowStyle Hidden `
         -RedirectStandardOutput "$evolutionState\supervisor.stdout.log" `
-        -RedirectStandardError  "$evolutionState\supervisor.stderr.log"
+        -RedirectStandardError  "$evolutionState\supervisor.stderr.log" | Out-Null
     Start-Sleep -Seconds 2
     $evolutionProc = Find-PythonProcess "market_evolution_watchdog.py"
     if ($evolutionProc) {
-        Write-Host "  supervisor spawned -- pid=$($evolutionProc.ProcessId)"
+        Write-Host "  supervisor spawned -- pid=$(@($evolutionProc)[0].ProcessId)"
         Write-Host "  accuracy improvements: $evolutionState\accuracy_improvements.jsonl"
     } else {
         Write-Host "  WARN: market evolution supervisor did not appear in process list"
@@ -231,7 +305,7 @@ if ($evolutionProc) {
     Write-Host "  WARN: evolution service or supervisor script is missing"
 }
 
-# -- 6. trading agent worker ----------------------------------------------
+# -- 6. trading agent worker (AGY single-agent self-switching) -------------
 #
 # The reading agent that hunts trades. Governed by its own start_at_boot
 # setting so it can be left off deliberately rather than by accident: the
@@ -239,77 +313,71 @@ if ($evolutionProc) {
 # no. An unreadable setting starts it -- a pipeline that is silently not
 # trading is the failure this whole stack exists to avoid.
 
-Write-Host ""
-Write-Host "Checking trading agent worker..."
+Write-Host "[6/8] Trading agent worker (AGY self-switching)"
 $agentProc = Find-PythonProcess "tradingagent_worker"
 if ($agentProc) {
-    Write-Host "  already running -- pid=$($agentProc.ProcessId)"
+    Write-Host "  already running -- pid=$(@($agentProc)[0].ProcessId)"
 } else {
     $startAgent = $true
     try {
-        $answer = & $python "$webRoot\manage.py" shell -c "from tradingagent.models import AgentConfig; c=AgentConfig.load(); print('YES' if getattr(c,'start_at_boot',True) else 'NO')" 2>$null
+        $answer = & $python "$webRoot\manage.py" shell -c "from tradingagent.models import AgentConfig; c=AgentConfig.load(); c.agent='agy'; c.save(update_fields=['agent']); print('YES' if getattr(c,'start_at_boot',True) else 'NO')" 2>$null
         if ($answer -match 'NO') { $startAgent = $false }
     } catch {
         Write-Host "  could not read start_at_boot; starting it (a dark agent is worse)"
     }
     if ($startAgent) {
-        Start-Process -FilePath $python `
-            -ArgumentList "-X","utf8","$webRoot\manage.py","tradingagent_worker" `
+        Start-DetachedProcess -FilePath $python `
+            -ArgumentList @("-X","utf8","$webRoot\manage.py","tradingagent_worker") `
             -WorkingDirectory $webRoot `
-            -WindowStyle Hidden `
             -RedirectStandardOutput (Join-Path $logsDir "agent_worker.log") `
-            -RedirectStandardError  (Join-Path $logsDir "agent_worker.err.log")
+            -RedirectStandardError  (Join-Path $logsDir "agent_worker.err.log") | Out-Null
         Start-Sleep -Seconds 2
         $agentProc = Find-PythonProcess "tradingagent_worker"
-        if ($agentProc) { Write-Host "  started -- pid=$($agentProc.ProcessId)" }
+        if ($agentProc) { Write-Host "  started -- pid=$(@($agentProc)[0].ProcessId)" }
         else { Write-Host "  WARN: agent worker did not appear in the process list" }
     } else {
         Write-Host "  start_at_boot is off -- left stopped, by setting"
     }
 }
 
-# -- 6b. strategy evolution ------------------------------------------------
+# -- 7. strategy evolution -------------------------------------------------
 #
 # Searches for new trading rules and publishes what survives a holdout across
 # multiple seeds. Hourly, because the book grows by a trade at a time and a
 # rule that clears the bar on 156 round trips may not clear it on 300.
 
-Write-Host ""
-Write-Host "Checking strategy evolution..."
+Write-Host "[7/8] Strategy evolution"
 $evolveProc = Find-PythonProcess "evolve_strategies"
 if ($evolveProc) {
-    Write-Host "  already running -- pid=$($evolveProc.ProcessId)"
+    Write-Host "  already running -- pid=$(@($evolveProc)[0].ProcessId)"
 } else {
-    Start-Process -FilePath $python `
-        -ArgumentList "-X","utf8","$webRoot\manage.py","evolve_strategies","--loop" `
+    Start-DetachedProcess -FilePath $python `
+        -ArgumentList @("-X","utf8","$webRoot\manage.py","evolve_strategies","--loop") `
         -WorkingDirectory $webRoot `
-        -WindowStyle Hidden `
         -RedirectStandardOutput (Join-Path $logsDir "evolve.log") `
-        -RedirectStandardError  (Join-Path $logsDir "evolve.err.log")
+        -RedirectStandardError  (Join-Path $logsDir "evolve.err.log") | Out-Null
     Start-Sleep -Seconds 2
     Write-Host "  started"
 }
 
-# -- 7. continuous refinement loop + console ------------------------------
+# -- 8. continuous refinement loop + console -------------------------------
 #
 # The loop that keeps fixing the pipeline, and the window that shows what it
 # is doing. The console is separate from the loop on purpose: closing the
 # window must not stop the work.
 
-Write-Host ""
-Write-Host "Checking continuous refinement loop..."
+Write-Host "[8/8] Continuous refinement loop"
 $refineRoot = "D:\Projects\ContinuousRefinement"
 if (Test-Path "$refineRoot\scripts\loop.py") {
     $loopProc = Find-PythonProcess "config.revenir.json"
     if ($loopProc) {
-        Write-Host "  already running -- pid=$($loopProc.ProcessId)"
+        Write-Host "  already running -- pid=$(@($loopProc)[0].ProcessId)"
     } else {
-        Start-Process -FilePath "python" `
-            -ArgumentList "scripts\loop.py","--config","config.revenir.json" `
+        Start-DetachedProcess -FilePath "python" `
+            -ArgumentList @("scripts\loop.py","--config","config.revenir.json") `
             -WorkingDirectory $refineRoot `
-            -WindowStyle Hidden `
             -RedirectStandardOutput "$refineRoot\data\revenir-stdout.log" `
-            -RedirectStandardError  "$refineRoot\data\revenir-stderr.log"
+            -RedirectStandardError  "$refineRoot\data\revenir-stderr.log" | Out-Null
         Start-Sleep -Seconds 2
         Write-Host "  loop started"
     }
@@ -318,19 +386,42 @@ if (Test-Path "$refineRoot\scripts\loop.py") {
     $consoleUp = Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" -ErrorAction SilentlyContinue |
                  Where-Object { $_.CommandLine -like "*console.py*revenir*" }
     if ($consoleUp) {
-        Write-Host "  console already open -- pid=$($consoleUp.ProcessId)"
+        Write-Host "  console already open -- pid=$(@($consoleUp)[0].ProcessId)"
     } else {
-        Start-Process -FilePath "pythonw" `
-            -ArgumentList "scripts\console.py","--config","config.revenir.json" `
-            -WorkingDirectory $refineRoot
+        Start-DetachedProcess -FilePath "pythonw" `
+            -ArgumentList @("scripts\console.py","--config","config.revenir.json") `
+            -WorkingDirectory $refineRoot | Out-Null
         Write-Host "  console opened"
     }
 } else {
     Write-Host "  WARN: ContinuousRefinement is not installed at $refineRoot"
 }
 
+# -- 8b. W1z4rD master supervisor (keeps node + web + crypto services alive) --
+
+Write-Host "[8b/8] W1z4rD master supervisor"
+$supProc = Find-PythonProcess "w1z4rd_supervisor.py"
+if ($supProc) {
+    Write-Host "  already running -- pid=$(@($supProc)[0].ProcessId)"
+} elseif (Test-Path $supervisorScript) {
+    $supRunner = if (Test-Path $evolutionPythonw) { $evolutionPythonw } else { $python }
+    Write-Host "  starting w1z4rd_supervisor.py..."
+    Start-DetachedProcess -FilePath $supRunner `
+        -ArgumentList @($supervisorScript) `
+        -WorkingDirectory $brainProject | Out-Null
+    Start-Sleep -Seconds 1
+    $supProc = Find-PythonProcess "w1z4rd_supervisor.py"
+    if ($supProc) {
+        Write-Host "  started -- pid=$(@($supProc)[0].ProcessId)"
+    } else {
+        Write-Host "  WARN: w1z4rd_supervisor.py did not appear in process list"
+    }
+}
+
 # -- open the panel --------------------------------------------------------
 
-Write-Host ""
-Write-Host "Opening dashboard..."
-Start-Process "http://${panelHost}:${panelPort}/"
+if (-not $env:REVENIR_SKIP_BROWSER) {
+    Write-Host ""
+    Write-Host "Opening dashboard..."
+    Start-Process "http://${panelHost}:${panelPort}/"
+}

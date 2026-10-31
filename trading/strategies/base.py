@@ -509,8 +509,32 @@ class StrategyRegistry:
         #: ``evaluate_all``. Read by ``BusScheduler._log_arbitration``; see
         #: that method for why a skip and a loss must not look alike.
         self.last_skips: Dict[str, str] = {}
+        self._last_discovered_check: float = 0.0
+        self._discovered_mtime: float = 0.0
         for strat in strategies or []:
             self.register(strat)
+
+    def _maybe_reload_discovered(self) -> None:
+        import time as _time
+
+        now = _time.monotonic()
+        if (now - self._last_discovered_check) < 30.0:
+            return
+        self._last_discovered_check = now
+        try:
+            from trading.strategies.discovered import DISCOVERED_PATH, build_discovered_strategies
+
+            if not DISCOVERED_PATH.is_file():
+                return
+            mtime = DISCOVERED_PATH.stat().st_mtime
+            if mtime <= self._discovered_mtime:
+                return
+            self._discovered_mtime = mtime
+            for strat in build_discovered_strategies():
+                if strat.strategy_id not in self._strategies:
+                    self.register(strat)
+        except Exception:
+            pass
 
     def register(self, strategy: Strategy) -> None:
         self._strategies[strategy.strategy_id] = strategy
@@ -562,6 +586,7 @@ class StrategyRegistry:
         and it is kept in memory -- a dict of at most one entry per registered
         strategy, overwritten each call -- so it costs no I/O on the tick path.
         """
+        self._maybe_reload_discovered()
         candidates: List[Dict[str, Any]] = []
         skips: Dict[str, str] = {}
         n_samples = len(getattr(state, "samples", []) or [])

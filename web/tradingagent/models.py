@@ -236,7 +236,7 @@ class AgentRun(models.Model):
         FAILED = "failed", "Failed"
         RATE_LIMITED = "rate_limited", "Rate limited"
 
-    agent = models.CharField(max_length=32, default="claude", db_index=True)
+    agent = models.CharField(max_length=32, default="agy", db_index=True)
     status = models.CharField(max_length=16, choices=Status.choices,
                               default=Status.RUNNING, db_index=True)
 
@@ -300,7 +300,7 @@ class AgentConfig(models.Model):
     #: unlocked by measured results, never by configuration alone.
     tier = models.CharField(max_length=16, choices=RiskTier.choices,
                             default=RiskTier.GHOST)
-    agent = models.CharField(max_length=32, default="claude")
+    agent = models.CharField(max_length=32, default="agy")
     interval_sec = models.IntegerField(default=900)
 
     max_daily_loss_usd = models.FloatField(

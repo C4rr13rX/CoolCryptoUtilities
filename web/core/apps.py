@@ -104,7 +104,7 @@ class CoreConfig(AppConfig):
 
         server_bootstrap = (
             cmd == "runserver"
-            or bool(os.environ.get("WAITRESS_PORT"))
+            or "run_waitress.py" in sys.argv[0]
             or os.environ.get("CORE_AUTO_BOOTSTRAP") == "1"
         )
         if not server_bootstrap and cmd not in {"start_production"}:

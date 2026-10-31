@@ -1,0 +1,45 @@
+# Isolated observation brain. Never apply this identity to a trading checkpoint.
+name = "wizard_observation"
+version = "0.1.0"
+binding_emergence_threshold = 3
+moment_history_window = 128
+
+[[pools]]
+name = "foundation_prompt"
+id = 1
+prototype = "byte-passthrough"
+atom_encoding_prefix = "foundation-prompt"
+kind = "SensoryInput"
+recent_atoms_window = 65536
+max_concept_member_count = 32
+concept_emergence_threshold = 3
+
+[[pools]]
+name = "verified_outcome"
+id = 4
+prototype = "byte-passthrough"
+atom_encoding_prefix = "verified-outcome"
+kind = "Action"
+recent_atoms_window = 65536
+max_concept_member_count = 1
+concept_emergence_threshold = 3
+
+[[pools]]
+name = "ruview_sensing"
+id = 11
+prototype = "byte-passthrough"
+atom_encoding_prefix = "ruview-v1"
+kind = "SensoryInput"
+recent_atoms_window = 8192
+max_concept_member_count = 16
+concept_emergence_threshold = 3
+
+[[pools]]
+name = "reviewed_video_observation"
+id = 12
+prototype = "byte-passthrough"
+atom_encoding_prefix = "real-video-v1"
+kind = "SensoryInput"
+recent_atoms_window = 8192
+max_concept_member_count = 16
+concept_emergence_threshold = 3

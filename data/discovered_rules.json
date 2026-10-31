@@ -1,38 +1,6102 @@
 [
   {
-    "id": "hurst > 0.535301",
-    "rule": "hurst > 0.535301",
+    "id": "edgeforge_9ca8ecaab1f1",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.72\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.28 \u2227 (Z[ret_velocity] > +0.54) [hold=6b, TP=4.2\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 5.016,
+    "holdout_mean_excess": 0.03234,
+    "net_profit_usd": 0.2345,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
     "conditions": [
       {
-        "feature": "hurst",
+        "feature": "edgeforge_math_score",
         "op": ">",
-        "value": 0.5353010908629542
+        "value": 1.28,
+        "formula": "(-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.72\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.28 \u2227 (Z[ret_velocity] > +0.54) [hold=6b, TP=4.2\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            -0.83,
+            -0.72,
+            -0.53
+          ],
+          "threshold": 1.28,
+          "hold_bars": 6,
+          "tp_fee_mult": 4.24,
+          "sl_fee_mult": 1.55,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.54
+        }
       }
     ],
-    "lineage": "beta",
-    "holdout_t": 2.862,
-    "holdout_selected": 10,
-    "holdout_mean_excess": 0.09985,
-    "fit_t": 1.26,
-    "detail": "selected 10 at mean excess +0.09985 vs -0.02064 for the other 50 (t=+2.86)",
-    "found_at": 1788621402.2364187
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        -0.83,
+        -0.72,
+        -0.53
+      ],
+      "threshold": 1.28,
+      "hold_bars": 6,
+      "tp_fee_mult": 4.24,
+      "sl_fee_mult": 1.55,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.54
+    },
+    "discovered_at": 1793467729.4870706
   },
   {
-    "id": "hurst > 0.521123",
-    "rule": "hurst > 0.521123",
+    "id": "edgeforge_ee6324c89ab8",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.83\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=2.6\u00d7fee, SL=2.1\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 3.174,
+    "holdout_mean_excess": 0.011235,
+    "net_profit_usd": 0.0393,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
     "conditions": [
       {
-        "feature": "hurst",
+        "feature": "edgeforge_math_score",
         "op": ">",
-        "value": 0.5211225421354218
+        "value": 2.19,
+        "formula": "((+1.83\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=2.6\u00d7fee, SL=2.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "threshold_and_gate",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "harmonic_dislocation"
+          ],
+          "weights": [
+            1.83,
+            -0.18,
+            -0.47
+          ],
+          "threshold": 2.19,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.62,
+          "sl_fee_mult": 2.08,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.75
+        }
       }
     ],
-    "lineage": "alpha'",
-    "holdout_t": 2.759,
-    "holdout_selected": 19,
-    "holdout_mean_excess": 0.048522,
-    "fit_t": 0.608,
-    "detail": "selected 19 at mean excess +0.04852 vs -0.02331 for the other 41 (t=+2.76)",
-    "found_at": 1788621402.2411842
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "threshold_and_gate",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "harmonic_dislocation"
+      ],
+      "weights": [
+        1.83,
+        -0.18,
+        -0.47
+      ],
+      "threshold": 2.19,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.62,
+      "sl_fee_mult": 2.08,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.75
+    },
+    "discovered_at": 1793467718.4133675
+  },
+  {
+    "id": "edgeforge_23b211681043",
+    "rule": "[EdgeForge arbitrum:ARB-WETH] ((+1.19\u00b7Z[range_compression] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.17 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 2.904,
+    "holdout_mean_excess": 0.015057,
+    "net_profit_usd": 0.0715,
+    "chain": "arbitrum",
+    "symbol": "ARB-WETH",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.17,
+        "formula": "((+1.19\u00b7Z[range_compression] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.17 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "range_compression",
+            "autocorr_lag1",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            0.66
+          ],
+          "threshold": 2.17,
+          "hold_bars": 2,
+          "tp_fee_mult": 2.79,
+          "sl_fee_mult": 1.32,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.01
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "range_compression",
+        "autocorr_lag1",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        0.66
+      ],
+      "threshold": 2.17,
+      "hold_bars": 2,
+      "tp_fee_mult": 2.79,
+      "sl_fee_mult": 1.32,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.01
+    },
+    "discovered_at": 1793467710.176499
+  },
+  {
+    "id": "edgeforge_dfadbd3ebc0a",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.19 \u2227 (Z[ret_velocity] > +0.54) [hold=3b, TP=3.7\u00d7fee, SL=1.4\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 3.667,
+    "holdout_mean_excess": 0.019542,
+    "net_profit_usd": 0.1368,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.19,
+        "formula": "(-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.19 \u2227 (Z[ret_velocity] > +0.54) [hold=3b, TP=3.7\u00d7fee, SL=1.4\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            -0.83,
+            -0.61,
+            -0.53
+          ],
+          "threshold": 1.19,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.7,
+          "sl_fee_mult": 1.42,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.54
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        -0.83,
+        -0.61,
+        -0.53
+      ],
+      "threshold": 1.19,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.7,
+      "sl_fee_mult": 1.42,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.54
+    },
+    "discovered_at": 1793467702.568628
+  },
+  {
+    "id": "edgeforge_013594d7e48e",
+    "rule": "[EdgeForge arbitrum:ARB-WETH] (+0.67\u00b7Z[autocorr_lag1]\u00b7Z[cramers_impulse_z] -0.18\u00b7Z[harmonic_dislocation]) > 2.08 \u2227 (Z[autocorr_lag1] > +0.66) [hold=6b, TP=2.8\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 4.799,
+    "holdout_mean_excess": 0.022934,
+    "net_profit_usd": 0.1147,
+    "chain": "arbitrum",
+    "symbol": "ARB-WETH",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.08,
+        "formula": "(+0.67\u00b7Z[autocorr_lag1]\u00b7Z[cramers_impulse_z] -0.18\u00b7Z[harmonic_dislocation]) > 2.08 \u2227 (Z[autocorr_lag1] > +0.66) [hold=6b, TP=2.8\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "poly_product",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "harmonic_dislocation"
+          ],
+          "weights": [
+            0.67,
+            -0.18,
+            -0.51
+          ],
+          "threshold": 2.08,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.84,
+          "sl_fee_mult": 1.77,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.66
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "poly_product",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "harmonic_dislocation"
+      ],
+      "weights": [
+        0.67,
+        -0.18,
+        -0.51
+      ],
+      "threshold": 2.08,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.84,
+      "sl_fee_mult": 1.77,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.66
+    },
+    "discovered_at": 1793467693.7255094
+  },
+  {
+    "id": "edgeforge_bc0a63bb1355",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+0.52\u00b7Z[rolling_skew_12] +1.64\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.77 \u2227 (Z[rolling_kurt_12] > +0.16) [hold=2b, TP=3.1\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 4.829,
+    "holdout_mean_excess": 0.01376,
+    "net_profit_usd": 0.313,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.77,
+        "formula": "((+0.52\u00b7Z[rolling_skew_12] +1.64\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.77 \u2227 (Z[rolling_kurt_12] > +0.16) [hold=2b, TP=3.1\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "rolling_skew_12",
+            "autocorr_lag1",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            0.52,
+            1.64,
+            0.18
+          ],
+          "threshold": 1.77,
+          "hold_bars": 2,
+          "tp_fee_mult": 3.13,
+          "sl_fee_mult": 1.27,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.16
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "rolling_skew_12",
+        "autocorr_lag1",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        0.52,
+        1.64,
+        0.18
+      ],
+      "threshold": 1.77,
+      "hold_bars": 2,
+      "tp_fee_mult": 3.13,
+      "sl_fee_mult": 1.27,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.16
+    },
+    "discovered_at": 1793467684.8844604
+  },
+  {
+    "id": "edgeforge_614673ef69e9",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.83\u00b7(Z[ret_acceleration] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.28 \u2227 (Z[ret_velocity] > +0.54) [hold=6b, TP=3.9\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 7.329,
+    "holdout_mean_excess": 0.038952,
+    "net_profit_usd": 0.2337,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.28,
+        "formula": "(-0.83\u00b7(Z[ret_acceleration] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.28 \u2227 (Z[ret_velocity] > +0.54) [hold=6b, TP=3.9\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_acceleration",
+            "rolling_kurt_12",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            -0.83,
+            -0.61,
+            -0.53
+          ],
+          "threshold": 1.28,
+          "hold_bars": 6,
+          "tp_fee_mult": 3.91,
+          "sl_fee_mult": 1.56,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.54
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_acceleration",
+        "rolling_kurt_12",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        -0.83,
+        -0.61,
+        -0.53
+      ],
+      "threshold": 1.28,
+      "hold_bars": 6,
+      "tp_fee_mult": 3.91,
+      "sl_fee_mult": 1.56,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.54
+    },
+    "discovered_at": 1793467675.194832
+  },
+  {
+    "id": "edgeforge_2131bc75d32b",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+2.39\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=2.6\u00d7fee, SL=2.1\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 3.174,
+    "holdout_mean_excess": 0.011235,
+    "net_profit_usd": 0.0393,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.19,
+        "formula": "((+2.39\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=2.6\u00d7fee, SL=2.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "threshold_and_gate",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "harmonic_dislocation"
+          ],
+          "weights": [
+            2.39,
+            -0.18,
+            -0.47
+          ],
+          "threshold": 2.19,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.62,
+          "sl_fee_mult": 2.08,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.75
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "threshold_and_gate",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "harmonic_dislocation"
+      ],
+      "weights": [
+        2.39,
+        -0.18,
+        -0.47
+      ],
+      "threshold": 2.19,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.62,
+      "sl_fee_mult": 2.08,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.75
+    },
+    "discovered_at": 1793467668.7416573
+  },
+  {
+    "id": "edgeforge_88abfb978f74",
+    "rule": "[EdgeForge optimism:ARB-USDC] ((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.21 \u2227 (Z[harmonic_dislocation] > -0.02) [hold=3b, TP=3.0\u00d7fee, SL=0.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 5.033,
+    "holdout_mean_excess": 0.015887,
+    "net_profit_usd": 0.3416,
+    "chain": "optimism",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.21,
+        "formula": "((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.21 \u2227 (Z[harmonic_dislocation] > -0.02) [hold=3b, TP=3.0\u00d7fee, SL=0.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "hurst_fast_24",
+            "harmonic_dislocation",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            -0.27
+          ],
+          "threshold": 2.21,
+          "hold_bars": 3,
+          "tp_fee_mult": 2.98,
+          "sl_fee_mult": 0.76,
+          "regime_var": "harmonic_dislocation",
+          "regime_min_z": -0.02
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "hurst_fast_24",
+        "harmonic_dislocation",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        -0.27
+      ],
+      "threshold": 2.21,
+      "hold_bars": 3,
+      "tp_fee_mult": 2.98,
+      "sl_fee_mult": 0.76,
+      "regime_var": "harmonic_dislocation",
+      "regime_min_z": -0.02
+    },
+    "discovered_at": 1793467659.6680596
+  },
+  {
+    "id": "edgeforge_98511f4884b8",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.43\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.08 \u2227 (Z[ret_velocity] > +0.54) [hold=6b, TP=4.2\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 3.295,
+    "holdout_mean_excess": 0.029238,
+    "net_profit_usd": 0.1023,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.08,
+        "formula": "(-0.43\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.08 \u2227 (Z[ret_velocity] > +0.54) [hold=6b, TP=4.2\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            -0.43,
+            -0.61,
+            -0.53
+          ],
+          "threshold": 1.08,
+          "hold_bars": 6,
+          "tp_fee_mult": 4.24,
+          "sl_fee_mult": 1.55,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.54
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        -0.43,
+        -0.61,
+        -0.53
+      ],
+      "threshold": 1.08,
+      "hold_bars": 6,
+      "tp_fee_mult": 4.24,
+      "sl_fee_mult": 1.55,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.54
+    },
+    "discovered_at": 1793467636.6719415
+  },
+  {
+    "id": "edgeforge_41ba1e1505a7",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.67\u00b7Z[autocorr_lag1]\u00b7Z[harmonic_dislocation] -0.47\u00b7Z[harmonic_dislocation]) > 1.98 \u2227 (Z[autocorr_lag1] > +0.57) [hold=4b, TP=2.7\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 5.055,
+    "holdout_mean_excess": 0.017804,
+    "net_profit_usd": 0.3561,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.98,
+        "formula": "(+0.67\u00b7Z[autocorr_lag1]\u00b7Z[harmonic_dislocation] -0.47\u00b7Z[harmonic_dislocation]) > 1.98 \u2227 (Z[autocorr_lag1] > +0.57) [hold=4b, TP=2.7\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "poly_product",
+          "var_names": [
+            "autocorr_lag1",
+            "harmonic_dislocation",
+            "harmonic_dislocation"
+          ],
+          "weights": [
+            0.67,
+            -0.47,
+            -0.54
+          ],
+          "threshold": 1.98,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.71,
+          "sl_fee_mult": 1.76,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.57
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "poly_product",
+      "var_names": [
+        "autocorr_lag1",
+        "harmonic_dislocation",
+        "harmonic_dislocation"
+      ],
+      "weights": [
+        0.67,
+        -0.47,
+        -0.54
+      ],
+      "threshold": 1.98,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.71,
+      "sl_fee_mult": 1.76,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.57
+    },
+    "discovered_at": 1793467636.6622221
+  },
+  {
+    "id": "edgeforge_038e0c64324b",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.99 \u2227 (Z[rolling_kurt_12] > -0.31) [hold=3b, TP=3.0\u00d7fee, SL=1.0\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 3.198,
+    "holdout_mean_excess": 0.009825,
+    "net_profit_usd": 0.2063,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.99,
+        "formula": "((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.99 \u2227 (Z[rolling_kurt_12] > -0.31) [hold=3b, TP=3.0\u00d7fee, SL=1.0\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "hurst_fast_24",
+            "autocorr_lag1",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            0.34
+          ],
+          "threshold": 1.99,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.05,
+          "sl_fee_mult": 1.02,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": -0.31
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "hurst_fast_24",
+        "autocorr_lag1",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        0.34
+      ],
+      "threshold": 1.99,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.05,
+      "sl_fee_mult": 1.02,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": -0.31
+    },
+    "discovered_at": 1793467636.6025803
+  },
+  {
+    "id": "edgeforge_80a6b82cb8b0",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.20 \u2227 (Z[variance_ratio_4_16] > -0.55) [hold=3b, TP=2.9\u00d7fee, SL=1.0\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 2.887,
+    "holdout_mean_excess": 0.012389,
+    "net_profit_usd": 0.1115,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.2,
+        "formula": "((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.20 \u2227 (Z[variance_ratio_4_16] > -0.55) [hold=3b, TP=2.9\u00d7fee, SL=1.0\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "hurst_fast_24",
+            "autocorr_lag1",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            0.49
+          ],
+          "threshold": 2.2,
+          "hold_bars": 3,
+          "tp_fee_mult": 2.88,
+          "sl_fee_mult": 1.04,
+          "regime_var": "variance_ratio_4_16",
+          "regime_min_z": -0.55
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "hurst_fast_24",
+        "autocorr_lag1",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        0.49
+      ],
+      "threshold": 2.2,
+      "hold_bars": 3,
+      "tp_fee_mult": 2.88,
+      "sl_fee_mult": 1.04,
+      "regime_var": "variance_ratio_4_16",
+      "regime_min_z": -0.55
+    },
+    "discovered_at": 1793467627.5304024
+  },
+  {
+    "id": "edgeforge_7156278ffc12",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+0.55\u00b7Z[autocorr_lag1] > 1.30) \u2227 (+1.25\u00b7Z[vwap_dislocation] +0.32\u00b7Z[hurst_fast_24] > 1.30)) \u2227 (Z[cubic_z_gate] > +0.29) [hold=3b, TP=4.8\u00d7fee, SL=1.5\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 74156250.0,
+    "holdout_mean_excess": 0.074156,
+    "net_profit_usd": 0.6489,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.16,
+        "formula": "((+0.55\u00b7Z[autocorr_lag1] > 1.30) \u2227 (+1.25\u00b7Z[vwap_dislocation] +0.32\u00b7Z[hurst_fast_24] > 1.30)) \u2227 (Z[cubic_z_gate] > +0.29) [hold=3b, TP=4.8\u00d7fee, SL=1.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "micro_flow",
+          "tactic_mode": "rational_gate",
+          "operator": "threshold_and_gate",
+          "var_names": [
+            "autocorr_lag1",
+            "vwap_dislocation",
+            "hurst_fast_24"
+          ],
+          "weights": [
+            0.55,
+            1.25,
+            0.32
+          ],
+          "threshold": 2.16,
+          "hold_bars": 3,
+          "tp_fee_mult": 4.75,
+          "sl_fee_mult": 1.46,
+          "regime_var": "cubic_z_gate",
+          "regime_min_z": 0.29
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "micro_flow",
+      "tactic_mode": "rational_gate",
+      "operator": "threshold_and_gate",
+      "var_names": [
+        "autocorr_lag1",
+        "vwap_dislocation",
+        "hurst_fast_24"
+      ],
+      "weights": [
+        0.55,
+        1.25,
+        0.32
+      ],
+      "threshold": 2.16,
+      "hold_bars": 3,
+      "tp_fee_mult": 4.75,
+      "sl_fee_mult": 1.46,
+      "regime_var": "cubic_z_gate",
+      "regime_min_z": 0.29
+    },
+    "discovered_at": 1793467622.995408
+  },
+  {
+    "id": "edgeforge_750d70725fb9",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+2.03\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=2.6\u00d7fee, SL=2.1\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 3.174,
+    "holdout_mean_excess": 0.011235,
+    "net_profit_usd": 0.0393,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.19,
+        "formula": "((+2.03\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=2.6\u00d7fee, SL=2.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "threshold_and_gate",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "harmonic_dislocation"
+          ],
+          "weights": [
+            2.03,
+            -0.18,
+            -0.47
+          ],
+          "threshold": 2.19,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.62,
+          "sl_fee_mult": 2.08,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.75
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "threshold_and_gate",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "harmonic_dislocation"
+      ],
+      "weights": [
+        2.03,
+        -0.18,
+        -0.47
+      ],
+      "threshold": 2.19,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.62,
+      "sl_fee_mult": 2.08,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.75
+    },
+    "discovered_at": 1793467621.3008165
+  },
+  {
+    "id": "edgeforge_c7006e37bd4c",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.19\u00b7Z[harmonic_dislocation] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.59 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 6.242,
+    "holdout_mean_excess": 0.017723,
+    "net_profit_usd": 0.2924,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.59,
+        "formula": "((+1.19\u00b7Z[harmonic_dislocation] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.59 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "harmonic_dislocation",
+            "autocorr_lag1",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            0.49
+          ],
+          "threshold": 2.59,
+          "hold_bars": 2,
+          "tp_fee_mult": 2.79,
+          "sl_fee_mult": 1.32,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.01
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "harmonic_dislocation",
+        "autocorr_lag1",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        0.49
+      ],
+      "threshold": 2.59,
+      "hold_bars": 2,
+      "tp_fee_mult": 2.79,
+      "sl_fee_mult": 1.32,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.01
+    },
+    "discovered_at": 1793467616.0628312
+  },
+  {
+    "id": "edgeforge_8186959a0538",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+0.52\u00b7Z[rolling_skew_12] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.63 \u2227 (Z[rolling_kurt_12] > +0.16) [hold=2b, TP=3.1\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 4.829,
+    "holdout_mean_excess": 0.01376,
+    "net_profit_usd": 0.313,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.63,
+        "formula": "((+0.52\u00b7Z[rolling_skew_12] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.63 \u2227 (Z[rolling_kurt_12] > +0.16) [hold=2b, TP=3.1\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "rolling_skew_12",
+            "autocorr_lag1",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            0.52,
+            1.46,
+            0.18
+          ],
+          "threshold": 1.63,
+          "hold_bars": 2,
+          "tp_fee_mult": 3.13,
+          "sl_fee_mult": 1.27,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.16
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "rolling_skew_12",
+        "autocorr_lag1",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        0.52,
+        1.46,
+        0.18
+      ],
+      "threshold": 1.63,
+      "hold_bars": 2,
+      "tp_fee_mult": 3.13,
+      "sl_fee_mult": 1.27,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.16
+    },
+    "discovered_at": 1793467606.223956
+  },
+  {
+    "id": "edgeforge_94d5a64d81c6",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.84\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) +1.22\u00b7Z[rolling_skew_12]\u00b2\u00b7sgn(Z[rolling_skew_12])) > 1.28 \u2227 (Z[variance_ratio_4_16] > +0.80) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 2.05,
+    "holdout_mean_excess": 0.015163,
+    "net_profit_usd": 0.0569,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.28,
+        "formula": "(-0.84\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) +1.22\u00b7Z[rolling_skew_12]\u00b2\u00b7sgn(Z[rolling_skew_12])) > 1.28 \u2227 (Z[variance_ratio_4_16] > +0.80) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "rolling_skew_12"
+          ],
+          "weights": [
+            -0.84,
+            1.22,
+            -0.53
+          ],
+          "threshold": 1.28,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.58,
+          "sl_fee_mult": 1.58,
+          "regime_var": "variance_ratio_4_16",
+          "regime_min_z": 0.8
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "rolling_skew_12"
+      ],
+      "weights": [
+        -0.84,
+        1.22,
+        -0.53
+      ],
+      "threshold": 1.28,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.58,
+      "sl_fee_mult": 1.58,
+      "regime_var": "variance_ratio_4_16",
+      "regime_min_z": 0.8
+    },
+    "discovered_at": 1793467592.62464
+  },
+  {
+    "id": "edgeforge_2e25ead8ac56",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.19\u00b7Z[harmonic_dislocation] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.35 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 8.822,
+    "holdout_mean_excess": 0.018044,
+    "net_profit_usd": 0.5052,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.35,
+        "formula": "((+1.19\u00b7Z[harmonic_dislocation] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.35 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "harmonic_dislocation",
+            "autocorr_lag1",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            0.49
+          ],
+          "threshold": 2.35,
+          "hold_bars": 2,
+          "tp_fee_mult": 2.79,
+          "sl_fee_mult": 1.32,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.01
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "harmonic_dislocation",
+        "autocorr_lag1",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        0.49
+      ],
+      "threshold": 2.35,
+      "hold_bars": 2,
+      "tp_fee_mult": 2.79,
+      "sl_fee_mult": 1.32,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.01
+    },
+    "discovered_at": 1793467592.0552392
+  },
+  {
+    "id": "edgeforge_7868b3121a8a",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.67\u00b7Z[autocorr_lag1]\u00b7Z[harmonic_dislocation] -0.88\u00b7Z[harmonic_dislocation]) > 1.98 \u2227 (Z[autocorr_lag1] > +0.57) [hold=4b, TP=2.7\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 80.397,
+    "holdout_mean_excess": 0.032652,
+    "net_profit_usd": 0.3428,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.98,
+        "formula": "(+0.67\u00b7Z[autocorr_lag1]\u00b7Z[harmonic_dislocation] -0.88\u00b7Z[harmonic_dislocation]) > 1.98 \u2227 (Z[autocorr_lag1] > +0.57) [hold=4b, TP=2.7\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "poly_product",
+          "var_names": [
+            "autocorr_lag1",
+            "harmonic_dislocation",
+            "harmonic_dislocation"
+          ],
+          "weights": [
+            0.67,
+            -0.88,
+            -0.54
+          ],
+          "threshold": 1.98,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.71,
+          "sl_fee_mult": 1.76,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.57
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "poly_product",
+      "var_names": [
+        "autocorr_lag1",
+        "harmonic_dislocation",
+        "harmonic_dislocation"
+      ],
+      "weights": [
+        0.67,
+        -0.88,
+        -0.54
+      ],
+      "threshold": 1.98,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.71,
+      "sl_fee_mult": 1.76,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.57
+    },
+    "discovered_at": 1793467584.459282
+  },
+  {
+    "id": "edgeforge_a5dd7beaa458",
+    "rule": "[EdgeForge optimism:ARB-USDC] ((+1.82\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.21 \u2227 (Z[harmonic_dislocation] > -0.02) [hold=3b, TP=3.0\u00d7fee, SL=0.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 2.911,
+    "holdout_mean_excess": 0.009546,
+    "net_profit_usd": 0.2052,
+    "chain": "optimism",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.21,
+        "formula": "((+1.82\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.21 \u2227 (Z[harmonic_dislocation] > -0.02) [hold=3b, TP=3.0\u00d7fee, SL=0.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "hurst_fast_24",
+            "harmonic_dislocation",
+            "range_compression"
+          ],
+          "weights": [
+            1.82,
+            1.46,
+            0.49
+          ],
+          "threshold": 2.21,
+          "hold_bars": 3,
+          "tp_fee_mult": 2.98,
+          "sl_fee_mult": 0.76,
+          "regime_var": "harmonic_dislocation",
+          "regime_min_z": -0.02
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "hurst_fast_24",
+        "harmonic_dislocation",
+        "range_compression"
+      ],
+      "weights": [
+        1.82,
+        1.46,
+        0.49
+      ],
+      "threshold": 2.21,
+      "hold_bars": 3,
+      "tp_fee_mult": 2.98,
+      "sl_fee_mult": 0.76,
+      "regime_var": "harmonic_dislocation",
+      "regime_min_z": -0.02
+    },
+    "discovered_at": 1793467574.5903614
+  },
+  {
+    "id": "edgeforge_24ef61558e17",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.65\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=3.0\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 3.169,
+    "holdout_mean_excess": 0.011275,
+    "net_profit_usd": 0.0395,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.19,
+        "formula": "((+1.65\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=3.0\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "threshold_and_gate",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "harmonic_dislocation"
+          ],
+          "weights": [
+            1.65,
+            -0.18,
+            -0.47
+          ],
+          "threshold": 2.19,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.98,
+          "sl_fee_mult": 1.78,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.75
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "threshold_and_gate",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "harmonic_dislocation"
+      ],
+      "weights": [
+        1.65,
+        -0.18,
+        -0.47
+      ],
+      "threshold": 2.19,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.98,
+      "sl_fee_mult": 1.78,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.75
+    },
+    "discovered_at": 1793467556.520806
+  },
+  {
+    "id": "edgeforge_d63794f4dc80",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.19 \u2227 (Z[ret_velocity] > +0.54) [hold=4b, TP=3.5\u00d7fee, SL=1.5\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 4.101,
+    "holdout_mean_excess": 0.018206,
+    "net_profit_usd": 0.1274,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.19,
+        "formula": "(-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.19 \u2227 (Z[ret_velocity] > +0.54) [hold=4b, TP=3.5\u00d7fee, SL=1.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            -0.83,
+            -0.61,
+            -0.53
+          ],
+          "threshold": 1.19,
+          "hold_bars": 4,
+          "tp_fee_mult": 3.48,
+          "sl_fee_mult": 1.46,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.54
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        -0.83,
+        -0.61,
+        -0.53
+      ],
+      "threshold": 1.19,
+      "hold_bars": 4,
+      "tp_fee_mult": 3.48,
+      "sl_fee_mult": 1.46,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.54
+    },
+    "discovered_at": 1793467556.5074618
+  },
+  {
+    "id": "edgeforge_087db5678844",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.08 \u2227 (Z[ret_velocity] > +0.54) [hold=6b, TP=4.2\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 4.582,
+    "holdout_mean_excess": 0.027085,
+    "net_profit_usd": 0.2302,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.08,
+        "formula": "(-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.08 \u2227 (Z[ret_velocity] > +0.54) [hold=6b, TP=4.2\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            -0.83,
+            -0.61,
+            -0.53
+          ],
+          "threshold": 1.08,
+          "hold_bars": 6,
+          "tp_fee_mult": 4.24,
+          "sl_fee_mult": 1.55,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.54
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        -0.83,
+        -0.61,
+        -0.53
+      ],
+      "threshold": 1.08,
+      "hold_bars": 6,
+      "tp_fee_mult": 4.24,
+      "sl_fee_mult": 1.55,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.54
+    },
+    "discovered_at": 1793467547.1585777
+  },
+  {
+    "id": "edgeforge_606376636953",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+0.52\u00b7Z[rolling_skew_12] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.77 \u2227 (Z[rolling_kurt_12] > +0.16) [hold=2b, TP=3.1\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 5.289,
+    "holdout_mean_excess": 0.016973,
+    "net_profit_usd": 0.3013,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.77,
+        "formula": "((+0.52\u00b7Z[rolling_skew_12] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.77 \u2227 (Z[rolling_kurt_12] > +0.16) [hold=2b, TP=3.1\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "rolling_skew_12",
+            "autocorr_lag1",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            0.52,
+            1.46,
+            0.18
+          ],
+          "threshold": 1.77,
+          "hold_bars": 2,
+          "tp_fee_mult": 3.13,
+          "sl_fee_mult": 1.27,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.16
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "rolling_skew_12",
+        "autocorr_lag1",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        0.52,
+        1.46,
+        0.18
+      ],
+      "threshold": 1.77,
+      "hold_bars": 2,
+      "tp_fee_mult": 3.13,
+      "sl_fee_mult": 1.27,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.16
+    },
+    "discovered_at": 1793467527.3837132
+  },
+  {
+    "id": "edgeforge_1a054bf1b1ba",
+    "rule": "[EdgeForge arbitrum:ARB-WETH] (+0.67\u00b7Z[autocorr_lag1]\u00b7Z[cramers_impulse_z] -0.18\u00b7Z[vol_weighted_slope_6]) > 1.78 \u2227 (Z[autocorr_lag1] > +0.40) [hold=4b, TP=2.3\u00d7fee, SL=1.9\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 2.233,
+    "holdout_mean_excess": 0.012452,
+    "net_profit_usd": 0.0498,
+    "chain": "arbitrum",
+    "symbol": "ARB-WETH",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.78,
+        "formula": "(+0.67\u00b7Z[autocorr_lag1]\u00b7Z[cramers_impulse_z] -0.18\u00b7Z[vol_weighted_slope_6]) > 1.78 \u2227 (Z[autocorr_lag1] > +0.40) [hold=4b, TP=2.3\u00d7fee, SL=1.9\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "poly_product",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "vol_weighted_slope_6"
+          ],
+          "weights": [
+            0.67,
+            -0.18,
+            -0.61
+          ],
+          "threshold": 1.78,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.26,
+          "sl_fee_mult": 1.89,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.4
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "poly_product",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "vol_weighted_slope_6"
+      ],
+      "weights": [
+        0.67,
+        -0.18,
+        -0.61
+      ],
+      "threshold": 1.78,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.26,
+      "sl_fee_mult": 1.89,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.4
+    },
+    "discovered_at": 1793467527.189983
+  },
+  {
+    "id": "edgeforge_f735a3feadc9",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.19 \u2227 (Z[ret_velocity] > +0.54) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 3.647,
+    "holdout_mean_excess": 0.018864,
+    "net_profit_usd": 0.132,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.19,
+        "formula": "(-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.19 \u2227 (Z[ret_velocity] > +0.54) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            -0.83,
+            -0.61,
+            -0.53
+          ],
+          "threshold": 1.19,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.58,
+          "sl_fee_mult": 1.58,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.54
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        -0.83,
+        -0.61,
+        -0.53
+      ],
+      "threshold": 1.19,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.58,
+      "sl_fee_mult": 1.58,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.54
+    },
+    "discovered_at": 1793467513.2208037
+  },
+  {
+    "id": "edgeforge_51923dbcb498",
+    "rule": "[EdgeForge optimism:ARB-USDC] ((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.16 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 4.203,
+    "holdout_mean_excess": 0.014971,
+    "net_profit_usd": 0.1722,
+    "chain": "optimism",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.16,
+        "formula": "((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.16 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "hurst_fast_24",
+            "harmonic_dislocation",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            0.82
+          ],
+          "threshold": 2.16,
+          "hold_bars": 2,
+          "tp_fee_mult": 2.79,
+          "sl_fee_mult": 1.32,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.01
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "hurst_fast_24",
+        "harmonic_dislocation",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        0.82
+      ],
+      "threshold": 2.16,
+      "hold_bars": 2,
+      "tp_fee_mult": 2.79,
+      "sl_fee_mult": 1.32,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.01
+    },
+    "discovered_at": 1793467513.1319451
+  },
+  {
+    "id": "edgeforge_c625255fe6ad",
+    "rule": "[EdgeForge arbitrum:ARB-WETH] ((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.08 \u2227 (Z[rolling_kurt_12] > +0.09) [hold=2b, TP=3.0\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 2.05,
+    "holdout_mean_excess": 0.011178,
+    "net_profit_usd": 0.0503,
+    "chain": "arbitrum",
+    "symbol": "ARB-WETH",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.08,
+        "formula": "((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.08 \u2227 (Z[rolling_kurt_12] > +0.09) [hold=2b, TP=3.0\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "hurst_fast_24",
+            "autocorr_lag1",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            0.34
+          ],
+          "threshold": 2.08,
+          "hold_bars": 2,
+          "tp_fee_mult": 2.96,
+          "sl_fee_mult": 1.29,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.09
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "hurst_fast_24",
+        "autocorr_lag1",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        0.34
+      ],
+      "threshold": 2.08,
+      "hold_bars": 2,
+      "tp_fee_mult": 2.96,
+      "sl_fee_mult": 1.29,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.09
+    },
+    "discovered_at": 1793467469.148981
+  },
+  {
+    "id": "edgeforge_bbbf1562bb54",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.65\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=2.8\u00d7fee, SL=1.9\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 3.169,
+    "holdout_mean_excess": 0.011275,
+    "net_profit_usd": 0.0395,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.19,
+        "formula": "((+1.65\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=2.8\u00d7fee, SL=1.9\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "threshold_and_gate",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "harmonic_dislocation"
+          ],
+          "weights": [
+            1.65,
+            -0.18,
+            -0.47
+          ],
+          "threshold": 2.19,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.8,
+          "sl_fee_mult": 1.93,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.75
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "threshold_and_gate",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "harmonic_dislocation"
+      ],
+      "weights": [
+        1.65,
+        -0.18,
+        -0.47
+      ],
+      "threshold": 2.19,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.8,
+      "sl_fee_mult": 1.93,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.75
+    },
+    "discovered_at": 1793467454.9576616
+  },
+  {
+    "id": "edgeforge_40e316e7edda",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.84\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) +0.91\u00b7Z[rolling_skew_12]\u00b2\u00b7sgn(Z[rolling_skew_12])) > 1.28 \u2227 (Z[variance_ratio_4_16] > +0.80) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 3.102,
+    "holdout_mean_excess": 0.015825,
+    "net_profit_usd": 0.1701,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.28,
+        "formula": "(-0.84\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) +0.91\u00b7Z[rolling_skew_12]\u00b2\u00b7sgn(Z[rolling_skew_12])) > 1.28 \u2227 (Z[variance_ratio_4_16] > +0.80) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "rolling_skew_12"
+          ],
+          "weights": [
+            -0.84,
+            0.91,
+            -0.53
+          ],
+          "threshold": 1.28,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.58,
+          "sl_fee_mult": 1.58,
+          "regime_var": "variance_ratio_4_16",
+          "regime_min_z": 0.8
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "rolling_skew_12"
+      ],
+      "weights": [
+        -0.84,
+        0.91,
+        -0.53
+      ],
+      "threshold": 1.28,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.58,
+      "sl_fee_mult": 1.58,
+      "regime_var": "variance_ratio_4_16",
+      "regime_min_z": 0.8
+    },
+    "discovered_at": 1793467453.4430568
+  },
+  {
+    "id": "edgeforge_840df925e881",
+    "rule": "[EdgeForge optimism:ARB-USDC] ((+1.19\u00b7Z[harmonic_dislocation] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.18 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 4.241,
+    "holdout_mean_excess": 0.010931,
+    "net_profit_usd": 0.2842,
+    "chain": "optimism",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.18,
+        "formula": "((+1.19\u00b7Z[harmonic_dislocation] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[range_compression]|)) > 2.18 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "harmonic_dislocation",
+            "autocorr_lag1",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            0.49
+          ],
+          "threshold": 2.18,
+          "hold_bars": 2,
+          "tp_fee_mult": 2.79,
+          "sl_fee_mult": 1.32,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.01
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "harmonic_dislocation",
+        "autocorr_lag1",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        0.49
+      ],
+      "threshold": 2.18,
+      "hold_bars": 2,
+      "tp_fee_mult": 2.79,
+      "sl_fee_mult": 1.32,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.01
+    },
+    "discovered_at": 1793467452.5394871
+  },
+  {
+    "id": "edgeforge_0b083bdbef8f",
+    "rule": "[EdgeForge optimism:ARB-USDC] ((+1.19\u00b7Z[hurst_fast_24] +1.16\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.16 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 2.383,
+    "holdout_mean_excess": 0.019017,
+    "net_profit_usd": 0.0475,
+    "chain": "optimism",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.16,
+        "formula": "((+1.19\u00b7Z[hurst_fast_24] +1.16\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.16 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "hurst_fast_24",
+            "harmonic_dislocation",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.16,
+            0.82
+          ],
+          "threshold": 2.16,
+          "hold_bars": 2,
+          "tp_fee_mult": 2.79,
+          "sl_fee_mult": 1.32,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.01
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "hurst_fast_24",
+        "harmonic_dislocation",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.16,
+        0.82
+      ],
+      "threshold": 2.16,
+      "hold_bars": 2,
+      "tp_fee_mult": 2.79,
+      "sl_fee_mult": 1.32,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.01
+    },
+    "discovered_at": 1793467406.351244
+  },
+  {
+    "id": "edgeforge_37b38bdeb465",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.28 \u2227 (Z[ret_velocity] > +0.54) [hold=6b, TP=4.2\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 5.016,
+    "holdout_mean_excess": 0.03234,
+    "net_profit_usd": 0.2345,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.28,
+        "formula": "(-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.28 \u2227 (Z[ret_velocity] > +0.54) [hold=6b, TP=4.2\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            -0.83,
+            -0.61,
+            -0.53
+          ],
+          "threshold": 1.28,
+          "hold_bars": 6,
+          "tp_fee_mult": 4.24,
+          "sl_fee_mult": 1.55,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.54
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        -0.83,
+        -0.61,
+        -0.53
+      ],
+      "threshold": 1.28,
+      "hold_bars": 6,
+      "tp_fee_mult": 4.24,
+      "sl_fee_mult": 1.55,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.54
+    },
+    "discovered_at": 1793467405.539687
+  },
+  {
+    "id": "edgeforge_be70a9efb5bb",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.65\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=3.2\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 3.169,
+    "holdout_mean_excess": 0.011275,
+    "net_profit_usd": 0.0395,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.19,
+        "formula": "((+1.65\u00b7Z[autocorr_lag1] > 1.31) \u2227 (-0.18\u00b7Z[cramers_impulse_z] -0.47\u00b7Z[harmonic_dislocation] > 1.31)) \u2227 (Z[autocorr_lag1] > +0.75) [hold=6b, TP=3.2\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "threshold_and_gate",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "harmonic_dislocation"
+          ],
+          "weights": [
+            1.65,
+            -0.18,
+            -0.47
+          ],
+          "threshold": 2.19,
+          "hold_bars": 6,
+          "tp_fee_mult": 3.16,
+          "sl_fee_mult": 1.64,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.75
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "threshold_and_gate",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "harmonic_dislocation"
+      ],
+      "weights": [
+        1.65,
+        -0.18,
+        -0.47
+      ],
+      "threshold": 2.19,
+      "hold_bars": 6,
+      "tp_fee_mult": 3.16,
+      "sl_fee_mult": 1.64,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.75
+    },
+    "discovered_at": 1793467408.5159528
+  },
+  {
+    "id": "edgeforge_d001aa4bf3e7",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+2.50\u00b7(Z[autocorr_lag1] - Z[body_conviction]) +0.52\u00b7Z[buy_pressure_accel]\u00b2\u00b7sgn(Z[buy_pressure_accel])) > 2.87 \u2227 (Z[body_conviction] > +0.64) [hold=6b, TP=5.0\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 25.041,
+    "holdout_mean_excess": 0.071072,
+    "net_profit_usd": 0.8706,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.87,
+        "formula": "(+2.50\u00b7(Z[autocorr_lag1] - Z[body_conviction]) +0.52\u00b7Z[buy_pressure_accel]\u00b2\u00b7sgn(Z[buy_pressure_accel])) > 2.87 \u2227 (Z[body_conviction] > +0.64) [hold=6b, TP=5.0\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "micro_flow",
+          "tactic_mode": "rational_gate",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "autocorr_lag1",
+            "body_conviction",
+            "buy_pressure_accel"
+          ],
+          "weights": [
+            2.5,
+            0.52,
+            -1.94
+          ],
+          "threshold": 2.87,
+          "hold_bars": 6,
+          "tp_fee_mult": 5.0,
+          "sl_fee_mult": 1.34,
+          "regime_var": "body_conviction",
+          "regime_min_z": 0.64
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "micro_flow",
+      "tactic_mode": "rational_gate",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "autocorr_lag1",
+        "body_conviction",
+        "buy_pressure_accel"
+      ],
+      "weights": [
+        2.5,
+        0.52,
+        -1.94
+      ],
+      "threshold": 2.87,
+      "hold_bars": 6,
+      "tp_fee_mult": 5.0,
+      "sl_fee_mult": 1.34,
+      "regime_var": "body_conviction",
+      "regime_min_z": 0.64
+    },
+    "discovered_at": 1793467405.3740056
+  },
+  {
+    "id": "edgeforge_b2a81010ca82",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+0.55\u00b7Z[autocorr_lag1] > 1.30) \u2227 (+2.10\u00b7Z[kalman_residual] +0.15\u00b7Z[cubic_z_gate] > 1.30)) \u2227 (Z[cubic_z_gate] > +0.29) [hold=3b, TP=4.8\u00d7fee, SL=1.5\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 74156250.0,
+    "holdout_mean_excess": 0.074156,
+    "net_profit_usd": 0.6489,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.16,
+        "formula": "((+0.55\u00b7Z[autocorr_lag1] > 1.30) \u2227 (+2.10\u00b7Z[kalman_residual] +0.15\u00b7Z[cubic_z_gate] > 1.30)) \u2227 (Z[cubic_z_gate] > +0.29) [hold=3b, TP=4.8\u00d7fee, SL=1.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "micro_flow",
+          "tactic_mode": "rational_gate",
+          "operator": "threshold_and_gate",
+          "var_names": [
+            "autocorr_lag1",
+            "kalman_residual",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            0.55,
+            2.1,
+            0.15
+          ],
+          "threshold": 2.16,
+          "hold_bars": 3,
+          "tp_fee_mult": 4.75,
+          "sl_fee_mult": 1.46,
+          "regime_var": "cubic_z_gate",
+          "regime_min_z": 0.29
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "micro_flow",
+      "tactic_mode": "rational_gate",
+      "operator": "threshold_and_gate",
+      "var_names": [
+        "autocorr_lag1",
+        "kalman_residual",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        0.55,
+        2.1,
+        0.15
+      ],
+      "threshold": 2.16,
+      "hold_bars": 3,
+      "tp_fee_mult": 4.75,
+      "sl_fee_mult": 1.46,
+      "regime_var": "cubic_z_gate",
+      "regime_min_z": 0.29
+    },
+    "discovered_at": 1793467394.3874793
+  },
+  {
+    "id": "edgeforge_e7754b3a1050",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.00\u00b7Z[buy_pressure_accel]\u00b7Z[autocorr_lag1] +0.68\u00b7Z[autocorr_lag1]) > 1.61 \u2227 (Z[vwap_dislocation] > +0.76) [hold=4b, TP=2.2\u00d7fee, SL=2.5\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 23136750.0,
+    "holdout_mean_excess": 0.023137,
+    "net_profit_usd": 0.2429,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.61,
+        "formula": "(-0.00\u00b7Z[buy_pressure_accel]\u00b7Z[autocorr_lag1] +0.68\u00b7Z[autocorr_lag1]) > 1.61 \u2227 (Z[vwap_dislocation] > +0.76) [hold=4b, TP=2.2\u00d7fee, SL=2.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "poly_product",
+          "var_names": [
+            "buy_pressure_accel",
+            "autocorr_lag1",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.0,
+            0.68,
+            0.18
+          ],
+          "threshold": 1.61,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.17,
+          "sl_fee_mult": 2.51,
+          "regime_var": "vwap_dislocation",
+          "regime_min_z": 0.76
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "poly_product",
+      "var_names": [
+        "buy_pressure_accel",
+        "autocorr_lag1",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.0,
+        0.68,
+        0.18
+      ],
+      "threshold": 1.61,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.17,
+      "sl_fee_mult": 2.51,
+      "regime_var": "vwap_dislocation",
+      "regime_min_z": 0.76
+    },
+    "discovered_at": 1793467389.990726
+  },
+  {
+    "id": "edgeforge_cfc725085109",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.84\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.33 \u2227 (Z[variance_ratio_4_16] > +0.67) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 2.576,
+    "holdout_mean_excess": 0.011323,
+    "net_profit_usd": 0.1585,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.33,
+        "formula": "(-0.84\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.33 \u2227 (Z[variance_ratio_4_16] > +0.67) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            -0.84,
+            -0.61,
+            -0.53
+          ],
+          "threshold": 1.33,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.58,
+          "sl_fee_mult": 1.58,
+          "regime_var": "variance_ratio_4_16",
+          "regime_min_z": 0.67
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        -0.84,
+        -0.61,
+        -0.53
+      ],
+      "threshold": 1.33,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.58,
+      "sl_fee_mult": 1.58,
+      "regime_var": "variance_ratio_4_16",
+      "regime_min_z": 0.67
+    },
+    "discovered_at": 1793467389.8241684
+  },
+  {
+    "id": "edgeforge_03120ba03d97",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+0.38\u00b7Z[rolling_skew_12] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.77 \u2227 (Z[hurst_fast_24] > +0.30) [hold=2b, TP=3.1\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 2.781,
+    "holdout_mean_excess": 0.012568,
+    "net_profit_usd": 0.1257,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.77,
+        "formula": "((+0.38\u00b7Z[rolling_skew_12] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.77 \u2227 (Z[hurst_fast_24] > +0.30) [hold=2b, TP=3.1\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "rolling_skew_12",
+            "autocorr_lag1",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            0.38,
+            1.46,
+            0.18
+          ],
+          "threshold": 1.77,
+          "hold_bars": 2,
+          "tp_fee_mult": 3.13,
+          "sl_fee_mult": 1.27,
+          "regime_var": "hurst_fast_24",
+          "regime_min_z": 0.3
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "rolling_skew_12",
+        "autocorr_lag1",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        0.38,
+        1.46,
+        0.18
+      ],
+      "threshold": 1.77,
+      "hold_bars": 2,
+      "tp_fee_mult": 3.13,
+      "sl_fee_mult": 1.27,
+      "regime_var": "hurst_fast_24",
+      "regime_min_z": 0.3
+    },
+    "discovered_at": 1793467381.940271
+  },
+  {
+    "id": "edgeforge_b7d2c6471241",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+2.50\u00b7(Z[autocorr_lag1] - Z[body_conviction]) -0.01\u00b7Z[wick_asymmetry]\u00b2\u00b7sgn(Z[wick_asymmetry])) > 2.86 \u2227 (Z[body_conviction] > +0.69) [hold=6b, TP=5.0\u00d7fee, SL=1.2\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 25.041,
+    "holdout_mean_excess": 0.071072,
+    "net_profit_usd": 0.8706,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.86,
+        "formula": "(+2.50\u00b7(Z[autocorr_lag1] - Z[body_conviction]) -0.01\u00b7Z[wick_asymmetry]\u00b2\u00b7sgn(Z[wick_asymmetry])) > 2.86 \u2227 (Z[body_conviction] > +0.69) [hold=6b, TP=5.0\u00d7fee, SL=1.2\u00d7fee]",
+        "genome": {
+          "variable_collection": "micro_flow",
+          "tactic_mode": "rational_gate",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "autocorr_lag1",
+            "body_conviction",
+            "wick_asymmetry"
+          ],
+          "weights": [
+            2.5,
+            -0.01,
+            -1.59
+          ],
+          "threshold": 2.86,
+          "hold_bars": 6,
+          "tp_fee_mult": 5.0,
+          "sl_fee_mult": 1.25,
+          "regime_var": "body_conviction",
+          "regime_min_z": 0.69
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "micro_flow",
+      "tactic_mode": "rational_gate",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "autocorr_lag1",
+        "body_conviction",
+        "wick_asymmetry"
+      ],
+      "weights": [
+        2.5,
+        -0.01,
+        -1.59
+      ],
+      "threshold": 2.86,
+      "hold_bars": 6,
+      "tp_fee_mult": 5.0,
+      "sl_fee_mult": 1.25,
+      "regime_var": "body_conviction",
+      "regime_min_z": 0.69
+    },
+    "discovered_at": 1793467380.053421
+  },
+  {
+    "id": "edgeforge_4436a1c1719d",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.23\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) +0.91\u00b7Z[rolling_kurt_12]\u00b2\u00b7sgn(Z[rolling_kurt_12])) > 1.21 \u2227 (Z[variance_ratio_4_16] > +1.06) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 2.958,
+    "holdout_mean_excess": 0.019484,
+    "net_profit_usd": 0.1364,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.21,
+        "formula": "(-0.23\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) +0.91\u00b7Z[rolling_kurt_12]\u00b2\u00b7sgn(Z[rolling_kurt_12])) > 1.21 \u2227 (Z[variance_ratio_4_16] > +1.06) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "rolling_kurt_12"
+          ],
+          "weights": [
+            -0.23,
+            0.91,
+            -0.84
+          ],
+          "threshold": 1.21,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.58,
+          "sl_fee_mult": 1.84,
+          "regime_var": "variance_ratio_4_16",
+          "regime_min_z": 1.06
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "rolling_kurt_12"
+      ],
+      "weights": [
+        -0.23,
+        0.91,
+        -0.84
+      ],
+      "threshold": 1.21,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.58,
+      "sl_fee_mult": 1.84,
+      "regime_var": "variance_ratio_4_16",
+      "regime_min_z": 1.06
+    },
+    "discovered_at": 1793467375.290068
+  },
+  {
+    "id": "edgeforge_6a06a901fdc7",
+    "rule": "[EdgeForge optimism:ARB-USDC] ((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.21 \u2227 (Z[harmonic_dislocation] > -0.02) [hold=3b, TP=3.0\u00d7fee, SL=0.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 5.033,
+    "holdout_mean_excess": 0.015887,
+    "net_profit_usd": 0.3416,
+    "chain": "optimism",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.21,
+        "formula": "((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.21 \u2227 (Z[harmonic_dislocation] > -0.02) [hold=3b, TP=3.0\u00d7fee, SL=0.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "hurst_fast_24",
+            "harmonic_dislocation",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            0.49
+          ],
+          "threshold": 2.21,
+          "hold_bars": 3,
+          "tp_fee_mult": 2.98,
+          "sl_fee_mult": 0.76,
+          "regime_var": "harmonic_dislocation",
+          "regime_min_z": -0.02
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "hurst_fast_24",
+        "harmonic_dislocation",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        0.49
+      ],
+      "threshold": 2.21,
+      "hold_bars": 3,
+      "tp_fee_mult": 2.98,
+      "sl_fee_mult": 0.76,
+      "regime_var": "harmonic_dislocation",
+      "regime_min_z": -0.02
+    },
+    "discovered_at": 1793467369.278711
+  },
+  {
+    "id": "edgeforge_45bd298f04a6",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.83\u00b7(Z[ret_acceleration] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.28 \u2227 (Z[ret_velocity] > +0.54) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 7.411,
+    "holdout_mean_excess": 0.030357,
+    "net_profit_usd": 0.1973,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.28,
+        "formula": "(-0.83\u00b7(Z[ret_acceleration] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.28 \u2227 (Z[ret_velocity] > +0.54) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_acceleration",
+            "rolling_kurt_12",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            -0.83,
+            -0.61,
+            -0.53
+          ],
+          "threshold": 1.28,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.58,
+          "sl_fee_mult": 1.58,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.54
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_acceleration",
+        "rolling_kurt_12",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        -0.83,
+        -0.61,
+        -0.53
+      ],
+      "threshold": 1.28,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.58,
+      "sl_fee_mult": 1.58,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.54
+    },
+    "discovered_at": 1793467345.0934863
+  },
+  {
+    "id": "edgeforge_ba7579f4d556",
+    "rule": "[EdgeForge optimism:ARB-USDC] ((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.21 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=3b, TP=3.0\u00d7fee, SL=0.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 7.296,
+    "holdout_mean_excess": 0.021087,
+    "net_profit_usd": 0.4112,
+    "chain": "optimism",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.21,
+        "formula": "((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.21 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=3b, TP=3.0\u00d7fee, SL=0.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "hurst_fast_24",
+            "harmonic_dislocation",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            0.49
+          ],
+          "threshold": 2.21,
+          "hold_bars": 3,
+          "tp_fee_mult": 2.98,
+          "sl_fee_mult": 0.76,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.01
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "hurst_fast_24",
+        "harmonic_dislocation",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        0.49
+      ],
+      "threshold": 2.21,
+      "hold_bars": 3,
+      "tp_fee_mult": 2.98,
+      "sl_fee_mult": 0.76,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.01
+    },
+    "discovered_at": 1793467344.0481653
+  },
+  {
+    "id": "edgeforge_f83ea3042d78",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+0.55\u00b7Z[autocorr_lag1] > 1.27) \u2227 (+1.96\u00b7Z[kalman_residual] +0.24\u00b7Z[cubic_z_gate] > 1.27)) \u2227 (Z[cubic_z_gate] > +0.29) [hold=3b, TP=4.8\u00d7fee, SL=1.5\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 74156250.0,
+    "holdout_mean_excess": 0.074156,
+    "net_profit_usd": 0.6489,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.12,
+        "formula": "((+0.55\u00b7Z[autocorr_lag1] > 1.27) \u2227 (+1.96\u00b7Z[kalman_residual] +0.24\u00b7Z[cubic_z_gate] > 1.27)) \u2227 (Z[cubic_z_gate] > +0.29) [hold=3b, TP=4.8\u00d7fee, SL=1.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "micro_flow",
+          "tactic_mode": "rational_gate",
+          "operator": "threshold_and_gate",
+          "var_names": [
+            "autocorr_lag1",
+            "kalman_residual",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            0.55,
+            1.96,
+            0.24
+          ],
+          "threshold": 2.12,
+          "hold_bars": 3,
+          "tp_fee_mult": 4.75,
+          "sl_fee_mult": 1.46,
+          "regime_var": "cubic_z_gate",
+          "regime_min_z": 0.29
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "micro_flow",
+      "tactic_mode": "rational_gate",
+      "operator": "threshold_and_gate",
+      "var_names": [
+        "autocorr_lag1",
+        "kalman_residual",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        0.55,
+        1.96,
+        0.24
+      ],
+      "threshold": 2.12,
+      "hold_bars": 3,
+      "tp_fee_mult": 4.75,
+      "sl_fee_mult": 1.46,
+      "regime_var": "cubic_z_gate",
+      "regime_min_z": 0.29
+    },
+    "discovered_at": 1793467337.2000058
+  },
+  {
+    "id": "edgeforge_79b1ff8086b1",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+0.38\u00b7Z[rolling_skew_12] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.77 \u2227 (Z[rolling_kurt_12] > +0.16) [hold=2b, TP=3.1\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 2.77,
+    "holdout_mean_excess": 0.010115,
+    "net_profit_usd": 0.1416,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.77,
+        "formula": "((+0.38\u00b7Z[rolling_skew_12] +1.46\u00b7Z[autocorr_lag1]) / (1 + |Z[cubic_z_gate]|)) > 1.77 \u2227 (Z[rolling_kurt_12] > +0.16) [hold=2b, TP=3.1\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "rolling_skew_12",
+            "autocorr_lag1",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            0.38,
+            1.46,
+            0.18
+          ],
+          "threshold": 1.77,
+          "hold_bars": 2,
+          "tp_fee_mult": 3.13,
+          "sl_fee_mult": 1.27,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.16
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "rolling_skew_12",
+        "autocorr_lag1",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        0.38,
+        1.46,
+        0.18
+      ],
+      "threshold": 1.77,
+      "hold_bars": 2,
+      "tp_fee_mult": 3.13,
+      "sl_fee_mult": 1.27,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.16
+    },
+    "discovered_at": 1793467330.4058473
+  },
+  {
+    "id": "edgeforge_a2a4ae19bb88",
+    "rule": "[EdgeForge optimism:ARB-USDC] ((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.21 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 5.097,
+    "holdout_mean_excess": 0.018067,
+    "net_profit_usd": 0.1897,
+    "chain": "optimism",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.21,
+        "formula": "((+1.19\u00b7Z[hurst_fast_24] +1.46\u00b7Z[harmonic_dislocation]) / (1 + |Z[range_compression]|)) > 2.21 \u2227 (Z[rolling_kurt_12] > +0.01) [hold=2b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "chaos_impulse_hybrid",
+          "tactic_mode": "harmonic_resonance",
+          "operator": "rational_ratio",
+          "var_names": [
+            "hurst_fast_24",
+            "harmonic_dislocation",
+            "range_compression"
+          ],
+          "weights": [
+            1.19,
+            1.46,
+            0.49
+          ],
+          "threshold": 2.21,
+          "hold_bars": 2,
+          "tp_fee_mult": 2.79,
+          "sl_fee_mult": 1.32,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.01
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "chaos_impulse_hybrid",
+      "tactic_mode": "harmonic_resonance",
+      "operator": "rational_ratio",
+      "var_names": [
+        "hurst_fast_24",
+        "harmonic_dislocation",
+        "range_compression"
+      ],
+      "weights": [
+        1.19,
+        1.46,
+        0.49
+      ],
+      "threshold": 2.21,
+      "hold_bars": 2,
+      "tp_fee_mult": 2.79,
+      "sl_fee_mult": 1.32,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.01
+    },
+    "discovered_at": 1793467323.1091056
+  },
+  {
+    "id": "edgeforge_7f73493f8d97",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.28 \u2227 (Z[ret_velocity] > +0.54) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 4.956,
+    "holdout_mean_excess": 0.022904,
+    "net_profit_usd": 0.1775,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.28,
+        "formula": "(-0.83\u00b7(Z[ret_jerk] - Z[rolling_kurt_12]) -0.61\u00b7Z[cubic_z_gate]\u00b2\u00b7sgn(Z[cubic_z_gate])) > 1.28 \u2227 (Z[ret_velocity] > +0.54) [hold=3b, TP=3.6\u00d7fee, SL=1.6\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_jerk",
+            "rolling_kurt_12",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            -0.83,
+            -0.61,
+            -0.53
+          ],
+          "threshold": 1.28,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.58,
+          "sl_fee_mult": 1.58,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.54
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_jerk",
+        "rolling_kurt_12",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        -0.83,
+        -0.61,
+        -0.53
+      ],
+      "threshold": 1.28,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.58,
+      "sl_fee_mult": 1.58,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.54
+    },
+    "discovered_at": 1793467315.5580063
+  },
+  {
+    "id": "edgeforge_9b9666319c60",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.18\u00b7(Z[ret_acceleration] - Z[ret_velocity]) -0.61\u00b7Z[ret_acceleration]\u00b2\u00b7sgn(Z[ret_acceleration])) > 0.82 \u2227 (Z[autocorr_lag1] > +0.97) [hold=3b, TP=3.9\u00d7fee, SL=1.7\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 4.328,
+    "holdout_mean_excess": 0.019529,
+    "net_profit_usd": 0.2392,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 0.82,
+        "formula": "(+0.18\u00b7(Z[ret_acceleration] - Z[ret_velocity]) -0.61\u00b7Z[ret_acceleration]\u00b2\u00b7sgn(Z[ret_acceleration])) > 0.82 \u2227 (Z[autocorr_lag1] > +0.97) [hold=3b, TP=3.9\u00d7fee, SL=1.7\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_acceleration",
+            "ret_velocity",
+            "ret_acceleration"
+          ],
+          "weights": [
+            0.18,
+            -0.61,
+            -1.91
+          ],
+          "threshold": 0.82,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.87,
+          "sl_fee_mult": 1.74,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.97
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_acceleration",
+        "ret_velocity",
+        "ret_acceleration"
+      ],
+      "weights": [
+        0.18,
+        -0.61,
+        -1.91
+      ],
+      "threshold": 0.82,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.87,
+      "sl_fee_mult": 1.74,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.97
+    },
+    "discovered_at": 1793467302.3349485
+  },
+  {
+    "id": "edgeforge_572ccc4dd37e",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.18\u00b7(Z[ret_acceleration] - Z[ret_velocity]) -0.61\u00b7Z[ret_acceleration]\u00b2\u00b7sgn(Z[ret_acceleration])) > 0.82 \u2227 (Z[autocorr_lag1] > +0.97) [hold=3b, TP=3.9\u00d7fee, SL=1.7\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 4.328,
+    "holdout_mean_excess": 0.019529,
+    "net_profit_usd": 0.2392,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 0.82,
+        "formula": "(+0.18\u00b7(Z[ret_acceleration] - Z[ret_velocity]) -0.61\u00b7Z[ret_acceleration]\u00b2\u00b7sgn(Z[ret_acceleration])) > 0.82 \u2227 (Z[autocorr_lag1] > +0.97) [hold=3b, TP=3.9\u00d7fee, SL=1.7\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "ret_acceleration",
+            "ret_velocity",
+            "ret_acceleration"
+          ],
+          "weights": [
+            0.18,
+            -0.61,
+            -1.38
+          ],
+          "threshold": 0.82,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.87,
+          "sl_fee_mult": 1.74,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.97
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "ret_acceleration",
+        "ret_velocity",
+        "ret_acceleration"
+      ],
+      "weights": [
+        0.18,
+        -0.61,
+        -1.38
+      ],
+      "threshold": 0.82,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.87,
+      "sl_fee_mult": 1.74,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.97
+    },
+    "discovered_at": 1793467280.6368964
+  },
+  {
+    "id": "edgeforge_0f13bc776995",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.19\u00b7Z[rolling_kurt_12] +0.09\u00b7Z[autocorr_lag1] -1.20\u00b7Z[cubic_z_gate]) > 1.78 \u2227 (Z[ret_jerk] > +0.35) [hold=4b, TP=3.5\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 3.337,
+    "holdout_mean_excess": 0.017565,
+    "net_profit_usd": 0.0878,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.78,
+        "formula": "(+0.19\u00b7Z[rolling_kurt_12] +0.09\u00b7Z[autocorr_lag1] -1.20\u00b7Z[cubic_z_gate]) > 1.78 \u2227 (Z[ret_jerk] > +0.35) [hold=4b, TP=3.5\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "linear_comb",
+          "var_names": [
+            "rolling_kurt_12",
+            "autocorr_lag1",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            0.19,
+            0.09,
+            -1.2
+          ],
+          "threshold": 1.78,
+          "hold_bars": 4,
+          "tp_fee_mult": 3.55,
+          "sl_fee_mult": 1.76,
+          "regime_var": "ret_jerk",
+          "regime_min_z": 0.35
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "linear_comb",
+      "var_names": [
+        "rolling_kurt_12",
+        "autocorr_lag1",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        0.19,
+        0.09,
+        -1.2
+      ],
+      "threshold": 1.78,
+      "hold_bars": 4,
+      "tp_fee_mult": 3.55,
+      "sl_fee_mult": 1.76,
+      "regime_var": "ret_jerk",
+      "regime_min_z": 0.35
+    },
+    "discovered_at": 1793467250.4548604
+  },
+  {
+    "id": "edgeforge_a056f782db16",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.19\u00b7Z[rolling_kurt_12] +0.09\u00b7Z[autocorr_lag1] -1.20\u00b7Z[cubic_z_gate]) > 1.50 \u2227 (Z[ret_jerk] > +0.35) [hold=4b, TP=3.5\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 3.337,
+    "holdout_mean_excess": 0.017565,
+    "net_profit_usd": 0.0878,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.5,
+        "formula": "(+0.19\u00b7Z[rolling_kurt_12] +0.09\u00b7Z[autocorr_lag1] -1.20\u00b7Z[cubic_z_gate]) > 1.50 \u2227 (Z[ret_jerk] > +0.35) [hold=4b, TP=3.5\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "linear_comb",
+          "var_names": [
+            "rolling_kurt_12",
+            "autocorr_lag1",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            0.19,
+            0.09,
+            -1.2
+          ],
+          "threshold": 1.5,
+          "hold_bars": 4,
+          "tp_fee_mult": 3.55,
+          "sl_fee_mult": 1.76,
+          "regime_var": "ret_jerk",
+          "regime_min_z": 0.35
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "linear_comb",
+      "var_names": [
+        "rolling_kurt_12",
+        "autocorr_lag1",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        0.19,
+        0.09,
+        -1.2
+      ],
+      "threshold": 1.5,
+      "hold_bars": 4,
+      "tp_fee_mult": 3.55,
+      "sl_fee_mult": 1.76,
+      "regime_var": "ret_jerk",
+      "regime_min_z": 0.35
+    },
+    "discovered_at": 1793467239.9525332
+  },
+  {
+    "id": "edgeforge_fc359b1a8e12",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.00\u00b7Z[shadow_exhaustion]\u00b7Z[ret_jerk] +0.68\u00b7Z[autocorr_lag1]) > 1.56 \u2227 (Z[range_compression] > +0.62) [hold=4b, TP=2.2\u00d7fee, SL=2.5\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 23136750.0,
+    "holdout_mean_excess": 0.023137,
+    "net_profit_usd": 0.2429,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.56,
+        "formula": "(-0.00\u00b7Z[shadow_exhaustion]\u00b7Z[ret_jerk] +0.68\u00b7Z[autocorr_lag1]) > 1.56 \u2227 (Z[range_compression] > +0.62) [hold=4b, TP=2.2\u00d7fee, SL=2.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "poly_product",
+          "var_names": [
+            "shadow_exhaustion",
+            "ret_jerk",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.0,
+            0.68,
+            0.54
+          ],
+          "threshold": 1.56,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.17,
+          "sl_fee_mult": 2.51,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.62
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "poly_product",
+      "var_names": [
+        "shadow_exhaustion",
+        "ret_jerk",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.0,
+        0.68,
+        0.54
+      ],
+      "threshold": 1.56,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.17,
+      "sl_fee_mult": 2.51,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.62
+    },
+    "discovered_at": 1793467186.6361628
+  },
+  {
+    "id": "edgeforge_bb1a6529db03",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.21\u00b7Z[autocorr_lag1] +0.69\u00b7Z[kaufman_efficiency_8]) / (1 + |Z[cramers_impulse_z]|)) > 1.93 \u2227 (Z[cramers_impulse_z] > +0.59) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 24.799,
+    "holdout_mean_excess": 0.030656,
+    "net_profit_usd": 0.1226,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.93,
+        "formula": "((+1.21\u00b7Z[autocorr_lag1] +0.69\u00b7Z[kaufman_efficiency_8]) / (1 + |Z[cramers_impulse_z]|)) > 1.93 \u2227 (Z[cramers_impulse_z] > +0.59) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "kaufman_efficiency_8",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.21,
+            0.69,
+            -0.08
+          ],
+          "threshold": 1.93,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.69,
+          "sl_fee_mult": 1.07,
+          "regime_var": "cramers_impulse_z",
+          "regime_min_z": 0.59
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "kaufman_efficiency_8",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.21,
+        0.69,
+        -0.08
+      ],
+      "threshold": 1.93,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.69,
+      "sl_fee_mult": 1.07,
+      "regime_var": "cramers_impulse_z",
+      "regime_min_z": 0.59
+    },
+    "discovered_at": 1793467183.8892057
+  },
+  {
+    "id": "edgeforge_e1bbfca6a18f",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.41\u00b7Z[autocorr_lag1] +0.57\u00b7Z[rolling_skew_12] -1.55\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[ret_velocity] > +0.71) [hold=2b, TP=3.8\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "2m",
+    "holdout_t": 4.067,
+    "holdout_mean_excess": 0.0243,
+    "net_profit_usd": 0.1458,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.85,
+        "formula": "(+0.41\u00b7Z[autocorr_lag1] +0.57\u00b7Z[rolling_skew_12] -1.55\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[ret_velocity] > +0.71) [hold=2b, TP=3.8\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            0.41,
+            0.57,
+            -1.55
+          ],
+          "threshold": 1.85,
+          "hold_bars": 2,
+          "tp_fee_mult": 3.78,
+          "sl_fee_mult": 1.77,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.71
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        0.41,
+        0.57,
+        -1.55
+      ],
+      "threshold": 1.85,
+      "hold_bars": 2,
+      "tp_fee_mult": 3.78,
+      "sl_fee_mult": 1.77,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.71
+    },
+    "discovered_at": 1793467175.2248278
+  },
+  {
+    "id": "edgeforge_b22435102eaf",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+2.50\u00b7(Z[autocorr_lag1] - Z[body_conviction]) +0.25\u00b7Z[wick_asymmetry]\u00b2\u00b7sgn(Z[wick_asymmetry])) > 2.62 \u2227 (Z[body_conviction] > +0.64) [hold=6b, TP=5.0\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 9.74,
+    "holdout_mean_excess": 0.056404,
+    "net_profit_usd": 0.7897,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.62,
+        "formula": "(+2.50\u00b7(Z[autocorr_lag1] - Z[body_conviction]) +0.25\u00b7Z[wick_asymmetry]\u00b2\u00b7sgn(Z[wick_asymmetry])) > 2.62 \u2227 (Z[body_conviction] > +0.64) [hold=6b, TP=5.0\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "micro_flow",
+          "tactic_mode": "rational_gate",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "autocorr_lag1",
+            "body_conviction",
+            "wick_asymmetry"
+          ],
+          "weights": [
+            2.5,
+            0.25,
+            -2.15
+          ],
+          "threshold": 2.62,
+          "hold_bars": 6,
+          "tp_fee_mult": 5.0,
+          "sl_fee_mult": 1.34,
+          "regime_var": "body_conviction",
+          "regime_min_z": 0.64
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "micro_flow",
+      "tactic_mode": "rational_gate",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "autocorr_lag1",
+        "body_conviction",
+        "wick_asymmetry"
+      ],
+      "weights": [
+        2.5,
+        0.25,
+        -2.15
+      ],
+      "threshold": 2.62,
+      "hold_bars": 6,
+      "tp_fee_mult": 5.0,
+      "sl_fee_mult": 1.34,
+      "regime_var": "body_conviction",
+      "regime_min_z": 0.64
+    },
+    "discovered_at": 1793467162.7887979
+  },
+  {
+    "id": "edgeforge_a68dce4aa7b0",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.85\u00b7Z[ret_acceleration]\u00b7Z[cubic_z_gate] +2.08\u00b7Z[autocorr_lag1]) > 1.58 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 4.531,
+    "holdout_mean_excess": 0.010052,
+    "net_profit_usd": 0.573,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.58,
+        "formula": "(-0.85\u00b7Z[ret_acceleration]\u00b7Z[cubic_z_gate] +2.08\u00b7Z[autocorr_lag1]) > 1.58 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_acceleration",
+            "cubic_z_gate",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.85,
+            2.08,
+            -0.7
+          ],
+          "threshold": 1.58,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.31,
+          "sl_fee_mult": 1.09,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_acceleration",
+        "cubic_z_gate",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.85,
+        2.08,
+        -0.7
+      ],
+      "threshold": 1.58,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.31,
+      "sl_fee_mult": 1.09,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793467152.1692195
+  },
+  {
+    "id": "edgeforge_4142cae3d6d4",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.07\u00b7Z[autocorr_lag1] +0.69\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.59 \u2227 (Z[range_compression] > +0.24) [hold=6b, TP=2.8\u00d7fee, SL=1.5\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 58.352,
+    "holdout_mean_excess": 0.034419,
+    "net_profit_usd": 0.2409,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.59,
+        "formula": "((+1.07\u00b7Z[autocorr_lag1] +0.69\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.59 \u2227 (Z[range_compression] > +0.24) [hold=6b, TP=2.8\u00d7fee, SL=1.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.07,
+            0.69,
+            0.05
+          ],
+          "threshold": 1.59,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.83,
+          "sl_fee_mult": 1.46,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.24
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.07,
+        0.69,
+        0.05
+      ],
+      "threshold": 1.59,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.83,
+      "sl_fee_mult": 1.46,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.24
+    },
+    "discovered_at": 1793467148.3863037
+  },
+  {
+    "id": "edgeforge_605cbbff94e4",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.00\u00b7Z[ret_velocity]\u00b7Z[ret_jerk] +0.68\u00b7Z[autocorr_lag1]) > 1.61 \u2227 (Z[vwap_dislocation] > +0.76) [hold=4b, TP=2.2\u00d7fee, SL=2.5\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 23136750.0,
+    "holdout_mean_excess": 0.023137,
+    "net_profit_usd": 0.2429,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.61,
+        "formula": "(-0.00\u00b7Z[ret_velocity]\u00b7Z[ret_jerk] +0.68\u00b7Z[autocorr_lag1]) > 1.61 \u2227 (Z[vwap_dislocation] > +0.76) [hold=4b, TP=2.2\u00d7fee, SL=2.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_velocity",
+            "ret_jerk",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.0,
+            0.68,
+            0.67
+          ],
+          "threshold": 1.61,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.17,
+          "sl_fee_mult": 2.51,
+          "regime_var": "vwap_dislocation",
+          "regime_min_z": 0.76
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_velocity",
+        "ret_jerk",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.0,
+        0.68,
+        0.67
+      ],
+      "threshold": 1.61,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.17,
+      "sl_fee_mult": 2.51,
+      "regime_var": "vwap_dislocation",
+      "regime_min_z": 0.76
+    },
+    "discovered_at": 1793467139.376725
+  },
+  {
+    "id": "edgeforge_3d95e9e52c1b",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.41\u00b7Z[autocorr_lag1] +0.57\u00b7Z[rolling_skew_12] -1.55\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[ret_velocity] > +0.71) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 8.727,
+    "holdout_mean_excess": 0.033909,
+    "net_profit_usd": 0.2628,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.85,
+        "formula": "(+0.41\u00b7Z[autocorr_lag1] +0.57\u00b7Z[rolling_skew_12] -1.55\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[ret_velocity] > +0.71) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            0.41,
+            0.57,
+            -1.55
+          ],
+          "threshold": 1.85,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.63,
+          "sl_fee_mult": 1.81,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.71
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        0.41,
+        0.57,
+        -1.55
+      ],
+      "threshold": 1.85,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.63,
+      "sl_fee_mult": 1.81,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.71
+    },
+    "discovered_at": 1793467139.0269372
+  },
+  {
+    "id": "edgeforge_3a26ef93c409",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.41\u00b7Z[rolling_kurt_12] +0.57\u00b7Z[rolling_skew_12] -1.63\u00b7Z[ret_acceleration]) > 1.91 \u2227 (Z[autocorr_lag1] > +0.88) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 5.08,
+    "holdout_mean_excess": 0.017999,
+    "net_profit_usd": 0.351,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.91,
+        "formula": "(+0.41\u00b7Z[rolling_kurt_12] +0.57\u00b7Z[rolling_skew_12] -1.63\u00b7Z[ret_acceleration]) > 1.91 \u2227 (Z[autocorr_lag1] > +0.88) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "rolling_kurt_12",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            0.41,
+            0.57,
+            -1.63
+          ],
+          "threshold": 1.91,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.65,
+          "sl_fee_mult": 1.82,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.88
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "rolling_kurt_12",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        0.41,
+        0.57,
+        -1.63
+      ],
+      "threshold": 1.91,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.65,
+      "sl_fee_mult": 1.82,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.88
+    },
+    "discovered_at": 1793467114.6240838
+  },
+  {
+    "id": "edgeforge_941e4d677fe4",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.19\u00b7Z[autocorr_lag1] +1.25\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.54 \u2227 (Z[range_compression] > +0.24) [hold=6b, TP=2.8\u00d7fee, SL=1.5\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 3.98,
+    "holdout_mean_excess": 0.013799,
+    "net_profit_usd": 0.3312,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.54,
+        "formula": "((+1.19\u00b7Z[autocorr_lag1] +1.25\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.54 \u2227 (Z[range_compression] > +0.24) [hold=6b, TP=2.8\u00d7fee, SL=1.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.19,
+            1.25,
+            -0.08
+          ],
+          "threshold": 1.54,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.83,
+          "sl_fee_mult": 1.46,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.24
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.19,
+        1.25,
+        -0.08
+      ],
+      "threshold": 1.54,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.83,
+      "sl_fee_mult": 1.46,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.24
+    },
+    "discovered_at": 1793467100.253987
+  },
+  {
+    "id": "edgeforge_6037c35d56e0",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.97\u00b7Z[autocorr_lag1]) > 1.87 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 8.165,
+    "holdout_mean_excess": 0.020235,
+    "net_profit_usd": 0.8043,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.87,
+        "formula": "(-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.97\u00b7Z[autocorr_lag1]) > 1.87 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_velocity",
+            "cubic_z_gate",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.85,
+            1.97,
+            -1.45
+          ],
+          "threshold": 1.87,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.31,
+          "sl_fee_mult": 1.09,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_velocity",
+        "cubic_z_gate",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.85,
+        1.97,
+        -1.45
+      ],
+      "threshold": 1.87,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.31,
+      "sl_fee_mult": 1.09,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793467089.3782234
+  },
+  {
+    "id": "edgeforge_2c5f58c2ff98",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.21\u00b7Z[autocorr_lag1] +0.69\u00b7Z[harmonic_dislocation]) / (1 + |Z[cramers_impulse_z]|)) > 1.60 \u2227 (Z[range_compression] > +0.20) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 5.335,
+    "holdout_mean_excess": 0.014961,
+    "net_profit_usd": 0.374,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.6,
+        "formula": "((+1.21\u00b7Z[autocorr_lag1] +0.69\u00b7Z[harmonic_dislocation]) / (1 + |Z[cramers_impulse_z]|)) > 1.60 \u2227 (Z[range_compression] > +0.20) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "harmonic_dislocation",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.21,
+            0.69,
+            -0.08
+          ],
+          "threshold": 1.6,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.69,
+          "sl_fee_mult": 1.07,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.2
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "harmonic_dislocation",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.21,
+        0.69,
+        -0.08
+      ],
+      "threshold": 1.6,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.69,
+      "sl_fee_mult": 1.07,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.2
+    },
+    "discovered_at": 1793467072.5079958
+  },
+  {
+    "id": "edgeforge_29524b871907",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.30\u00b7Z[autocorr_lag1] +0.73\u00b7Z[rolling_skew_12] -2.23\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[autocorr_lag1] > +1.08) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 4.518,
+    "holdout_mean_excess": 0.017812,
+    "net_profit_usd": 0.2405,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.85,
+        "formula": "(-0.30\u00b7Z[autocorr_lag1] +0.73\u00b7Z[rolling_skew_12] -2.23\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[autocorr_lag1] > +1.08) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            -0.3,
+            0.73,
+            -2.23
+          ],
+          "threshold": 1.85,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.65,
+          "sl_fee_mult": 1.82,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 1.08
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        -0.3,
+        0.73,
+        -2.23
+      ],
+      "threshold": 1.85,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.65,
+      "sl_fee_mult": 1.82,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 1.08
+    },
+    "discovered_at": 1793467072.4872243
+  },
+  {
+    "id": "edgeforge_bc4ad407685a",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.67\u00b7Z[ret_velocity]) > 1.80 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 12.811,
+    "holdout_mean_excess": 0.037013,
+    "net_profit_usd": 0.2591,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.8,
+        "formula": "(-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.67\u00b7Z[ret_velocity]) > 1.80 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_velocity",
+            "cubic_z_gate",
+            "ret_velocity"
+          ],
+          "weights": [
+            -0.85,
+            1.67,
+            -0.52
+          ],
+          "threshold": 1.8,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.31,
+          "sl_fee_mult": 1.09,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_velocity",
+        "cubic_z_gate",
+        "ret_velocity"
+      ],
+      "weights": [
+        -0.85,
+        1.67,
+        -0.52
+      ],
+      "threshold": 1.8,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.31,
+      "sl_fee_mult": 1.09,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793467065.8959928
+  },
+  {
+    "id": "edgeforge_65b653a4e2c9",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.21\u00b7Z[autocorr_lag1] +0.77\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.73 \u2227 (Z[range_compression] > +0.22) [hold=6b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 86.188,
+    "holdout_mean_excess": 0.033665,
+    "net_profit_usd": 0.2946,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.73,
+        "formula": "((+1.21\u00b7Z[autocorr_lag1] +0.77\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.73 \u2227 (Z[range_compression] > +0.22) [hold=6b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.21,
+            0.77,
+            -0.08
+          ],
+          "threshold": 1.73,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.76,
+          "sl_fee_mult": 1.27,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.22
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.21,
+        0.77,
+        -0.08
+      ],
+      "threshold": 1.73,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.76,
+      "sl_fee_mult": 1.27,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.22
+    },
+    "discovered_at": 1793467045.568584
+  },
+  {
+    "id": "edgeforge_28e739dd3e3d",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-1.38\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[ret_velocity]) > 1.67 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 12.745,
+    "holdout_mean_excess": 0.034855,
+    "net_profit_usd": 0.244,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.67,
+        "formula": "(-1.38\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[ret_velocity]) > 1.67 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_velocity",
+            "cubic_z_gate",
+            "ret_velocity"
+          ],
+          "weights": [
+            -1.38,
+            1.76,
+            -0.61
+          ],
+          "threshold": 1.67,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.31,
+          "sl_fee_mult": 1.09,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_velocity",
+        "cubic_z_gate",
+        "ret_velocity"
+      ],
+      "weights": [
+        -1.38,
+        1.76,
+        -0.61
+      ],
+      "threshold": 1.67,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.31,
+      "sl_fee_mult": 1.09,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793467038.6733592
+  },
+  {
+    "id": "edgeforge_7710ddae0c74",
+    "rule": "[EdgeForge arbitrum:ARB-WETH] (-0.30\u00b7Z[autocorr_lag1] +0.41\u00b7Z[rolling_skew_12] -1.72\u00b7Z[ret_acceleration]) > 1.86 \u2227 (Z[autocorr_lag1] > +1.29) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 4.415,
+    "holdout_mean_excess": 0.017634,
+    "net_profit_usd": 0.194,
+    "chain": "arbitrum",
+    "symbol": "ARB-WETH",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.86,
+        "formula": "(-0.30\u00b7Z[autocorr_lag1] +0.41\u00b7Z[rolling_skew_12] -1.72\u00b7Z[ret_acceleration]) > 1.86 \u2227 (Z[autocorr_lag1] > +1.29) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            -0.3,
+            0.41,
+            -1.72
+          ],
+          "threshold": 1.86,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.65,
+          "sl_fee_mult": 1.82,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 1.29
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        -0.3,
+        0.41,
+        -1.72
+      ],
+      "threshold": 1.86,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.65,
+      "sl_fee_mult": 1.82,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 1.29
+    },
+    "discovered_at": 1793467032.833416
+  },
+  {
+    "id": "edgeforge_1b410a0fbb23",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.19\u00b7Z[autocorr_lag1] +0.77\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.54 \u2227 (Z[range_compression] > +0.24) [hold=6b, TP=2.8\u00d7fee, SL=1.5\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 47.162,
+    "holdout_mean_excess": 0.03328,
+    "net_profit_usd": 0.4077,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.54,
+        "formula": "((+1.19\u00b7Z[autocorr_lag1] +0.77\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.54 \u2227 (Z[range_compression] > +0.24) [hold=6b, TP=2.8\u00d7fee, SL=1.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.19,
+            0.77,
+            0.26
+          ],
+          "threshold": 1.54,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.83,
+          "sl_fee_mult": 1.46,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.24
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.19,
+        0.77,
+        0.26
+      ],
+      "threshold": 1.54,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.83,
+      "sl_fee_mult": 1.46,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.24
+    },
+    "discovered_at": 1793467032.72356
+  },
+  {
+    "id": "edgeforge_1d743d8a9161",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+0.55\u00b7Z[autocorr_lag1] > 1.30) \u2227 (+1.34\u00b7Z[vwap_dislocation] +0.32\u00b7Z[cubic_z_gate] > 1.30)) \u2227 (Z[cubic_z_gate] > +0.29) [hold=3b, TP=4.8\u00d7fee, SL=1.5\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 74156250.0,
+    "holdout_mean_excess": 0.074156,
+    "net_profit_usd": 0.6489,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.16,
+        "formula": "((+0.55\u00b7Z[autocorr_lag1] > 1.30) \u2227 (+1.34\u00b7Z[vwap_dislocation] +0.32\u00b7Z[cubic_z_gate] > 1.30)) \u2227 (Z[cubic_z_gate] > +0.29) [hold=3b, TP=4.8\u00d7fee, SL=1.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "micro_flow",
+          "tactic_mode": "rational_gate",
+          "operator": "threshold_and_gate",
+          "var_names": [
+            "autocorr_lag1",
+            "vwap_dislocation",
+            "cubic_z_gate"
+          ],
+          "weights": [
+            0.55,
+            1.34,
+            0.32
+          ],
+          "threshold": 2.16,
+          "hold_bars": 3,
+          "tp_fee_mult": 4.75,
+          "sl_fee_mult": 1.46,
+          "regime_var": "cubic_z_gate",
+          "regime_min_z": 0.29
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "micro_flow",
+      "tactic_mode": "rational_gate",
+      "operator": "threshold_and_gate",
+      "var_names": [
+        "autocorr_lag1",
+        "vwap_dislocation",
+        "cubic_z_gate"
+      ],
+      "weights": [
+        0.55,
+        1.34,
+        0.32
+      ],
+      "threshold": 2.16,
+      "hold_bars": 3,
+      "tp_fee_mult": 4.75,
+      "sl_fee_mult": 1.46,
+      "regime_var": "cubic_z_gate",
+      "regime_min_z": 0.29
+    },
+    "discovered_at": 1793467024.5592058
+  },
+  {
+    "id": "edgeforge_6edc12654a21",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.30\u00b7Z[wick_asymmetry] +0.54\u00b7Z[wick_asymmetry] -1.78\u00b7Z[ret_acceleration]) > 1.84 \u2227 (Z[autocorr_lag1] > +0.71) [hold=3b, TP=3.7\u00d7fee, SL=1.9\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 4.644,
+    "holdout_mean_excess": 0.013358,
+    "net_profit_usd": 0.3774,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.84,
+        "formula": "(-0.30\u00b7Z[wick_asymmetry] +0.54\u00b7Z[wick_asymmetry] -1.78\u00b7Z[ret_acceleration]) > 1.84 \u2227 (Z[autocorr_lag1] > +0.71) [hold=3b, TP=3.7\u00d7fee, SL=1.9\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "wick_asymmetry",
+            "wick_asymmetry",
+            "ret_acceleration"
+          ],
+          "weights": [
+            -0.3,
+            0.54,
+            -1.78
+          ],
+          "threshold": 1.84,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.7,
+          "sl_fee_mult": 1.85,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.71
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "wick_asymmetry",
+        "wick_asymmetry",
+        "ret_acceleration"
+      ],
+      "weights": [
+        -0.3,
+        0.54,
+        -1.78
+      ],
+      "threshold": 1.84,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.7,
+      "sl_fee_mult": 1.85,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.71
+    },
+    "discovered_at": 1793467017.7763624
+  },
+  {
+    "id": "edgeforge_67a83b6b2589",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.19\u00b7Z[autocorr_lag1] +0.42\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.54 \u2227 (Z[range_compression] > +0.24) [hold=6b, TP=2.8\u00d7fee, SL=1.5\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 58.352,
+    "holdout_mean_excess": 0.034419,
+    "net_profit_usd": 0.2409,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.54,
+        "formula": "((+1.19\u00b7Z[autocorr_lag1] +0.42\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.54 \u2227 (Z[range_compression] > +0.24) [hold=6b, TP=2.8\u00d7fee, SL=1.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.19,
+            0.42,
+            -0.08
+          ],
+          "threshold": 1.54,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.83,
+          "sl_fee_mult": 1.46,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.24
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.19,
+        0.42,
+        -0.08
+      ],
+      "threshold": 1.54,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.83,
+      "sl_fee_mult": 1.46,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.24
+    },
+    "discovered_at": 1793467009.5310755
+  },
+  {
+    "id": "edgeforge_85aa0dbb290e",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+2.50\u00b7(Z[autocorr_lag1] - Z[body_conviction]) -0.01\u00b7Z[wick_asymmetry]\u00b2\u00b7sgn(Z[wick_asymmetry])) > 3.00 \u2227 (Z[body_conviction] > +0.67) [hold=6b, TP=5.0\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 25.041,
+    "holdout_mean_excess": 0.071072,
+    "net_profit_usd": 0.8706,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 3.0,
+        "formula": "(+2.50\u00b7(Z[autocorr_lag1] - Z[body_conviction]) -0.01\u00b7Z[wick_asymmetry]\u00b2\u00b7sgn(Z[wick_asymmetry])) > 3.00 \u2227 (Z[body_conviction] > +0.67) [hold=6b, TP=5.0\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "micro_flow",
+          "tactic_mode": "rational_gate",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "autocorr_lag1",
+            "body_conviction",
+            "wick_asymmetry"
+          ],
+          "weights": [
+            2.5,
+            -0.01,
+            -2.33
+          ],
+          "threshold": 3.0,
+          "hold_bars": 6,
+          "tp_fee_mult": 5.0,
+          "sl_fee_mult": 1.29,
+          "regime_var": "body_conviction",
+          "regime_min_z": 0.67
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "micro_flow",
+      "tactic_mode": "rational_gate",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "autocorr_lag1",
+        "body_conviction",
+        "wick_asymmetry"
+      ],
+      "weights": [
+        2.5,
+        -0.01,
+        -2.33
+      ],
+      "threshold": 3.0,
+      "hold_bars": 6,
+      "tp_fee_mult": 5.0,
+      "sl_fee_mult": 1.29,
+      "regime_var": "body_conviction",
+      "regime_min_z": 0.67
+    },
+    "discovered_at": 1793467006.54592
+  },
+  {
+    "id": "edgeforge_74deedbf0f6d",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.00\u00b7Z[shadow_exhaustion]\u00b7Z[ret_jerk] +0.68\u00b7Z[autocorr_lag1]) > 1.56 \u2227 (Z[harmonic_dislocation] > +0.59) [hold=4b, TP=2.2\u00d7fee, SL=2.5\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 23136750.0,
+    "holdout_mean_excess": 0.023137,
+    "net_profit_usd": 0.2429,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.56,
+        "formula": "(-0.00\u00b7Z[shadow_exhaustion]\u00b7Z[ret_jerk] +0.68\u00b7Z[autocorr_lag1]) > 1.56 \u2227 (Z[harmonic_dislocation] > +0.59) [hold=4b, TP=2.2\u00d7fee, SL=2.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "poly_product",
+          "var_names": [
+            "shadow_exhaustion",
+            "ret_jerk",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.0,
+            0.68,
+            0.54
+          ],
+          "threshold": 1.56,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.17,
+          "sl_fee_mult": 2.51,
+          "regime_var": "harmonic_dislocation",
+          "regime_min_z": 0.59
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "poly_product",
+      "var_names": [
+        "shadow_exhaustion",
+        "ret_jerk",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.0,
+        0.68,
+        0.54
+      ],
+      "threshold": 1.56,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.17,
+      "sl_fee_mult": 2.51,
+      "regime_var": "harmonic_dislocation",
+      "regime_min_z": 0.59
+    },
+    "discovered_at": 1793467006.1921093
+  },
+  {
+    "id": "edgeforge_5ba4393c8471",
+    "rule": "[EdgeForge optimism:ARB-USDC] (-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +2.36\u00b7Z[ret_velocity]) > 1.67 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 2.281,
+    "holdout_mean_excess": 0.009327,
+    "net_profit_usd": 0.1516,
+    "chain": "optimism",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.67,
+        "formula": "(-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +2.36\u00b7Z[ret_velocity]) > 1.67 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_velocity",
+            "cubic_z_gate",
+            "ret_velocity"
+          ],
+          "weights": [
+            -0.85,
+            2.36,
+            -0.61
+          ],
+          "threshold": 1.67,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.31,
+          "sl_fee_mult": 1.09,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_velocity",
+        "cubic_z_gate",
+        "ret_velocity"
+      ],
+      "weights": [
+        -0.85,
+        2.36,
+        -0.61
+      ],
+      "threshold": 1.67,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.31,
+      "sl_fee_mult": 1.09,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793467002.902251
+  },
+  {
+    "id": "edgeforge_f2bf2599df36",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.41\u00b7Z[autocorr_lag1] +0.54\u00b7Z[rolling_skew_12] -1.60\u00b7Z[ret_acceleration]) > 1.81 \u2227 (Z[autocorr_lag1] > +1.08) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 3.652,
+    "holdout_mean_excess": 0.012872,
+    "net_profit_usd": 0.2413,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.81,
+        "formula": "(+0.41\u00b7Z[autocorr_lag1] +0.54\u00b7Z[rolling_skew_12] -1.60\u00b7Z[ret_acceleration]) > 1.81 \u2227 (Z[autocorr_lag1] > +1.08) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            0.41,
+            0.54,
+            -1.6
+          ],
+          "threshold": 1.81,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.65,
+          "sl_fee_mult": 1.82,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 1.08
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        0.41,
+        0.54,
+        -1.6
+      ],
+      "threshold": 1.81,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.65,
+      "sl_fee_mult": 1.82,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 1.08
+    },
+    "discovered_at": 1793467002.8187003
+  },
+  {
+    "id": "edgeforge_fdd252afe1bd",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[autocorr_lag1]) > 1.41 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 8.165,
+    "holdout_mean_excess": 0.020235,
+    "net_profit_usd": 0.8043,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.41,
+        "formula": "(-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[autocorr_lag1]) > 1.41 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_velocity",
+            "cubic_z_gate",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.85,
+            1.76,
+            -0.7
+          ],
+          "threshold": 1.41,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.31,
+          "sl_fee_mult": 1.09,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_velocity",
+        "cubic_z_gate",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.85,
+        1.76,
+        -0.7
+      ],
+      "threshold": 1.41,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.31,
+      "sl_fee_mult": 1.09,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793466988.4810457
+  },
+  {
+    "id": "edgeforge_463a227b15ab",
+    "rule": "[EdgeForge arbitrum:ARB-WETH] (-0.30\u00b7Z[autocorr_lag1] +0.54\u00b7Z[rolling_skew_12] -2.08\u00b7Z[ret_acceleration]) > 1.89 \u2227 (Z[rolling_skew_12] > +1.51) [hold=3b, TP=4.0\u00d7fee, SL=2.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 2.435,
+    "holdout_mean_excess": 0.021965,
+    "net_profit_usd": 0.0879,
+    "chain": "arbitrum",
+    "symbol": "ARB-WETH",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.89,
+        "formula": "(-0.30\u00b7Z[autocorr_lag1] +0.54\u00b7Z[rolling_skew_12] -2.08\u00b7Z[ret_acceleration]) > 1.89 \u2227 (Z[rolling_skew_12] > +1.51) [hold=3b, TP=4.0\u00d7fee, SL=2.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            -0.3,
+            0.54,
+            -2.08
+          ],
+          "threshold": 1.89,
+          "hold_bars": 3,
+          "tp_fee_mult": 4.05,
+          "sl_fee_mult": 2.06,
+          "regime_var": "rolling_skew_12",
+          "regime_min_z": 1.51
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        -0.3,
+        0.54,
+        -2.08
+      ],
+      "threshold": 1.89,
+      "hold_bars": 3,
+      "tp_fee_mult": 4.05,
+      "sl_fee_mult": 2.06,
+      "regime_var": "rolling_skew_12",
+      "regime_min_z": 1.51
+    },
+    "discovered_at": 1793466980.5653658
+  },
+  {
+    "id": "edgeforge_fe1030aaf4f6",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.19\u00b7Z[autocorr_lag1] +0.77\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.39 \u2227 (Z[range_compression] > +0.24) [hold=6b, TP=2.8\u00d7fee, SL=1.5\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 3.112,
+    "holdout_mean_excess": 0.014042,
+    "net_profit_usd": 0.1931,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.39,
+        "formula": "((+1.19\u00b7Z[autocorr_lag1] +0.77\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.39 \u2227 (Z[range_compression] > +0.24) [hold=6b, TP=2.8\u00d7fee, SL=1.5\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.19,
+            0.77,
+            -0.08
+          ],
+          "threshold": 1.39,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.83,
+          "sl_fee_mult": 1.46,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.24
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.19,
+        0.77,
+        -0.08
+      ],
+      "threshold": 1.39,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.83,
+      "sl_fee_mult": 1.46,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.24
+    },
+    "discovered_at": 1793466980.495325
+  },
+  {
+    "id": "edgeforge_8c8848bf1b82",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.14\u00b7Z[autocorr_lag1] +0.69\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.54 \u2227 (Z[range_compression] > +0.22) [hold=6b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 102.157,
+    "holdout_mean_excess": 0.033855,
+    "net_profit_usd": 0.3555,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.54,
+        "formula": "((+1.14\u00b7Z[autocorr_lag1] +0.69\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.54 \u2227 (Z[range_compression] > +0.22) [hold=6b, TP=2.8\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.14,
+            0.69,
+            -0.02
+          ],
+          "threshold": 1.54,
+          "hold_bars": 6,
+          "tp_fee_mult": 2.76,
+          "sl_fee_mult": 1.27,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.22
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.14,
+        0.69,
+        -0.02
+      ],
+      "threshold": 1.54,
+      "hold_bars": 6,
+      "tp_fee_mult": 2.76,
+      "sl_fee_mult": 1.27,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.22
+    },
+    "discovered_at": 1793466961.356025
+  },
+  {
+    "id": "edgeforge_d34adc60faa2",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.85\u00b7Z[ret_acceleration]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[autocorr_lag1]) > 1.67 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 4.891,
+    "holdout_mean_excess": 0.012733,
+    "net_profit_usd": 0.5157,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.67,
+        "formula": "(-0.85\u00b7Z[ret_acceleration]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[autocorr_lag1]) > 1.67 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_acceleration",
+            "cubic_z_gate",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.85,
+            1.76,
+            -0.61
+          ],
+          "threshold": 1.67,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.31,
+          "sl_fee_mult": 1.09,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_acceleration",
+        "cubic_z_gate",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.85,
+        1.76,
+        -0.61
+      ],
+      "threshold": 1.67,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.31,
+      "sl_fee_mult": 1.09,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793466960.8378608
+  },
+  {
+    "id": "edgeforge_fc2c3d397f20",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.41\u00b7Z[ret_acceleration] +0.54\u00b7Z[rolling_skew_12] -1.48\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[ret_velocity] > +0.71) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 8.539,
+    "holdout_mean_excess": 0.031166,
+    "net_profit_usd": 0.2727,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.85,
+        "formula": "(+0.41\u00b7Z[ret_acceleration] +0.54\u00b7Z[rolling_skew_12] -1.48\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[ret_velocity] > +0.71) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "ret_acceleration",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            0.41,
+            0.54,
+            -1.48
+          ],
+          "threshold": 1.85,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.63,
+          "sl_fee_mult": 1.81,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.71
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "ret_acceleration",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        0.41,
+        0.54,
+        -1.48
+      ],
+      "threshold": 1.85,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.63,
+      "sl_fee_mult": 1.81,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.71
+    },
+    "discovered_at": 1793466952.8110356
+  },
+  {
+    "id": "edgeforge_384225faedc2",
+    "rule": "[EdgeForge arbitrum:ARB-WETH] (-0.85\u00b7Z[ret_jerk]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[autocorr_lag1]) > 1.76 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 2.05,
+    "holdout_mean_excess": 0.00766,
+    "net_profit_usd": 0.1264,
+    "chain": "arbitrum",
+    "symbol": "ARB-WETH",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.76,
+        "formula": "(-0.85\u00b7Z[ret_jerk]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[autocorr_lag1]) > 1.76 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_jerk",
+            "cubic_z_gate",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.85,
+            1.76,
+            -0.52
+          ],
+          "threshold": 1.76,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.31,
+          "sl_fee_mult": 1.09,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_jerk",
+        "cubic_z_gate",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.85,
+        1.76,
+        -0.52
+      ],
+      "threshold": 1.76,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.31,
+      "sl_fee_mult": 1.09,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793466942.1832924
+  },
+  {
+    "id": "edgeforge_c9185fda7fe8",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.14\u00b7Z[autocorr_lag1] +0.69\u00b7Z[harmonic_dislocation]) / (1 + |Z[cramers_impulse_z]|)) > 1.61 \u2227 (Z[range_compression] > +0.20) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 4.661,
+    "holdout_mean_excess": 0.014788,
+    "net_profit_usd": 0.3179,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.61,
+        "formula": "((+1.14\u00b7Z[autocorr_lag1] +0.69\u00b7Z[harmonic_dislocation]) / (1 + |Z[cramers_impulse_z]|)) > 1.61 \u2227 (Z[range_compression] > +0.20) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "harmonic_dislocation",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.14,
+            0.69,
+            -0.08
+          ],
+          "threshold": 1.61,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.69,
+          "sl_fee_mult": 1.07,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.2
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "harmonic_dislocation",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.14,
+        0.69,
+        -0.08
+      ],
+      "threshold": 1.61,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.69,
+      "sl_fee_mult": 1.07,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.2
+    },
+    "discovered_at": 1793466924.4457273
+  },
+  {
+    "id": "edgeforge_ddb96beaeb76",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.41\u00b7Z[autocorr_lag1] +0.54\u00b7Z[rolling_skew_12] -1.78\u00b7Z[ret_acceleration]) > 1.90 \u2227 (Z[autocorr_lag1] > +0.88) [hold=3b, TP=3.7\u00d7fee, SL=1.9\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 3.744,
+    "holdout_mean_excess": 0.01178,
+    "net_profit_usd": 0.3151,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.9,
+        "formula": "(+0.41\u00b7Z[autocorr_lag1] +0.54\u00b7Z[rolling_skew_12] -1.78\u00b7Z[ret_acceleration]) > 1.90 \u2227 (Z[autocorr_lag1] > +0.88) [hold=3b, TP=3.7\u00d7fee, SL=1.9\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            0.41,
+            0.54,
+            -1.78
+          ],
+          "threshold": 1.9,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.71,
+          "sl_fee_mult": 1.86,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.88
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        0.41,
+        0.54,
+        -1.78
+      ],
+      "threshold": 1.9,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.71,
+      "sl_fee_mult": 1.86,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.88
+    },
+    "discovered_at": 1793466916.6336148
+  },
+  {
+    "id": "edgeforge_acad640edc05",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.58\u00b7Z[autocorr_lag1]) > 1.81 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 6.434,
+    "holdout_mean_excess": 0.020727,
+    "net_profit_usd": 0.456,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.81,
+        "formula": "(-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.58\u00b7Z[autocorr_lag1]) > 1.81 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_velocity",
+            "cubic_z_gate",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.85,
+            1.58,
+            -0.61
+          ],
+          "threshold": 1.81,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.31,
+          "sl_fee_mult": 1.09,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_velocity",
+        "cubic_z_gate",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.85,
+        1.58,
+        -0.61
+      ],
+      "threshold": 1.81,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.31,
+      "sl_fee_mult": 1.09,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793466916.2789288
+  },
+  {
+    "id": "edgeforge_36e803312d61",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.41\u00b7Z[autocorr_lag1] +0.57\u00b7Z[rolling_skew_12] -1.63\u00b7Z[ret_acceleration]) > 1.91 \u2227 (Z[autocorr_lag1] > +0.88) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 4.317,
+    "holdout_mean_excess": 0.0137,
+    "net_profit_usd": 0.3459,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.91,
+        "formula": "(+0.41\u00b7Z[autocorr_lag1] +0.57\u00b7Z[rolling_skew_12] -1.63\u00b7Z[ret_acceleration]) > 1.91 \u2227 (Z[autocorr_lag1] > +0.88) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            0.41,
+            0.57,
+            -1.63
+          ],
+          "threshold": 1.91,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.65,
+          "sl_fee_mult": 1.82,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.88
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        0.41,
+        0.57,
+        -1.63
+      ],
+      "threshold": 1.91,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.65,
+      "sl_fee_mult": 1.82,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.88
+    },
+    "discovered_at": 1793466894.2342982
+  },
+  {
+    "id": "edgeforge_a04dcdb1fda7",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.21\u00b7Z[autocorr_lag1] +0.69\u00b7Z[kaufman_efficiency_8]) / (1 + |Z[cramers_impulse_z]|)) > 1.93 \u2227 (Z[range_compression] > +0.20) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 6.729,
+    "holdout_mean_excess": 0.020079,
+    "net_profit_usd": 0.2108,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.93,
+        "formula": "((+1.21\u00b7Z[autocorr_lag1] +0.69\u00b7Z[kaufman_efficiency_8]) / (1 + |Z[cramers_impulse_z]|)) > 1.93 \u2227 (Z[range_compression] > +0.20) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "kaufman_efficiency_8",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.21,
+            0.69,
+            -0.08
+          ],
+          "threshold": 1.93,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.69,
+          "sl_fee_mult": 1.07,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.2
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "kaufman_efficiency_8",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.21,
+        0.69,
+        -0.08
+      ],
+      "threshold": 1.93,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.69,
+      "sl_fee_mult": 1.07,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.2
+    },
+    "discovered_at": 1793466894.1664822
+  },
+  {
+    "id": "edgeforge_125fb7d8dd5b",
+    "rule": "[EdgeForge arbitrum:ARB-WETH] (+2.50\u00b7(Z[autocorr_lag1] - Z[body_conviction]) +0.52\u00b7Z[net_vol_imbalance]\u00b2\u00b7sgn(Z[net_vol_imbalance])) > 2.92 \u2227 (Z[body_conviction] > +0.67) [hold=6b, TP=5.0\u00d7fee, SL=1.3\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 4.326,
+    "holdout_mean_excess": 0.020026,
+    "net_profit_usd": 0.6508,
+    "chain": "arbitrum",
+    "symbol": "ARB-WETH",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 2.92,
+        "formula": "(+2.50\u00b7(Z[autocorr_lag1] - Z[body_conviction]) +0.52\u00b7Z[net_vol_imbalance]\u00b2\u00b7sgn(Z[net_vol_imbalance])) > 2.92 \u2227 (Z[body_conviction] > +0.67) [hold=6b, TP=5.0\u00d7fee, SL=1.3\u00d7fee]",
+        "genome": {
+          "variable_collection": "micro_flow",
+          "tactic_mode": "rational_gate",
+          "operator": "harmonic_diff",
+          "var_names": [
+            "autocorr_lag1",
+            "body_conviction",
+            "net_vol_imbalance"
+          ],
+          "weights": [
+            2.5,
+            0.52,
+            -2.38
+          ],
+          "threshold": 2.92,
+          "hold_bars": 6,
+          "tp_fee_mult": 5.0,
+          "sl_fee_mult": 1.29,
+          "regime_var": "body_conviction",
+          "regime_min_z": 0.67
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "micro_flow",
+      "tactic_mode": "rational_gate",
+      "operator": "harmonic_diff",
+      "var_names": [
+        "autocorr_lag1",
+        "body_conviction",
+        "net_vol_imbalance"
+      ],
+      "weights": [
+        2.5,
+        0.52,
+        -2.38
+      ],
+      "threshold": 2.92,
+      "hold_bars": 6,
+      "tp_fee_mult": 5.0,
+      "sl_fee_mult": 1.29,
+      "regime_var": "body_conviction",
+      "regime_min_z": 0.67
+    },
+    "discovered_at": 1793466884.3605063
+  },
+  {
+    "id": "edgeforge_6326ba1f2b67",
+    "rule": "[EdgeForge arbitrum:ARB-WETH] (-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[autocorr_lag1]) > 1.76 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=6b, TP=3.3\u00d7fee, SL=0.9\u00d7fee]",
+    "horizon": "5m",
+    "holdout_t": 8.428,
+    "holdout_mean_excess": 0.020709,
+    "net_profit_usd": 0.7766,
+    "chain": "arbitrum",
+    "symbol": "ARB-WETH",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.76,
+        "formula": "(-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[autocorr_lag1]) > 1.76 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=6b, TP=3.3\u00d7fee, SL=0.9\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_velocity",
+            "cubic_z_gate",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.85,
+            1.76,
+            -0.52
+          ],
+          "threshold": 1.76,
+          "hold_bars": 6,
+          "tp_fee_mult": 3.29,
+          "sl_fee_mult": 0.91,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_velocity",
+        "cubic_z_gate",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.85,
+        1.76,
+        -0.52
+      ],
+      "threshold": 1.76,
+      "hold_bars": 6,
+      "tp_fee_mult": 3.29,
+      "sl_fee_mult": 0.91,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793466879.0646927
+  },
+  {
+    "id": "edgeforge_c960a3498723",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.41\u00b7Z[autocorr_lag1] +0.54\u00b7Z[rolling_skew_12] -1.48\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[ret_velocity] > +0.71) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 8.727,
+    "holdout_mean_excess": 0.033909,
+    "net_profit_usd": 0.2628,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.85,
+        "formula": "(+0.41\u00b7Z[autocorr_lag1] +0.54\u00b7Z[rolling_skew_12] -1.48\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[ret_velocity] > +0.71) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            0.41,
+            0.54,
+            -1.48
+          ],
+          "threshold": 1.85,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.63,
+          "sl_fee_mult": 1.81,
+          "regime_var": "ret_velocity",
+          "regime_min_z": 0.71
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        0.41,
+        0.54,
+        -1.48
+      ],
+      "threshold": 1.85,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.63,
+      "sl_fee_mult": 1.81,
+      "regime_var": "ret_velocity",
+      "regime_min_z": 0.71
+    },
+    "discovered_at": 1793466879.0013092
+  },
+  {
+    "id": "edgeforge_ff2de82acd3e",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.14\u00b7Z[autocorr_lag1] +0.69\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.49 \u2227 (Z[kaufman_efficiency_8] > +0.54) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 8.227,
+    "holdout_mean_excess": 0.022897,
+    "net_profit_usd": 0.3148,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.49,
+        "formula": "((+1.14\u00b7Z[autocorr_lag1] +0.69\u00b7Z[cramers_impulse_z]) / (1 + |Z[cramers_impulse_z]|)) > 1.49 \u2227 (Z[kaufman_efficiency_8] > +0.54) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "cramers_impulse_z",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.14,
+            0.69,
+            -0.08
+          ],
+          "threshold": 1.49,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.69,
+          "sl_fee_mult": 1.07,
+          "regime_var": "kaufman_efficiency_8",
+          "regime_min_z": 0.54
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "cramers_impulse_z",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.14,
+        0.69,
+        -0.08
+      ],
+      "threshold": 1.49,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.69,
+      "sl_fee_mult": 1.07,
+      "regime_var": "kaufman_efficiency_8",
+      "regime_min_z": 0.54
+    },
+    "discovered_at": 1793466854.115735
+  },
+  {
+    "id": "edgeforge_06d8a5620620",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (+0.41\u00b7Z[autocorr_lag1] +0.43\u00b7Z[rolling_skew_12] -1.78\u00b7Z[ret_acceleration]) > 1.90 \u2227 (Z[autocorr_lag1] > +0.88) [hold=3b, TP=3.7\u00d7fee, SL=1.9\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 4.318,
+    "holdout_mean_excess": 0.013723,
+    "net_profit_usd": 0.3499,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.9,
+        "formula": "(+0.41\u00b7Z[autocorr_lag1] +0.43\u00b7Z[rolling_skew_12] -1.78\u00b7Z[ret_acceleration]) > 1.90 \u2227 (Z[autocorr_lag1] > +0.88) [hold=3b, TP=3.7\u00d7fee, SL=1.9\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            0.41,
+            0.43,
+            -1.78
+          ],
+          "threshold": 1.9,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.71,
+          "sl_fee_mult": 1.86,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 0.88
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        0.41,
+        0.43,
+        -1.78
+      ],
+      "threshold": 1.9,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.71,
+      "sl_fee_mult": 1.86,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 0.88
+    },
+    "discovered_at": 1793466853.638115
+  },
+  {
+    "id": "edgeforge_7ff8389e373d",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.97\u00b7Z[autocorr_lag1]) > 1.98 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 8.165,
+    "holdout_mean_excess": 0.020235,
+    "net_profit_usd": 0.8043,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.98,
+        "formula": "(-0.85\u00b7Z[ret_velocity]\u00b7Z[cubic_z_gate] +1.97\u00b7Z[autocorr_lag1]) > 1.98 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "ret_velocity",
+            "cubic_z_gate",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.85,
+            1.97,
+            -0.61
+          ],
+          "threshold": 1.98,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.31,
+          "sl_fee_mult": 1.09,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "ret_velocity",
+        "cubic_z_gate",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.85,
+        1.97,
+        -0.61
+      ],
+      "threshold": 1.98,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.31,
+      "sl_fee_mult": 1.09,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793466827.0334806
+  },
+  {
+    "id": "edgeforge_760f88d4673c",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] (-0.30\u00b7Z[autocorr_lag1] +0.73\u00b7Z[rolling_skew_12] -1.60\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[autocorr_lag1] > +1.08) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 8.313,
+    "holdout_mean_excess": 0.028709,
+    "net_profit_usd": 0.3948,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.85,
+        "formula": "(-0.30\u00b7Z[autocorr_lag1] +0.73\u00b7Z[rolling_skew_12] -1.60\u00b7Z[ret_acceleration]) > 1.85 \u2227 (Z[autocorr_lag1] > +1.08) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            -0.3,
+            0.73,
+            -1.6
+          ],
+          "threshold": 1.85,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.65,
+          "sl_fee_mult": 1.82,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 1.08
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        -0.3,
+        0.73,
+        -1.6
+      ],
+      "threshold": 1.85,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.65,
+      "sl_fee_mult": 1.82,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 1.08
+    },
+    "discovered_at": 1793466826.9826643
+  },
+  {
+    "id": "edgeforge_cc9482f60686",
+    "rule": "[EdgeForge arbitrum:ARB-USDC] ((+1.14\u00b7Z[autocorr_lag1] +0.69\u00b7Z[harmonic_dislocation]) / (1 + |Z[cramers_impulse_z]|)) > 1.71 \u2227 (Z[range_compression] > +0.20) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "4m",
+    "holdout_t": 7.938,
+    "holdout_mean_excess": 0.020235,
+    "net_profit_usd": 0.4603,
+    "chain": "arbitrum",
+    "symbol": "ARB-USDC",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.71,
+        "formula": "((+1.14\u00b7Z[autocorr_lag1] +0.69\u00b7Z[harmonic_dislocation]) / (1 + |Z[cramers_impulse_z]|)) > 1.71 \u2227 (Z[range_compression] > +0.20) [hold=4b, TP=2.7\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "rapid_impulse",
+          "tactic_mode": "rapid_money_button",
+          "operator": "rational_ratio",
+          "var_names": [
+            "autocorr_lag1",
+            "harmonic_dislocation",
+            "cramers_impulse_z"
+          ],
+          "weights": [
+            1.14,
+            0.69,
+            -0.08
+          ],
+          "threshold": 1.71,
+          "hold_bars": 4,
+          "tp_fee_mult": 2.69,
+          "sl_fee_mult": 1.07,
+          "regime_var": "range_compression",
+          "regime_min_z": 0.2
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "rapid_impulse",
+      "tactic_mode": "rapid_money_button",
+      "operator": "rational_ratio",
+      "var_names": [
+        "autocorr_lag1",
+        "harmonic_dislocation",
+        "cramers_impulse_z"
+      ],
+      "weights": [
+        1.14,
+        0.69,
+        -0.08
+      ],
+      "threshold": 1.71,
+      "hold_bars": 4,
+      "tp_fee_mult": 2.69,
+      "sl_fee_mult": 1.07,
+      "regime_var": "range_compression",
+      "regime_min_z": 0.2
+    },
+    "discovered_at": 1793466811.849133
+  },
+  {
+    "id": "edgeforge_0b6717c3082f",
+    "rule": "[EdgeForge arbitrum:ARB-WETH] (-0.30\u00b7Z[autocorr_lag1] +0.41\u00b7Z[rolling_skew_12] -1.72\u00b7Z[ret_acceleration]) > 1.80 \u2227 (Z[autocorr_lag1] > +1.29) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 4.415,
+    "holdout_mean_excess": 0.017634,
+    "net_profit_usd": 0.194,
+    "chain": "arbitrum",
+    "symbol": "ARB-WETH",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.8,
+        "formula": "(-0.30\u00b7Z[autocorr_lag1] +0.41\u00b7Z[rolling_skew_12] -1.72\u00b7Z[ret_acceleration]) > 1.80 \u2227 (Z[autocorr_lag1] > +1.29) [hold=3b, TP=3.6\u00d7fee, SL=1.8\u00d7fee]",
+        "genome": {
+          "variable_collection": "flow_chaos_hybrid",
+          "tactic_mode": "differential_chaos",
+          "operator": "linear_comb",
+          "var_names": [
+            "autocorr_lag1",
+            "rolling_skew_12",
+            "ret_acceleration"
+          ],
+          "weights": [
+            -0.3,
+            0.41,
+            -1.72
+          ],
+          "threshold": 1.8,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.65,
+          "sl_fee_mult": 1.82,
+          "regime_var": "autocorr_lag1",
+          "regime_min_z": 1.29
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "flow_chaos_hybrid",
+      "tactic_mode": "differential_chaos",
+      "operator": "linear_comb",
+      "var_names": [
+        "autocorr_lag1",
+        "rolling_skew_12",
+        "ret_acceleration"
+      ],
+      "weights": [
+        -0.3,
+        0.41,
+        -1.72
+      ],
+      "threshold": 1.8,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.65,
+      "sl_fee_mult": 1.82,
+      "regime_var": "autocorr_lag1",
+      "regime_min_z": 1.29
+    },
+    "discovered_at": 1793466789.7456393
+  },
+  {
+    "id": "edgeforge_3dbc8cf64a69",
+    "rule": "[EdgeForge arbitrum:ARB-WETH] (-0.85\u00b7Z[rolling_skew_12]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[autocorr_lag1]) > 1.76 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+    "horizon": "3m",
+    "holdout_t": 6.473,
+    "holdout_mean_excess": 0.013853,
+    "net_profit_usd": 0.7931,
+    "chain": "arbitrum",
+    "symbol": "ARB-WETH",
+    "conditions": [
+      {
+        "feature": "edgeforge_math_score",
+        "op": ">",
+        "value": 1.76,
+        "formula": "(-0.85\u00b7Z[rolling_skew_12]\u00b7Z[cubic_z_gate] +1.76\u00b7Z[autocorr_lag1]) > 1.76 \u2227 (Z[rolling_kurt_12] > +0.79) [hold=3b, TP=3.3\u00d7fee, SL=1.1\u00d7fee]",
+        "genome": {
+          "variable_collection": "nonlinear_chaos",
+          "tactic_mode": "polynomial_interaction",
+          "operator": "poly_product",
+          "var_names": [
+            "rolling_skew_12",
+            "cubic_z_gate",
+            "autocorr_lag1"
+          ],
+          "weights": [
+            -0.85,
+            1.76,
+            -0.52
+          ],
+          "threshold": 1.76,
+          "hold_bars": 3,
+          "tp_fee_mult": 3.31,
+          "sl_fee_mult": 1.09,
+          "regime_var": "rolling_kurt_12",
+          "regime_min_z": 0.79
+        }
+      }
+    ],
+    "edgeforge_genome": {
+      "variable_collection": "nonlinear_chaos",
+      "tactic_mode": "polynomial_interaction",
+      "operator": "poly_product",
+      "var_names": [
+        "rolling_skew_12",
+        "cubic_z_gate",
+        "autocorr_lag1"
+      ],
+      "weights": [
+        -0.85,
+        1.76,
+        -0.52
+      ],
+      "threshold": 1.76,
+      "hold_bars": 3,
+      "tp_fee_mult": 3.31,
+      "sl_fee_mult": 1.09,
+      "regime_var": "rolling_kurt_12",
+      "regime_min_z": 0.79
+    },
+    "discovered_at": 1793466789.6963582
   }
 ]

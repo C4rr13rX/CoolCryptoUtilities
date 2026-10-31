@@ -391,6 +391,10 @@ class WizardChatPageView(BaseSecureView):
     initial_route = "wizard-chat"
 
 
+class EdgeSearchPageView(BaseSecureView):
+    initial_route = "edge-search"
+
+
 class ApiDiagView(View):
     def get(self, request: HttpRequest, *args, **kwargs) -> JsonResponse:
         try:

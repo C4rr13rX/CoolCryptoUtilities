@@ -29,6 +29,8 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+from services.token_limiter import TokenLimiter, is_token_or_rate_limit
 
 
 DEFAULT_MODEL = os.getenv("CLAUDE_CODE_MODEL", "claude-opus-5")
@@ -126,9 +128,10 @@ class ClaudeCodeSession:
         verbose_default: bool = False,
         workdir: str | Path | None = None,
         meta_role: Optional[str] = None,
-        system_prompt: str = "",
-        **_ignored: Any,
-    ) -> None:
+        system_prompt: str = "",
+        auto_wait_quota: bool = True,
+        **_ignored: Any,
+    ) -> None:
         defaults = claude_code_default_settings()
         self.session_name = session_name
         self.executable = executable or os.getenv("CLAUDE_CODE_EXECUTABLE", "claude")
@@ -141,7 +144,8 @@ class ClaudeCodeSession:
         self.stream_default = stream_default
         self.verbose_default = verbose_default
         self.meta_role = meta_role
-        self.system_prompt = system_prompt
+        self.system_prompt = system_prompt
+        self.auto_wait_quota = auto_wait_quota
         self.workdir = Path(workdir).resolve() if workdir else None
 
         self.transcript_dir = Path(transcript_dir) if transcript_dir else None
@@ -193,7 +197,9 @@ class ClaudeCodeSession:
             self._stream_callback = prev_callback
             return resp
 
-        cmd = self._build_cmd(system=system or self.system_prompt)
+        if self.auto_wait_quota:
+            TokenLimiter.wait_until_available("claude", callback=self._print if verbose else None)
+        cmd = self._build_cmd(system=system or self.system_prompt)
         if verbose:
             self._print(f"[claude-code] {' '.join(cmd)}\n")
 
@@ -202,7 +208,17 @@ class ClaudeCodeSession:
         finally:
             self._stream_callback = prev_callback
 
-        text = (out or "").strip()
+        text = (out or "").strip()
+        combined_err = f"{text}\n{err or ''}"
+        if is_token_or_rate_limit(combined_err):
+            delay = TokenLimiter.record_rate_limit("claude", combined_err)
+            if self.auto_wait_quota:
+                if verbose:
+                    self._print(f"[claude-code token limit] Waiting {delay:.1f}s until tokens replenish, then auto-restarting...\n")
+                TokenLimiter.wait_until_available("claude", callback=self._print if verbose else None)
+                return self.send(prompt, stream=stream, verbose=verbose, system=system, stream_callback=stream_callback)
+        elif rc == 0 and text:
+            TokenLimiter.record_success("claude")
         if rc != 0 and not text:
             text = f"[claude-code error rc={rc}] {(err or '').strip()}"
         self._append_transcript(prompt, text)

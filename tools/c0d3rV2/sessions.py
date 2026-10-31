@@ -109,6 +109,23 @@ class SessionManager:
         _BEDROCK = {"bedrock", "c0d3r", "coder"}
         _WIZARD  = {"wizard", "w1z4rd", "wizard_node", "local"}
         _FREELOADER = {"freeloader", "agentthefreeloader", "agent_the_freeloader"}
+        _AGY = {"agy", "antigravity", "agy_cli", "agy_research", "google_agy"}
+
+        if backend in _AGY:
+            from tools.agy_session import AgySession, agy_default_settings
+            settings = agy_default_settings()
+            if model:
+                settings["model"] = model
+            if reasoning_effort:
+                settings["reasoning_effort"] = reasoning_effort
+            if backend == "agy_research":
+                settings["agent_name"] = "research"
+            return AgySession(
+                session_name="c0d3rv2-agy",
+                transcript_dir=transcript_dir,
+                workdir=workdir,
+                **settings,
+            )
 
         if backend in _FREELOADER:
             from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
@@ -129,7 +146,26 @@ class SessionManager:
                     transcript_dir=transcript_dir,
                     workdir=workdir,
                 )
-            # Node offline: fall back to Bedrock if configured.
+            # Node offline: fall back to AGY helping agent if available, else Bedrock.
+            from tools.agy_session import agy_available
+            if agy_available():
+                print(
+                    f"[c0d3rv2] W1z4rD node offline ({probe['error']}). "
+                    "Falling back to AGY helping agent.",
+                    flush=True,
+                )
+                from tools.agy_session import AgySession, agy_default_settings
+                settings = agy_default_settings()
+                if model:
+                    settings["model"] = model
+                if reasoning_effort:
+                    settings["reasoning_effort"] = reasoning_effort
+                return AgySession(
+                    session_name="c0d3rv2-agy",
+                    transcript_dir=transcript_dir,
+                    workdir=workdir,
+                    **settings,
+                )
             print(
                 f"[c0d3rv2] W1z4rD node offline ({probe['error']}). "
                 "Falling back to Bedrock.",

@@ -64,6 +64,8 @@ urlpatterns = [
     path("logs", views.LogsPageView.as_view()),
     path("wizard-chat/", views.WizardChatPageView.as_view(), name="wizard-chat"),
     path("wizard-chat", views.WizardChatPageView.as_view()),
+    path("edge-search/", views.EdgeSearchPageView.as_view(), name="edge-search"),
+    path("edge-search", views.EdgeSearchPageView.as_view()),
     path("api/profit-logic/", views.ProfitLogicAuditView.as_view(),
          name="profit-logic-audit"),
     path("api/live-gate-map/", views.LiveGateMapView.as_view(),

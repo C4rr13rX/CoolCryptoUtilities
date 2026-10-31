@@ -130,6 +130,8 @@ INSTALLED_APPS = [
     "wizard_chat.apps.WizardChatConfig",
     "modelcontrol.apps.ModelControlConfig",
     "tradingagent.apps.TradingAgentConfig",
+    "edgeforge.apps.EdgeforgeConfig",
+    "agentresearch.apps.AgentResearchConfig",
     "payouts.apps.PayoutsConfig",
 ]
 

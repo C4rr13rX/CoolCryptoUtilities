@@ -185,6 +185,10 @@
          MAIN CONTENT
     ═══════════════════════════════════════════════════════ -->
     <div class="content-area">
+      <div class="instrument-sphere">
+      <WizardMetricRing :status="wizardStatus" :online="nodeOnline" :message="eyeMessage?.rawResponse" :amplitude="eyeAmplitude" :busy="loading" :brain-id="selectedBrainId" :paths="selfDesign.sigils" />
+      <div class="conversation-orb">
+      <WizardEye :concepts="eyeMessage?.concepts || []" :message-id="eyeMessage?.id || ''" :signal="eyeSignal" :association="eyeAssociation" :playback="eyePlayback" :observation="eyeObservation" :busy="loading" :amplitude="eyeAmplitude" :design="selfDesign.eye" @telemetry="sceneTelemetry=$event" />
 
       <!-- Chat thread -->
       <div ref="threadEl" class="chat-thread">
@@ -194,18 +198,19 @@
              when silent, brightens with voice loudness, has soft
              vertical bands keyed to the FFT spectrum — a phonetic
              "light through fog" feel. -->
-        <AudioVisualizerOverlay />
+        <AudioVisualizerOverlay @amplitude="eyeAmplitude = $event" @playback="eyePlayback = $event" />
         <div class="thread-inner">
 
           <div v-if="!messages.length" class="empty-state">
             <div class="empty-glyph">⬡</div>
             <p>Ask the W1z4rD anything.</p>
-            <p class="hint">Attach images, PDFs, videos, audio. The node learns from every corrected answer.</p>
+            <p class="hint">Foundation first. Attachments and reviewed corrections unlock after the core assessments pass.</p>
           </div>
 
           <div
             v-for="msg in messages"
             :key="msg.id"
+            :data-message-id="msg.id"
             class="message-row"
             :class="msg.role === 'user' ? 'row-user' : 'row-wizard'"
           >
@@ -276,9 +281,10 @@
                       @keydown.enter.ctrl.exact.prevent="submitInlineAnswer(msg)"
                     />
                     <div class="inline-answer-actions">
+                      <label class="inline-review"><input v-model="inlineAnswerReviewed[msg.id]" type="checkbox" /> I verified this outcome and reviewed all twelve core prerogatives together.</label>
                       <button
                         class="btn-primary btn-sm"
-                        :disabled="!inlineAnswerTexts[msg.id]?.trim() || inlineAnswerSubmitting[msg.id]"
+                        :disabled="!inlineAnswerTexts[msg.id]?.trim() || !inlineAnswerReviewed[msg.id] || inlineAnswerSubmitting[msg.id]"
                         @click="submitInlineAnswer(msg)"
                       >
                         {{ inlineAnswerSubmitting[msg.id] ? 'Training…' : 'Train node' }}
@@ -344,6 +350,8 @@
       </div>
 
       <!-- ─── Neural State Inspector ─── -->
+      </div><!-- /conversation-orb -->
+      </div><!-- /instrument-sphere -->
       <transition name="slide-up">
         <div v-if="inspectorOpen && inspectorData" class="neuro-inspector">
           <div class="inspector-header">
@@ -517,6 +525,10 @@
       </transition>
 
     </div><!-- /content-area -->
+    <WizardObservation @cue="eyeObservation = $event" />
+    <WizardSilhouetteStudio @changed="eyeAssociations = $event" />
+    <WizardLearningPanel :brain-id="selectedBrainId" />
+    <WizardSelfPresentation :brain-id="selectedBrainId" :response="eyeMessage?.rawResponse?.self_design" :telemetry="sceneTelemetry" :playback="eyePlayback" :amplitude="eyeAmplitude" @design="selfDesign=$event" />
 
     <!-- ═══════════════════════════════════════════════════════
          LIVE TRAINING PANEL (collapsible, black background)
@@ -532,6 +544,7 @@
          FLOATING INPUT BAR
     ═══════════════════════════════════════════════════════ -->
     <div class="input-bar">
+      <p v-if="uploadError" role="alert" class="upload-error">{{ uploadError }}</p>
       <!-- Agent-mode toggles (localhost-only) -->
       <div class="agent-toggles" :class="{ active: agentMode }">
         <label class="agent-toggle">
@@ -610,6 +623,15 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import AudioVisualizerOverlay from '@/components/AudioVisualizerOverlay.vue'
+import WizardEye from '@/components/WizardEye.vue'
+import WizardMetricRing from '@/components/WizardMetricRing.vue'
+import WizardSelfPresentation from '@/components/WizardSelfPresentation.vue'
+import WizardObservation from '@/components/WizardObservation.vue'
+import WizardSilhouetteStudio from '@/components/WizardSilhouetteStudio.vue'
+import { readEyeSignal } from '@/utils/eyeSignal'
+import { readAssociations, matchAssociation } from '@/utils/eyeAssociations'
+import type { ObservationCue } from '@/utils/observation'
+import WizardLearningPanel from '@/components/WizardLearningPanel.vue'
 import TrainingLivePanel from '@/components/TrainingLivePanel.vue'
 import { fetchWizardBrains, selectWizardBrain, type WizardBrain } from '@/api'
 
@@ -643,6 +665,18 @@ interface InspectorData {
 // State
 // ---------------------------------------------------------------------------
 const messages        = ref<Message[]>([])
+const eyeAmplitude = ref(0)
+const selfDesign = ref<Record<string,any>>({eye:{}})
+const sceneTelemetry = ref<Record<string,unknown>>()
+const eyeMessage = computed(() => messages.value.find(message => message.id === eyePlayback.value.messageId)
+  || [...messages.value].reverse().find(message => message.role === 'wizard'))
+const eyeSignal = computed(() => readEyeSignal(eyeMessage.value?.rawResponse?.eye_signal))
+const eyePlayback = ref({ at_ms: 0, present: false, messageId: '' })
+const eyeObservation = ref<ObservationCue>()
+const inlineAnswerReviewed = ref<Record<string, boolean>>({})
+const uploadError = ref('')
+const eyeAssociations = ref(readAssociations())
+const eyeAssociation = computed(() => matchAssociation(eyeMessage.value?.concepts || [], eyeAssociations.value))
 const inputText       = ref('')
 const loading         = ref(false)
 const dragging        = ref(false)
@@ -932,29 +966,34 @@ const activePool = computed(() => poolsData.value?.[poolsTab.value])
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
+let nodeStatusInterval: ReturnType<typeof setInterval> | undefined
+let chatMounted = false
+const escHandler = (e: KeyboardEvent) => {
+  if (e.key === 'Escape' && isFullscreen.value) {
+    isFullscreen.value = false
+    document.body.style.overflow = ''
+    document.body.classList.remove('wizard-fs')
+  }
+}
 onMounted(async () => {
+  chatMounted = true
+  window.addEventListener('keydown', escHandler)
   await loadChatBrains()
+  if (!chatMounted) return
   checkNodeStatus()
-  const iv = setInterval(checkNodeStatus, 30_000)
+  nodeStatusInterval = setInterval(checkNodeStatus, 30_000)
   // Esc exits fullscreen so users can collapse without hunting for
   // the toggle button.  Window listener (not capture) so chat input
   // textareas still see their own keystrokes.
-  const escHandler = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && isFullscreen.value) {
-      isFullscreen.value = false
-      document.body.style.overflow = ''
-      document.body.classList.remove('wizard-fs')
-    }
-  }
-  window.addEventListener('keydown', escHandler)
-  onBeforeUnmount(() => {
-    clearInterval(iv)
+})
+onBeforeUnmount(() => {
+    chatMounted = false
+    if (nodeStatusInterval) clearInterval(nodeStatusInterval)
     window.removeEventListener('keydown', escHandler)
     // Always release body scroll lock + class on unmount so leaving
     // the page via router-link doesn't leave the document stuck.
     document.body.style.overflow = ''
     document.body.classList.remove('wizard-fs')
-  })
 })
 
 /** Toggle the panel between in-flow and viewport-filling modes.
@@ -1032,6 +1071,7 @@ function onFilePick(e: Event) {
 function removeStaged(i: number) { stagedFiles.value.splice(i, 1) }
 
 async function processFiles(files: File[]) {
+  uploadError.value = ''
   const formData = new FormData()
   const newStaged: StagedFile[] = files.map(f => ({
     name: f.name, text: '', size: f.size, uploading: true, error: false, file: f,
@@ -1041,12 +1081,14 @@ async function processFiles(files: File[]) {
   for (const f of files) formData.append('files', f)
   try {
     const r = await fetch('/api/wizard-chat/upload/', { method: 'POST', body: formData })
-    const d: { files: Attachment[] } = await r.json()
+    const d: { files: Attachment[]; error?: string } = await r.json()
+    if (!r.ok) throw new Error(d.error || 'Upload failed')
     d.files.forEach((result, i) => {
       const sf = stagedFiles.value[startIdx + i]
       if (sf) { sf.text = result.text; sf.uploading = false; sf.error = result.error || false }
     })
-  } catch {
+  } catch (error) {
+    uploadError.value = error instanceof Error ? error.message : 'Upload failed'
     for (let i = startIdx; i < startIdx + files.length; i++) {
       const sf = stagedFiles.value[i]
       if (sf) { sf.uploading = false; sf.error = true; sf.text = '[Upload failed]' }
@@ -1155,6 +1197,7 @@ async function sendMessage() {
       })
       const d = await r.json()
       nodeOnline.value = d.node_online ?? nodeOnline.value
+      if (!r.ok) throw new Error(d.error || 'Message failed')
 
       const media = extractMediaFromResponse(d)
       messages.value.push({
@@ -1214,44 +1257,23 @@ function openInlineAnswer(msg: Message) {
 
 async function submitInlineAnswer(msg: Message) {
   const answer = inlineAnswerTexts.value[msg.id]?.trim()
-  if (!answer) return
+  if (!answer || !inlineAnswerReviewed.value[msg.id]) return
   const question = getQuestionForMsg(msg)
   inlineAnswerSubmitting.value[msg.id] = true
   trainProgressPct.value[msg.id] = 0
   trainProgressStage.value[msg.id] = ''
 
-  // The backend runs the five-stage training pipeline synchronously
-  // (concept binding → slow-pool sequence → dopamine flush → knowledge
-  // ingest → recall verify).  Until that finishes we animate the
-  // progress bar through estimated per-stage durations so the user
-  // sees motion proportional to the real work happening server-side.
-  // Empirically: stage 1 (35 multi_pool passes) is the longest at
-  // ~3-5s; the rest combined ~2-4s.  Total ~6-10s.
-  const stages: Array<{ pct: number; label: string; ms: number }> = [
-    { pct: 15, label: 'binding concept in multi-pool fabric', ms: 1500 },
-    { pct: 40, label: '35 high-confidence training passes',   ms: 2500 },
-    { pct: 60, label: 'reinforcing slow-pool sequence',       ms: 1500 },
-    { pct: 80, label: 'dopamine LTP capture',                 ms: 1200 },
-    { pct: 95, label: 'verifying recall…',                    ms: 1500 },
-  ]
-  let progressActive = true
-  ;(async () => {
-    for (const s of stages) {
-      if (!progressActive) return
-      trainProgressStage.value[msg.id] = s.label
-      trainProgressPct.value[msg.id]   = s.pct
-      await new Promise(r => setTimeout(r, s.ms))
-    }
-  })()
+  trainProgressStage.value[msg.id] = 'Submitting the reviewed outcome and awaiting recall verification…'
 
   try {
     const r = await fetch('/api/wizard-chat/train/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, answer, session_id: sessionId.value }),
+      body: JSON.stringify({ question, answer, session_id: sessionId.value,
+        prerogative_review: { outcome_verified: inlineAnswerReviewed.value[msg.id] === true,
+          checked_prerogatives: Array.from({ length: 12 }, (_, index) => `P${String(index + 1).padStart(2, '0')}`), conflicts: [] } }),
     })
     const d = await r.json()
-    progressActive = false
     trainProgressPct.value[msg.id]   = 100
     trainProgressStage.value[msg.id] = d.verify_match ? 'verified' : 'finished'
     inlineAnswerResults.value[msg.id] = {
@@ -1277,7 +1299,6 @@ async function submitInlineAnswer(msg: Message) {
       }, 8000)
     }
   } catch (err) {
-    progressActive = false
     inlineAnswerResults.value[msg.id] = { ok: false, error: String(err) }
   } finally {
     inlineAnswerSubmitting.value[msg.id] = false
@@ -1911,4 +1932,17 @@ function renderMarkdown(text: string): string {
 .fade-enter-active, .fade-leave-active { transition: opacity 0.15s; }
 .fade-enter-from, .fade-leave-to       { opacity: 0; }
 @keyframes pulse { 0%,100% { opacity: 0.7; } 50% { opacity: 1; } }
+</style>
+<style scoped>
+.content-area { overflow-y: auto; align-items: center; container-type: size; }
+.instrument-sphere { position: relative; width: min(100cqw, 100cqh, 1000px); aspect-ratio: 1; flex: 0 0 auto; display: grid; place-items: center; }
+.conversation-orb { position: relative; width: 69%; aspect-ratio: 1; box-sizing: border-box; border-radius: 50%; overflow: hidden; border: 1px solid #e9ddff99; box-shadow: 0 14px 35px #000c, 0 0 40px #b348b52a, 0 0 3px #d1c7ff, inset 0 0 60px #000; isolation: isolate; }
+.conversation-orb::after { content: ''; position: absolute; inset: 0; border-radius: 50%; pointer-events: none; z-index: 3; box-shadow: inset -12px -20px 32px #01000bd9, inset 4px 6px 16px #e8d8ff35, inset 0 0 5px #f2eaff99; background: radial-gradient(ellipse at 29% 17%, #ffffff35 0, #ffffff0a 15%, transparent 36%), radial-gradient(ellipse at 76% 84%, #769dff25, transparent 26%); }
+.conversation-orb .chat-thread { position: absolute; top: 53%; bottom: 12%; left: 16%; right: 16%; z-index: 2; border-radius: 12px; background: #06030d99; }
+.conversation-orb .thread-inner { width: 100%; box-sizing: border-box; padding: .75rem; }
+.conversation-orb .empty-state { padding: .5rem; }
+.conversation-orb .empty-glyph { display: none; }
+.conversation-orb .avatar { display: none; }
+.conversation-orb .bubble { font-size: .8rem; }
+@media (max-width: 540px) { .conversation-orb .chat-thread { top: 50%; bottom: 13%; left: 12%; right: 12%; } }
 </style>

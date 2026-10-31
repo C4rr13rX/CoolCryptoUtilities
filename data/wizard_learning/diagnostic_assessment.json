@@ -1,0 +1,45 @@
+{
+  "diagnostic_only": true,
+  "results": {
+    "grounding": [
+      {
+        "case_id": "grounding-01-software-team",
+        "passed": false,
+        "error": "timed out"
+      }
+    ],
+    "transfer": [
+      {
+        "case_id": "transfer-01-robotics-workshop",
+        "passed": false,
+        "error": "timed out"
+      }
+    ],
+    "joint": [
+      {
+        "case_id": "joint-0",
+        "passed": false,
+        "error": "timed out"
+      }
+    ],
+    "retention": [
+      {
+        "case_id": "retention-01-garden-cooperative",
+        "passed": false,
+        "error": "timed out"
+      }
+    ]
+  },
+  "gate": {
+    "ready": false,
+    "stage": "foundation",
+    "blockers": [
+      "Foundation grounding, transfer, joint-prerogative, and retention assessments have not passed."
+    ],
+    "manifest_hash": "d56653ba052d8abb99af6567f67f2a7eb9053a9b747561950da4292cf17d9083",
+    "suite_hash": "36b0a16f78d07a97b0b6782e6cb7bef0bb38df33e0990f5cf14efbf4beaf631f",
+    "revision": 0,
+    "assessment": {},
+    "scope": "Finite measured benchmark; not proof of unrestricted mature understanding."
+  }
+}

@@ -12,8 +12,11 @@ $Champion = Join-Path $WizardRoot "runtime\market-evolution\champion.json"
 $SeniorState = Join-Path $WizardRoot "runtime\programming-brain-codex-watch\state.json"
 
 function Test-LoopbackPort([int]$Port) {
-    $connection = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
-        Where-Object { $_.LocalAddress -in @("127.0.0.1", "::1") } | Select-Object -First 1
+    $connection = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.LocalAddress -in @("127.0.0.1", "::1", "0.0.0.0", "::") -and
+            ($_.State -eq "Listen" -or ($_.RemotePort -eq 0 -and $_.OwningProcess -gt 0))
+        } | Select-Object -First 1
     if ($connection) { return "UP pid=$($connection.OwningProcess)" }
     return "DOWN"
 }
@@ -31,6 +34,22 @@ do {
     Write-Host ("Django dashboard       : {0}" -f (Test-LoopbackPort 8001))
     Write-Host ("Crypto brain node      : {0}" -f (Test-LoopbackPort 8090))
     Write-Host ("Senior brain proxy     : {0}" -f (Test-LoopbackPort 18096))
+
+    try {
+        $ef = Invoke-RestMethod -Uri "http://127.0.0.1:8001/api/edge-search/status/" -TimeoutSec 12 -ErrorAction Stop
+        $wCount = if ($ef.workers) { @($ef.workers).Count } else { 0 }
+        Write-Host ("EdgeForge GA workers   : {0} active (agent={1}; profitable_rules={2}; skipped_no_profit={3})" -f `
+            $wCount, $ef.config.research_agent, $ef.counts.profitable_findings, $ef.counts.complete_no_profit_skipped)
+    } catch {
+        Write-Host "EdgeForge GA workers   : status unavailable" -ForegroundColor Yellow
+    }
+
+    $taProc = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*tradingagent_worker*" } | Select-Object -First 1
+    $evProc = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*evolve_strategies*" } | Select-Object -First 1
+    Write-Host ("TradingAgent (AGY)     : {0}" -f $(if ($taProc) { "UP pid=$($taProc.ProcessId)" } else { "DOWN" }))
+    Write-Host ("Strategy evolution     : {0}" -f $(if ($evProc) { "UP pid=$($evProc.ProcessId)" } else { "DOWN" }))
 
     $heartbeat = Read-Json $Heartbeat
     if ($heartbeat) {

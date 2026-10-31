@@ -171,3 +171,27 @@ data/pass_scores.json
 data/behavior_prompt.md
 data/agent_standing_orders.md
 data/pass_gate_snapshot.json
+# Temporary, backup, and lock files
+*.tmp
+**/*.tmp
+*.bak*
+**/*.bak*
+*.lock
+**/*.lock
+.env.bak*
+
+# Dynamic runtime dumps and watchdogs
+data/ga_runs.json
+data/live_graduation_candidates.json
+data/live_watchdog_state.json
+data/money_button_edge_overrides.json
+data/money_button_gate_census.json
+data/predicate_forge_weth_fee.json
+data/tradingagent_directives.json
+
+# Playwright artifacts
+.playwright-cli/
+**/.playwright-cli/
+NUL
+data/strategy_registry.json
+data/strategy_registry*

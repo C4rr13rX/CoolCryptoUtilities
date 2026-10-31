@@ -1,10 +1,14 @@
 from django.urls import path
 from . import node_update_views, views
 from . import agent_views
+from . import learning_views
+from .self_design_views import WizardSelfDesignView
 
 app_name = "wizard_chat"
 
 urlpatterns = [
+    path("self-design/", WizardSelfDesignView.as_view(), name="self_design"),
+    path("learning/", learning_views.WizardLearningView.as_view(), name="learning"),
     path("message/", views.WizardChatMessageView.as_view(), name="message"),
     path("message", views.WizardChatMessageView.as_view()),
     path("upload/", views.WizardChatUploadView.as_view(), name="upload"),

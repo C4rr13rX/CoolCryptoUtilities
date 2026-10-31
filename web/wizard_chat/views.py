@@ -741,6 +741,10 @@ class WizardChatMessageView(View):
         text = (body.get("text") or "").strip()
         session_id = (body.get("session_id") or str(uuid.uuid4()))
         attachment_texts: list[str] = body.get("attachment_texts") or []
+        if attachment_texts:
+            from .learning_views import blocked_response
+            blocked = blocked_response(_brain_for_request(request))
+            if blocked is not None: return blocked
 
         if not text and not attachment_texts:
             return JsonResponse({"error": "No message content"}, status=400)
@@ -769,6 +773,8 @@ class WizardChatMessageView(View):
         full_prompt = "\n\n".join(parts)
 
         brain = _brain_for_request(request)
+        from tools.wizard_learning.self_design import context as self_design_context
+        full_prompt = self_design_context(brain) + "\n\n" + full_prompt
         wizard_data = _wizard_ask(
             full_prompt,
             session_id,
@@ -794,7 +800,18 @@ class WizardChatMessageView(View):
                 web_snippet = ""
 
         result = _build_answer(wizard_data, web_snippet, full_prompt)
+        from .eye_signal import response_eye_fields
+        result.update(response_eye_fields(
+            wizard_data,
+            answer_matches_model=(result.get("answer") or "").strip() == (wizard_data.get("answer") or "").strip(),
+        ))
         result["node_online"] = node_up
+        if isinstance(wizard_data.get("visual_proposal"), dict):
+            from tools.wizard_learning.self_design import propose
+            try:
+                result["self_design"] = propose(brain, wizard_data["visual_proposal"])
+            except ValueError as error:
+                result["self_design"] = {"applied": False, "reason": str(error)}
         result["session_id"] = session_id
         # Record the wizard's response into the rolling context so the
         # next turn sees it.  Use the final composed answer (after
@@ -931,6 +948,9 @@ class WizardChatUploadView(View):
     """
 
     def post(self, request):
+        from .learning_views import blocked_response
+        blocked = blocked_response(_brain_for_request(request))
+        if blocked is not None: return blocked
         files = request.FILES.getlist("files") or request.FILES.getlist("files[]")
         if not files:
             return JsonResponse({"error": "No files provided"}, status=400)
@@ -963,9 +983,9 @@ class WizardChatUploadView(View):
                 sensor_ok = False
                 sensor_err = ""
                 if sensor_kind is not None:
-                    sensor_ok, sensor_err = _post_sensor_observe(
-                    sensor_kind, sensor_body, _brain_for_request(request)["endpoint"],
-                    )
+                    # An attachment is context, not an observed outcome. Do not
+                    # teach its bytes or its generated interpretation as truth.
+                    sensor_err = "Context only. Model learning requires a reviewed experience through the foundation-first pipeline."
                 results.append({
                     "name": f.name,
                     "text": text,
@@ -1010,13 +1030,37 @@ class WizardChatTrainView(View):
             return JsonResponse({"error": "Both question and answer are required"}, status=400)
 
         brain = _brain_for_request(request)
-        result = _wizard_train(
-            question,
-            answer,
-            session_id,
-            endpoint=brain["endpoint"],
-            chat_path=brain["chat_path"],
-        )
+        from .learning_views import blocked_response
+        blocked = blocked_response(brain)
+        if blocked is not None: return blocked
+        from tools.wizard_learning.curriculum import IDS
+        review = body.get("prerogative_review")
+        if not isinstance(review, dict) or review.get("outcome_verified") is not True or review.get("conflicts") != [] or not isinstance(review.get("checked_prerogatives"), list) or not all(isinstance(item, str) for item in review["checked_prerogatives"]) or set(review["checked_prerogatives"]) != set(IDS):
+            return JsonResponse({"ok": False, "error": "A verified correction must be reviewed against all twelve prerogatives together."}, status=422)
+        from tools.wizard_learning.store import LearningStore, brain_key
+        try:
+            LearningStore().admit_expansion(brain_key(brain), os.getenv("WIZARD_LEARNING_CHECKPOINT_ID", ""), "human correction submitted; foundational retention must be reassessed")
+        except PermissionError as error:
+            return JsonResponse({"ok": False, "error": str(error)}, status=423)
+        from tools.wizard_learning.brain import BrainClient, encode
+        client = BrainClient(brain, timeout=20)
+        try:
+            consolidated = client.post("/brain/consolidate", {
+                "input_pool": int(os.getenv("WIZARD_FOUNDATION_INPUT_POOL", "1")), "input_frame": encode(question),
+                "outcome_pool": int(os.getenv("WIZARD_FOUNDATION_OUTCOME_POOL", "4")), "outcome_frame": encode(answer),
+            })
+            if consolidated.get("consolidated") is not True:
+                return JsonResponse({"ok": False, "error": "The node did not acknowledge the observed outcome.", "retention_reassessment_required": True}, status=503)
+            verified = client.ask(question)
+            recalled = (verified.get("answer") or verified.get("reply") or "").strip()
+            matches = recalled == answer
+            result = {"ok": matches, "verify_match": matches, "verify_answer": recalled,
+                      "verify_decoder": verified.get("decoder"), "verify_confidence": verified.get("grounding", {}).get("integrated_confidence"),
+                      "steps": [{"label": "Consolidate verified outcome", "ok": True}, {"label": "Read-only recall verification", "ok": matches}],
+                      "retention_reassessment_required": True}
+            if not matches: result["error"] = "Outcome was submitted, but exact read-only recall was not verified."
+        except Exception as error:
+            return JsonResponse({"ok": False, "error": str(error), "retention_reassessment_required": True}, status=502)
         return JsonResponse(result)
 
 

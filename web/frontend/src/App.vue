@@ -60,9 +60,20 @@
           <StatusIndicator :label="t('nav.advisories')" :level="advisoryIntent" :detail="advisorySummary" icon="lightning" />
         </div>
         <div class="header-right">
+          <button
+            type="button"
+            class="airgap-btn"
+            title="Open Optical QR Key Deck for Air-Gap Phone Scanner"
+            @click="opticalSyncOpen = true"
+          >
+            <span class="qr-icon">📱</span>
+            <span class="qr-label">Air-Gap QR Deck</span>
+          </button>
           <span v-if="store.loading" class="loading-pill">{{ t('nav.refreshing') }}</span>
         </div>
       </header>
+      <OpticalQrSyncModal v-model="opticalSyncOpen" />
+
       <section class="content__body" :class="{ 'glitch-pulse': glitchActive }">
         <div ref="contentRef" class="content__viewport" :class="{ 'content__viewport--immersive': isImmersiveRoute }">
           <RouterView v-slot="{ Component }">
@@ -85,6 +96,7 @@ import { appRealtimeHealthy } from '@/services/appRealtime';
 import { useUiSettingsStore } from '@/stores/uiSettings';
 import { attachEdgeAutoScroll } from '@/utils/edgeAutoScroll';
 import { initDomTranslation, setLanguage, t } from '@/i18n';
+import OpticalQrSyncModal from '@/components/OpticalQrSyncModal.vue';
 // runGuardianJob import removed with maybePingGuardian; restore if popup is re-enabled.
 
 const store = useDashboardStore();
@@ -92,6 +104,7 @@ const uiSettings = useUiSettingsStore();
 const route = useRoute();
 const router = useRouter();
 const sidebarOpen = ref(false);
+const opticalSyncOpen = ref(false);
 const isSolo = computed(() => route.meta?.layout === 'solo');
 const isImmersiveRoute = computed(() => ['wizard-chat'].includes(route.name as string));
 const glitchActive = ref(false);
@@ -126,9 +139,11 @@ onMounted(() => {
     ambientAudio.triggerChord(soundId);
   };
   window.addEventListener('pointerdown', pointerHandler, { passive: true });
+  window.addEventListener('open-optical-sync', () => { opticalSyncOpen.value = true; });
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('open-optical-sync', () => { opticalSyncOpen.value = true; });
   if (refreshTimer) window.clearInterval(refreshTimer);
   if (consoleTimer) window.clearInterval(consoleTimer);
   if (glitchTimer) window.clearTimeout(glitchTimer);
@@ -794,6 +809,7 @@ const resolveAppIntent = (routeName: string) => {
     case 'model-control':
       return store.serverOnline ? 'ok' : 'warn';
     case 'trading-agent':
+    case 'edge-search':
       return store.serverOnline ? 'ok' : 'warn';
     case 'math':
       return store.serverOnline ? 'ok' : 'warn';
@@ -830,6 +846,8 @@ const navItems = computed(() => {
     { route: 'wallet', path: '/wallet', label: t('nav.wallet'), icon: 'wallet' },
     { route: 'c0d3r', path: '/c0d3r', label: t('nav.c0d3r'), icon: 'terminal' },
     { route: 'trading-agent', path: '/trading-agent', label: t('nav.trading_agent'), icon: 'rocket' },
+    { route: 'agent-research', path: '/agent-research', label: t('nav.agent_research'), icon: 'radar' },
+    { route: 'edge-search', path: '/edge-search', label: t('nav.edge_search'), icon: 'lab' },
     { route: 'math', path: '/math', label: t('nav.math'), icon: 'lab' },
     { route: 'model-control', path: '/model-control', label: t('nav.model_control'), icon: 'settings' },
     { route: 'investigations', path: '/investigations', label: t('nav.investigations'), icon: 'shield' },
@@ -1125,6 +1143,39 @@ const ghostProfitDisplay = computed(() => currencyFormatter.format(Number(
   flex: 1;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.airgap-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: rgba(56, 189, 248, 0.16);
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  color: #38bdf8;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+  letter-spacing: 0.06em;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.airgap-btn:hover {
+  background: rgba(56, 189, 248, 0.32);
+  border-color: #38bdf8;
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.4);
+  color: #ffffff;
+}
+
+.airgap-btn .qr-icon {
+  font-size: 0.95rem;
+}
+
 .header-right .loading-pill {
   padding: 0.45rem 0.9rem;
   border-radius: 999px;
@@ -1134,6 +1185,7 @@ const ghostProfitDisplay = computed(() => currencyFormatter.format(Number(
   letter-spacing: 0.12rem;
   font-size: 0.75rem;
 }
+
 
 .content__body {
   flex: 1 1 auto;

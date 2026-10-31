@@ -43,6 +43,9 @@
           <p class="caption">{{ activeWalletCaption }}</p>
         </div>
         <div class="summary-actions">
+          <button class="btn" type="button" @click="openOpticalSync" style="background: rgba(56, 189, 248, 0.2); border-color: #38bdf8; color: #38bdf8;">
+            📱 Air-Gap QR Deck
+          </button>
           <button class="btn" type="button" @click="wallet.autoRefresh" :disabled="wallet.running || wallet.autoRefreshing">
             {{ wallet.autoRefreshing || wallet.running ? t('common.refreshing') : t('wallet.auto_refresh') }}
           </button>
@@ -50,6 +53,7 @@
             {{ t('wallet.reload_snapshot') }}
           </button>
         </div>
+
       </header>
       <div class="summary-grid">
         <div>
@@ -614,10 +618,15 @@ async function clearWizardMnemonic() {
   await wallet.saveMnemonic(null);
 }
 
+function openOpticalSync() {
+  window.dispatchEvent(new CustomEvent('open-optical-sync'));
+}
+
 async function refreshAll() {
   await wallet.fetchSnapshot();
   await wallet.fetchMultiWallet();
 }
+
 
 async function handleCreateWallet() {
   if (creatingWallet.value) return;

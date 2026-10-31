@@ -81,9 +81,12 @@ _CODEX_ALIASES = {"codex", "codex_cli", "openai_codex"}
 _CLAUDE_CODE_ALIASES = {
     "claude_code", "claudecode", "claude_code_cli", "cc",
 }
+_AGY_ALIASES = {
+    "agy", "antigravity", "agy_cli", "agy_research", "google_agy",
+}
 
-# Cascading preference order — wizard first, OpenAI last by policy.
-_FALLBACK_ORDER  = ("wizard", "bedrock", "claude", "openai")
+# Cascading preference order — wizard first, AGY and Freeloader next, OpenAI last by policy.
+_FALLBACK_ORDER  = ("wizard", "agy", "freeloader", "bedrock", "claude", "openai")
 
 _LEGACY_MAP: Dict[str, str] = {}
 
@@ -119,6 +122,9 @@ def get_session_class(provider: str, *, explicit: bool = False) -> Type:
     if norm in _CLAUDE_CODE_ALIASES:
         from tools.claude_code_session import ClaudeCodeSession
         return ClaudeCodeSession
+    if norm in _AGY_ALIASES:
+        from tools.agy_session import AgySession
+        return AgySession
     if (freeloader_mode_active() and not explicit) or norm in _FREELOADER_ALIASES:
         from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
         return AgentTheFreeloaderSession
@@ -145,6 +151,9 @@ def default_settings(provider: str) -> Dict[str, Any]:
     if norm in _CLAUDE_CODE_ALIASES:
         from tools.claude_code_session import claude_code_default_settings
         return claude_code_default_settings()
+    if norm in _AGY_ALIASES:
+        from tools.agy_session import agy_default_settings
+        return agy_default_settings()
     if norm in _OPENAI_ALIASES or norm in _CLAUDE_ALIASES:
         return {}
     if norm in _BEDROCK_ALIASES:
@@ -165,6 +174,9 @@ def settings_for_role(provider: str, role: str | None = None) -> Dict[str, Any]:
     if norm in _CLAUDE_CODE_ALIASES:
         from tools.claude_code_session import claude_code_settings_for_role
         return claude_code_settings_for_role(role)
+    if norm in _AGY_ALIASES:
+        from tools.agy_session import agy_settings_for_role
+        return agy_settings_for_role(role)
     if norm in _OPENAI_ALIASES or norm in _CLAUDE_ALIASES:
         return {}
     if norm in _BEDROCK_ALIASES:
@@ -184,6 +196,9 @@ def _probe(provider: str) -> bool:
         if norm in _CLAUDE_CODE_ALIASES:
             from tools.claude_code_session import claude_code_available
             return claude_code_available()
+        if norm in _AGY_ALIASES:
+            from tools.agy_session import agy_available
+            return agy_available()
         if norm in _FREELOADER_ALIASES:
             from tools.c0d3rV2.plugins.agent_the_freeloader import AgentTheFreeloaderSession
             return bool(AgentTheFreeloaderSession.probe().get("online"))
@@ -262,7 +277,7 @@ def make_session(
     norm = _normalise(provider or "wizard")
     cls = get_session_class(norm)
     settings = settings_for_role(norm, role)
-    if model and norm in _BEDROCK_ALIASES:
+    if model and (norm in _BEDROCK_ALIASES or norm in _AGY_ALIASES):
         settings["model"] = model
     settings.update({k: v for k, v in kwargs.items() if v is not None})
     return cls(session_name=session_name, workdir=workdir or "", **settings)

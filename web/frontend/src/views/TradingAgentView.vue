@@ -179,6 +179,8 @@
 
         <label>Agent
           <select v-model="form.agent">
+            <option value="agy">agy (Antigravity)</option>
+            <option value="agy_research">agy_research (AGY Research Agent)</option>
             <option value="claude">claude</option>
             <option value="codex">codex</option>
           </select>

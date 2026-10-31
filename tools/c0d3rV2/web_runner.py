@@ -173,6 +173,21 @@ def _make_session(
             max_tokens=max(128, int(os.getenv("C0D3R_WEB_ATF_MAX_TOKENS", "1024"))),
         )
 
+    if chosen in {"agy", "antigravity", "agy_cli", "agy_research"}:
+        from tools.agy_session import AgySession, agy_default_settings
+        settings = agy_default_settings()
+        if model:
+            settings["model"] = model
+        if chosen == "agy_research":
+            settings["agent_name"] = "research"
+        return AgySession(
+            session_name=f"agy-web-{session_key[:16]}",
+            transcript_dir=_RUNTIME_ROOT / "transcripts",
+            transcript_enabled=False,
+            workdir=_PROJECT_ROOT,
+            **settings,
+        )
+
     if chosen == "openai":
         from tools.openai_session import OpenAISession
         return OpenAISession(

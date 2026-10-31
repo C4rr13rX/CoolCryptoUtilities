@@ -12,4 +12,6 @@ urlpatterns = [
     path("settings/import/", views.SecureSettingBulkImportView.as_view(), name="settings-import"),
     path("settings/import-file/", views.SecureSettingFileImportView.as_view(), name="settings-import-file"),
     path("settings/export/", views.SecureSettingExportView.as_view(), name="settings-export"),
+    path("settings/deck/", views.OpticalKeyCardDeckView.as_view(), name="settings-card-deck"),
 ]
+

@@ -386,6 +386,57 @@ def build_prompt(config: AgentConfig) -> str:
     except Exception:
         pass
 
+    # Cross-app feedback from EdgeForge 3-worker pure-math GA and StrategyLedger
+    try:
+        from edgeforge.models import StrategyVenture
+
+        top_ventures = list(
+            StrategyVenture.objects.filter(is_profitable=True)
+            .order_by("-net_return_after_fees", "-holdout_t_stat")[:6]
+        )
+        if top_ventures:
+            parts += ["", "## EDGEFORGE PURE-MATH GA SURVIVORS (after-fee OOS winners)"]
+            for v in top_ventures:
+                parts.append(
+                    f"  [{v.best_chain}:{v.best_symbol}] {v.formula_human} | "
+                    f"net={v.net_return_after_fees * 100:+.3f}%/trade "
+                    f"(${v.net_profit_usd:+.4f}, n={v.oos_trades}, t={v.holdout_t_stat:+.2f})"
+                )
+    except Exception:
+        pass
+
+    try:
+        ledger_path = ROOT / "data" / "strategy_ledger.json"
+        if ledger_path.is_file():
+            ledger_data = json.loads(ledger_path.read_text(encoding="utf-8"))
+            strats = (
+                (ledger_data.get("strategies") or ledger_data)
+                if isinstance(ledger_data, dict)
+                else {}
+            )
+            near_grad = []
+            for sid, srow in strats.items():
+                if not isinstance(srow, dict):
+                    continue
+                ghost_obj = srow.get("ghost") if isinstance(srow.get("ghost"), dict) else {}
+                g_trades = int(ghost_obj.get("trades") or srow.get("ghost_trades") or 0)
+                g_wins = int(ghost_obj.get("wins") or srow.get("ghost_wins") or 0)
+                g_net = float(ghost_obj.get("total_profit") or srow.get("ghost_net_pnl") or 0.0)
+                grad = bool(srow.get("live_approved") or srow.get("graduated"))
+                wr = (g_wins / g_trades) if g_trades > 0 else 0.0
+                if g_trades >= 3 or grad:
+                    near_grad.append((sid, g_trades, wr, g_net, grad))
+            near_grad.sort(key=lambda x: (x[4], x[3], x[1]), reverse=True)
+            if near_grad:
+                parts += ["", "## STRATEGY GRADUATION LADDER (ghost -> live status)"]
+                for sid, gt, wr, gnet, grad in near_grad[:8]:
+                    status_tag = "LIVE-GRADUATED" if grad else f"ghost ({gt}/20 trades)"
+                    parts.append(
+                        f"  {sid:<32} {status_tag:<22} wr={wr * 100:5.1f}%  net=${gnet:+.4f}"
+                    )
+    except Exception:
+        pass
+
     parts += [
         "",
         "## THIS PASS",
@@ -429,20 +480,10 @@ def build_prompt(config: AgentConfig) -> str:
 
 # ------------------------------------------------------------------ act ---
 
-#: How the CLIs say "you have run out". Matched case-insensitively against
-#: stdout and stderr together, because neither guarantees which stream the
-#: message lands on, nor an exit code that separates it from a crash.
-_QUOTA_MARKERS = (
-    "usage limit reached",
-    "rate limit",
-    "quota exceeded",
-    "quota exhausted",
-    "too many requests",
-    "429",
-    "resets at",
-    "upgrade to increase your usage limit",
-    "insufficient_quota",
-)
+from services.token_limiter import TokenLimiter, is_token_or_rate_limit, TOKEN_LIMIT_MARKERS
+
+#: Backward-compatible alias referencing the unified TokenLimiter markers
+_QUOTA_MARKERS = TOKEN_LIMIT_MARKERS
 
 
 def _parse_reset_epoch(text: str) -> Optional[float]:
@@ -479,14 +520,92 @@ def _decide(prompt: str, agent: str, timeout: int = 900) -> Dict[str, Any]:
     """Ask the LLM. Returns the parsed decision, or an error."""
     import shutil
 
+    agent_key = (agent or "agy").strip().lower()
+    norm_agent = TokenLimiter._normalize_agent(agent_key)
+
+    # 1. Proactive check: If currently cooling down due to token limit exhaustion,
+    # don't waste time or process spawns; report waiting_for_tokens immediately.
+    limit_state = TokenLimiter.get_state(norm_agent)
+    if not limit_state.is_available:
+        return {
+            "error": "waiting_for_tokens",
+            "quota_exhausted": True,
+            "resets_at": limit_state.available_at,
+            "seconds_remaining": limit_state.seconds_remaining,
+            "raw": f"Agent {norm_agent.upper()} cooling down ({limit_state.seconds_remaining:.1f}s remaining)",
+        }
+
+    if agent_key in {"agy", "antigravity", "agy_research"}:
+        from tools.agy_session import AgySession, resolve_agy_executable
+
+        exe = resolve_agy_executable()
+        if not exe:
+            return {"error": f"{agent} not found on PATH"}
+        try:
+            session = AgySession(
+                session_name="tradingagent_decide",
+                agent_name="research" if agent_key == "agy_research" else "",
+                timeout_s=min(int(timeout), 300),
+                transcript_enabled=False,
+                workdir=ROOT,
+            )
+            text = (
+                session.send(
+                    prompt,
+                    system=(
+                        "You are the autonomous quantitative trading agent. "
+                        "Analyze the market, mathematical audit, theorems, and EdgeForge GA "
+                        "findings, and return ONLY one valid JSON decision object."
+                    ),
+                    role="quant_research",
+                )
+                or ""
+            ).strip()
+        except Exception as exc:  # noqa: BLE001
+            combined_err = str(exc)
+            if is_token_or_rate_limit(combined_err, exc=exc):
+                delay = TokenLimiter.record_rate_limit("agy", combined_err)
+                st = TokenLimiter.get_state("agy")
+                return {
+                    "error": "quota exhausted",
+                    "quota_exhausted": True,
+                    "resets_at": st.available_at,
+                    "seconds_remaining": st.seconds_remaining,
+                    "raw": combined_err[:400],
+                }
+            return {"error": f"{type(exc).__name__}: {exc}"}
+
+        if is_token_or_rate_limit(text):
+            delay = TokenLimiter.record_rate_limit("agy", text)
+            st = TokenLimiter.get_state("agy")
+            return {
+                "error": "quota exhausted",
+                "quota_exhausted": True,
+                "resets_at": st.available_at,
+                "seconds_remaining": st.seconds_remaining,
+                "raw": text[:400],
+            }
+        if not text:
+            return {"error": "no output"}
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            return {"error": "no JSON object in the reply", "raw": text[:600]}
+        try:
+            res = json.loads(text[start : end + 1])
+            TokenLimiter.record_success("agy")
+            return res
+        except json.JSONDecodeError as exc:
+            return {"error": f"unparsable JSON: {exc}", "raw": text[start : start + 600]}
+
     exe = shutil.which(f"{agent}.cmd") or shutil.which(agent)
     if not exe:
         return {"error": f"{agent} not found on PATH"}
 
-    args = ([exe, "-p", "--permission-mode", "bypassPermissions"]
-            if agent == "claude" else
-            [exe, "exec", "--json", "-c", 'approval_policy="never"',
-             "-c", 'sandbox_mode="read-only"', "-"])
+    if agent_key == "claude":
+        args = [exe, "-p", "--permission-mode", "bypassPermissions"]
+    else:
+        args = [exe, "exec", "--json", "-c", 'approval_policy="never"',
+                "-c", 'sandbox_mode="read-only"', "-"]
     try:
         out = subprocess.run(args, input=prompt, capture_output=True, text=True,
                              timeout=timeout, cwd=str(ROOT),
@@ -495,23 +614,15 @@ def _decide(prompt: str, agent: str, timeout: int = 900) -> Dict[str, Any]:
         return {"error": f"{type(exc).__name__}: {exc}"}
 
     text = (out.stdout or "").strip()
-
-    # A QUOTA WALL IS NOT A FAILED PASS.
-    #
-    # When the model session runs out, the CLI exits with a message rather
-    # than a decision. Treated as an ordinary error the worker retries on its
-    # normal interval, so every cycle until the quota resets spends a process
-    # spawn and produces nothing -- and the run rows read as a string of
-    # failures rather than as "waiting", which is a different fact.
-    #
-    # Detected from the combined output because the CLIs word it differently
-    # and neither guarantees an exit code that distinguishes it from a crash.
-    combined = f"{text}\n{out.stderr or ''}".lower()
-    if any(marker in combined for marker in _QUOTA_MARKERS):
+    combined = f"{text}\n{out.stderr or ''}"
+    if is_token_or_rate_limit(combined):
+        delay = TokenLimiter.record_rate_limit(norm_agent, combined)
+        st = TokenLimiter.get_state(norm_agent)
         return {
             "error": "quota exhausted",
             "quota_exhausted": True,
-            "resets_at": _parse_reset_epoch(combined),
+            "resets_at": st.available_at,
+            "seconds_remaining": st.seconds_remaining,
             "raw": combined[:400],
         }
 
@@ -523,7 +634,9 @@ def _decide(prompt: str, agent: str, timeout: int = 900) -> Dict[str, Any]:
     if start == -1 or end <= start:
         return {"error": "no JSON object in the reply", "raw": text[:600]}
     try:
-        return json.loads(text[start:end + 1])
+        res = json.loads(text[start:end + 1])
+        TokenLimiter.record_success(norm_agent)
+        return res
     except json.JSONDecodeError as exc:
         return {"error": f"unparsable JSON: {exc}", "raw": text[start:start + 600]}
 
@@ -614,6 +727,59 @@ def _clamp_trades(trades: List[dict], config: AgentConfig) -> List[dict]:
     return out
 
 
+def sync_pipeline_feedback(run: Optional[AgentRun] = None, trades: Optional[List[dict]] = None) -> Dict[str, Any]:
+    """Synchronize cross-app feedback between closed trading outcomes,
+    `Constraint`/`Experiment` records, and pipeline directive files."""
+    summary: Dict[str, Any] = {
+        "constraints_promoted": 0,
+        "experiments_confirmed": 0,
+        "directives_published": 0,
+    }
+    try:
+        # 1. Promote PROPOSED constraints that already have measured positive evidence
+        for c in Constraint.objects.filter(status=Constraint.Status.PROPOSED):
+            if c.trades_under >= 10 and c.net_pl_under > 0.0 and c.win_rate_under >= 0.50:
+                c.status = Constraint.Status.ACTIVE
+                c.save(update_fields=["status", "updated_at"])
+                summary["constraints_promoted"] += 1
+
+        # 2. Check GHOST experiments ready to confirm on measured outcomes
+        for exp in Experiment.objects.filter(status=Experiment.Status.GHOST):
+            if exp.ready_to_graduate:
+                exp.status = Experiment.Status.CONFIRMED
+                exp.concluded_at = timezone.now()
+                exp.save(update_fields=["status", "concluded_at", "updated_at"])
+                summary["experiments_confirmed"] += 1
+
+        # 3. Publish active TradingAgent directives & constraints for pipeline consumption
+        if trades is not None or run is not None:
+            directives_path = ROOT / "data" / "tradingagent_directives.json"
+            directives_path.parent.mkdir(parents=True, exist_ok=True)
+            active_rules = [
+                {
+                    "id": c.id,
+                    "kind": c.kind,
+                    "rule": c.rule[:300],
+                    "trades_under": c.trades_under,
+                    "net_pl_under": round(c.net_pl_under, 4),
+                    "win_rate_under": round(c.win_rate_under, 4),
+                }
+                for c in Constraint.objects.filter(status=Constraint.Status.ACTIVE)[:25]
+            ]
+            payload = {
+                "updated_at": time.time(),
+                "agent": run.agent if run else "agy",
+                "run_id": run.id if run else None,
+                "decisions": trades or [],
+                "active_constraints": active_rules,
+            }
+            directives_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            summary["directives_published"] = len(active_rules)
+    except Exception as exc:  # noqa: BLE001
+        summary["error"] = str(exc)
+    return summary
+
+
 def run_once(config: Optional[AgentConfig] = None) -> AgentRun:
     """One pass. Always safe to call: it does nothing unless enabled."""
     config = config or AgentConfig.load()
@@ -628,6 +794,7 @@ def run_once(config: Optional[AgentConfig] = None) -> AgentRun:
         return run
 
     try:
+        sync_pipeline_feedback()
         prompt = build_prompt(config)
         run.prompt = prompt
         run.save(update_fields=["prompt"])
@@ -664,6 +831,8 @@ def run_once(config: Optional[AgentConfig] = None) -> AgentRun:
         }
 
         _record_decision(run, decision, config)
+        feedback_sync = sync_pipeline_feedback(run=run, trades=trades)
+        run.observations = dict(run.observations or {}, pipeline_feedback=feedback_sync)
 
         # Act on what it asked for. Each call polices itself -- an unknown job
         # is refused, a repeat inside the window is refused, junk symbols are

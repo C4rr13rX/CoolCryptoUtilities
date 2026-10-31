@@ -33,5 +33,22 @@
       "free": 15865942016,
       "pct_used": 98.35
     }
+  },
+  {
+    "stamped_utc": "2026-09-19T02:52:56Z",
+    "stamped_epoch": 1789786376,
+    "note": "",
+    "sizes_bytes": {
+      "storage/trading_cache.db": 27846295552,
+      "storage/trading_cache.db-wal": 1664797272,
+      "storage/trading_cache.db-shm": 1376256
+    },
+    "volume": {
+      "path": "D:\\",
+      "total": 960179990528,
+      "used": 944318787584,
+      "free": 15861202944,
+      "pct_used": 98.35
+    }
   }
 ]

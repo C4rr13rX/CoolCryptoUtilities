@@ -51,6 +51,14 @@ class ProviderError(RuntimeError):
 
 
 def has_credential(spec: ModelSpec) -> bool:
+    if spec.provider == "AGY" or spec.api_key_env == "AGY_CLI_AVAILABLE":
+        if os.getenv("AGENT_FREELOADER_DISABLE_AGY", "").strip().lower() in {"1", "true", "yes"}:
+            return False
+        try:
+            from tools.agy_session import agy_available
+            return agy_available()
+        except Exception:
+            return False
     if not spec.api_key_env:
         return True
     if spec.provider == "Cloudflare Workers AI" and not os.getenv("CLOUDFLARE_ACCOUNT_ID"):
@@ -67,6 +75,8 @@ def invoke(
     temperature: float,
     timeout_s: float,
 ) -> ProviderResponse:
+    if spec.provider == "AGY" or spec.api_style == "AGY-CLI":
+        return _invoke_agy(spec, prompt, system, max_tokens, temperature, timeout_s)
     api_key = resolve_secret(spec.api_key_env)
     if spec.provider == "Pollinations.AI" and not api_key:
         # Anonymous access remains available without a key; a free Seed token
@@ -85,6 +95,40 @@ def invoke(
     if spec.provider == "Cohere":
         return _invoke_cohere(spec, api_key, prompt, system, max_tokens, temperature, timeout_s)
     return _invoke_openai_compatible(spec, api_key, prompt, system, max_tokens, temperature, timeout_s)
+
+
+def _invoke_agy(
+    spec: ModelSpec,
+    prompt: str,
+    system: str,
+    max_tokens: int,
+    temperature: float,
+    timeout_s: float,
+) -> ProviderResponse:
+    from tools.agy_session import AgySession, classify_job_for_agy, resolve_agy_executable
+
+    if not resolve_agy_executable():
+        raise ProviderError(503, "AGY CLI is not installed or not on PATH")
+    plan = classify_job_for_agy(prompt, system)
+    session = AgySession(
+        session_name=f"atf-agy-{spec.model_id}",
+        model=spec.model_id,
+        reasoning_effort=plan.get("effort", "medium"),
+        agent=plan.get("agent", ""),
+        read_timeout_s=max(15.0, float(timeout_s)),
+    )
+    reply = session.send(prompt, system=system)
+    if not reply or reply.startswith("[agy missing]") or reply.startswith("[agy error"):
+        status_code = 429 if "quota" in (reply or "").lower() or "429" in (reply or "") else 502
+        raise ProviderError(status_code, reply or "AGY CLI returned empty output")
+    in_tok = max(1, (len(prompt) + len(system)) // 4)
+    out_tok = max(1, len(reply) // 4)
+    return ProviderResponse(
+        text=reply,
+        headers={"x-agy-model": session.get_model_id(), "x-agy-job": plan.get("job_type", "")},
+        input_tokens=in_tok,
+        output_tokens=out_tok,
+    )
 
 
 def _invoke_openai_compatible(

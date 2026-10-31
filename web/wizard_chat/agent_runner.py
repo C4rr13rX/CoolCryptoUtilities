@@ -198,6 +198,19 @@ def _make_session(
             workdir=_PROJECT_ROOT,
         )
 
+    if chosen in {"agy", "antigravity", "agy_cli", "agy_research"}:
+        from tools.agy_session import AgySession, agy_default_settings
+        settings = agy_default_settings()
+        if chosen == "agy_research":
+            settings["agent_name"] = "research"
+        return AgySession(
+            session_name=f"agy-agent-{session_key[:16]}",
+            transcript_dir=_RUNTIME_ROOT / "transcripts",
+            transcript_enabled=False,
+            workdir=_PROJECT_ROOT,
+            **settings,
+        )
+
     if chosen == "openai":
         from tools.openai_session import OpenAISession
         return OpenAISession(
