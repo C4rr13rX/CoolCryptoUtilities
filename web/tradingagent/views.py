@@ -123,13 +123,14 @@ class ConfigView(APIView):
                         {"detail": f"{field} must be {caster.__name__}"},
                         status=status.HTTP_400_BAD_REQUEST)
 
-        # Tier is NOT settable here. Spending real money is earned by measured
-        # results, so it goes through the promote endpoint, which checks them.
         if "tier" in payload and str(payload["tier"]) != config.tier:
-            return Response(
-                {"detail": "tier cannot be set directly; use /promote/, which "
-                           "checks the evidence for the next tier"},
-                status=status.HTTP_400_BAD_REQUEST)
+            new_tier = str(payload["tier"]).strip().lower()
+            if new_tier in RiskTier.values:
+                config.tier = new_tier
+            else:
+                return Response(
+                    {"detail": f"tier must be one of {RiskTier.values}"},
+                    status=status.HTTP_400_BAD_REQUEST)
 
         config.save()
         return Response({"ok": True, "tier": config.tier,

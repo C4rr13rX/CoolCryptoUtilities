@@ -40,12 +40,37 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, onUnmounted } from 'vue';
 import StreamsPanel from '@/components/StreamsPanel.vue';
 import { useDashboardStore } from '@/stores/dashboard';
+import { fetchLatestStreams } from '@/api';
 import { t } from '@/i18n';
 
 const store = useDashboardStore();
+
+let pollTimer: number | undefined;
+
+const loadStreams = async () => {
+  try {
+    const data = await fetchLatestStreams();
+    if (data && typeof data === 'object') {
+      store.streams = data;
+    }
+  } catch (err) {
+    console.warn('Failed to fetch stream snapshot', err);
+  }
+};
+
+onMounted(() => {
+  void loadStreams();
+  pollTimer = window.setInterval(loadStreams, 10000);
+});
+
+onUnmounted(() => {
+  if (pollTimer) {
+    window.clearInterval(pollTimer);
+  }
+});
 
 const numberFormatter = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 3,

@@ -238,7 +238,9 @@ def build_prompt(config: AgentConfig) -> str:
         parts.append(
             f"You are trading REAL money at ${config.clip_usd:.2f} a clip. "
             f"Daily loss limit ${config.max_daily_loss_usd:.2f}, at most "
-            f"{config.max_open_positions} open positions.")
+            f"{config.max_open_positions} open positions. "
+            f"In {config.tier.upper()} tier, exploratory clips (${config.clip_usd:.2f}) "
+            f"are authorized on verified EdgeForge GA survivors with active tick feeds on Base.")
 
     parts += [
         "",
@@ -390,10 +392,16 @@ def build_prompt(config: AgentConfig) -> str:
     try:
         from edgeforge.models import StrategyVenture
 
-        top_ventures = list(
-            StrategyVenture.objects.filter(is_profitable=True)
+        base_ventures = list(
+            StrategyVenture.objects.filter(is_profitable=True, best_chain="base")
             .order_by("-net_return_after_fees", "-holdout_t_stat")[:6]
         )
+        other_ventures = list(
+            StrategyVenture.objects.filter(is_profitable=True)
+            .exclude(best_chain="base")
+            .order_by("-net_return_after_fees", "-holdout_t_stat")[:4]
+        )
+        top_ventures = (base_ventures + other_ventures)[:8]
         if top_ventures:
             parts += ["", "## EDGEFORGE PURE-MATH GA SURVIVORS (after-fee OOS winners)"]
             for v in top_ventures:

@@ -36,15 +36,15 @@ def _find_running_production_pid() -> Optional[int]:
     try:
         import psutil
         current_pid = os.getpid()
-        for proc in psutil.process_iter(['pid', 'cmdline']):
+        for proc in psutil.process_iter():
             try:
-                if proc.info['pid'] == current_pid:
+                if proc.pid == current_pid:
                     continue
-                cmdline = proc.info.get('cmdline') or []
+                cmdline = proc.cmdline()
                 cmd_str = ' '.join(cmdline)
                 if 'main.py' in cmd_str and 'start_production' in cmd_str:
-                    return proc.info['pid']
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    return proc.pid
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
                 continue
     except Exception:
         pass
