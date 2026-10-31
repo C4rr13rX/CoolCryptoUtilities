@@ -1109,3 +1109,44 @@ class TokenLimitsView(APIView):
                 delay = float(request.data.get("delay") or 30.0)
                 TokenLimiter.record_rate_limit(agent, "Simulated token limit for testing", delay_seconds=delay)
         return Response({"token_limits": TokenLimiter.get_all_limits_summary()}, status=status.HTTP_200_OK)
+
+
+class FundTrackerView(APIView):
+    """Real-time fund reservation, locked balance, and outbound transfer status for BusScheduler."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request: Request, *args, **kwargs) -> Response:
+        from services.fund_tracker import get_fund_tracker
+        chain_filter = request.query_params.get("chain")
+        tracker = get_fund_tracker()
+        summary = tracker.get_summary(chain=chain_filter)
+        return Response(summary, status=status.HTTP_200_OK)
+
+    def post(self, request: Request, *args, **kwargs) -> Response:
+        from services.fund_tracker import get_fund_tracker
+        action = str(request.data.get("action") or "").strip().lower()
+        tracker = get_fund_tracker()
+
+        if action == "release_reservation":
+            res_id = str(request.data.get("reservation_id") or "").strip()
+            ok = tracker.release_reservation(res_id)
+            return Response({"ok": ok, "released": res_id}, status=status.HTTP_200_OK)
+
+        elif action == "record_outbound":
+            record = tracker.record_outbound_transfer(
+                chain=str(request.data.get("chain") or "base"),
+                token=str(request.data.get("token") or "USDC"),
+                amount=float(request.data.get("amount") or 0.0),
+                destination=str(request.data.get("destination") or ""),
+                reason=str(request.data.get("reason") or "manual_record"),
+                tx_hash=str(request.data.get("tx_hash") or ""),
+                source="operator_api",
+            )
+            return Response({"ok": True, "transfer": record}, status=status.HTTP_201_CREATED)
+
+        elif action == "clear_all":
+            tracker.clear_all()
+            return Response({"ok": True, "message": "all fund reservations cleared"}, status=status.HTTP_200_OK)
+
+        return Response({"error": f"Unknown action: {action}"}, status=status.HTTP_400_BAD_REQUEST)

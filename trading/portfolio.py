@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import Dict, Iterable, Optional, Tuple
 
 from cache import CacheBalances
+from services.fund_tracker import get_fund_tracker, FundTracker
 from db import get_db, TradingDatabase
 from trading.constants import PRIMARY_CHAIN
 
@@ -71,6 +72,7 @@ class PortfolioState:
         if not self.wallet:
             self.wallet = self._derive_wallet_from_mnemonic()
         self.cache = CacheBalances(db=self.db)
+        self.fund_tracker: FundTracker = get_fund_tracker()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -171,8 +173,13 @@ class PortfolioState:
         }
         self._last_refresh = now
         self._next_refresh = now + self.refresh_interval
+        for ch in self.chains:
+            try:
+                self.fund_tracker.reconcile_with_cache(ch, cache_ts=self._last_refresh)
+            except Exception:
+                pass
 
-    def get_quantity(self, symbol: str, chain: str = "ethereum") -> float:
+    def get_raw_quantity(self, symbol: str, chain: str = "ethereum") -> float:
         key = (chain.lower(), symbol.upper())
         holding = self.holdings.get(key)
         if holding:
@@ -183,8 +190,69 @@ class PortfolioState:
                 return h.quantity
         return 0.0
 
-    def get_native_balance(self, chain: str = "ethereum") -> float:
+    def get_quantity(self, symbol: str, chain: str = "ethereum") -> float:
+        raw = self.get_raw_quantity(symbol, chain)
+        if raw <= 0.0:
+            return 0.0
+        locked = self.fund_tracker.get_locked_amount(chain, symbol, current_cache_ts=self._last_refresh)
+        return max(0.0, raw - locked)
+
+    def get_raw_native_balance(self, chain: str = "ethereum") -> float:
         return self.native_balances.get(chain.lower(), 0.0)
+
+    def get_native_balance(self, chain: str = "ethereum") -> float:
+        raw = self.get_raw_native_balance(chain)
+        if raw <= 0.0:
+            return 0.0
+        native_symbol = NATIVE_SYMBOL.get(chain.lower(), "ETH")
+        locked = self.fund_tracker.get_locked_amount(chain, native_symbol, current_cache_ts=self._last_refresh)
+        return max(0.0, raw - locked)
+
+    def get_locked_quantity(self, symbol: str, chain: str = "ethereum") -> float:
+        return self.fund_tracker.get_locked_amount(chain, symbol, current_cache_ts=self._last_refresh)
+
+    def record_outbound_transfer(
+        self,
+        *,
+        chain: str,
+        token: str,
+        amount: float,
+        destination: str,
+        reason: str,
+        tx_hash: Optional[str] = None,
+        source: str = "portfolio",
+    ) -> Dict[str, Any]:
+        return self.fund_tracker.record_outbound_transfer(
+            chain=chain,
+            token=token,
+            amount=amount,
+            destination=destination,
+            reason=reason,
+            tx_hash=tx_hash,
+            source=source,
+        )
+
+    def reserve_funds(
+        self,
+        *,
+        chain: str,
+        token: str,
+        amount: float,
+        reason: str,
+        reservation_id: Optional[str] = None,
+        ttl_seconds: float = 180.0,
+    ) -> Dict[str, Any]:
+        return self.fund_tracker.reserve_funds(
+            chain=chain,
+            token=token,
+            amount=amount,
+            reason=reason,
+            reservation_id=reservation_id,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def release_reservation(self, reservation_id: str) -> bool:
+        return self.fund_tracker.release_reservation(reservation_id)
 
     def get_native_usd(self, chain: str = "ethereum") -> float:
         return self.native_usd.get(chain.lower(), 0.0)
@@ -195,11 +263,13 @@ class PortfolioState:
     def stable_liquidity(self, chain: str = "ethereum") -> float:
         chain_l = chain.lower()
         total = 0.0
+        seen = set()
         for (c, sym), holding in self.holdings.items():
             if c != chain_l:
                 continue
-            if sym in STABLE_TOKENS:
-                total += holding.quantity
+            if sym in STABLE_TOKENS and sym not in seen:
+                seen.add(sym)
+                total += self.get_quantity(sym, chain=chain_l)
         return total
 
     def total_value_usd(self) -> float:
@@ -234,11 +304,15 @@ class PortfolioState:
         non-ETH chain it is that chain's native balance.
         """
         chain = self.primary_chain
+        native_sym = NATIVE_SYMBOL.get(chain, "ETH")
         return {
             "wallet": self.wallet,
             "chain": chain,
             "native_eth": self.get_native_balance(chain),
+            "raw_native_eth": self.get_raw_native_balance(chain),
             "stable_usd": self.stable_liquidity(chain),
+            "locked_quote": self.fund_tracker.get_locked_amount(chain, "USDC", current_cache_ts=self._last_refresh),
+            "locked_native": self.fund_tracker.get_locked_amount(chain, native_sym, current_cache_ts=self._last_refresh),
             "holdings": len(self.holdings),
             "last_refresh": self._last_refresh,
         }

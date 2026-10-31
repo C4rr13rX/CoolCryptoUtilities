@@ -491,6 +491,50 @@ class AgentResearchAPITests(TestCase):
         self.assertEqual(marker.status, ProfitAccrualMarker.MarkerStatus.DISPATCHED_TO_VAULT)
         self.assertIsNotNone(marker.dispatched_at)
 
+        # 5. Verify FundTracker recorded the transfer so BusScheduler is immediately aware
+        from services.fund_tracker import get_fund_tracker
+        tracker = get_fund_tracker()
+        locked = tracker.get_locked_amount("base", "USDC")
+        self.assertGreaterEqual(locked, marker.accrued_profit_usd)
+
+    def test_fund_tracker_api_endpoints(self):
+        """Verify GET and POST endpoints for fund reservation tracking."""
+        from services.fund_tracker import get_fund_tracker
+        tracker = get_fund_tracker()
+        tracker.clear_all()
+
+        url = reverse("agentresearch-fund-tracker")
+        get_resp = self.client.get(url)
+        self.assertEqual(get_resp.status_code, status.HTTP_200_OK)
+        data = get_resp.json()
+        self.assertIn("active_reservations_count", data)
+        self.assertIn("locked_totals", data)
+
+        # Record manual outbound transfer via API
+        post_resp = self.client.post(url, {
+            "action": "record_outbound",
+            "chain": "base",
+            "token": "USDC",
+            "amount": 12.50,
+            "destination": "0xexternal_wallet",
+            "reason": "operator_test",
+        }, format="json")
+        self.assertEqual(post_resp.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(post_resp.json()["ok"])
+        self.assertEqual(tracker.get_locked_amount("base", "USDC"), 12.50)
+
+        # Create reservation and release via API
+        res = tracker.reserve_funds(chain="base", token="USDC", amount=5.0, reason="test_res")
+        self.assertEqual(tracker.get_locked_amount("base", "USDC"), 17.50)
+
+        rel_resp = self.client.post(url, {
+            "action": "release_reservation",
+            "reservation_id": res["id"],
+        }, format="json")
+        self.assertEqual(rel_resp.status_code, status.HTTP_200_OK)
+        self.assertTrue(rel_resp.json()["ok"])
+        self.assertEqual(tracker.get_locked_amount("base", "USDC"), 12.50)
+
 
 
 

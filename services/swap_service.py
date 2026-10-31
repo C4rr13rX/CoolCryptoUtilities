@@ -1068,6 +1068,21 @@ class SwapService:
         in the caller -- the money has already moved and the exception would
         lose the hash all over again, which is the exact bug this fixes.
         """
+        if outcome.broadcast:
+            try:
+                from services.fund_tracker import get_fund_tracker
+                amt_val = float(context.get("amount_human") or 0.0)
+                get_fund_tracker().record_trade_execution(
+                    chain=str(context.get("chain") or ""),
+                    sell_token=str(context.get("sell") or ""),
+                    sell_amount=amt_val,
+                    buy_token=str(context.get("buy") or ""),
+                    tx_hash=outcome.tx_hash,
+                    source="swap_service",
+                )
+            except Exception as fte:
+                print(f"[fund_tracker] swap outcome notice: {fte}")
+
         recorder = getattr(self, "recorder", None)
         if recorder is None:
             return

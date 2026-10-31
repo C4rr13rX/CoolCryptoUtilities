@@ -195,3 +195,7 @@ data/tradingagent_directives.json
 NUL
 data/strategy_registry.json
 data/strategy_registry*
+
+data/fund_reservations.json
+data/fund_reservations.json.lock
+data/discovered_rules.json

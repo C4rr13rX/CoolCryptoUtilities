@@ -6707,6 +6707,15 @@ class TradingBot:
                 pred_summary,
                 brain_summary,
             )
+            if directive and getattr(directive, "reservation_id", ""):
+                if not decision or decision.get("action") == "hold":
+                    try:
+                        from services.fund_tracker import get_fund_tracker
+                        get_fund_tracker().release_reservation(directive.reservation_id)
+                    except Exception:
+                        pass
+                else:
+                    decision["reservation_id"] = directive.reservation_id
             if decision and decision.get("action") != "hold":
                 self.queue.append(decision)
                 self.db.log_trade(

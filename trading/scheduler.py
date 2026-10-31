@@ -16,6 +16,7 @@ from trading.cdcl_solver import CDCLTradingSolver
 from db import get_db, TradingDatabase
 from trading.data_stream import _split_symbol
 from trading.portfolio import PortfolioState
+from services.fund_tracker import get_fund_tracker
 from trading.constants import PRIMARY_CHAIN
 from trading.opportunity import OpportunitySignal
 
@@ -300,6 +301,8 @@ class TradeDirective:
     #: being looked up again later from a symbol->address book that cannot
     #: represent the ambiguity. Consumers must prefer this over any lookup.
     token_address: str = ""
+    reservation_id: str = ""
+    chain: str = ""
 
     def to_dict(self) -> Dict[str, float]:
         payload = asdict(self)
@@ -362,6 +365,8 @@ class BusScheduler:
         self.history_limit_sec = history_limit_sec
         self.routes: Dict[str, RouteState] = {}
         self.accuracy = HorizonAccuracyTracker(self.horizons)
+        from services.fund_tracker import get_fund_tracker
+        self.fund_tracker = get_fund_tracker()
         seconds = [sec for _, sec in self.horizons]
         self._horizon_min = min(seconds) if seconds else 60
         self._horizon_span = max(seconds) - self._horizon_min if seconds else 1
@@ -968,6 +973,11 @@ class BusScheduler:
         available_quote = portfolio.get_quantity(state.quote_token, chain=chain_name)
         available_base = portfolio.get_quantity(state.base_token, chain=chain_name)
         native_balance = portfolio.get_native_balance(chain_name)
+        raw_quote = getattr(portfolio, "get_raw_quantity", lambda sym, ch: available_quote)(state.quote_token, chain_name)
+        if available_quote <= 0.0 and raw_quote > 0.0:
+            locked_quote = raw_quote - available_quote
+            state.last_filter_reason = f"funds_locked_or_transferred (raw={raw_quote:.4f}, locked={locked_quote:.4f})"
+            return None
         try:
             min_native = float(os.getenv("GAS_ALERT_MIN_NATIVE", "0.01"))
         except Exception:
@@ -1379,19 +1389,29 @@ class BusScheduler:
                     )
             return None
         chosen = self._trident.select(candidates, context)
+        ret_dir = chosen or max(candidates, key=lambda cand: cand.get("score", 0.0))["directive"]
+        arb_method = "trident" if chosen else "max_score"
+        state.last_directive = ret_dir
         if chosen:
             state.last_filter_reason = ""
-            state.last_directive = chosen
-            self._log_arbitration(
-                state.symbol, chain_name, candidates, chosen, "trident"
-            )
-            return chosen
-        fallback = max(candidates, key=lambda cand: cand.get("score", 0.0))
-        state.last_directive = fallback["directive"]
         self._log_arbitration(
-            state.symbol, chain_name, candidates, fallback["directive"], "max_score"
+            state.symbol, chain_name, candidates, ret_dir, arb_method
         )
-        return fallback["directive"]
+        if ret_dir and ret_dir.action == "enter":
+            try:
+                size_quote = float(ret_dir.size) * float(ret_dir.target_price or 1.0)
+                res = self.fund_tracker.reserve_funds(
+                    chain=chain_name,
+                    token=ret_dir.quote_token,
+                    amount=size_quote,
+                    reason=f"bus_scheduler_directive:{ret_dir.symbol}:{ret_dir.strategy_id}",
+                    ttl_seconds=180.0,
+                )
+                ret_dir.reservation_id = res.get("id", "")
+                ret_dir.chain = chain_name
+            except Exception:
+                pass
+        return ret_dir
 
     def record_trade(self, symbol: str, action: str, price: float, size: float = 0.0) -> None:
         """Record a completed trade for directional constraint enforcement."""
@@ -1841,6 +1861,9 @@ class BusScheduler:
         from trading.constants import MAX_QUOTE_SHARE
         if bullish:
             if available_quote <= 0:
+                raw_quote = getattr(portfolio, "get_raw_quantity", lambda sym, ch: available_quote)(state.quote_token, chain_name)
+                if raw_quote > 0.0:
+                    state.last_filter_reason = f"funds_locked_or_transferred (raw={raw_quote:.4f}, locked={raw_quote - available_quote:.4f})"
                 return None
             share = max(0.05, min(MAX_QUOTE_SHARE,
                                   edge * 2.0 * signal.confidence * risk_budget))
@@ -2145,6 +2168,9 @@ class BusScheduler:
 
         available_quote = float(portfolio.get_quantity(state.quote_token, chain=chain_name))
         if available_quote <= 0.0:
+            raw_quote = getattr(portfolio, "get_raw_quantity", lambda sym, ch: available_quote)(state.quote_token, chain_name)
+            if raw_quote > 0.0:
+                return self._mb_gate_refusal(state.symbol, f"quote_funds_locked_or_transferred (raw={raw_quote:.4f}, locked={raw_quote - available_quote:.4f})")
             return self._mb_gate_refusal(state.symbol, "no_quote_balance")
 
         try:
@@ -2365,3 +2391,7 @@ class BusScheduler:
 
     def pending_retry_count(self) -> int:
         return len(self._pending_retries)
+
+    def get_fund_status(self, chain: str = PRIMARY_CHAIN) -> Dict[str, Any]:
+        """Provides BusScheduler awareness of active fund reservations and outbound transfers."""
+        return self.fund_tracker.get_summary(chain=chain)

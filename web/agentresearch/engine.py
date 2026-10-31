@@ -1264,13 +1264,26 @@ class ProfitAccrualCoordinator:
             m.save(update_fields=["status", "dispatched_at", "dispatch_tx_or_note"])
             chain_breakdown[m.chain] = chain_breakdown.get(m.chain, 0.0) + m.accrued_profit_usd
 
-        # Update settlement wallets
+        # Update settlement wallets and notify FundTracker so BusScheduler is immediately aware
         for ch, amt in chain_breakdown.items():
             wallet = ChainSettlementWallet.objects.filter(chain=ch).first()
+            dest_wallet = wallet.wallet_address if (wallet and wallet.wallet_address) else "vault"
             if wallet:
                 wallet.total_settled_usd += amt
                 wallet.last_settled_at = now
                 wallet.save(update_fields=["total_settled_usd", "last_settled_at"])
+            try:
+                from services.fund_tracker import get_fund_tracker
+                get_fund_tracker().record_outbound_transfer(
+                    chain=ch,
+                    token="USDC",
+                    amount=amt,
+                    destination=dest_wallet,
+                    reason="profit_vault_dispatch",
+                    source="profit_accrual_coordinator",
+                )
+            except Exception as fte:
+                print(f"[fund_tracker] vault sweep notice: {fte}")
 
         vault_cfg.total_dispatched_profits_usd += total_to_send
         vault_cfg.total_profits_transferred_usd += total_to_send

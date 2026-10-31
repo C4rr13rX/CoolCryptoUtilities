@@ -110,7 +110,21 @@ class BridgeService:
             res = self.core.execute(
                 src_chain, dst_chain, token, dst_tok, amt, slippage=slip, wait=wait
             )
-            print(f"[bridge] tx={res.get('txHash')}")
+            txh = res.get("txHash") or res.get("tx_hash") or ""
+            print(f"[bridge] tx={txh}")
+            try:
+                from services.fund_tracker import get_fund_tracker
+                get_fund_tracker().record_outbound_transfer(
+                    chain=src_chain,
+                    token=token,
+                    amount=amt,
+                    destination=f"bridge:{dst_chain}:{dst_tok}",
+                    reason="bridge_transfer",
+                    tx_hash=str(txh),
+                    source="bridge_service",
+                )
+            except Exception as fe:
+                print(f"[fund_tracker] bridge notice: {fe}")
             if wait and res.get("bridgeStatus"):
                 print(f"[bridge] final status={res['bridgeStatus'].get('status')}")
             return res
