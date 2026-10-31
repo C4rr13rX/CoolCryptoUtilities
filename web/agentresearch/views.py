@@ -18,6 +18,17 @@ from rest_framework import permissions, status
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.authentication import SessionAuthentication, BasicAuthentication
+
+
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    def enforce_csrf(self, request):
+        return  # CSRF check bypassed for authenticated session views
+
+
+class BaseAgentResearchAPIView(APIView):
+    authentication_classes = [CsrfExemptSessionAuthentication, BasicAuthentication]
+
 
 from .engine import (
     RESEARCH_COORDINATOR,
@@ -242,7 +253,7 @@ def _profit_marker_dict(m: ProfitAccrualMarker) -> Dict[str, Any]:
     }
 
 
-class AgentResearchStatusView(APIView):
+class AgentResearchStatusView(BaseAgentResearchAPIView):
     """High-level summary of agents, market coverage, arbitrage, ghost runs, and graduated live strategies."""
 
     permission_classes = [permissions.AllowAny]
@@ -332,7 +343,7 @@ class AgentResearchStatusView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class MarketScannerView(APIView):
+class MarketScannerView(BaseAgentResearchAPIView):
     """Multi-chain market data scanner with lowest fee calculation and trend indicators."""
 
     permission_classes = [permissions.AllowAny]
@@ -378,7 +389,7 @@ class MarketScannerView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class ArbitrageExplorerView(APIView):
+class ArbitrageExplorerView(BaseAgentResearchAPIView):
     """Cross-chain, cross-DEX, and spatial arbitrage tracking."""
 
     permission_classes = [permissions.AllowAny]
@@ -418,7 +429,7 @@ class ArbitrageExplorerView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class GhostSessionsView(APIView):
+class GhostSessionsView(BaseAgentResearchAPIView):
     """Historical ghost trading research sessions and trigger endpoint."""
 
     permission_classes = [permissions.AllowAny]
@@ -432,13 +443,22 @@ class GhostSessionsView(APIView):
 
     def post(self, request: Request, *args, **kwargs) -> Response:
         """Trigger an immediate historical ghost research pass with agent self-scoring."""
-        res = RESEARCH_COORDINATOR.run_agent_ghost_research_pass()
-        if not res:
-            return Response({"error": "Ghost research pass could not be started."}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({"status": "success", "result": res}, status=status.HTTP_201_CREATED)
+        try:
+            res = RESEARCH_COORDINATOR.run_agent_ghost_research_pass()
+            if not res:
+                return Response(
+                    {"error": "Ghost research pass could not be started: no agent profile or market data available."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return Response({"status": "success", "result": res}, status=status.HTTP_201_CREATED)
+        except Exception as exc:
+            return Response(
+                {"error": f"Ghost research error: {type(exc).__name__}: {exc}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
-class GhostSessionDetailView(APIView):
+class GhostSessionDetailView(BaseAgentResearchAPIView):
     """Detailed view of an individual ghost session and its simulated trades."""
 
     permission_classes = [permissions.AllowAny]
@@ -471,7 +491,7 @@ class GhostSessionDetailView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class GraduatedStrategiesView(APIView):
+class GraduatedStrategiesView(BaseAgentResearchAPIView):
     """Strategies graduated from ghost trading to live execution."""
 
     permission_classes = [permissions.AllowAny]
@@ -484,7 +504,7 @@ class GraduatedStrategiesView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class GraduatedStrategyToggleView(APIView):
+class GraduatedStrategyToggleView(BaseAgentResearchAPIView):
     """Pause or resume a graduated live strategy."""
 
     permission_classes = [permissions.AllowAny]
@@ -507,7 +527,7 @@ class GraduatedStrategyToggleView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class AgentDirectoryView(APIView):
+class AgentDirectoryView(BaseAgentResearchAPIView):
     """Lists all agents across the site and allows creating new agents with custom roles."""
 
     permission_classes = [permissions.AllowAny]
@@ -554,7 +574,7 @@ class AgentDirectoryView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
-class AgentChatView(APIView):
+class AgentChatView(BaseAgentResearchAPIView):
     """Two-way communication deck with an individual agent labeled by role."""
 
     permission_classes = [permissions.AllowAny]
@@ -644,7 +664,7 @@ class AgentChatView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
-class AgentResearchControlView(APIView):
+class AgentResearchControlView(BaseAgentResearchAPIView):
     """System control actions (scan markets, run ghost research, toggle auto-graduate)."""
 
     permission_classes = [permissions.AllowAny]
@@ -745,7 +765,7 @@ class AgentResearchExportView(View):
             return response
 
 
-class VaultView(APIView):
+class VaultView(BaseAgentResearchAPIView):
     """Encrypted vault configuration for profit sweep destination account and transfer percentage."""
 
     permission_classes = [permissions.AllowAny]
@@ -782,7 +802,7 @@ class VaultView(APIView):
             return Response({"error": "Either 'secret' or 'profit_transfer_pct' must be provided."}, status=status.HTTP_400_BAD_REQUEST)
 
 
-class VaultRevealView(APIView):
+class VaultRevealView(BaseAgentResearchAPIView):
     """Decrypts and reveals the plaintext account secret on demand."""
 
     permission_classes = [permissions.AllowAny]
@@ -795,7 +815,7 @@ class VaultRevealView(APIView):
             return Response({"error": f"Failed to decrypt vault secret: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class SettlementWalletsView(APIView):
+class SettlementWalletsView(BaseAgentResearchAPIView):
     """Lists and configures per-chain stablecoin settlement wallet addresses."""
 
     permission_classes = [permissions.AllowAny]
@@ -831,7 +851,7 @@ class SettlementWalletsView(APIView):
         return Response({"status": "saved", "wallet": _wallet_dict(wallet)}, status=status.HTTP_200_OK)
 
 
-class SettlementWalletDeleteView(APIView):
+class SettlementWalletDeleteView(BaseAgentResearchAPIView):
     """Remove a chain settlement wallet."""
 
     permission_classes = [permissions.AllowAny]
@@ -844,7 +864,7 @@ class SettlementWalletDeleteView(APIView):
         return Response({"status": "deleted", "chain": chain}, status=status.HTTP_200_OK)
 
 
-class StrategyLineageView(APIView):
+class StrategyLineageView(BaseAgentResearchAPIView):
     """Lineage view: the agent as its own root strategy and child strategies born from it."""
 
     permission_classes = [permissions.AllowAny]
@@ -880,7 +900,7 @@ class StrategyLineageView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class AgentTradesView(APIView):
+class AgentTradesView(BaseAgentResearchAPIView):
     """Tracks trades executed by agents in ghost or live mode with dynamic sizing."""
 
     permission_classes = [permissions.AllowAny]
@@ -959,7 +979,7 @@ class AgentTradesView(APIView):
         return Response({"status": "recorded", "trade": _trade_dict(trade)}, status=status.HTTP_201_CREATED)
 
 
-class AlphaWalletsView(APIView):
+class AlphaWalletsView(BaseAgentResearchAPIView):
     """Discovers, tracks, and manages top-performing smart money trader wallets on-chain."""
 
     permission_classes = [permissions.AllowAny]
@@ -1015,7 +1035,7 @@ class AlphaWalletsView(APIView):
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
 
-class AlphaWalletConfirmView(APIView):
+class AlphaWalletConfirmView(BaseAgentResearchAPIView):
     """Processes incoming live data from the wallet, evaluates profitability,
     and immediately graduates straight to live mirror trading once confirmed."""
 
@@ -1028,7 +1048,7 @@ class AlphaWalletConfirmView(APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
-class AlphaWalletToggleView(APIView):
+class AlphaWalletToggleView(BaseAgentResearchAPIView):
     """Enables or disables live mirror execution for an alpha wallet."""
 
     permission_classes = [permissions.AllowAny]
@@ -1051,7 +1071,7 @@ class AlphaWalletToggleView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class ProfitMarkersView(APIView):
+class ProfitMarkersView(BaseAgentResearchAPIView):
     """Lists granular profit accrual markers and running totals (stays put vs dispatched)."""
 
     permission_classes = [permissions.AllowAny]
@@ -1075,7 +1095,7 @@ class ProfitMarkersView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class SendAllProfitsView(APIView):
+class SendAllProfitsView(BaseAgentResearchAPIView):
     """Manual button click to send all total profits.
     Dispatches accumulated profits that were staying put in the pool."""
 
@@ -1088,7 +1108,7 @@ class SendAllProfitsView(APIView):
 
 
 
-class TokenLimitsView(APIView):
+class TokenLimitsView(BaseAgentResearchAPIView):
     """External Agent Token Limit & Quota Registry.
     Tracks limits for AGY, Codex, and Claude with automatic replenishment countdowns."""
 
@@ -1111,7 +1131,7 @@ class TokenLimitsView(APIView):
         return Response({"token_limits": TokenLimiter.get_all_limits_summary()}, status=status.HTTP_200_OK)
 
 
-class FundTrackerView(APIView):
+class FundTrackerView(BaseAgentResearchAPIView):
     """Real-time fund reservation, locked balance, and outbound transfer status for BusScheduler."""
 
     permission_classes = [permissions.AllowAny]

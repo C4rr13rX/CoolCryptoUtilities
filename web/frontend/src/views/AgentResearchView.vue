@@ -1069,6 +1069,24 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 
 const API = '/api/agent-research';
 
+function csrf(): string {
+  const m = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+async function authFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers || {});
+  const token = csrf();
+  if (token && !headers.has('X-CSRFToken')) {
+    headers.set('X-CSRFToken', token);
+  }
+  return fetch(url, {
+    credentials: 'same-origin',
+    ...init,
+    headers,
+  });
+}
+
 // State
 const loading = ref(false);
 const scanning = ref(false);
@@ -1200,7 +1218,7 @@ function setNotice(msg: string, isError = false) {
 // Fetchers
 async function fetchStatus() {
   try {
-    const r = await fetch(`${API}/status/`);
+    const r = await authFetch(`${API}/status/`);
     if (!r.ok) return;
     const data = await r.json();
     cfg.value = data.config || {};
@@ -1226,7 +1244,7 @@ async function fetchStatus() {
 
 async function fetchAlphaWallets() {
   try {
-    const r = await fetch(`${API}/alpha-wallets/`);
+    const r = await authFetch(`${API}/alpha-wallets/`);
     if (!r.ok) return;
     const data = await r.json();
     alphaWallets.value = data.wallets || [];
@@ -1237,7 +1255,7 @@ async function fetchAlphaWallets() {
 
 async function fetchProfitMarkers() {
   try {
-    const r = await fetch(`${API}/profit-markers/`);
+    const r = await authFetch(`${API}/profit-markers/`);
     if (!r.ok) return;
     const data = await r.json();
     profitMarkers.value = data.markers || [];
@@ -1252,7 +1270,7 @@ async function fetchMarketSnapshots() {
     const url = filterScannerChain.value
       ? `${API}/markets/?chain=${encodeURIComponent(filterScannerChain.value)}`
       : `${API}/markets/`;
-    const r = await fetch(url);
+    const r = await authFetch(url);
     if (!r.ok) return;
     const data = await r.json();
     snapshots.value = data.results || [];
@@ -1264,7 +1282,7 @@ async function fetchMarketSnapshots() {
 async function fetchArbitrage() {
   try {
     const url = filterProfitableOnly.value ? `${API}/arbitrage/?profitable_only=true` : `${API}/arbitrage/`;
-    const r = await fetch(url);
+    const r = await authFetch(url);
     if (!r.ok) return;
     const data = await r.json();
     arbitrageOpps.value = data.results || [];
@@ -1275,7 +1293,7 @@ async function fetchArbitrage() {
 
 async function fetchGhostRuns() {
   try {
-    const r = await fetch(`${API}/ghost-runs/`);
+    const r = await authFetch(`${API}/ghost-runs/`);
     if (!r.ok) return;
     const data = await r.json();
     ghostSessions.value = data.results || [];
@@ -1286,7 +1304,7 @@ async function fetchGhostRuns() {
 
 async function fetchLineage() {
   try {
-    const r = await fetch(`${API}/lineage/`);
+    const r = await authFetch(`${API}/lineage/`);
     if (!r.ok) return;
     const data = await r.json();
     lineageNodes.value = data.lineage || [];
@@ -1300,7 +1318,7 @@ async function fetchAgentTrades() {
     const params = new URLSearchParams();
     if (filterTradeMode.value) params.append('mode', filterTradeMode.value);
     if (filterTradeChain.value) params.append('chain', filterTradeChain.value);
-    const r = await fetch(`${API}/trades/?${params.toString()}`);
+    const r = await authFetch(`${API}/trades/?${params.toString()}`);
     if (!r.ok) return;
     const data = await r.json();
     agentTrades.value = data.trades || [];
@@ -1311,7 +1329,7 @@ async function fetchAgentTrades() {
 
 async function fetchSettlementWallets() {
   try {
-    const r = await fetch(`${API}/settlement-wallets/`);
+    const r = await authFetch(`${API}/settlement-wallets/`);
     if (!r.ok) return;
     const data = await r.json();
     settlementWallets.value = data.wallets || [];
@@ -1340,7 +1358,7 @@ async function refreshAll() {
 async function scanOnchainWallets() {
   scanningWallets.value = true;
   try {
-    const r = await fetch(`${API}/alpha-wallets/`, {
+    const r = await authFetch(`${API}/alpha-wallets/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'scan' }),
@@ -1359,7 +1377,7 @@ async function scanOnchainWallets() {
 
 async function confirmAlphaWallet(walletId: number) {
   try {
-    const r = await fetch(`${API}/alpha-wallets/${walletId}/confirm/`, {
+    const r = await authFetch(`${API}/alpha-wallets/${walletId}/confirm/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -1381,7 +1399,7 @@ async function confirmAlphaWallet(walletId: number) {
 
 async function toggleAlphaMirror(walletId: number) {
   try {
-    const r = await fetch(`${API}/alpha-wallets/${walletId}/toggle/`, {
+    const r = await authFetch(`${API}/alpha-wallets/${walletId}/toggle/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -1398,7 +1416,7 @@ async function toggleAlphaMirror(walletId: number) {
 async function saveAlphaWallet() {
   if (!alphaForm.value.wallet_address.trim()) return;
   try {
-    const r = await fetch(`${API}/alpha-wallets/`, {
+    const r = await authFetch(`${API}/alpha-wallets/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(alphaForm.value),
@@ -1421,7 +1439,7 @@ async function sendAllTotalProfits() {
   if (!confirm('Send all accumulated profits to your encrypted vault account and chain settlement wallets?')) return;
   sendingProfits.value = true;
   try {
-    const r = await fetch(`${API}/profit-markers/send-all/`, {
+    const r = await authFetch(`${API}/profit-markers/send-all/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -1444,7 +1462,7 @@ async function selectAgent(ag: any) {
   selectedAgent.value = ag;
   chatMessages.value = [];
   try {
-    const r = await fetch(`${API}/agents/${encodeURIComponent(ag.agent_id)}/chat/`);
+    const r = await authFetch(`${API}/agents/${encodeURIComponent(ag.agent_id)}/chat/`);
     if (!r.ok) return;
     const data = await r.json();
     chatMessages.value = data.messages || [];
@@ -1461,7 +1479,7 @@ async function sendAgentMessage() {
   sendingMessage.value = true;
 
   try {
-    const r = await fetch(`${API}/agents/${encodeURIComponent(selectedAgent.value.agent_id)}/chat/`, {
+    const r = await authFetch(`${API}/agents/${encodeURIComponent(selectedAgent.value.agent_id)}/chat/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: content }),
@@ -1489,7 +1507,7 @@ async function createNewAgent() {
   if (!newAgentForm.value.name || !newAgentForm.value.role) return;
   creatingAgent.value = true;
   try {
-    const r = await fetch(`${API}/agents/`, {
+    const r = await authFetch(`${API}/agents/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newAgentForm.value),
@@ -1525,7 +1543,7 @@ async function toggleRevealSecret() {
   }
   revealingSecret.value = true;
   try {
-    const r = await fetch(`${API}/vault/reveal/`, { method: 'POST' });
+    const r = await authFetch(`${API}/vault/reveal/`, { method: 'POST' });
     const data = await r.json();
     if (r.ok && data.secret) {
       revealedSecret.value = data.secret;
@@ -1543,7 +1561,7 @@ async function saveVaultSecret() {
   if (!newVaultSecretInput.value.trim()) return;
   savingVault.value = true;
   try {
-    const r = await fetch(`${API}/vault/`, {
+    const r = await authFetch(`${API}/vault/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1569,7 +1587,7 @@ async function saveVaultSecret() {
 
 async function saveProfitPct() {
   try {
-    const r = await fetch(`${API}/vault/`, {
+    const r = await authFetch(`${API}/vault/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ profit_transfer_pct: selectedProfitPct.value }),
@@ -1586,7 +1604,7 @@ async function saveProfitPct() {
 
 async function saveSettlementWallet() {
   try {
-    const r = await fetch(`${API}/settlement-wallets/`, {
+    const r = await authFetch(`${API}/settlement-wallets/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(walletForm.value),
@@ -1607,7 +1625,7 @@ async function saveSettlementWallet() {
 async function deleteSettlementWallet(chain: string) {
   if (!confirm(`Remove settlement wallet for ${chain.toUpperCase()}?`)) return;
   try {
-    const r = await fetch(`${API}/settlement-wallets/${encodeURIComponent(chain)}/`, { method: 'DELETE' });
+    const r = await authFetch(`${API}/settlement-wallets/${encodeURIComponent(chain)}/`, { method: 'DELETE' });
     if (r.ok) {
       setNotice(`Settlement wallet for ${chain.toUpperCase()} removed.`);
       await fetchSettlementWallets();
@@ -1621,13 +1639,18 @@ async function deleteSettlementWallet(chain: string) {
 async function runGhostResearch() {
   scanning.value = true;
   try {
-    const r = await fetch(`${API}/ghost-runs/`, { method: 'POST' });
-    const data = await r.json();
+    const r = await authFetch(`${API}/ghost-runs/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await r.json().catch(() => ({}));
     if (r.ok) {
-      setNotice(`Historical Ghost Research Pass Complete! Result: ${data.result?.status || 'Done'}`);
+      const res = data.result || {};
+      const chainInfo = res.chain ? ` [${res.chain.toUpperCase()}:${res.symbol}]` : '';
+      setNotice(`Historical Ghost Research Pass Complete!${chainInfo} Self-Score: ${res.self_score ?? 'Done'}`);
       await refreshAll();
     } else {
-      setNotice(data.error || 'Research pass failed', true);
+      setNotice(data.error || data.detail || 'Research pass failed', true);
     }
   } catch (err: any) {
     setNotice(`Ghost execution error: ${err.message}`, true);
@@ -1638,7 +1661,7 @@ async function runGhostResearch() {
 
 async function scanMarketsNow() {
   try {
-    const r = await fetch(`${API}/control/`, {
+    const r = await authFetch(`${API}/control/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'scan_markets' }),
@@ -1655,7 +1678,7 @@ async function scanMarketsNow() {
 
 async function resetAgentTokenLimit(agentKey: string) {
   try {
-    const r = await fetch(`${API}/token-limits/`, {
+    const r = await authFetch(`${API}/token-limits/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agent: agentKey, action: 'reset' }),
@@ -1672,7 +1695,7 @@ async function resetAgentTokenLimit(agentKey: string) {
 
 async function toggleGraduatedStrategy(strategyId: string) {
   try {
-    const r = await fetch(`${API}/graduated/${encodeURIComponent(strategyId)}/toggle/`, {
+    const r = await authFetch(`${API}/graduated/${encodeURIComponent(strategyId)}/toggle/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'toggle' }),
