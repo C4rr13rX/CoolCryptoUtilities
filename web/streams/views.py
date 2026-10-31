@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
+import time
 from typing import Dict, List
 
-from django.db.models import Max
 from rest_framework import generics, status
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -30,22 +31,57 @@ class LatestSampleView(generics.GenericAPIView):
                 return Response({"detail": "No samples found."}, status=status.HTTP_404_NOT_FOUND)
             return Response(items)
 
-        latest_map: Dict[str, Dict[str, float]] = {}
-        aggregates = (
-            MarketStream.objects.values("symbol")
-            .annotate(latest_ts=Max("ts"))
-            .order_by("symbol")
-        )
-        for entry in aggregates:
-            symbol = entry["symbol"]
-            ts = entry["latest_ts"]
-            sample = (
-                MarketStream.objects.filter(symbol=symbol, ts=ts)
-                .order_by("-id")
-                .first()
-            )
-            if sample:
-                latest_map[symbol] = self.get_serializer(sample).data
+        now = time.time()
+        # Single-query JOIN for latest record per symbol within active window (48 hours)
+        query = """
+            SELECT m.*
+            FROM market_stream m
+            INNER JOIN (
+                SELECT symbol, MAX(id) as max_id
+                FROM market_stream
+                WHERE ts > %s
+                GROUP BY symbol
+            ) latest ON m.id = latest.max_id
+        """
+        samples = list(MarketStream.objects.raw(query, [now - 172800.0]))
+        if not samples:
+            # Fall back to 30 days if trading was paused
+            samples = list(MarketStream.objects.raw(query, [now - 2592000.0]))
+        if not samples:
+            # Absolute fallback: most recent 100 symbols ever seen
+            query_all = """
+                SELECT m.*
+                FROM market_stream m
+                INNER JOIN (
+                    SELECT symbol, MAX(id) as max_id
+                    FROM market_stream
+                    GROUP BY symbol
+                    ORDER BY max_id DESC
+                    LIMIT 100
+                ) latest ON m.id = latest.max_id
+            """
+            samples = list(MarketStream.objects.raw(query_all))
+
+        latest_map: Dict[str, dict] = {}
+        for sample in samples:
+            raw_val = sample.raw
+            if isinstance(raw_val, str):
+                try:
+                    raw_val = json.loads(raw_val)
+                except Exception:
+                    pass
+            source_val = ""
+            if isinstance(raw_val, dict):
+                source_val = raw_val.get("source") or raw_val.get("rest", "")
+            latest_map[sample.symbol] = {
+                "ts": sample.ts,
+                "chain": sample.chain,
+                "symbol": sample.symbol,
+                "price": sample.price,
+                "volume": sample.volume,
+                "raw": raw_val,
+                "source": source_val,
+            }
         return Response(latest_map)
 
 

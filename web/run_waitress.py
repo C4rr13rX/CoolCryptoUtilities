@@ -18,7 +18,7 @@ Invocation (from web/):
     python run_waitress.py
 Env overrides:
     WAITRESS_HOST     default 127.0.0.1
-    WAITRESS_PORT     default 8000
+    WAITRESS_PORT     default 8001
     WAITRESS_THREADS  default 8
 """
 from __future__ import annotations
@@ -165,7 +165,7 @@ def _reap_other_instances() -> None:
 
 def main() -> int:
     host    = os.environ.get("WAITRESS_HOST", "127.0.0.1")
-    port    = int(os.environ.get("WAITRESS_PORT", "8000"))
+    port    = int(os.environ.get("WAITRESS_PORT", "8001"))
 
     # Take sole ownership before binding. Whoever starts last wins, which is
     # the right rule: the newest process is running the newest code.

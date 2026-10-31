@@ -101,22 +101,34 @@ def score(genome: Any, objective: str = "balanced") -> float:
 # Persistence
 # --------------------------------------------------------------------------
 
-def _load() -> Dict[str, Any]:
-    """Read the registry, or raise if it exists but cannot be read.
+_cache_mtime: float = 0.0
+_cached_data: Optional[Dict[str, Any]] = None
 
-    Returning ``{"strategies": {}}`` for an unreadable file was silent data
-    loss of the worst kind here: callers write back what they read, so a single
-    failed open() persisted an EMPTY registry over the lifetime record of every
-    strategy. This file is append-only precisely because it must survive the
-    ledger resets, and it cannot do that if a lost race can blank it.
-    """
+
+def _load() -> Dict[str, Any]:
+    """Read the registry, with mtime-based in-memory caching."""
+    global _cache_mtime, _cached_data
+    try:
+        if REGISTRY_PATH.exists():
+            mtime = REGISTRY_PATH.stat().st_mtime
+            if _cached_data is not None and mtime == _cache_mtime:
+                return _cached_data
+    except OSError:
+        pass
+
     raw, ok = read_json(REGISTRY_PATH, default=None)
     if not ok:
         raise OSError(f"could not read {REGISTRY_PATH}")
     if raw is None:
-        return {"strategies": {}}
-    if not isinstance(raw, dict):
+        raw = {"strategies": {}}
+    elif not isinstance(raw, dict):
         raise ValueError(f"{REGISTRY_PATH} is not a registry")
+
+    try:
+        _cache_mtime = REGISTRY_PATH.stat().st_mtime
+    except OSError:
+        _cache_mtime = 0.0
+    _cached_data = raw
     return raw
 
 
@@ -153,6 +165,12 @@ def _save(state: Dict[str, Any]) -> None:
     # services/atomic_json.py for the measurement.
     if not write_json(REGISTRY_PATH, state):
         raise OSError(f"could not persist {REGISTRY_PATH}")
+    global _cache_mtime, _cached_data
+    _cached_data = state
+    try:
+        _cache_mtime = REGISTRY_PATH.stat().st_mtime
+    except OSError:
+        _cache_mtime = 0.0
 
 
 # --------------------------------------------------------------------------

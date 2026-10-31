@@ -31,6 +31,26 @@ LOG_MAX_BYTES = int(os.getenv("CONSOLE_LOG_MAX_BYTES", str(50 * 1024 * 1024)))
 PID_PATH = REPO_ROOT / "runtime" / "production.pid"
 
 
+def _find_running_production_pid() -> Optional[int]:
+    """Scan process table for any running production instances of main.py."""
+    try:
+        import psutil
+        current_pid = os.getpid()
+        for proc in psutil.process_iter(['pid', 'cmdline']):
+            try:
+                if proc.info['pid'] == current_pid:
+                    continue
+                cmdline = proc.info.get('cmdline') or []
+                cmd_str = ' '.join(cmdline)
+                if 'main.py' in cmd_str and 'start_production' in cmd_str:
+                    return proc.info['pid']
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    except Exception:
+        pass
+    return None
+
+
 def _is_pid_alive(pid: int) -> bool:
     """Check whether a process with *pid* is still running."""
     try:
@@ -66,16 +86,19 @@ class ConsoleProcessManager:
         self._log_thread: Optional[threading.Thread] = None
 
     def _read_pid(self) -> Optional[int]:
-        """Read a previously-written PID file and return the PID if alive."""
+        """Read a previously-written PID file and return the PID if alive, or detect running instance."""
         try:
-            if not PID_PATH.exists():
-                return None
-            pid = int(PID_PATH.read_text().strip())
-            if _is_pid_alive(pid):
-                return pid
-            PID_PATH.unlink(missing_ok=True)
+            if PID_PATH.exists():
+                pid = int(PID_PATH.read_text().strip())
+                if _is_pid_alive(pid):
+                    return pid
+                PID_PATH.unlink(missing_ok=True)
         except Exception:
             pass
+        live_pid = _find_running_production_pid()
+        if live_pid:
+            self._write_pid(live_pid)
+            return live_pid
         return None
 
     def _write_pid(self, pid: int) -> None:
@@ -157,21 +180,40 @@ class ConsoleProcessManager:
 
     def status(self) -> Dict[str, Optional[str]]:
         with self._lock:
-            if not self._process:
-                existing_pid = self._read_pid()
-                if existing_pid:
-                    return {"status": "running", "pid": str(existing_pid), "uptime": None}
-                return {"status": "idle", "pid": None, "uptime": None}
-            running = self._process.poll() is None
-            uptime = None
-            if running and self._started_at:
-                uptime = f"{time.time() - self._started_at:.1f}"
-            return {
-                "status": "running" if running else "exited",
-                "pid": str(self._process.pid),
-                "returncode": None if running else str(self._process.returncode),
-                "uptime": uptime,
-            }
+            if self._process:
+                running = self._process.poll() is None
+                if running:
+                    uptime = None
+                    if self._started_at:
+                        uptime = f"{time.time() - self._started_at:.1f}"
+                    return {
+                        "status": "running",
+                        "pid": str(self._process.pid),
+                        "returncode": None,
+                        "uptime": uptime,
+                    }
+                else:
+                    # Stale exited child: check if another production instance is running.
+                    live_pid = self._read_pid()
+                    if live_pid:
+                        self._process = None
+                        self._started_at = None
+                        return {
+                            "status": "running",
+                            "pid": str(live_pid),
+                            "returncode": None,
+                            "uptime": None,
+                        }
+                    return {
+                        "status": "exited",
+                        "pid": str(self._process.pid),
+                        "returncode": str(self._process.returncode),
+                        "uptime": None,
+                    }
+            existing_pid = self._read_pid()
+            if existing_pid:
+                return {"status": "running", "pid": str(existing_pid), "returncode": None, "uptime": None}
+            return {"status": "idle", "pid": None, "returncode": None, "uptime": None}
 
     def tail(self, lines: int = 200) -> list[str]:
         if not LOG_PATH.exists():
