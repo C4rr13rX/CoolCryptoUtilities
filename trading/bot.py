@@ -1935,6 +1935,12 @@ class TradingBot:
         into a field: the plan is rebuilt every cycle and a latch would have
         to be cleared by hand, which is how a halt becomes permanent.
         """
+        # Explicit operator arm with ENABLE_LIVE_TRADING=1 overrides aggregate legacy
+        # model block when LIVE_REQUIRE_MODEL_READY=0 (see selector.py:1260).
+        if (os.getenv("ENABLE_LIVE_TRADING", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}:
+            if (os.getenv("LIVE_REQUIRE_MODEL_READY", "0") or "0").strip().lower() not in {"1", "true", "yes", "on"}:
+                return False
+
         plan = getattr(self, "_transition_plan", None)
         if not isinstance(plan, dict):
             return False
