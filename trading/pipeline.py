@@ -7056,12 +7056,19 @@ class TrainingPipeline:
         except Exception:
             watchlists = {}
         manual_ghost = [sym for sym in (watchlists or {}).get("ghost", []) if sym]
-        if manual_ghost:
+        live_trading = os.getenv("ENABLE_LIVE_TRADING", "0").lower() in {"1", "true", "yes", "on"}
+        lead_assets: List[str] = []
+        if live_trading:
+            live_wl = [sym for sym in (watchlists or {}).get("live", []) if sym]
+            base_pairs = ["WETH-USDC", "AERO-USDC"]
+            lead_assets = [s for s in (base_pairs + live_wl) if s]
+
+        if manual_ghost or lead_assets:
             merged: List[str] = []
-            for sym in manual_ghost + focus_assets:
+            for sym in lead_assets + manual_ghost + focus_assets:
                 if sym not in merged:
                     merged.append(sym)
-            focus_assets = merged[: self.focus_max_assets] or manual_ghost[: self.focus_max_assets]
+            focus_assets = merged[: self.focus_max_assets] or lead_assets[: self.focus_max_assets]
             manual_overrides["ghost"] = manual_ghost
 
         self.metrics.record(
