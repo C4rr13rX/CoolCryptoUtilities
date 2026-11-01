@@ -405,15 +405,14 @@ onMounted(() => {
           float dust = fbm(p * 12.0 + cloud * 3.0);
           float band = exp(-pow((p.y + 0.22 * p.x + 0.08 * sin(p.z * 9.0)) * 3.0, 2.0));
           
-          vec3 deepSpace = vec3(0.024, 0.039, 0.067); // matches var(--bg, #060a11)
-          vec3 nebulaTone = mix(vec3(0.12, 0.018, 0.12), vec3(0.03, 0.065, 0.21), dust);
-          vec3 color = deepSpace;
-          color += nebulaTone * pow(cloud, 2.0) * band * nebula * 3.5;
-          color += vec3(0.32, 0.2, 0.25) * pow(cloud * dust, 3.0) * nebula * 2.8;
+          vec3 nebulaTone = mix(vec3(0.14, 0.02, 0.16), vec3(0.025, 0.055, 0.19), dust);
+          vec3 cloudColor = nebulaTone * pow(cloud, 2.0) * band * nebula * 3.5;
+          cloudColor += vec3(0.35, 0.22, 0.28) * pow(cloud * dust, 3.0) * nebula * 2.8;
           
-          // Soft radial edge fade to ensure zero hard square borders
-          float edgeAlpha = smoothstep(0.98, 0.35, length(p.xy));
-          gl_FragColor = vec4(pow(max(color, vec3(0.0)), vec3(0.55)), edgeAlpha);
+          // Pure transparency fade before reaching any boundary edge
+          float radialDist = length(p.xy);
+          float alpha = clamp(length(cloudColor) * 2.2, 0.0, 1.0) * smoothstep(0.85, 0.2, radialDist);
+          gl_FragColor = vec4(pow(max(cloudColor, vec3(0.0)), vec3(0.65)), alpha);
         }
       `,
     })
@@ -589,11 +588,12 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border-radius: 50%;
   clip-path: circle(50% at 50% 50%);
-  background: #060a11;
+  background: transparent !important;
   display: flex;
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
+  margin: 0 auto;
 }
 
 .eye :deep(canvas) {
@@ -606,6 +606,7 @@ onBeforeUnmount(() => {
   display: block;
   object-fit: cover;
   margin: 0 auto;
+  background: transparent !important;
 }
 
 .signal-label {

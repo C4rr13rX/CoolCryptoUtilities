@@ -1215,6 +1215,7 @@ class DeterministicInnovationView(BaseAgentResearchAPIView):
         return Response({
             "status": "success",
             "epochs_active": [
+                {"epoch": "Pre-1980", "name": "Kelly-Thorp Geometric Growth & Mandelbrot Fat-Tail Invariants", "status": "calculated"},
                 {"epoch": "1996-2004", "name": "Graph Topology & Stationary Centrality", "status": "computed"},
                 {"epoch": "2004-2015", "name": "Distributed State & Merkle DAG Consensus", "status": "verified"},
                 {"epoch": "2015-2020", "name": "Conservation Invariants & Constant-Product AMMs", "status": "bounded"},

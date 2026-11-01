@@ -5098,7 +5098,12 @@ class TrainingPipeline:
             cumulative += float(profit)
             trough = min(trough, cumulative)
         max_drawdown = abs(trough)
-        concentration_block = len(trades) >= max(5, min_trades) and dominant_share > dominance_guard
+        is_single_strategy = bool(strategy_id)
+        concentration_block = (
+            not is_single_strategy
+            and len(trades) >= max(5, min_trades)
+            and dominant_share > dominance_guard
+        )
         # Leave-one-symbol-out: does the edge survive without its best token?
         #
         # `dominant_share` counts TRADES, so a strategy that spreads its

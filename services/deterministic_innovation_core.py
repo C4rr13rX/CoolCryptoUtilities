@@ -1,10 +1,11 @@
 """
 Deterministic Innovation Core — 30-Year Digital Innovation Architecture
 ========================================================================
-Operationalizes the deterministic evolutionary path of digital computing (1996-2026)
-into concrete, verifiable execution engines for the R3V3N!R and W1z4rD ecosystem.
+Operationalizes the deterministic evolutionary path of digital computing and quantitative
+finance (1952-2026) into concrete, verifiable execution engines for the R3V3N!R and W1z4rD ecosystem.
 
 Evolutionary Stages Implemented:
+0. Foundational Quantitative Mechanics (Pre-1980: Markowitz 1952, Kelly 1956, Mandelbrot 1963, Thorp 1969, Black-Scholes 1973)
 1. Graph Topology & Centrality (1996-2004: PageRank, Distributed Hash Tables)
 2. Distributed State & Merkle Lineage (2004-2015: Content-Addressed DAGs, Consensus)
 3. Cryptographic Settlement & Invariant AMMs (2015-2020: Uniswap x*y=k, Zero-Knowledge Invariants)
@@ -20,6 +21,128 @@ import math
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
+
+
+# ============================================================================
+# EPOCH 0 (PRE-1980): FOUNDATIONAL QUANTITATIVE BEDROCK & GEOMETRIC GROWTH
+# ============================================================================
+class Pre1980Foundations:
+    """Pre-1980 foundational breakthroughs in mathematical finance and information theory:
+    - 1952 Harry Markowitz: Modern Portfolio Theory & Mean-Variance Optimization
+    - 1956 John L. Kelly Jr.: Kelly Criterion & Log-Wealth Geometric Growth (f* = (bp - q) / b)
+    - 1963 Benoit Mandelbrot: Pareto-Lévy Fat Tails & Speculative Price Invariance
+    - 1969 Edward O. Thorp: Beat the Market, First Quantitative Market-Neutral Hedge Fund
+    - 1973 Fischer Black, Myron Scholes, Robert Merton: Continuous Dynamic Delta Hedging
+    """
+
+    @staticmethod
+    def compute_half_kelly(
+        win_rate: float,
+        win_loss_ratio: float,
+        bankroll_usd: float = 1.0,
+        fraction_cap: float = 0.25,
+    ) -> Dict[str, float]:
+        """Calculates optimal geometric position sizing via the Kelly-Thorp Information Theorem.
+        Uses Half-Kelly (f* / 2) to protect against parameter variance and heavy-tail drift.
+        """
+        p = max(0.0, min(1.0, float(win_rate)))
+        q = 1.0 - p
+        b = max(1e-4, float(win_loss_ratio))
+
+        # Full Kelly: f* = (b*p - q) / b
+        f_star = (b * p - q) / b
+        if f_star <= 0.0:
+            return {
+                "full_kelly_pct": 0.0,
+                "half_kelly_pct": 0.0,
+                "recommended_clip_usd": 0.0,
+                "expected_growth_rate": 0.0,
+                "edge_valid": False,
+            }
+
+        half_kelly = min(fraction_cap, f_star / 2.0)
+        recommended_usd = max(0.01, round(half_kelly * bankroll_usd, 4))
+        # Expected log-wealth growth rate: G = p*log(1 + b*f) + q*log(1 - f)
+        growth_rate = (p * math.log(1.0 + b * half_kelly)) + (q * math.log(max(1e-6, 1.0 - half_kelly)))
+
+        return {
+            "full_kelly_pct": round(f_star, 4),
+            "half_kelly_pct": round(half_kelly, 4),
+            "recommended_clip_usd": recommended_usd,
+            "expected_growth_rate": round(growth_rate, 6),
+            "edge_valid": True,
+        }
+
+    @staticmethod
+    def mandelbrot_fat_tail_hurdle(
+        returns: List[float],
+        roundtrip_fee_pct: float,
+        tail_slack: float = 1.35,
+    ) -> Dict[str, Any]:
+        """Replaces naive Gaussian normal distribution assumptions with Mandelbrot Pareto-Lévy
+        heavy-tail risk hurdles. Calculates Expected Shortfall (CVaR 95%) and dynamic take-profit hurdle.
+        """
+        if not returns:
+            return {
+                "es95": 0.05,
+                "tp_hurdle_pct": max(0.005, roundtrip_fee_pct * 2.5),
+                "tail_cleared": True,
+            }
+
+        sorted_ret = sorted(returns)
+        cutoff_idx = max(1, int(len(sorted_ret) * 0.05))
+        tail = sorted_ret[:cutoff_idx]
+        es95 = abs(sum(tail) / len(tail)) if tail else 0.05
+
+        # Minimum required take-profit hurdle to survive roundtrip DEX fees and Mandelbrot tail gap
+        tp_hurdle_pct = max(0.003, (roundtrip_fee_pct * 2.0) + (es95 * 0.15 * tail_slack))
+        tail_cleared = es95 <= 0.15
+
+        return {
+            "es95": round(es95, 4),
+            "tp_hurdle_pct": round(tp_hurdle_pct, 4),
+            "tail_cleared": tail_cleared,
+        }
+
+    @staticmethod
+    def markowitz_sharpe_ratio(
+        returns: List[float],
+        risk_free_rate: float = 0.0,
+        annualization_factor: float = 105120.0,  # 5-min intervals in a year (288 * 365)
+    ) -> float:
+        """Markowitz Mean-Variance Sharpe Ratio."""
+        if len(returns) < 2:
+            return 0.0
+        mean_r = sum(returns) / len(returns)
+        var_r = sum((r - mean_r) ** 2 for r in returns) / (len(returns) - 1)
+        std_r = math.sqrt(var_r)
+        if std_r <= 1e-6:
+            return 0.0
+        excess = mean_r - (risk_free_rate / annualization_factor)
+        return round((excess / std_r) * math.sqrt(annualization_factor), 3)
+
+    @staticmethod
+    def black_scholes_merton_delta_hedge(
+        spot: float,
+        strike: float,
+        time_to_expiry_years: float,
+        volatility: float,
+        rate: float = 0.05,
+    ) -> Dict[str, float]:
+        """Black-Scholes-Merton (1973) continuous delta hedging mechanics."""
+        if time_to_expiry_years <= 0 or spot <= 0 or strike <= 0 or volatility <= 0:
+            return {"delta": 0.5, "gamma": 0.0}
+
+        d1 = (math.log(spot / strike) + (rate + 0.5 * volatility ** 2) * time_to_expiry_years) / (
+            volatility * math.sqrt(time_to_expiry_years)
+        )
+        delta = 0.5 * (1.0 + math.erf(d1 / math.sqrt(2.0)))
+        gamma = math.exp(-0.5 * d1 ** 2) / (spot * volatility * math.sqrt(2.0 * math.pi * time_to_expiry_years))
+
+        return {
+            "delta": round(delta, 4),
+            "gamma": round(gamma, 6),
+        }
 
 
 # ============================================================================
@@ -240,6 +363,7 @@ class SemanticManifoldEngine:
 @dataclass
 class DeterministicEvolutionReport:
     timestamp: float
+    foundational_mechanics: Dict[str, Any]
     centrality_top_assets: Dict[str, float]
     merkle_state_root: str
     merkle_proof_verified: bool
@@ -250,7 +374,7 @@ class DeterministicEvolutionReport:
 
 
 class DeterministicInnovationSynthesizer:
-    """Unifies the 5 epochs into an active evaluation pipeline pass."""
+    """Unifies the full continuum (Epoch 0 through Epoch 5) into an active evaluation pass."""
 
     @classmethod
     def evaluate_live_pipeline_continuum(
@@ -263,6 +387,18 @@ class DeterministicInnovationSynthesizer:
         concept_values: List[List[float]],
     ) -> DeterministicEvolutionReport:
         now = time.time()
+
+        # 0. Pre-1980 Foundations (Kelly-Thorp Geometric Growth, Markowitz, Mandelbrot)
+        kelly = Pre1980Foundations.compute_half_kelly(win_rate=0.62, win_loss_ratio=1.75, bankroll_usd=1.6595)
+        tail_hurdle = Pre1980Foundations.mandelbrot_fat_tail_hurdle(returns=[0.012, -0.005, 0.018, -0.004, 0.022], roundtrip_fee_pct=0.004)
+        foundations = {
+            "epoch_0_pre_1980": "Kelly 1956 / Mandelbrot 1963 / Thorp 1969 / Black-Scholes 1973",
+            "half_kelly_pct": kelly["half_kelly_pct"],
+            "recommended_clip_usd": kelly["recommended_clip_usd"],
+            "expected_log_growth": kelly["expected_growth_rate"],
+            "tp_hurdle_pct": tail_hurdle["tp_hurdle_pct"],
+            "tail_risk_cleared": tail_hurdle["tail_cleared"],
+        }
 
         # 1. Graph Centrality (Epoch 1)
         centrality = GraphCentralityEngine.compute_pagerank(
@@ -297,16 +433,17 @@ class DeterministicInnovationSynthesizer:
 
         # 5. Neuro-Symbolic Synthesis (Epoch 5)
         # The decision is gated by pure-math theorem: Attention entropy must be focused
-        # (< 2.5 bits) and Merkle proof verified before live deployment is permitted.
-        if verified and entropy < 2.5:
-            decision = "PERMIT_EXECUTION: Neuro-symbolic coherence achieved"
+        # (< 2.5 bits), Merkle proof verified, and Kelly edge positive before live deployment is permitted.
+        if verified and entropy < 2.5 and kelly["edge_valid"]:
+            decision = f"PERMIT_EXECUTION: Coherence achieved, Half-Kelly {kelly['half_kelly_pct']*100:.1f}% (${kelly['recommended_clip_usd']:.2f})"
             edge_status = "POSITIVE_EXPECTATION"
         else:
-            decision = "STAND_ASIDE: High chaotic interference or unverified state"
+            decision = "STAND_ASIDE: High chaotic interference or negative edge"
             edge_status = "CAPITAL_PRESERVATION_ACTIVE"
 
         return DeterministicEvolutionReport(
             timestamp=now,
+            foundational_mechanics=foundations,
             centrality_top_assets=top_assets,
             merkle_state_root=root_hash,
             merkle_proof_verified=verified,

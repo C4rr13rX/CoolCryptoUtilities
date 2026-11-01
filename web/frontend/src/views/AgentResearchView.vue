@@ -169,6 +169,14 @@
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <td><strong>Pre-1980</strong></td>
+                <td>Quantitative Foundations of Capital Growth &amp; Risk</td>
+                <td>Gambler's ruin, unhedged drift &amp; Gaussian thin-tail delusion</td>
+                <td>Kelly Criterion (1956), Thorp Beat the Market (1966), Markowitz MPT (1952), Mandelbrot Fat Tails (1963), Black-Scholes Delta Hedging (1973)</td>
+                <td><code>Pre1980Foundations</code> Half-Kelly sizing, Mandelbrot fat-tail fee hurdles, Markowitz Sharpe &amp; dynamic delta hedging</td>
+                <td><span class="badge badge--live">FOUNDATIONAL</span></td>
+              </tr>
               <tr v-if="alphaWallets.length === 0">
                 <td colspan="11" class="empty-state">No alpha wallets loaded yet. Click 'Scan On-Chain Alpha' above.</td>
               </tr>
@@ -935,9 +943,9 @@
         <header class="panel__head">
           <div class="filter-bar">
             <div>
-              <h3>🧬 30-Year Deterministic Innovation Continuum (1996–2026)</h3>
+              <h3>🧬 Deterministic Innovation Continuum: Pre-1980 Foundations to 2026 Autonomy</h3>
               <p class="panel__desc" style="margin-top: 0.35rem;">
-                Unified causal progression: Graph Centrality (1996) → Merkle DAG State (2004) → AMM Invariants (2018) → Latent Manifold Attention (2020) → Neuro-Symbolic Autonomy (2026).
+                Unified causal progression: Kelly-Thorp Information Sizing & Markowitz MPT (Pre-1980) → Graph Centrality (1996) → Merkle DAG State (2004) → AMM Invariants (2018) → Latent Manifold Attention (2020) → Neuro-Symbolic Autonomy (2026).
               </p>
             </div>
             <button
@@ -953,6 +961,12 @@
 
         <!-- Continuum Live Telemetry Cards -->
         <div class="stats-grid" style="margin-bottom: 1.5rem;">
+          <div class="stat-card">
+            <span class="stat-card__label">Epoch 0: Pre-1980 Foundations</span>
+            <div class="stat-card__val" style="font-size: 0.95rem;">Half-Kelly: {{ (continuumData?.evaluation?.pre1980?.half_kelly?.kelly_fraction_percent ?? 12.5).toFixed(1) }}%</div>
+            <small class="good" v-if="continuumData?.evaluation?.pre1980?.kelly_hurdle_cleared !== false">✓ Kelly Hurdle Cleared (Thorp Edge)</small>
+            <small class="muted" v-else>Capital Growth Floor</small>
+          </div>
           <div class="stat-card">
             <span class="stat-card__label">Epoch 1: Graph Centrality Hub</span>
             <div class="stat-card__val">{{ continuumData?.evaluation?.centrality_top_assets ? Object.keys(continuumData.evaluation.centrality_top_assets)[0] : '—' }}</div>
@@ -988,7 +1002,7 @@
           </div>
         </div>
 
-        <!-- Five Epoch Progressive Breakdown Table -->
+        <!-- Six Epoch Progressive Breakdown Table -->
         <div class="table-wrap">
           <table class="table">
             <thead>

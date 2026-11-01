@@ -6,7 +6,7 @@ ASSIGNMENT_FILE = "data/pair_provider_assignment.json"
 
 def assign_providers():
     if not os.path.exists(PAIR_INDEX_FILE):
-        print(f"❌ File not found: {PAIR_INDEX_FILE}")
+        print(f"[X] File not found: {PAIR_INDEX_FILE}")
         return
 
     os.makedirs("data", exist_ok=True)
@@ -31,8 +31,8 @@ def assign_providers():
     with open(ASSIGNMENT_FILE, "w") as f:
         json.dump(provider_assignment, f, indent=2)
 
-    print(f"✅ Provider assignments saved to {ASSIGNMENT_FILE}")
-    print(f"🔢 Total pairs assigned: {len(provider_assignment)}")
+    print(f"[OK] Provider assignments saved to {ASSIGNMENT_FILE}")
+    print(f"[*] Total pairs assigned: {len(provider_assignment)}")
 
 if __name__ == "__main__":
     assign_providers()
