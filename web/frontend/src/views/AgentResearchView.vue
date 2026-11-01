@@ -929,6 +929,125 @@
       </div>
     </section>
 
+    <!-- TAB 10: 30-YEAR DETERMINISTIC INNOVATION CONTINUUM -->
+    <section v-if="currentTab === 'continuum'" class="tab-pane">
+      <div class="panel">
+        <header class="panel__head">
+          <div class="filter-bar">
+            <div>
+              <h3>🧬 30-Year Deterministic Innovation Continuum (1996–2026)</h3>
+              <p class="panel__desc" style="margin-top: 0.35rem;">
+                Unified causal progression: Graph Centrality (1996) → Merkle DAG State (2004) → AMM Invariants (2018) → Latent Manifold Attention (2020) → Neuro-Symbolic Autonomy (2026).
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn btn--primary"
+              :disabled="evaluatingContinuum"
+              @click="fetchDeterministicInnovation"
+            >
+              {{ evaluatingContinuum ? 'EVALUATING...' : '⚡ EVALUATE CONTINUUM' }}
+            </button>
+          </div>
+        </header>
+
+        <!-- Continuum Live Telemetry Cards -->
+        <div class="stats-grid" style="margin-bottom: 1.5rem;">
+          <div class="stat-card">
+            <span class="stat-card__label">Epoch 1: Graph Centrality Hub</span>
+            <div class="stat-card__val">{{ continuumData?.evaluation?.centrality_top_assets ? Object.keys(continuumData.evaluation.centrality_top_assets)[0] : '—' }}</div>
+            <small class="muted">PageRank: {{ continuumData?.evaluation?.centrality_top_assets ? Object.values(continuumData.evaluation.centrality_top_assets)[0] : '0.0' }}</small>
+          </div>
+
+          <div class="stat-card">
+            <span class="stat-card__label">Epoch 2 &amp; 3: Merkle Audit DAG</span>
+            <div class="stat-card__val" style="font-size: 0.95rem; font-family: monospace;">{{ (continuumData?.evaluation?.merkle_state_root || '—').slice(0, 14) }}...</div>
+            <small class="good" v-if="continuumData?.evaluation?.merkle_proof_verified">✓ Merkle Proof Verified</small>
+            <small class="bad" v-else>Tamper / Unverified</small>
+          </div>
+
+          <div class="stat-card">
+            <span class="stat-card__label">Epoch 3: AMM Invariant (x*y=k)</span>
+            <div class="stat-card__val" style="font-size: 0.95rem;">{{ continuumData?.evaluation?.amm_invariant_status || 'Bounded' }}</div>
+            <small class="muted">Zero Slippage Boundary Guard</small>
+          </div>
+
+          <div class="stat-card">
+            <span class="stat-card__label">Epoch 4: Attention Entropy</span>
+            <div class="stat-card__val">{{ continuumData?.evaluation?.semantic_attention_entropy ?? '—' }} <span style="font-size: 0.75rem;">bits</span></div>
+            <small class="good" v-if="(continuumData?.evaluation?.semantic_attention_entropy || 0) < 2.5">✓ Focused Manifold (&lt;2.5 bits)</small>
+            <small class="bad" v-else>Chaotic Interference</small>
+          </div>
+
+          <div class="stat-card">
+            <span class="stat-card__label">Epoch 5: Neuro-Symbolic Verdict</span>
+            <div class="stat-card__val" style="font-size: 0.85rem;" :class="(continuumData?.evaluation?.expected_edge_status === 'POSITIVE_EXPECTATION') ? 'good' : 'bad'">
+              {{ continuumData?.evaluation?.expected_edge_status || 'IDLE' }}
+            </div>
+            <small class="muted">{{ continuumData?.evaluation?.neuro_symbolic_decision || 'Standing by' }}</small>
+          </div>
+        </div>
+
+        <!-- Five Epoch Progressive Breakdown Table -->
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Epoch</th>
+                <th>Era Name</th>
+                <th>Bottleneck Overcome</th>
+                <th>Deterministic Breakthrough</th>
+                <th>Engine Upgrade in CCU &amp; W1z4rD</th>
+                <th>Live Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>1996–2004</strong></td>
+                <td>Graph Topology &amp; Stationary Centrality</td>
+                <td>Unranked, chaotic web documents</td>
+                <td>Eigenvector centrality (PageRank), DHTs (Kademlia)</td>
+                <td><code>GraphCentralityEngine</code> PageRank over DEX pools &amp; concepts</td>
+                <td><span class="badge badge--live">COMPUTED</span></td>
+              </tr>
+              <tr>
+                <td><strong>2004–2010</strong></td>
+                <td>Distributed State &amp; Content DAGs</td>
+                <td>Monolithic hardware fragility</td>
+                <td>Content-addressed Merkle DAGs (Git), Paxos/Raft, AWS Cloud</td>
+                <td><code>MerkleStateDAG</code> content-addressing on trading &amp; checkpoints</td>
+                <td><span class="badge badge--live">VERIFIED</span></td>
+              </tr>
+              <tr>
+                <td><strong>2008–2018</strong></td>
+                <td>Cryptographic Invariants &amp; Trustless Settlement</td>
+                <td>Centralized counterparty &amp; gatekeeper risk</td>
+                <td>Nakamoto consensus, EVM smart contracts, Uniswap x*y=k</td>
+                <td><code>InvariantMechanics</code> AMM constant-product slippage &amp; fee boundaries</td>
+                <td><span class="badge badge--live">BOUNDED</span></td>
+              </tr>
+              <tr>
+                <td><strong>2017–2023</strong></td>
+                <td>High-Dimensional Manifold Projection</td>
+                <td>Rigid rule engines failing on unstructured language</td>
+                <td>Transformer Self-Attention, continuous latent embedding manifolds</td>
+                <td><code>SemanticManifoldEngine</code> scaled dot-product attention &amp; entropy</td>
+                <td><span class="badge badge--live">PROJECTED</span></td>
+              </tr>
+              <tr>
+                <td><strong>2024–2026</strong></td>
+                <td>Neuro-Symbolic Synthesis &amp; Active Self-Healing</td>
+                <td>Hallucinating ungrounded LLMs vs static frozen weights</td>
+                <td>Hebbian multi-pool brains, GA theorem verification, Guardian auto-remediation</td>
+                <td><code>DeterministicInnovationSynthesizer</code> + W1z4rD multi-pool Hebbian learning</td>
+                <td><span class="badge badge--accent">AUTONOMOUS</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- Modal: Create New Agent -->
     <div v-if="showNewAgentModal" class="modal-backdrop" @click.self="showNewAgentModal = false">
       <div class="modal">
@@ -1096,6 +1215,26 @@ const notice = ref('');
 const isNoticeError = ref(false);
 
 const currentTab = ref('alpha');
+const continuumData = ref<any>(null);
+const evaluatingContinuum = ref(false);
+
+async function fetchDeterministicInnovation() {
+  evaluatingContinuum.value = true;
+  try {
+    const r = await authFetch(`${API}/deterministic-innovation/`);
+    const data = await r.json();
+    if (r.ok) {
+      continuumData.value = data;
+      setNotice('Deterministic innovation continuum successfully evaluated.');
+    } else {
+      setNotice(data.error || 'Failed to evaluate continuum', true);
+    }
+  } catch (err: any) {
+    setNotice(`Continuum evaluation error: ${err.message}`, true);
+  } finally {
+    evaluatingContinuum.value = false;
+  }
+}
 const tabs = computed(() => [
   { id: 'alpha', title: 'Alpha Wallets & Live Mirror', icon: '🎯', count: alphaWallets.value.length },
   { id: 'agents', title: 'Multi-Agent Hub & Comms', icon: '🤖', count: agents.value.length },
@@ -1106,6 +1245,7 @@ const tabs = computed(() => [
   { id: 'ghost', title: 'Ghost Research & Scoring', icon: '👻', count: ghostSessions.value.length },
   { id: 'lineage', title: 'Live & Strategy Lineage', icon: '🌳', count: graduatedStrategies.value.length },
   { id: 'trades', title: 'Agent Trade Ledger', icon: '📜', count: agentTrades.value.length },
+  { id: 'continuum', title: '30-Yr Innovation Continuum', icon: '🧬' },
 ]);
 
 // Top level data
@@ -1350,6 +1490,7 @@ async function refreshAll() {
     fetchLineage(),
     fetchAgentTrades(),
     fetchSettlementWallets(),
+    fetchDeterministicInnovation(),
   ]);
   loading.value = false;
 }
