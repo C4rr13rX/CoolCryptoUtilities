@@ -348,6 +348,27 @@ def _wizard_ask(
             }.get(decoder, "low")
         return data
     except urllib.error.URLError as exc:
+        fallback_endpoint = os.getenv("W1Z4RD_NODE_URL", "http://127.0.0.1:8090")
+        if endpoint != fallback_endpoint:
+            try:
+                fallback_req = urllib.request.Request(
+                    f"{fallback_endpoint}{chat_path}",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(fallback_req, timeout=WIZARD_TIMEOUT) as resp:
+                    data = json.loads(resp.read())
+                if "activated_concepts" not in data:
+                    wa = data.get("word_activations") or []
+                    data["activated_concepts"] = [
+                        f"txt:word_{w['word']}" for w in wa if isinstance(w, dict) and w.get("word")
+                    ]
+                if "answer" not in data or data.get("answer") is None:
+                    data["answer"] = ""
+                return data
+            except Exception:
+                pass
         return {"error": str(exc), "answer": "", "hypothesis": True,
                 "confidence_tier": "offline", "activated_concepts": []}
     except Exception as exc:

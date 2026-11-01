@@ -4307,20 +4307,30 @@ class TrainingPipeline:
     ) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
         if not report:
             return None, None
-        preferred = ("5m", "15m", "1h", "6h")
-        for label in preferred:
-            payload = report.get(label)
-            if payload:
-                return label, payload
+        dominant = (self._last_confusion_summary or {}).get("dominant")
+        if dominant and dominant in report:
+            payload = report[dominant]
+            if float(payload.get("precision", 0.0)) >= 0.50 and float(payload.get("false_positive_rate", 1.0)) <= 0.85:
+                return dominant, payload
         best_label: Optional[str] = None
         best_payload: Optional[Dict[str, Any]] = None
         best_score = float("-inf")
         for label, payload in report.items():
             f1 = self._safe_float(payload.get("f1_score", 0.0))
-            if f1 > best_score:
-                best_score = f1
+            prec = self._safe_float(payload.get("precision", 0.0))
+            fpr = self._safe_float(payload.get("false_positive_rate", 1.0))
+            adjusted_score = f1 * (1.0 - 0.5 * fpr) if prec >= 0.50 else f1 * 0.1
+            if adjusted_score > best_score:
+                best_score = adjusted_score
                 best_label = label
                 best_payload = payload
+        if best_label and best_score > 0.4:
+            return best_label, best_payload
+        preferred = ("5m", "15m", "1h", "6h")
+        for label in preferred:
+            payload = report.get(label)
+            if payload:
+                return label, payload
         return best_label, best_payload
 
     def _persist_confusion_report(self, report: Dict[str, Dict[str, Any]]) -> None:

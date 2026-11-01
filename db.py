@@ -1592,15 +1592,35 @@ class TradingDatabase:
         except Exception:
             return 0
 
+    _MARKET_STREAM_RETENTION_SEC = max(
+        3600.0, float(os.getenv("MARKET_STREAM_RETENTION_SEC", str(24 * 3600)))
+    )
+    _market_stream_last_prune: float = 0.0
+
+    def _maybe_prune_market_stream(self, now: float) -> None:
+        """Drop market stream ticks past the retention window (default 24h), at most once every 30 minutes."""
+        if now - self._market_stream_last_prune < 1800.0:
+            return
+        self._market_stream_last_prune = now
+        cutoff = now - self._MARKET_STREAM_RETENTION_SEC
+        try:
+            with self._lock:
+                with self._conn:
+                    self._conn.execute("DELETE FROM market_stream WHERE ts < ?", (cutoff,))
+        except Exception:
+            pass
+
     def insert_market_sample(self, chain: str, symbol: str, price: float, volume: float, raw: Dict[str, Any]) -> None:
+        now = time.time()
         with self._conn:
             self._conn.execute(
                 """
                 INSERT INTO market_stream(ts, chain, symbol, price, volume, raw)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (time.time(), chain, symbol, price, volume, json.dumps(raw or {})),
+                (now, chain, symbol, price, volume, json.dumps(raw or {})),
             )
+        self._maybe_prune_market_stream(now)
 
     def fetch_market_samples(self, limit: int = 512) -> List[Dict[str, Any]]:
         with self._cursor() as cur:

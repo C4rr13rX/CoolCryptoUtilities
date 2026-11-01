@@ -345,6 +345,14 @@ def guardian_health(request: HttpRequest) -> JsonResponse:
 
 
 def guardian_failure_response(request, *args, **kwargs):
+    # Automatically start Guardian supervisor on any system error without prompt
+    try:
+        from services.guardian_supervisor import guardian_supervisor
+        status = guardian_supervisor.status()
+        if not status.get("running"):
+            guardian_supervisor.start()
+    except Exception as exc:
+        logger.warning(f"Failed to auto-start Guardian supervisor: {exc}")
     view = GuardianFallbackView.as_view()
     response = view(request, *args, **kwargs)
     response.status_code = 503

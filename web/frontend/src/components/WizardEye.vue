@@ -79,12 +79,14 @@ const vertex = `
 varying vec3 localPosition;
 varying vec3 normalView;
 varying vec3 viewPosition;
+varying vec2 vScreen;
 void main() {
   localPosition = position;
   normalView = normalize(normalMatrix * normal);
   vec4 p = modelViewMatrix * vec4(position, 1.0);
   viewPosition = -p.xyz;
   gl_Position = projectionMatrix * p;
+  vScreen = gl_Position.xy / gl_Position.w;
 }
 `
 
@@ -388,7 +390,9 @@ onMounted(() => {
     camera = new THREE.PerspectiveCamera(41, 1, 0.1, 30)
     camera.position.set(0, 0, 4.5)
 
-    // Cosmic background that gently dissolves into the interface background
+    // Cosmic background that is strictly inscribed inside the circular orb
+    // with smooth edge falloff and discard outside rScreen > 0.98, eliminating
+    // all square boundary corners.
     const universeMaterial = new THREE.ShaderMaterial({
       side: THREE.BackSide,
       transparent: true,
@@ -397,9 +401,14 @@ onMounted(() => {
       fragmentShader: `
         precision highp float;
         varying vec3 localPosition;
+        varying vec2 vScreen;
         uniform float time, nebula;
         ${noise}
         void main() {
+          float rScreen = length(vScreen);
+          if (rScreen > 0.98) discard;
+          float circleFade = smoothstep(0.98, 0.72, rScreen);
+          
           vec3 p = normalize(localPosition);
           float cloud = fbm(p * 5.0 + vec3(time * 0.002, 0.0, 0.0));
           float dust = fbm(p * 12.0 + cloud * 3.0);
@@ -409,9 +418,7 @@ onMounted(() => {
           vec3 cloudColor = nebulaTone * pow(cloud, 2.0) * band * nebula * 3.5;
           cloudColor += vec3(0.35, 0.22, 0.28) * pow(cloud * dust, 3.0) * nebula * 2.8;
           
-          // Pure transparency fade before reaching any boundary edge
-          float radialDist = length(p.xy);
-          float alpha = clamp(length(cloudColor) * 2.2, 0.0, 1.0) * smoothstep(0.85, 0.2, radialDist);
+          float alpha = clamp(length(cloudColor) * 2.2, 0.0, 1.0) * circleFade;
           gl_FragColor = vec4(pow(max(cloudColor, vec3(0.0)), vec3(0.65)), alpha);
         }
       `,
@@ -464,19 +471,23 @@ onMounted(() => {
           attribute float size;
           varying vec3 tint;
           varying float sparkle;
+          varying vec2 vScreen;
           uniform float time;
           void main() {
             tint = color;
             sparkle = 0.7 + 0.3 * sin(time * 0.6 + position.x * 17.0);
             vec4 p = modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = clamp(size * 8.0 / max(1.0, -p.z), 0.8, 8.0);
             gl_Position = projectionMatrix * p;
+            vScreen = gl_Position.xy / gl_Position.w;
+            gl_PointSize = clamp(size * 8.0 / max(1.0, -p.z), 0.8, 8.0);
           }
         `,
         fragmentShader: `
           varying vec3 tint;
           varying float sparkle;
+          varying vec2 vScreen;
           void main() {
+            if (length(vScreen) > 0.96) discard;
             vec2 p = gl_PointCoord - 0.5;
             float d = length(p);
             float core = exp(-d * d * 65.0);
@@ -588,6 +599,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border-radius: 50%;
   clip-path: circle(50% at 50% 50%);
+  -webkit-clip-path: circle(50% at 50% 50%);
   background: transparent !important;
   display: flex;
   align-items: center;
@@ -596,13 +608,15 @@ onBeforeUnmount(() => {
   margin: 0 auto;
 }
 
-.eye :deep(canvas) {
+.eye :deep(canvas),
+.eye canvas {
   width: 100% !important;
   height: 100% !important;
   max-width: 100%;
   max-height: 100%;
   border-radius: 50%;
   clip-path: circle(50% at 50% 50%);
+  -webkit-clip-path: circle(50% at 50% 50%);
   display: block;
   object-fit: cover;
   margin: 0 auto;
