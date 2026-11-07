@@ -267,7 +267,10 @@ def _build_flow(
     """Same as web_runner._build_flow but with shell tools added (and
     optionally the admin variant)."""
     from process_flow import ProcessFlow
-    from tool_registry import ToolRegistry, WebSearchTool, MemorySearchTool, MatrixSearchTool
+    from tool_registry import (
+        ToolRegistry, WebSearchTool, MemorySearchTool, MatrixSearchTool,
+        FileReadTool, FileWriteTool, DirectoryEnsureTool
+    )
     from lt_mem import LongTermMemory
     from web_search import WebSearch
 
@@ -285,6 +288,9 @@ def _build_flow(
     tools.register(WebSearchTool(WebSearch(session)))
     tools.register(MemorySearchTool(lt_memory))
     tools.register(MatrixSearchTool())
+    tools.register(FileReadTool(workdir))
+    tools.register(FileWriteTool(workdir))
+    tools.register(DirectoryEnsureTool(workdir))
 
     shell_tool, admin_tool = _build_shell_tools(workdir, session_key)
     tools.register(shell_tool)

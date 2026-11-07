@@ -80,7 +80,7 @@ class WizardChatAgentView(View):
         # An explicit `backend` field in the request body is ignored.
         backend = "wizard"
         from modelcontrol.wizard_brains import selected_wizard_brain
-        wizard_brain = selected_wizard_brain(request.user, "chat")
+        wizard_brain = selected_wizard_brain(getattr(request, "user", None), "chat")
 
         if not text:
             return JsonResponse({"error": "text required"}, status=400)

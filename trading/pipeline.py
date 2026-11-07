@@ -4795,10 +4795,32 @@ class TrainingPipeline:
         candidates = self._live_gate_candidates()
         if not candidates:
             return self._ghost_validation()
+
+        # Pre-fetch the whole ghost book ONCE and group by strategy_id in memory.
+        # Otherwise, looping over 1,000+ approved candidates executes 1,000+ queries
+        # against 50,000 rows in SQLite (taking 40+ minutes per readiness report).
+        metrics = getattr(self, "metrics", None)
+        if metrics is None:
+            db = getattr(self, "db", None) or get_db()
+            metrics = MetricsCollector(db)
+            self.metrics = metrics
+        lookback = int(os.getenv("GHOST_VALIDATION_LOOKBACK_SEC", str(getattr(self, "focus_lookback_sec", 172800))))
+        try:
+            all_trades = metrics.ghost_trade_snapshot(limit=500, lookback_sec=lookback)
+        except Exception:
+            all_trades = []
+
+        trades_by_strategy: Dict[str, List[Any]] = {}
+        for t in all_trades:
+            sid = getattr(t, "strategy_id", None)
+            if sid:
+                trades_by_strategy.setdefault(sid, []).append(t)
+
         verdicts = []
         for sid in candidates:
+            sid_trades = trades_by_strategy.get(sid, [])
             try:
-                verdict = self._ghost_validation(sid)
+                verdict = self._ghost_validation(sid, trades=sid_trades)
             except Exception:  # noqa: BLE001
                 continue
             verdicts.append(verdict)
@@ -4832,7 +4854,11 @@ class TrainingPipeline:
             refusal["reason"] = "no_qualified_strategy:%s" % (refusal.get("reason") or "unearned")
         return refusal
 
-    def _ghost_validation(self, strategy_id: Optional[str] = None) -> Dict[str, Any]:
+    def _ghost_validation(
+        self,
+        strategy_id: Optional[str] = None,
+        trades: Optional[List[Any]] = None,
+    ) -> Dict[str, Any]:
         """Evaluate the ghost guardrails, over one strategy's book or all of them.
 
         With ``strategy_id`` the verdict describes ONLY that strategy's own
@@ -4841,7 +4867,7 @@ class TrainingPipeline:
         """
         metrics = getattr(self, "metrics", None)
         if metrics is None:
-            db = getattr(self, "db", None)
+            db = getattr(self, "db", None) or get_db()
             if db is None:
                 return {
                     "ready": False,
@@ -4854,14 +4880,16 @@ class TrainingPipeline:
                     "strategy_id": strategy_id or "",
                 }
             metrics = MetricsCollector(db)
-        self.metrics = metrics
-        lookback = int(os.getenv("GHOST_VALIDATION_LOOKBACK_SEC", str(getattr(self, "focus_lookback_sec", 172800))))
-        try:
-            trades = metrics.ghost_trade_snapshot(
-                limit=500, lookback_sec=lookback, strategy_id=strategy_id
-            )
-        except Exception:
-            trades = []
+            self.metrics = metrics
+        if trades is None:
+            lookback = int(os.getenv("GHOST_VALIDATION_LOOKBACK_SEC", str(getattr(self, "focus_lookback_sec", 172800))))
+            try:
+                trades = metrics.ghost_trade_snapshot(
+                    limit=500, lookback_sec=lookback, strategy_id=strategy_id
+                )
+            except Exception:
+                trades = []
+
         # One book, one clip. See price_book_at_live_clip: the raw rows carry
         # each lane's own simulated notional (measured spread: $0.031 to
         # $39.573), so summing or ratioing their dollars answers "which rows

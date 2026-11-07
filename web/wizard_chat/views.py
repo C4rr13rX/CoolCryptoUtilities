@@ -234,7 +234,7 @@ TRAIN_SURPRISE = 0.5  # non-zero → ACh/NE neuromodulator gate amplifies LTP
 def _brain_for_request(request) -> dict[str, str]:
     from modelcontrol.wizard_brains import selected_wizard_brain
 
-    return selected_wizard_brain(request.user, "chat")
+    return selected_wizard_brain(getattr(request, "user", None), "chat")
 
 
 # ── /sensor/observe routing for uploaded files ──────────────────────────────
@@ -312,51 +312,19 @@ def _wizard_ask(
         "hops": 2,
         "min_strength": 0.05,
     }).encode()
-    req = urllib.request.Request(
-        f"{endpoint}{chat_path}",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=WIZARD_TIMEOUT) as resp:
-            data = json.loads(resp.read())
-        # /chat / /neuro/ask shape normalisation for the downstream display.
-        if "activated_concepts" not in data:
-            wa = data.get("word_activations") or []
-            data["activated_concepts"] = [
-                f"txt:word_{w['word']}" for w in wa if isinstance(w, dict) and w.get("word")
-            ]
-        if "answer" not in data:
-            data["answer"] = ""
-        if data.get("answer") is None:
-            data["answer"] = ""
-        # /chat reports `decoder` = "multi_pool" when the concept-binding
-        # path was confident enough, "char_chain" when it fell through to
-        # the slow pool, or "eem" when the equation matrix supplied the
-        # answer.  Map that to the legacy hypothesis/tier flags the chat
-        # UI already renders so users see the same UNCERTAIN badge for
-        # char_chain fallbacks as before.
-        decoder = data.get("decoder")
-        if decoder and "hypothesis" not in data:
-            data["hypothesis"] = decoder == "char_chain"
-        if decoder and "confidence_tier" not in data:
-            data["confidence_tier"] = {
-                "multi_pool": "high",
-                "eem":        "medium",
-                "char_chain": "low",
-            }.get(decoder, "low")
-        return data
-    except urllib.error.URLError as exc:
-        alt_path = "/chat" if chat_path == "/brain/chat" else "/brain/chat"
+    paths = [chat_path]
+    if "/chat" not in paths:
+        paths.insert(0, "/chat")
+    last_err = ""
+    for p in paths:
+        req = urllib.request.Request(
+            f"{endpoint}{p}",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         try:
-            alt_req = urllib.request.Request(
-                f"{endpoint}{alt_path}",
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(alt_req, timeout=WIZARD_TIMEOUT) as resp:
+            with urllib.request.urlopen(req, timeout=WIZARD_TIMEOUT) as resp:
                 data = json.loads(resp.read())
             if "activated_concepts" not in data:
                 wa = data.get("word_activations") or []
@@ -365,37 +333,22 @@ def _wizard_ask(
                 ]
             if "answer" not in data or data.get("answer") is None:
                 data["answer"] = ""
+            decoder = data.get("decoder")
+            if decoder and "hypothesis" not in data:
+                data["hypothesis"] = decoder == "char_chain"
+            if decoder and "confidence_tier" not in data:
+                data["confidence_tier"] = {
+                    "multi_pool": "high",
+                    "eem":        "medium",
+                    "char_chain": "low",
+                }.get(decoder, "low")
             return data
-        except Exception:
-            pass
+        except Exception as exc:
+            last_err = str(exc)
+            continue
 
-        fallback_endpoint = os.getenv("W1Z4RD_NODE_URL", "http://127.0.0.1:8090")
-        if endpoint != fallback_endpoint:
-            for p in (chat_path, alt_path):
-                try:
-                    fallback_req = urllib.request.Request(
-                        f"{fallback_endpoint}{p}",
-                        data=payload,
-                        headers={"Content-Type": "application/json"},
-                        method="POST",
-                    )
-                    with urllib.request.urlopen(fallback_req, timeout=WIZARD_TIMEOUT) as resp:
-                        data = json.loads(resp.read())
-                    if "activated_concepts" not in data:
-                        wa = data.get("word_activations") or []
-                        data["activated_concepts"] = [
-                            f"txt:word_{w['word']}" for w in wa if isinstance(w, dict) and w.get("word")
-                        ]
-                    if "answer" not in data or data.get("answer") is None:
-                        data["answer"] = ""
-                    return data
-                except Exception:
-                    pass
-        return {"error": str(exc), "answer": "", "hypothesis": True,
-                "confidence_tier": "offline", "activated_concepts": []}
-    except Exception as exc:
-        return {"error": str(exc), "answer": "", "hypothesis": True,
-                "confidence_tier": "error", "activated_concepts": []}
+    return {"error": last_err or "offline", "answer": "", "hypothesis": True,
+            "confidence_tier": "offline", "activated_concepts": []}
 
 
 def _wizard_train(

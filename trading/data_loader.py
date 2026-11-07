@@ -340,9 +340,19 @@ class HistoricalDataLoader:
         except OSError:
             return
         for meta_path in meta_paths:
+            version = -1
             try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                version = int(meta.get("version", 0))
+                # Fast header inspection: meta files can reach 180MB+ each; full
+                # json.loads() on hundreds of them stalls the main thread for 15+ minutes
+                # and blows memory into critical pressure.
+                with meta_path.open("r", encoding="utf-8") as f:
+                    head = f.read(8192)
+                match = re.search(r'"version"\s*:\s*(-?\d+)', head)
+                if match:
+                    version = int(match.group(1))
+                else:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    version = int(meta.get("version", 0))
             except Exception:  # noqa: BLE001 - unreadable meta is itself stale
                 version = -1
             if version == self._disk_cache_version:

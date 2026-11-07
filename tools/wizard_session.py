@@ -74,16 +74,13 @@ def _wizard_endpoint() -> str:
 def _wizard_chat_path() -> str:
     """Path component for chat requests.
 
-    Default: /brain/chat (the merged main node's canonical chat
-    surface — routes through the Phase A-E brain substrate).
-    Override with WIZARD_USE_BRAIN_PREFIX=0 to use /chat instead
-    (which is what the standalone brain_server binary exposes at
-    the top level).
+    Default: /chat (the canonical top-level endpoint for brain chat).
+    Set WIZARD_USE_BRAIN_PREFIX=1 to route to /brain/chat.
     """
-    raw = os.getenv("WIZARD_USE_BRAIN_PREFIX", "1").strip().lower()
-    if raw in {"0", "false", "no"}:
-        return "/chat"
-    return "/brain/chat"
+    raw = os.getenv("WIZARD_USE_BRAIN_PREFIX", "0").strip().lower()
+    if raw in {"1", "true", "yes"}:
+        return "/brain/chat"
+    return "/chat"
 
 
 def _wizard_timeout() -> float:
@@ -217,37 +214,51 @@ class WizardSession:
         import urllib.request
         import urllib.error
 
-        if _legacy_neuro_api():
-            url = f"{self.endpoint}/neuro/ask"
-            payload = json.dumps({
-                "text": text,
-                "session_id": self._session_id,
-                "top_k": 30,
-                "min_strength": 0.05,
-            }).encode()
-        else:
-            url = f"{self.endpoint}{self.chat_path}"
-            payload = json.dumps({"text": text}).encode()
+        paths = [self.chat_path]
+        alt = "/chat" if self.chat_path != "/chat" else "/brain/chat"
+        if alt not in paths:
+            paths.append(alt)
 
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
-                raw = resp.read().decode("utf-8", errors="replace")
-        except urllib.error.URLError as exc:
-            return (
-                f"[wizard-brain unavailable: {exc}] "
-                f"The Wizard Node is not running at {self.endpoint}. "
-                "Start it from D:\\Projects\\W1z4rDV1510n with: "
-                "./bin/w1z4rd_node.exe --config node_config.json "
-                "api --addr 127.0.0.1:8090"
+        raw = None
+        last_exc = None
+        for p in paths:
+            if _legacy_neuro_api():
+                url = f"{self.endpoint}/neuro/ask"
+                payload = json.dumps({
+                    "text": text,
+                    "session_id": self._session_id,
+                    "top_k": 30,
+                    "min_strength": 0.05,
+                }).encode()
+            else:
+                url = f"{self.endpoint}{p}"
+                payload = json.dumps({"text": text}).encode()
+
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
             )
-        except Exception as exc:
-            return f"[wizard-brain error: {exc}]"
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
+                    raw = resp.read().decode("utf-8", errors="replace")
+                break
+            except Exception as exc:
+                last_exc = exc
+                if _legacy_neuro_api():
+                    break
+
+        if raw is None:
+            if isinstance(last_exc, urllib.error.URLError):
+                return (
+                    f"[wizard-brain unavailable: {last_exc}] "
+                    f"The Wizard Node is not running at {self.endpoint}. "
+                    "Start it from D:\\Projects\\W1z4rDV1510n with: "
+                    "./bin/w1z4rd_node.exe --config node_config.json "
+                    "api --addr 127.0.0.1:8090"
+                )
+            return f"[wizard-brain error: {last_exc}]"
 
         try:
             data = json.loads(raw)

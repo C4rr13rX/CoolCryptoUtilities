@@ -265,7 +265,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import {
   fetchPipelineReadiness,
@@ -557,9 +557,21 @@ function formatUsd(value: number) {
   return Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(num);
 }
 
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+
 onMounted(() => {
   loadReadiness();
   loadDelegation();
+  pollTimer = setInterval(() => {
+    loadReadiness();
+  }, 10000);
+});
+
+onUnmounted(() => {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
 });
 </script>
 

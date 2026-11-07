@@ -18,6 +18,7 @@ class SecureSetting(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        app_label = "securevault"
         unique_together = ("user", "name", "category")
         ordering = ["user", "category", "name"]
 

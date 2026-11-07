@@ -90,7 +90,7 @@ def _environment_profile(user) -> dict[str, str]:
         _read_setting(user, "WIZARD_BRAIN_CHAT_URL")
         or os.getenv("WIZARD_BRAIN_URL")
         or os.getenv("WIZARD_NODE_URL")
-        or "http://localhost:8090"
+        or "http://127.0.0.1:8090"
     )
     endpoint, chat_path = normalize_brain_address(raw)
     return {

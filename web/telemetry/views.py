@@ -283,6 +283,16 @@ def build_dashboard_summary(*, request_refresh: bool = True) -> Dict[str, Any]:
     total_profit = float(accounting["ghost"].get("net_profit", 0.0))
 
     live_readiness = _load_report(ROOT / "data/reports/live_readiness.json")
+    if live_readiness and "ghost_ready_any" not in live_readiness:
+        try:
+            strategies = strategy_readiness()
+            live_readiness["ghost_ready_strategies"] = strategies["ghost_ready_ids"]
+            live_readiness["live_ready_strategies"] = strategies["live_ready_ids"]
+            live_readiness["ghost_ready_any"] = strategies["ghost_ready"]
+            live_readiness["live_ready_any"] = strategies["live_ready"]
+            live_readiness["is_live_trading"] = strategies["is_live_trading"]
+        except Exception:
+            pass
     snapshot = db.fetch_latest_organism_snapshot() or {}
     transition = snapshot.get("transition_plan") if isinstance(snapshot, dict) else {}
     if not transition and isinstance(snapshot, dict):
