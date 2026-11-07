@@ -386,18 +386,18 @@ const stageProgress = computed(() => {
     let detail = '';
     // Never show a stale or absent reading as a fact. '--' means "no value
     // yet", which is different from a value we know to be false.
-    if (stale && idx >= 2) {
-      detail = '—  (no current reading)';
-    } else if (idx === 2) {
+    if (idx === 2) {
       detail = ghostReady
         ? (ghostIds.length ? `ready: ${names(ghostIds)}` : 'collecting validation samples')
-        : (readiness.ghost_collection_reason || readiness.mini_reason || '—');
+        : (stale && !ghostIds.length ? '—  (no current reading)' : (readiness.ghost_collection_reason || readiness.mini_reason || '—'));
     } else if (idx === 3) {
       detail = liveReady
         ? (liveIds.length ? `approved: ${names(liveIds)}` : 'approved')
-        : (readiness.reason || '—');
+        : (stale && !liveIds.length ? '—  (no current reading)' : (readiness.reason || '—'));
     } else if (idx === 4) {
-      detail = readiness.is_live_trading ? `live: ${names(liveIds)}` : (liveReady ? 'awaiting first fill' : '—');
+      detail = readiness.is_live_trading
+        ? (liveIds.length ? `live: ${names(liveIds)}` : 'live')
+        : (liveReady ? 'awaiting first fill' : (stale ? '—  (no current reading)' : '—'));
     }
     return { ...s, state, detail, fill: state === 'done' ? 100 : state === 'active' ? 45 : 0 };
   });
