@@ -27,7 +27,7 @@ class RecoveryCoordinator:
     def __init__(self, *, agent_repair: Optional[Callable[[str], str]] = None) -> None:
         self.agent_repair = agent_repair
         self.host = os.getenv("GUARDIAN_DJANGO_HOST", "127.0.0.1")
-        self.port = int(os.getenv("GUARDIAN_DJANGO_PORT", os.getenv("WAITRESS_PORT", "8000")))
+        self.port = int(os.getenv("GUARDIAN_DJANGO_PORT", os.getenv("WAITRESS_PORT", "8001")))
         self.health_url = os.getenv("GUARDIAN_DJANGO_HEALTH_URL", f"http://{self.host}:{self.port}/health/guardian/")
         self.fallback = GuardianFallbackServer(RECOVERY_STATE, RECOVERY_LOG, host=self.host, port=self.port)
         self.processes: Dict[str, subprocess.Popen] = {}
