@@ -179,10 +179,10 @@ class RecoveryCoordinator:
         self._terminate_matching("run_asgi.py")
         env = dict(os.environ)
         env["WAITRESS_HOST"], env["WAITRESS_PORT"] = self.host, str(self.port)
-        log_path = RUNTIME / "asgi-recovery.log"
+        log_path = RUNTIME / "waitress-recovery.log"
         with log_path.open("a", encoding="utf-8") as handle:
             proc = subprocess.Popen(
-                [resolve_python_bin(), "run_asgi.py"], cwd=WEB_ROOT, env=env,
+                [resolve_python_bin(), "run_waitress.py"], cwd=WEB_ROOT, env=env,
                 stdout=handle, stderr=subprocess.STDOUT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         self.processes["django"] = proc
