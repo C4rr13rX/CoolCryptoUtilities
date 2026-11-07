@@ -63,7 +63,7 @@ class RecoveryCoordinator:
             self._recover_w1z4rd_training(components["w1z4rd_brain_training"])
         return components
 
-    def _probe(self, url: str, timeout: float = 2.5) -> bool:
+    def _probe(self, url: str, timeout: float = 6.0) -> bool:
         try:
             with urllib.request.urlopen(url, timeout=timeout) as response:
                 return 200 <= int(response.status) < 500
@@ -73,8 +73,18 @@ class RecoveryCoordinator:
             return False
 
     def _django_status(self) -> Dict[str, Any]:
-        ok = self._probe(self.health_url)
-        return {"status": "running" if ok else "down", "attempts": self.attempts.get("django", 0), "detail": self.health_url}
+        ok = self._probe(self.health_url, timeout=5.0)
+        if not ok:
+            time.sleep(1.0)
+            ok = self._probe(self.health_url, timeout=6.0)
+        if ok:
+            self._django_fail_count = 0
+            return {"status": "running", "attempts": self.attempts.get("django", 0), "detail": self.health_url}
+        self._django_fail_count = getattr(self, "_django_fail_count", 0) + 1
+        # Require 3 consecutive failed cycles (30s) before declaring it dead if process is active
+        if self._django_fail_count < 3 and self._process_matching("run_waitress.py"):
+            return {"status": "running", "attempts": self.attempts.get("django", 0), "detail": "slow_response"}
+        return {"status": "down", "attempts": self.attempts.get("django", 0), "detail": self.health_url}
 
     def _process_matching(self, *needles: str) -> bool:
         try:
@@ -186,12 +196,13 @@ class RecoveryCoordinator:
                 stdout=handle, stderr=subprocess.STDOUT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         self.processes["django"] = proc
-        for _ in range(20):
-            if self._probe(self.health_url, timeout=1.0):
+        for _ in range(45):
+            if self._probe(self.health_url, timeout=2.0):
                 self._log(f"Django restored on attempt {attempt}; pid={proc.pid}")
                 self.attempts["django"] = 0
+                self._django_fail_count = 0
                 return
-            time.sleep(0.5)
+            time.sleep(1.0)
         self._log(f"Django restart attempt {attempt} failed; fallback page restored")
         self.fallback.start()
 
