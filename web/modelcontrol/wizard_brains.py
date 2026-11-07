@@ -72,9 +72,9 @@ def normalize_brain_address(endpoint: str, chat_path: str = "") -> tuple[str, st
             embedded_path = embedded_path[: -len(suffix)]
             break
     selected_path = selected_path or (
-        "/chat"
-        if os.getenv("WIZARD_USE_BRAIN_PREFIX", "1").strip().lower() in {"0", "false", "no"}
-        else "/brain/chat"
+        "/brain/chat"
+        if os.getenv("WIZARD_USE_BRAIN_PREFIX", "0").strip().lower() in {"1", "true", "yes"}
+        else "/chat"
     )
     if not selected_path.startswith("/"):
         selected_path = f"/{selected_path}"

@@ -12,7 +12,7 @@
 #   5. Market evolution   (included W1z4rDV1510n protected-fold GA)
 #   6. TradingAgent (AGY) (manage.py tradingagent_worker, default agent='agy')
 #   6b. Strategy evolution(manage.py evolve_strategies --loop)
-#   7. Continuous refine  (ContinuousRefinement loop + console)
+#   7. Continuous refine  (disabled)
 #
 # Each check is by listening-port (brain, waitress) or by command-line
 # substring (prod_manager, brain_feeder). Already-running services are
@@ -360,42 +360,7 @@ if ($evolveProc) {
     Write-Host "  started"
 }
 
-# -- 8. continuous refinement loop + console -------------------------------
-#
-# The loop that keeps fixing the pipeline, and the window that shows what it
-# is doing. The console is separate from the loop on purpose: closing the
-# window must not stop the work.
-
-Write-Host "[8/8] Continuous refinement loop"
-$refineRoot = "D:\Projects\ContinuousRefinement"
-if (Test-Path "$refineRoot\scripts\loop.py") {
-    $loopProc = Find-PythonProcess "config.revenir.json"
-    if ($loopProc) {
-        Write-Host "  already running -- pid=$(@($loopProc)[0].ProcessId)"
-    } else {
-        Start-DetachedProcess -FilePath "python" `
-            -ArgumentList @("scripts\loop.py","--config","config.revenir.json") `
-            -WorkingDirectory $refineRoot `
-            -RedirectStandardOutput "$refineRoot\data\revenir-stdout.log" `
-            -RedirectStandardError  "$refineRoot\data\revenir-stderr.log" | Out-Null
-        Start-Sleep -Seconds 2
-        Write-Host "  loop started"
-    }
-
-    # The console. pythonw so it owns a window rather than a console host.
-    $consoleUp = Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" -ErrorAction SilentlyContinue |
-                 Where-Object { $_.CommandLine -like "*console.py*revenir*" }
-    if ($consoleUp) {
-        Write-Host "  console already open -- pid=$(@($consoleUp)[0].ProcessId)"
-    } else {
-        Start-DetachedProcess -FilePath "pythonw" `
-            -ArgumentList @("scripts\console.py","--config","config.revenir.json") `
-            -WorkingDirectory $refineRoot | Out-Null
-        Write-Host "  console opened"
-    }
-} else {
-    Write-Host "  WARN: ContinuousRefinement is not installed at $refineRoot"
-}
+# 8. Continuous refinement loop disabled per user request.
 
 # -- 8b. W1z4rD master supervisor (keeps node + web + crypto services alive) --
 

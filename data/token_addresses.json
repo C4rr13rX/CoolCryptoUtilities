@@ -11,9 +11,9 @@
       "ts": 1788325720.4788759
     },
     "AERO": {
-      "address": "0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+      "address": "0x3f5bf3edac59d650d8fdf9657a71f2f904a3a4ee",
       "source": "geckoterminal",
-      "ts": 1793441858.7902255
+      "ts": 1793768258.451545
     },
     "USDC": {
       "address": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
@@ -621,9 +621,9 @@
       "ts": 1791608858.8701606
     },
     "PAPER": {
-      "address": "0xf5954f33798529917c4940317cada852f00c9b07",
+      "address": "0x2fd3f789fe25984295c8fa032be2485c5c7e4276",
       "source": "geckoterminal",
-      "ts": 1793113235.1004949
+      "ts": 1793754547.2930741
     },
     "MMETH": {
       "address": "0x4fc59c42653e052c7ab5c8381f839e2d70504131",
@@ -754,6 +754,46 @@
       "address": "0xf7b9cf4dab32ce42f1e08c05f561ccc0e7b44cea",
       "source": "geckoterminal",
       "ts": 1793475403.1439774
+    },
+    "CDXR": {
+      "address": "0x40aaf75454036bed56f3266ccf18f6b7befd6aca",
+      "source": "geckoterminal",
+      "ts": 1793510663.8479948
+    },
+    "MYERS": {
+      "address": "0xb0ef0acf594d3f8c2b546089707e769811d2eb07",
+      "source": "geckoterminal",
+      "ts": 1793571679.172382
+    },
+    "TIG": {
+      "address": "0x0c03ce270b4826ec62e7dd007f0b716068639f7b",
+      "source": "geckoterminal",
+      "ts": 1793629843.4325953
+    },
+    "WL1": {
+      "address": "0xe6522a891702cd2e8cc2a5182638c9da1dd44b22",
+      "source": "geckoterminal",
+      "ts": 1793653549.0547895
+    },
+    "REBOOT": {
+      "address": "0xe125872d91a5a67704fa782aa74014adff7cae7e",
+      "source": "geckoterminal",
+      "ts": 1793884300.453224
+    },
+    "IVT": {
+      "address": "0x4b12507e171970b3acd48edfeb5bd1c676e61280",
+      "source": "geckoterminal",
+      "ts": 1793754547.2930741
+    },
+    "BOOTR": {
+      "address": "0xb1c3a6ac90e324c4072ad4b2a71c5d9382f9565c",
+      "source": "geckoterminal",
+      "ts": 1793808700.226849
+    },
+    "DENIM": {
+      "address": "0x0bddfa9a0a1eb326593262c7af47ee091db9cb70",
+      "source": "geckoterminal",
+      "ts": 1793815999.9553387
     }
   }
 }
