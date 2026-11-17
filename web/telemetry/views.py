@@ -81,6 +81,47 @@ _LIVE_SWAPS_CACHE: list[Dict[str, Any]] = []
 _LIVE_SWAPS_CACHE_TIME: float = 0.0
 _ACCOUNTING_CACHE: Dict[str, Any] = {}
 _ACCOUNTING_CACHE_TIME: float = 0.0
+_SNAPSHOT_CACHE: Dict[str, Any] = {}
+_SNAPSHOT_CACHE_TIME: float = 0.0
+_STATE_POSITIONS_CACHE: Dict[str, Any] = {}
+_STATE_POSITIONS_CACHE_TIME: float = 0.0
+
+
+def _cached_latest_snapshot(db: Any) -> Dict[str, Any]:
+    global _SNAPSHOT_CACHE, _SNAPSHOT_CACHE_TIME
+    now = time.time()
+    with _LIVE_SWAPS_CACHE_LOCK:
+        if (now - _SNAPSHOT_CACHE_TIME) < 3.0 and _SNAPSHOT_CACHE:
+            return _SNAPSHOT_CACHE
+    snap = db.fetch_latest_organism_snapshot() or {}
+    if isinstance(snap, dict):
+        with _LIVE_SWAPS_CACHE_LOCK:
+            _SNAPSHOT_CACHE = snap
+            _SNAPSHOT_CACHE_TIME = time.time()
+    return snap if isinstance(snap, dict) else {}
+
+
+def _cached_state_positions(db: Any) -> Dict[str, Any]:
+    global _STATE_POSITIONS_CACHE, _STATE_POSITIONS_CACHE_TIME
+    now = time.time()
+    with _LIVE_SWAPS_CACHE_LOCK:
+        if (now - _STATE_POSITIONS_CACHE_TIME) < 5.0:
+            return dict(_STATE_POSITIONS_CACHE)
+    out: Dict[str, Any] = {}
+    try:
+        saved = db.load_state() or {}
+        gt = saved.get("ghost_trading") if isinstance(saved, dict) else {}
+        raw_state_positions = gt.get("positions") if isinstance(gt, dict) else {}
+        if isinstance(raw_state_positions, dict):
+            for k, v in raw_state_positions.items():
+                if isinstance(v, dict):
+                    out[str(v.get("symbol") or k or "").upper()] = v
+    except Exception:
+        out = {}
+    with _LIVE_SWAPS_CACHE_LOCK:
+        _STATE_POSITIONS_CACHE = dict(out)
+        _STATE_POSITIONS_CACHE_TIME = time.time()
+    return out
 
 
 def _cached_accounting(db: Any) -> Dict[str, Any]:
@@ -536,7 +577,7 @@ class PipelineReadinessView(APIView):
 class BusScheduleView(APIView):
     def get(self, request: Request, *args, **kwargs) -> Response:
         db = get_db()
-        snapshot = db.fetch_latest_organism_snapshot() or {}
+        snapshot = _cached_latest_snapshot(db)
         scheduler = snapshot.get("scheduler") if isinstance(snapshot, dict) else []
         transition = {}
         if isinstance(snapshot, dict):
@@ -652,17 +693,7 @@ class BusScheduleView(APIView):
         # without horizon/strategy_id. The persisted ghost state keeps the full
         # position dicts, so enrich from there when the snapshot lacks them —
         # this makes the sell-high timeframe label work without an engine restart.
-        state_positions: Dict[str, Any] = {}
-        try:
-            saved = db.load_state() or {}
-            gt = saved.get("ghost_trading") if isinstance(saved, dict) else {}
-            raw_state_positions = gt.get("positions") if isinstance(gt, dict) else {}
-            if isinstance(raw_state_positions, dict):
-                for k, v in raw_state_positions.items():
-                    if isinstance(v, dict):
-                        state_positions[str(v.get("symbol") or k or "").upper()] = v
-        except Exception:
-            state_positions = {}
+        state_positions = _cached_state_positions(db)
         if isinstance(open_positions, dict):
             for raw_symbol, pos in open_positions.items():
                 if not isinstance(pos, dict):
@@ -826,13 +857,13 @@ class BusScheduleView(APIView):
         # Ensure active licensed strategies are scheduled and visible in the Live Lane
         live_symbols_present = {str(item.get("symbol") or "").upper() for item in live_schedule if item.get("symbol")}
 
-        # 1. Money Button & Money Button Dip licensed Base routes
+        # 1. Money Button & Money Button Dip licensed Base routes (gate-clean pairs)
         if "money_button_dip" in live_approved_sids or "money_button" in live_approved_sids:
-            rec_clip = min(2.0, max(0.50, _safe_float(risk_flags.get("recommended_live_usd"), 0.80) or 0.80))
+            rec_clip = min(2.0, max(0.50, _safe_float(risk_flags.get("recommended_live_usd"), 1.10) or 1.10))
             for mb_sym, mb_sid, mb_hz in [
                 ("WETH-USDC", "money_button", "10m"),
-                ("CBETH-USDC", "money_button_dip", "30m"),
-                ("AERO-USDC", "money_button_dip", "30m"),
+                ("WETH-USDT", "money_button_dip", "30m"),
+                ("CBBTC-USDC", "money_button_dip", "30m"),
             ]:
                 if mb_sym not in live_symbols_present:
                     live_symbols_present.add(mb_sym)

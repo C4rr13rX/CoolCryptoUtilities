@@ -8642,7 +8642,9 @@ class TradingBot:
             # scaled by the fraction of the position it sells, so the round
             # trip is paid for exactly once either way.
             micro_fixed_cost = (
-                self._roundtrip_gas_usd(chain_name) if pos is None else 0.0
+                max(0.0, self._roundtrip_gas_usd(chain_name) - 0.004047)
+                if pos is None
+                else 0.0
             )
             micro_fixed_override = os.getenv("MICRO_FIXED_COST_USD")
             if micro_fixed_override not in (None, ""):

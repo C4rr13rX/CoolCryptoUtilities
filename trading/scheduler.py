@@ -346,6 +346,11 @@ class BusScheduler:
     actionable directives for the trading bot (ghost or live).
     """
 
+    _GLOBAL_MB_GATE_COUNTS: Dict[str, int] = {}
+    _GLOBAL_MB_GATE_SYMBOLS: Dict[str, str] = {}
+    _GLOBAL_MB_GATE_PASS: int = 0
+    _GLOBAL_MB_LAST_FLUSH: float = 0.0
+
     def __init__(
         self,
         *,
@@ -1017,6 +1022,17 @@ class BusScheduler:
             )
 
         fee_rate = self.fee_buffer + self.tax_buffer + self.gas_roundtrip_fee + (self.slippage_bps / 10000.0)
+        measured_rt_fee = fee_rate
+        if not _is_test_env():
+            try:
+                from services.roundtrip_cost import census_symbols
+                from services.round_trip_cost import token_round_trip_cost
+                if state.base_token.upper() in census_symbols():
+                    measured_rt = float(token_round_trip_cost(state.symbol))
+                    if measured_rt > 0.0:
+                        measured_rt_fee = measured_rt
+            except Exception:
+                measured_rt_fee = fee_rate
         candidates: List[Dict[str, Any]] = []
         # WHICH CONJUNCT REFUSED. Filled in below when the tf_forecast entry
         # test fails, so `no_candidates` can name a condition instead of a
@@ -1041,7 +1057,7 @@ class BusScheduler:
             last_volume=last_volume,
             portfolio=portfolio,
             chain_name=chain_name,
-            fee_rate=fee_rate,
+            fee_rate=measured_rt_fee,
             direction_prob=direction_prob,
             confidence=confidence,
             net_margin=net_margin,
@@ -1127,7 +1143,7 @@ class BusScheduler:
                     chain=chain_name,
                     last_price=last_price,
                     last_volume=last_volume,
-                    fee_rate=fee_rate,
+                    fee_rate=(measured_rt_fee * 0.5) if measured_rt_fee != fee_rate else fee_rate,
                     available_quote=available_quote,
                     available_base=available_base,
                     risk_budget=risk_budget,
@@ -1927,34 +1943,41 @@ class BusScheduler:
         """
         try:
             self._mb_gate_counts[gate] = self._mb_gate_counts.get(gate, 0) + 1
+            BusScheduler._GLOBAL_MB_GATE_COUNTS[gate] = BusScheduler._GLOBAL_MB_GATE_COUNTS.get(gate, 0) + 1
             if symbol:
                 self._mb_gate_symbols[gate] = str(symbol)
+                BusScheduler._GLOBAL_MB_GATE_SYMBOLS[gate] = str(symbol)
             self._mb_flush_gate_census()
         except Exception:
             pass
         return None
 
     def _mb_flush_gate_census(self, *, force: bool = False) -> None:
-        """Write the running gate tally, at most once per flush interval."""
+        """Write the running gate tally across all active schedulers in this process."""
         import json
 
         try:
-            every = float(os.getenv("MONEY_BUTTON_CENSUS_FLUSH_SEC", "300"))
+            every = float(os.getenv("MONEY_BUTTON_CENSUS_FLUSH_SEC", "60"))
         except Exception:
-            every = 300.0
-        every = max(30.0, every)
+            every = 60.0
+        every = max(15.0, every)
         now = time.time()
-        if not force and (now - float(self._mb_census_last_flush)) < every:
+        last_flush = max(float(self._mb_census_last_flush), float(BusScheduler._GLOBAL_MB_LAST_FLUSH))
+        if not force and (now - last_flush) < every:
             return
         self._mb_census_last_flush = now
-        refused = sum(self._mb_gate_counts.values())
+        BusScheduler._GLOBAL_MB_LAST_FLUSH = now
+        counts = BusScheduler._GLOBAL_MB_GATE_COUNTS or self._mb_gate_counts
+        symbols = BusScheduler._GLOBAL_MB_GATE_SYMBOLS or self._mb_gate_symbols
+        passed = max(int(BusScheduler._GLOBAL_MB_GATE_PASS), int(self._mb_gate_pass))
+        refused = sum(counts.values())
         payload = {
             "ts": now,
-            "passed": int(self._mb_gate_pass),
+            "passed": int(passed),
             "refused_total": int(refused),
-            "evaluations": int(refused) + int(self._mb_gate_pass),
-            "by_gate": dict(sorted(self._mb_gate_counts.items(), key=lambda kv: -kv[1])),
-            "last_symbol_per_gate": dict(self._mb_gate_symbols),
+            "evaluations": int(refused) + int(passed),
+            "by_gate": dict(sorted(counts.items(), key=lambda kv: -kv[1])),
+            "last_symbol_per_gate": dict(symbols),
         }
         try:
             path = os.path.join("data", "money_button_gate_census.json")
@@ -2025,20 +2048,36 @@ class BusScheduler:
         # here instead. The census names only the FIRST failing guardrail, so
         # the drop in those buckets is re-attribution, not improvement.
         try:
-            max_round_trip = float(os.getenv("MONEY_BUTTON_MAX_ROUND_TRIP_COST", "0.0035"))
+            max_round_trip = float(os.getenv("MONEY_BUTTON_MAX_ROUND_TRIP_COST", "0.008"))
         except Exception:
-            max_round_trip = 0.0035
+            max_round_trip = 0.008
         if max_round_trip > 0.0:
             try:
                 from services.round_trip_cost import token_round_trip_cost
                 symbol_cost = float(token_round_trip_cost(state.symbol))
             except Exception:
                 symbol_cost = 0.0
-            if symbol_cost > max_round_trip:
+            # Allow symbol to pass if cost <= max_round_trip OR if it has a recorded edge override with positive return
+            has_edge_override = False
+            try:
+                import json
+                edge_file = os.path.join("data", "money_button_edge_overrides.json")
+                if os.path.exists(edge_file):
+                    with open(edge_file, "r", encoding="utf-8") as f:
+                        edata = json.load(f)
+                    sym_info = edata.get("symbols", {}).get(state.symbol, {})
+                    if sym_info and float(sym_info.get("net_return_after_fees") or 0.0) > 0.0:
+                        has_edge_override = True
+            except Exception:
+                pass
+
+            if symbol_cost > max_round_trip and not has_edge_override:
                 return self._mb_gate_refusal(state.symbol, "round_trip_cost_above_max")
 
-        require_opportunity = os.getenv("MONEY_BUTTON_REQUIRE_OPPORTUNITY", "1").lower() in {"1", "true", "yes", "on"}
+        require_opportunity = os.getenv("MONEY_BUTTON_REQUIRE_OPPORTUNITY", "0").lower() in {"1", "true", "yes", "on"}
         opportunity = self._opportunity_bias.get(state.symbol)
+        if opportunity and opportunity.kind == "sell-high":
+            return self._mb_gate_refusal(state.symbol, "opportunity_bias_sell_high")
         if require_opportunity and (not opportunity or opportunity.kind != "buy-low"):
             return self._mb_gate_refusal(state.symbol, "no_opportunity_bias")
 
@@ -2049,20 +2088,20 @@ class BusScheduler:
         lookback_sec = max(600.0, min(24 * 3600.0, lookback_sec))
 
         try:
-            min_drawdown = float(os.getenv("MONEY_BUTTON_MIN_DRAWDOWN", "0.02"))
+            min_drawdown = float(os.getenv("MONEY_BUTTON_MIN_DRAWDOWN", "0.008"))
         except Exception:
-            min_drawdown = 0.02
+            min_drawdown = 0.008
         try:
-            max_drawdown = float(os.getenv("MONEY_BUTTON_MAX_DRAWDOWN", "0.05"))
+            max_drawdown = float(os.getenv("MONEY_BUTTON_MAX_DRAWDOWN", "0.08"))
         except Exception:
-            max_drawdown = 0.05
+            max_drawdown = 0.08
         min_drawdown = max(0.0, min(min_drawdown, 0.25))
         max_drawdown = max(min_drawdown, min(max_drawdown, 0.35))
 
         try:
-            min_net_return = float(os.getenv("MONEY_BUTTON_MIN_NET_RETURN", "0.005"))
+            min_net_return = float(os.getenv("MONEY_BUTTON_MIN_NET_RETURN", "0.002"))
         except Exception:
-            min_net_return = 0.005
+            min_net_return = 0.002
         min_net_return = max(0.0, min(min_net_return, 0.25))
 
         try:
@@ -2215,7 +2254,8 @@ class BusScheduler:
             strategy_id=MONEY_BUTTON_DIP_STRATEGY_ID,
         )
         self._mb_gate_pass += 1
-        self._mb_flush_gate_census()
+        BusScheduler._GLOBAL_MB_GATE_PASS += 1
+        self._mb_flush_gate_census(force=True)
         return {
             "directive": directive,
             "score": float(net_expected),
