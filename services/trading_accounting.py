@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Dict
 
 ACCOUNTING_VERSION = 2
@@ -90,15 +91,58 @@ def trading_accounting_snapshot(db: Any) -> Dict[str, Any]:
 
     ghost = dict(db.trade_outcome_summary("ghost"))
     live = dict(db.trade_outcome_summary("live"))
-    ghost["open"] = len(positions)
+    ghost_open_exposure: Dict[str, float] = {}
+    live_open_exposure: Dict[str, float] = {}
+    for raw_sym, pos in positions.items():
+        if not isinstance(pos, dict):
+            continue
+        sym = str(pos.get("symbol") or raw_sym or "").upper()
+        notional = max(0.0, _safe_float(pos.get("size")) * _safe_float(pos.get("entry_price")))
+        if str(pos.get("mode") or "ghost").lower() == "live":
+            if sym and notional > 0.0:
+                live_open_exposure[sym] = live_open_exposure.get(sym, 0.0) + notional
+        else:
+            if sym and notional > 0.0:
+                ghost_open_exposure[sym] = ghost_open_exposure.get(sym, 0.0) + notional
+
+    ghost_open_count = sum(
+        1 for pos in positions.values()
+        if not isinstance(pos, dict) or str(pos.get("mode") or "ghost").lower() != "live"
+    )
+    live_open_count = sum(
+        1 for pos in positions.values()
+        if isinstance(pos, dict) and str(pos.get("mode") or "").lower() == "live"
+    )
+    ghost["open"] = ghost_open_count
     ghost["total"] = int(ghost["closed"]) + int(ghost["open"])
-    live["open"] = 0
-    live["total"] = int(live["closed"])
+    live["open"] = live_open_count
+    live["total"] = int(live["closed"]) + int(live["open"])
+
+    ghost_gross = _safe_float(ghost.get("gross_profit"))
+    ghost_fee_cost = _safe_float(ghost.get("fee_cost", ghost.get("fees")))
+    verified_profit = _safe_float(ghost.get("net_profit"))
+    ghost_exposure = float(sum(ghost_open_exposure.values()))
+    default_bankroll = _safe_float(os.getenv("GHOST_SIM_PER_CHAIN_USD", "25.0")) or 25.0
+    initial_bankroll = _safe_float(ghost_state.get("initial_bankroll"))
+    if initial_bankroll <= 0.0:
+        initial_bankroll = default_bankroll
+    ghost_balance = max(0.0, initial_bankroll + verified_profit - ghost_exposure)
+    focus_chain = (os.getenv("LIVE_FOCUS_CHAIN") or "base").strip().lower() or "base"
+
+    ghost["gross_profit"] = ghost_gross
+    ghost["fee_cost"] = ghost_fee_cost
+    ghost["fees"] = ghost_fee_cost
+    ghost["initial_bankroll"] = initial_bankroll
+    ghost["exposure"] = ghost_exposure
+    ghost["active_exposure"] = ghost_open_exposure
+    ghost["balance"] = ghost_balance
+    ghost["sim_quote_balances"] = {f"{focus_chain}:USDC": ghost_balance}
+    live["exposure"] = float(sum(live_open_exposure.values()))
+    live["active_exposure"] = live_open_exposure
 
     version = int(ghost_state.get("accounting_version") or 0)
     cached_profit = _safe_float(ghost_state.get("total_profit"))
     cached_bank = _safe_float(ghost_state.get("stable_bank"))
-    verified_profit = _safe_float(ghost.get("net_profit"))
     cache_consistent = version >= ACCOUNTING_VERSION and math.isclose(
         cached_profit + cached_bank,
         verified_profit,

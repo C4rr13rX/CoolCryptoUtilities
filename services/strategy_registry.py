@@ -188,6 +188,7 @@ def register_strategy(
     model_name: str = "",
     metrics: Optional[Dict[str, Any]] = None,
     commissioned: bool = False,
+    strategy_id: str = "",
 ) -> Dict[str, Any]:
     """Add a strategy, stamped with the model it was derived from.
 
@@ -195,25 +196,41 @@ def register_strategy(
     found using one brain must be labelled as such, so a later run on a
     different brain is a comparison rather than a silent overwrite.
     """
-    strategy_id = "%s_%s" % (kind, uuid.uuid4().hex[:10])
-    entry = {
-        "strategy_id": strategy_id,
-        "name": name or strategy_id,
-        "kind": kind,
-        "genes": genes or {},
-        "run_id": run_id,
-        "objective": objective,
-        "objective_label": OBJECTIVE_LABELS.get(objective, objective),
-        "model_id": model_id,
-        "model_name": model_name or model_id or "(no brain)",
-        "metrics": metrics or {},
-        "commissioned": bool(commissioned),
-        "created_at": time.time(),
-        "experiments": [],
-    }
     with _lock, file_lock(REGISTRY_PATH):
         state = _load()
-        state.setdefault("strategies", {})[strategy_id] = entry
+        strategies = state.setdefault("strategies", {})
+        resolved_id = (strategy_id or "").strip()
+        if not resolved_id and name:
+            for existing_id, existing in strategies.items():
+                if (
+                    isinstance(existing, dict)
+                    and existing.get("kind") == kind
+                    and existing.get("name") == name
+                    and existing.get("model_id", "") == model_id
+                ):
+                    resolved_id = existing_id
+                    break
+        if not resolved_id:
+            resolved_id = "%s_%s" % (kind, uuid.uuid4().hex[:10])
+        prev = strategies.get(resolved_id) if isinstance(strategies.get(resolved_id), dict) else {}
+        entry = {
+            "strategy_id": resolved_id,
+            "name": name or resolved_id,
+            "kind": kind,
+            "genes": genes or prev.get("genes") or {},
+            "run_id": run_id or prev.get("run_id") or "",
+            "objective": objective,
+            "objective_label": OBJECTIVE_LABELS.get(objective, objective),
+            "model_id": model_id,
+            "model_name": model_name or model_id or "(no brain)",
+            "metrics": metrics if metrics is not None else (prev.get("metrics") or {}),
+            "commissioned": bool(commissioned),
+            "created_at": prev.get("created_at") or time.time(),
+            "experiments": list(prev.get("experiments") or []),
+        }
+        if prev.get("lifetime"):
+            entry["lifetime"] = prev["lifetime"]
+        strategies[resolved_id] = entry
         _save(state)
     return entry
 

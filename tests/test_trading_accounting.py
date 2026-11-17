@@ -99,3 +99,35 @@ def test_dashboard_accounting_excludes_legacy_cache(tmp_path) -> None:
     assert snapshot["ghost"]["open"] == 1
     assert snapshot["integrity"]["valid"] is False
     assert snapshot["integrity"]["legacy_cached_profit"] == pytest.approx(189.61)
+
+
+def test_ghost_accounting_reconciles_balance_exposure_gross_and_fees(tmp_path) -> None:
+    db = TradingDatabase(str(tmp_path / "reconcile.db"))
+    assert _record(db, outcome_id="trade-1:exit:1", profit=1.4) is True
+    db.save_state({
+        "ghost_trading": {
+            "accounting_version": ACCOUNTING_VERSION,
+            "initial_bankroll": 25.0,
+            "stable_bank": 0.4,
+            "total_profit": 1.0,
+            "positions": {
+                "ETH-USDC": {"symbol": "ETH-USDC", "mode": "ghost", "size": 0.01, "entry_price": 200.0},
+            },
+            # Orphaned closed symbol exposure must be ignored in favour of open positions.
+            "active_exposure": {"UNI-USDC": 50.72, "ETH-USDC": 2.0},
+            "sim_quote_balances": {"base:USDC": 100.0, "arbitrum:USDC": 100.0},
+        }
+    })
+
+    snapshot = trading_accounting_snapshot(db)
+    ghost = snapshot["ghost"]
+
+    assert ghost["gross_profit"] == pytest.approx(1.5)
+    assert ghost["fee_cost"] == pytest.approx(0.1)
+    assert ghost["net_profit"] == pytest.approx(1.4)
+    assert ghost["gross_profit"] - ghost["fee_cost"] == pytest.approx(ghost["net_profit"])
+    assert ghost["exposure"] == pytest.approx(2.0)
+    assert ghost["active_exposure"] == {"ETH-USDC": pytest.approx(2.0)}
+    assert ghost["balance"] == pytest.approx(25.0 + 1.4 - 2.0)
+    assert ghost["sim_quote_balances"] == {"base:USDC": pytest.approx(24.4)}
+    assert snapshot["integrity"]["valid"] is True

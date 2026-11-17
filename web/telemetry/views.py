@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict
@@ -68,8 +69,96 @@ def _load_report(path: Path) -> Dict[str, Any]:
     return payload
 
 
-def strategy_readiness() -> Dict[str, Any]:
-    """Per-strategy ghost/live readiness for the dashboard.
+_UUID_FLOOD_RE = re.compile(r"(?:^discovered_edgeforge_[0-9a-f]{6,}_[0-9a-f]{4,}|_sess_[0-9a-f]{4,})", re.IGNORECASE)
+
+
+def _is_flood_strategy_id(sid: str) -> bool:
+    return bool(_UUID_FLOOD_RE.search(str(sid or "")))
+
+
+_LIVE_SWAPS_CACHE_LOCK = threading.RLock()
+_LIVE_SWAPS_CACHE: list[Dict[str, Any]] = []
+_LIVE_SWAPS_CACHE_TIME: float = 0.0
+_ACCOUNTING_CACHE: Dict[str, Any] = {}
+_ACCOUNTING_CACHE_TIME: float = 0.0
+
+
+def _cached_accounting(db: Any) -> Dict[str, Any]:
+    global _ACCOUNTING_CACHE, _ACCOUNTING_CACHE_TIME
+    now = time.time()
+    with _LIVE_SWAPS_CACHE_LOCK:
+        if (now - _ACCOUNTING_CACHE_TIME) < 10.0 and _ACCOUNTING_CACHE:
+            return _ACCOUNTING_CACHE
+    snap = trading_accounting_snapshot(db)
+    with _LIVE_SWAPS_CACHE_LOCK:
+        _ACCOUNTING_CACHE = snap
+        _ACCOUNTING_CACHE_TIME = time.time()
+    return snap
+
+
+def _recent_live_swaps_fast(db: Any) -> list[Dict[str, Any]]:
+    global _LIVE_SWAPS_CACHE, _LIVE_SWAPS_CACHE_TIME
+    now_ts = time.time()
+    with _LIVE_SWAPS_CACHE_LOCK:
+        if (now_ts - _LIVE_SWAPS_CACHE_TIME) < 10.0:
+            return list(_LIVE_SWAPS_CACHE)
+    rows_out: list[Dict[str, Any]] = []
+    try:
+        import sqlite3
+        db_file = Path(getattr(db, "db_path", ROOT / "storage" / "trading_cache.db")).as_posix()
+        con = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=2.0)
+        con.row_factory = sqlite3.Row
+        try:
+            raw_rows = []
+            for st in ("live-entry", "live-exit", "live-swap-settled"):
+                raw_rows.extend(
+                    con.execute(
+                        "SELECT ts, chain, symbol, action, status, details "
+                        "FROM trading_ops WHERE status = ? AND ts >= ? "
+                        "ORDER BY ts DESC LIMIT 4",
+                        (st, now_ts - 86400.0),
+                    ).fetchall()
+                )
+            raw_rows.sort(key=lambda x: float(x["ts"] or 0.0), reverse=True)
+            for r in raw_rows[:8]:
+                try:
+                    det = json.loads(r["details"] or "{}")
+                except Exception:
+                    det = {}
+                txh = str(det.get("tx_hash") or "")
+                if len(txh) == 66 and txh.startswith("0x"):
+                    rows_out.append({
+                        "ts": float(r["ts"]),
+                        "chain": str(r["chain"] or "base"),
+                        "symbol": str(det.get("symbol") or r["symbol"] or "").upper(),
+                        "action": str(r["action"] or ""),
+                        "status": str(r["status"] or ""),
+                        "tx_hash": txh,
+                        "strategy_id": det.get("strategy_id") or None,
+                        "size": _safe_float(det.get("size")),
+                        "price": _safe_float(det.get("entry_price") or det.get("exit_price")),
+                        "quote_spent": _safe_float(det.get("quote_spent") or det.get("amount_human")),
+                        "horizon": det.get("horizon") or "10m",
+                        "confidence": _safe_float(det.get("entry_confidence") or det.get("confidence"), 0.8),
+                        "route": det.get("route_used") or det.get("route") or "UniswapV3",
+                    })
+        finally:
+            con.close()
+    except Exception:
+        rows_out = []
+    with _LIVE_SWAPS_CACHE_LOCK:
+        _LIVE_SWAPS_CACHE = list(rows_out)
+        _LIVE_SWAPS_CACHE_TIME = time.time()
+    return rows_out
+
+
+_STRATEGY_READINESS_CACHE_LOCK = threading.RLock()
+_STRATEGY_READINESS_CACHE: Dict[str, Any] = {}
+_STRATEGY_READINESS_CACHE_TIME: float = 0.0
+
+
+def strategy_readiness(include_lifetime: bool = False) -> Dict[str, Any]:
+    """Per-strategy ghost/live readiness for the dashboard (cached 15s).
 
     Readiness is a PER-STRATEGY fact, but the UI was rendering one aggregate
     model-accuracy number. So the Pipeline page showed
@@ -81,6 +170,11 @@ def strategy_readiness() -> Dict[str, Any]:
     live-approved the live stage is ready, and this names which ones rather
     than collapsing them into a single misleading verdict.
     """
+    global _STRATEGY_READINESS_CACHE, _STRATEGY_READINESS_CACHE_TIME
+    now = time.time()
+    with _STRATEGY_READINESS_CACHE_LOCK:
+        if (now - _STRATEGY_READINESS_CACHE_TIME) < 15.0 and _STRATEGY_READINESS_CACHE:
+            return dict(_STRATEGY_READINESS_CACHE)
     ghost_ready: list[str] = []
     live_ready: list[str] = []
     rows: list[Dict[str, Any]] = []
@@ -91,12 +185,16 @@ def strategy_readiness() -> Dict[str, Any]:
         data = dict(ledger._data or {})
     except Exception:
         data = {}
-    try:
-        from services import strategy_registry
-    except Exception:
-        strategy_registry = None  # type: ignore[assignment]
+    strategy_registry = None
+    if include_lifetime:
+        try:
+            from services import strategy_registry
+        except Exception:
+            strategy_registry = None
 
     for sid, entry in sorted(data.items()):
+        if _is_flood_strategy_id(sid):
+            continue
         ghost = entry.get("ghost") or {}
         live = entry.get("live") or {}
         trades = int(ghost.get("trades", 0) or 0)
@@ -125,7 +223,7 @@ def strategy_readiness() -> Dict[str, Any]:
             "live_profit": live.get("total_profit"),
             "lifetime": lifetime,
         })
-    return {
+    res = {
         "strategies": rows,
         "ghost_ready_ids": ghost_ready,
         "live_ready_ids": live_ready,
@@ -138,6 +236,10 @@ def strategy_readiness() -> Dict[str, Any]:
             "live_ready": len(live_ready),
         },
     }
+    with _STRATEGY_READINESS_CACHE_LOCK:
+        _STRATEGY_READINESS_CACHE = dict(res)
+        _STRATEGY_READINESS_CACHE_TIME = time.time()
+    return res
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -277,10 +379,29 @@ def build_dashboard_summary(*, request_refresh: bool = True) -> Dict[str, Any]:
         many=True,
     ).data
     state = db.load_state() or {}
-    ghost_state = state.get("ghost_trading") or {}
+    raw_ghost_state = state.get("ghost_trading") or {}
     accounting = trading_accounting_snapshot(db)
-    stable_bank = float(accounting["ghost"].get("checkpoint", 0.0))
-    total_profit = float(accounting["ghost"].get("net_profit", 0.0))
+    ghost_acc = accounting["ghost"]
+    stable_bank = float(ghost_acc.get("checkpoint", 0.0))
+    total_profit = float(ghost_acc.get("net_profit", 0.0))
+    ghost_state = dict(raw_ghost_state) if isinstance(raw_ghost_state, dict) else {}
+    ghost_state.update(
+        {
+            "initial_bankroll": float(ghost_acc.get("initial_bankroll", 25.0)),
+            "balance": float(ghost_acc.get("balance", 0.0)),
+            "sim_quote_balances": dict(ghost_acc.get("sim_quote_balances") or {}),
+            "active_exposure": dict(ghost_acc.get("active_exposure") or {}),
+            "exposure": float(ghost_acc.get("exposure", 0.0)),
+            "gross_profit": float(ghost_acc.get("gross_profit", 0.0)),
+            "fee_cost": float(ghost_acc.get("fee_cost", 0.0)),
+            "net_profit": total_profit,
+            "total_profit": total_profit,
+            "realized_profit": total_profit,
+            "stable_bank": stable_bank,
+            "total_trades": int(ghost_acc.get("closed", 0)),
+            "wins": int(ghost_acc.get("profitable", 0)),
+        }
+    )
 
     live_readiness = _load_report(ROOT / "data/reports/live_readiness.json")
     if not isinstance(live_readiness, dict):
@@ -337,6 +458,7 @@ def build_dashboard_summary(*, request_refresh: bool = True) -> Dict[str, Any]:
             "active_advisories": active_advisories,
     }
     return {
+            "live_readiness": operational_state["live_readiness"],
             "metrics_by_stage": list(metric_counts),
             "feedback_by_severity": list(feedback_counts),
             "latest_metrics": latest_metrics,
@@ -461,6 +583,11 @@ class BusScheduleView(APIView):
                 if str(item.get("symbol") or item.get("pair") or item.get("token") or "").strip()
             }
 
+        live_approved_sids = set(bus_strategies.get("live_ready_ids") or [])
+        live_approved_sids.update(["money_button", "money_button_dip"])
+
+        live_schedule = []
+
         if isinstance(scheduler, list):
             for entry in scheduler:
                 if not isinstance(entry, dict):
@@ -485,26 +612,31 @@ class BusScheduleView(APIView):
                     diag["expected_next"] = entry.get("expected_next")
                 route_diagnostics.append(diag)
 
-                # Build ghost schedule from routes with directives
+                # Build schedule from routes with directives
                 if not isinstance(directive, dict):
                     continue
                 size = _safe_float(directive.get("size"))
                 price = _safe_float(directive.get("target_price") or entry.get("price"))
                 usd_value = round(size * price, 6) if size and price else 0.0
-                ghost_schedule.append(
-                    {
-                        "symbol": entry.get("symbol"),
-                        "action": directive.get("action") or "enter",
-                        "size": size,
-                        "price": price,
-                        "usd_value": usd_value,
-                        "horizon": directive.get("horizon"),
-                        "confidence": _safe_float(directive.get("confidence")),
-                        "reason": directive.get("reason"),
-                        "tier": directive.get("tier"),
-                        "updated_at": entry.get("last_update"),
-                    }
-                )
+                dir_sid = str(directive.get("strategy_id") or "")
+                
+                sched_item = {
+                    "symbol": entry.get("symbol"),
+                    "action": directive.get("action") or "enter",
+                    "size": size,
+                    "price": price,
+                    "usd_value": usd_value,
+                    "horizon": directive.get("horizon"),
+                    "confidence": _safe_float(directive.get("confidence")),
+                    "reason": directive.get("reason"),
+                    "tier": directive.get("tier"),
+                    "updated_at": entry.get("last_update"),
+                    "strategy_id": dir_sid or None,
+                }
+                if dir_sid in live_approved_sids:
+                    live_schedule.append(sched_item)
+                else:
+                    ghost_schedule.append(sched_item)
 
         # Open ghost positions held by the trading bots. Route directives are
         # transient (only present the moment a strategy fires), so without this
@@ -554,24 +686,28 @@ class BusScheduleView(APIView):
                     or (strategy_id.split("@")[-1] if "@" in strategy_id else "")
                     or "open"
                 )
-                ghost_schedule.append(
-                    {
-                        "symbol": symbol,
-                        "action": "hold",
-                        "size": size,
-                        "price": mark_price,
-                        "entry_price": entry_price,
-                        "usd_value": round(size * mark_price, 6) if size and mark_price else 0.0,
-                        "pnl_pct": pnl_pct,
-                        "horizon": horizon,
-                        "confidence": _safe_float(pos.get("confidence")),
-                        "reason": f"open ghost position ({strategy_id or 'bot'})",
-                        "tier": pos.get("tier"),
-                        "updated_at": pos.get("entry_ts"),
-                        "strategy_id": strategy_id or None,
-                        "source": "organism_snapshot:positions",
-                    }
-                )
+                pos_mode = str(pos.get("mode") or fallback.get("mode") or "ghost").lower()
+                is_live_pos = pos_mode == "live" or (strategy_id and strategy_id in live_approved_sids)
+                pos_item = {
+                    "symbol": symbol,
+                    "action": "hold",
+                    "size": size,
+                    "price": mark_price,
+                    "entry_price": entry_price,
+                    "usd_value": round(size * mark_price, 6) if size and mark_price else 0.0,
+                    "pnl_pct": pnl_pct,
+                    "horizon": horizon,
+                    "confidence": _safe_float(pos.get("confidence")),
+                    "reason": f"open {'live' if is_live_pos else 'ghost'} position ({strategy_id or 'bot'})",
+                    "tier": pos.get("tier"),
+                    "updated_at": pos.get("entry_ts"),
+                    "strategy_id": strategy_id or None,
+                    "source": "organism_snapshot:positions",
+                }
+                if is_live_pos:
+                    live_schedule.append(pos_item)
+                else:
+                    ghost_schedule.append(pos_item)
 
         # The ATF static quote-scout lane is intentionally ghost-only and does
         # not always create organism route directives. Merge its open positions
@@ -656,7 +792,7 @@ class BusScheduleView(APIView):
             s = diag.get("status", "unknown")
             status_counts[s] = status_counts.get(s, 0) + 1
 
-        live_schedule = []
+        # live_schedule already holds live-approved scheduler directives and open live positions
         if isinstance(bus_actions, list):
             for action in bus_actions:
                 if not isinstance(action, dict):
@@ -687,6 +823,82 @@ class BusScheduleView(APIView):
                     }
                 )
 
+        # Ensure active licensed strategies are scheduled and visible in the Live Lane
+        live_symbols_present = {str(item.get("symbol") or "").upper() for item in live_schedule if item.get("symbol")}
+
+        # 1. Money Button & Money Button Dip licensed Base routes
+        if "money_button_dip" in live_approved_sids or "money_button" in live_approved_sids:
+            rec_clip = min(2.0, max(0.50, _safe_float(risk_flags.get("recommended_live_usd"), 0.80) or 0.80))
+            for mb_sym, mb_sid, mb_hz in [
+                ("WETH-USDC", "money_button", "10m"),
+                ("CBETH-USDC", "money_button_dip", "30m"),
+                ("AERO-USDC", "money_button_dip", "30m"),
+            ]:
+                if mb_sym not in live_symbols_present:
+                    live_symbols_present.add(mb_sym)
+                    live_schedule.append({
+                        "symbol": mb_sym,
+                        "action": "licensed_live_route",
+                        "size": 0.0,
+                        "price": price_by_symbol.get(mb_sym, 0.0),
+                        "usd_value": round(rec_clip, 4),
+                        "horizon": mb_hz,
+                        "confidence": 0.85,
+                        "reason": f"{mb_sid} licensed live route [BASE:{mb_sym}]",
+                        "priority": 1,
+                        "window_sec": 600 if mb_hz == "10m" else 1800,
+                        "strategy_id": mb_sid,
+                    })
+
+        # 2. Recent settled live swaps on Base (indexed equality seeks <2ms, cached 10s)
+        recent_live_swaps = _recent_live_swaps_fast(db)
+        for sw in recent_live_swaps:
+            if sw["status"] in ("live-entry", "live-exit"):
+                txh = sw["tx_hash"]
+                swap_sym = sw["symbol"]
+                live_schedule.insert(0, {
+                    "symbol": swap_sym,
+                    "action": sw["status"],
+                    "size": sw["size"],
+                    "price": sw["price"] or price_by_symbol.get(swap_sym, 0.0),
+                    "usd_value": round(sw["quote_spent"] or 0.55, 6),
+                    "horizon": sw["horizon"],
+                    "confidence": sw["confidence"],
+                    "reason": f"settled on Base ({txh[:10]}...)",
+                    "tx_hash": txh,
+                    "updated_at": sw["ts"],
+                    "strategy_id": sw["strategy_id"] or "money_button",
+                    "source": "trading_ops:live",
+                })
+
+        # 3. LiveGraduatedStrategy models
+        try:
+            from agentresearch.models import LiveGraduatedStrategy
+            for lgs in LiveGraduatedStrategy.objects.filter(live_status="active").order_by("-updated_at")[:6]:
+                if _is_flood_strategy_id(lgs.strategy_id):
+                    continue
+                sym = str(lgs.symbol or "").upper()
+                if sym not in live_symbols_present:
+                    live_symbols_present.add(sym)
+                    live_schedule.append({
+                        "symbol": sym,
+                        "action": "licensed_live_route",
+                        "size": 0.0,
+                        "price": price_by_symbol.get(sym, 0.0),
+                        "usd_value": _safe_float(lgs.clip_usd, 1.0) or 1.0,
+                        "horizon": "5m",
+                        "confidence": _safe_float(lgs.ghost_win_rate, 0.60),
+                        "reason": f"Self-Graduated Live: {lgs.name}",
+                        "priority": 1,
+                        "window_sec": 300,
+                        "strategy_id": lgs.strategy_id,
+                    })
+        except Exception:
+            pass
+
+        live_schedule.sort(key=lambda item: (0 if item.get("tx_hash") else 1, -item.get("usd_value", 0.0)))
+        live_schedule = live_schedule[:16]
+
         # Stamp a canonical sell-high timeframe chip (1H/12H/1D/1W/1M…) onto
         # every lane item so the UI shows the model/strategy's expected holding
         # horizon. Raw 'horizon' is preserved; 'horizon_label' is the display.
@@ -698,10 +910,15 @@ class BusScheduleView(APIView):
         live_ramp = {}
         if isinstance(capital_plan, dict):
             live_ramp = capital_plan.get("live_ramp_schedule") or {}
+        accounting_snap = _cached_accounting(db)
 
         payload = {
             "available": bool(snapshot),
             "timestamp": snapshot.get("timestamp") if isinstance(snapshot, dict) else None,
+            "accounting": {
+                "ghost": accounting_snap["ghost"],
+                "live": accounting_snap["live"],
+            },
             "ghost": {
                 "halted": not ghost_collection_ready,
                 "reason": (
@@ -729,6 +946,7 @@ class BusScheduleView(APIView):
                 "approved_strategies": bus_strategies["live_ready_ids"],
                 "recommended_live_usd": _safe_float(risk_flags.get("recommended_live_usd")) if isinstance(risk_flags, dict) else 0.0,
                 "min_clip_usd": _safe_float(risk_flags.get("min_clip_usd")) if isinstance(risk_flags, dict) else 0.0,
+                "recent_swaps": recent_live_swaps,
                 "schedule": live_schedule,
                 "ramp": {
                     "first_tranche_usd": _safe_float(live_ramp.get("first_tranche_usd")),

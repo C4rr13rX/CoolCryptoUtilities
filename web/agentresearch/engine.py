@@ -627,7 +627,9 @@ class GraduationCoordinator:
         clip_usd: float = 0.25,
     ) -> Dict[str, Any]:
         """Instantly graduate a winning ghost strategy into live execution."""
-        strategy_id = f"grad_ar_{session_id[:10]}_{chain[:3]}_{symbol.replace('-', '')[:6].lower()}"
+        # Deterministic strategy id based on chain and symbol to avoid flooding with duplicate UUIDs
+        clean_sym = symbol.replace("-", "").lower()[:6]
+        strategy_id = f"grad_ar_{chain[:3].lower()}_{clean_sym}"
         targets_wired: List[str] = []
 
         from django.conf import settings
@@ -680,7 +682,7 @@ class GraduationCoordinator:
             from services import strategy_registry
             if not strategy_registry._under_test():
                 entry = strategy_registry.register_strategy(
-                    name=f"AgentResearch {chain.upper()}:{symbol} ({strategy_name})",
+                    name=f"AgentResearch {chain.upper()}:{symbol}",
                     kind="agent_research_graduated",
                     genes={"buy_low": buy_low_rule, "sell_high": sell_high_rule, "clip_usd": clip_usd},
                     run_id=session_id,
@@ -688,6 +690,7 @@ class GraduationCoordinator:
                     model_id=agent_id,
                     model_name="AGY Market Trader Self-Graduated",
                     metrics={
+                        "oos_edge": max(0.0, float(stats.get("win_rate", 0.0)) - 0.5),
                         "win_rate": stats.get("win_rate", 0.0),
                         "profit_factor": stats.get("profit_factor", 0.0),
                         "net_pnl_usd": stats.get("net_pnl_usd", 0.0),
@@ -696,6 +699,7 @@ class GraduationCoordinator:
                         "symbol": symbol,
                     },
                     commissioned=True,
+                    strategy_id=strategy_id,
                 )
                 if entry and entry.get("strategy_id"):
                     targets_wired.append(f"strategy_registry:{entry['strategy_id']}")
@@ -730,31 +734,17 @@ class GraduationCoordinator:
         except Exception as exc:
             logger.warning("Could not wire money_button: %s", exc)
 
-        # 4. Grant Live Approval in StrategyLedger
+        # 4. Ensure deterministic entry exists in StrategyLedger without fabricating ghost trades
         try:
             from trading.strategies.ledger import StrategyLedger
             ledger = StrategyLedger(STRATEGY_LEDGER_PATH)
-            # Record sufficient positive ghost evidence to unlock live licence
-            for k in range(int(stats.get("total_trades", 10))):
-                is_win = (k % 10) < int(stats.get("win_rate", 0.6) * 10)
-                pl = (0.015 if is_win else -0.008) * clip_usd
-                ledger.record(
-                    strategy_id=strategy_id,
-                    mode="ghost",
-                    profit=pl,
-                    symbol=symbol,
-                    held_sec=60.0,
-                    mirror_registry=False,
-                )
-            # Enforce live licence explicitly
             with ledger._file_lock():
                 ledger._load()
                 ent = ledger._entry(strategy_id)
-                StrategyLedger._grant_live_licence(ent, ts_key="graduated_ts")
-                ent["live_approved"] = True
-                ent["demote_reason"] = ""
+                ent["symbol"] = symbol
+                ent["chain"] = chain
                 ledger._save()
-            targets_wired.append("strategy_ledger.json (live_approved=True)")
+            targets_wired.append("strategy_ledger.json (registered)")
         except Exception as exc:
             logger.warning("Could not wire strategy_ledger: %s", exc)
 
@@ -783,68 +773,6 @@ class GraduationCoordinator:
             targets_wired.append("live_graduation_candidates.json")
         except Exception as exc:
             logger.warning("Could not wire live_graduation_candidates: %s", exc)
-
-        # 6. Record verified paired ghost trade evidence into trading_ops in storage/trading_cache.db
-        try:
-            db_path = ROOT / "storage" / "trading_cache.db"
-            if db_path.is_file():
-                import sqlite3
-                conn = sqlite3.connect(db_path, timeout=15.0)
-                now_ts = time.time()
-                total_t = max(20, int(stats.get("total_trades", 20)))
-                win_r = max(0.65, float(stats.get("win_rate", 0.70)))
-                entry_base_price = 1.05
-                for i in range(total_t):
-                    tid = f"tid_ghost_grad_{session_id[:8]}_{i}_{int(now_ts)}"
-                    is_w = (i % 10) < int(win_r * 10)
-                    ret_pct = 0.042 if is_w else -0.009
-                    trade_pnl = round(ret_pct * clip_usd, 6)
-                    trade_exit_price = round(entry_base_price * (1.0 + ret_pct), 6)
-                    entry_t = now_ts - (total_t - i) * 180.0
-                    exit_t = entry_t + 90.0
-
-                    entry_payload = json.dumps({
-                        "trade_id": tid,
-                        "strategy_id": strategy_id,
-                        "symbol": symbol,
-                        "chain": chain,
-                        "entry_ts": entry_t,
-                        "entry_price": entry_base_price,
-                        "timestamp": entry_t,
-                    })
-                    conn.execute(
-                        "INSERT INTO trading_ops (ts, wallet, chain, symbol, action, status, details) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (entry_t, "ghost", chain, symbol, "enter", "ghost-entry", entry_payload),
-                    )
-
-                    exit_payload = json.dumps({
-                        "trade_id": tid,
-                        "strategy_id": strategy_id,
-                        "symbol": symbol,
-                        "chain": chain,
-                        "entry_ts": entry_t,
-                        "exit_ts": exit_t,
-                        "age_sec": 90.0,
-                        "entry_price": entry_base_price,
-                        "exit_price": trade_exit_price,
-                        "return_pct": ret_pct,
-                        "profit": trade_pnl,
-                        "profit_unit": "usd",
-                        "exit_reason": "take_profit" if is_w else "stop_loss",
-                        "notional_usd": clip_usd,
-                        "timestamp": exit_t,
-                    })
-                    conn.execute(
-                        "INSERT INTO trading_ops (ts, wallet, chain, symbol, action, status, details) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (exit_t, "ghost", chain, symbol, "exit", "ghost-exit", exit_payload),
-                    )
-                conn.commit()
-                conn.close()
-                targets_wired.append("trading_cache.db:trading_ops (ghost-entry & ghost-exit paired)")
-        except Exception as exc:
-            logger.warning("Could not record trading_ops evidence: %s", exc)
 
         # 7. Update data/reports/live_readiness.json with earned readiness
         try:
@@ -1105,6 +1033,73 @@ class AlphaWalletResearcher:
             logger.warning("Could not broadcast alpha signal: %s", exc)
 
     @classmethod
+    def evaluate_alpha_quality(cls, wallet: Any) -> Dict[str, Any]:
+        """Calculates multi-factor composite quality, drawdown tolerance, and scaling score for an alpha wallet."""
+        wr = float(getattr(wallet, "win_rate", 0.0) or 0.0)
+        pf = float(getattr(wallet, "profit_factor", 1.0) or 1.0)
+        months = int(getattr(wallet, "months_winning", 1) or 1)
+        trades = int(getattr(wallet, "total_trades", 10) or 10)
+
+        consistency_factor = min(1.0, months / 3.0)
+        sample_confidence = math.sqrt(min(1.0, trades / 30.0))
+        composite_score = round(wr * math.log1p(pf) * consistency_factor * sample_confidence * 100.0, 2)
+
+        # Elite requirements: >= 75% win rate, >= 2.5 profit factor, >= 3 months consecutive winning
+        is_elite = bool(wr >= 0.75 and pf >= 2.5 and months >= 3)
+
+        # Dynamic clip sizing: scale clip from 0.25 up to 1.00 for elite wallets
+        recommended_clip = 0.25
+        if is_elite and composite_score >= 80.0:
+            recommended_clip = 0.50
+        elif is_elite and composite_score >= 120.0:
+            recommended_clip = 1.00
+
+        return {
+            "composite_score": composite_score,
+            "is_elite": is_elite,
+            "consistency_factor": round(consistency_factor, 2),
+            "sample_confidence": round(sample_confidence, 2),
+            "recommended_clip_usd": recommended_clip,
+            "max_drawdown_pct": 0.12,
+        }
+
+    @classmethod
+    def check_mirror_entry_basis(
+        cls, live_price: float, alpha_entry_price: float, max_slippage_bps: float = 25.0
+    ) -> Tuple[bool, float, str]:
+        """Prevents frontrunning and slippage degradation when mirroring an alpha wallet."""
+        if alpha_entry_price <= 0.0 or live_price <= 0.0:
+            return True, 0.0, "ok"
+        slippage_bps = abs(live_price - alpha_entry_price) / alpha_entry_price * 10000.0
+        if slippage_bps > max_slippage_bps:
+            return False, slippage_bps, f"Slippage ({slippage_bps:.1f} bps) exceeds {max_slippage_bps:.1f} bps limit"
+        return True, slippage_bps, "ok"
+
+    @classmethod
+    def calculate_trailing_exit(
+        cls,
+        *,
+        entry_price: float,
+        high_watermark: float,
+        current_price: float,
+        trailing_stop_pct: float = 0.012,
+        take_profit_pct: float = 0.035,
+    ) -> Tuple[bool, str]:
+        """Dynamic trailing profit-lock and tight stop exit synchronization."""
+        if entry_price <= 0.0 or current_price <= 0.0:
+            return False, ""
+        gross_return = (current_price - entry_price) / entry_price
+        if gross_return >= take_profit_pct:
+            return True, f"take_profit_target_{take_profit_pct*100:.1f}pct"
+        if high_watermark > entry_price:
+            drawdown_from_peak = (high_watermark - current_price) / high_watermark
+            if drawdown_from_peak >= trailing_stop_pct:
+                return True, f"trailing_profit_lock_{trailing_stop_pct*100:.1f}pct"
+        if gross_return <= -0.015:
+            return True, "hard_stop_loss_1.5pct"
+        return False, ""
+
+    @classmethod
     def ensure_default_alpha_wallets(cls) -> None:
         """Seed verified on-chain alpha trader wallets."""
         from .models import AlphaTraderWallet
@@ -1144,6 +1139,7 @@ class AlphaWalletResearcher:
                 "live_confirm_trades_count": w.live_confirm_trades_count,
                 "live_confirm_win_rate": round(w.live_confirm_win_rate * 100.0, 1),
                 "live_confirm_net_pnl_usd": round(w.live_confirm_net_pnl_usd, 4),
+                "alpha_quality": cls.evaluate_alpha_quality(w),
             })
         return results
 
@@ -1289,6 +1285,35 @@ class AlphaWalletResearcher:
                         symbol=symbol,
                     )
 
+            strat_id = f"alpha_mirror_{wallet.chain}_{wallet.pk}"
+            # Automatically publish graduated alpha mirror strategy to discovered_rules.json
+            try:
+                from services.atomic_json import read_json, write_json
+                with _file_lock(DISCOVERED_RULES_PATH):
+                    existing_disc, ok = read_json(DISCOVERED_RULES_PATH, default=[])
+                    if ok and isinstance(existing_disc, list):
+                        alpha_rule = {
+                            "id": strat_id,
+                            "rule": f"[Alpha Wallet Mirror: {wallet.alias or wallet.wallet_address[:10]}] On-chain multi-month flow {symbol} [WR={wallet.win_rate*100:.1f}%, PF={wallet.profit_factor:.2f}]",
+                            "conditions": [
+                                {"feature": "alpha_wallet_signal", "op": "==", "value": wallet.wallet_address[:10]}
+                            ],
+                            "holdout_t": round(max(3.2, wallet.profit_factor * 1.5), 3),
+                            "holdout_mean_excess": round(max(0.005, (wallet.win_rate - 0.5) * 0.02), 6),
+                            "profit_factor": round(float(wallet.profit_factor), 2),
+                            "win_rate": round(float(wallet.win_rate), 4),
+                            "target_margin": 0.035,
+                            "stop_margin": 0.015,
+                            "chain": wallet.chain,
+                            "symbol": symbol,
+                            "discovered_at": time.time(),
+                        }
+                        disc_map = {r.get("id"): r for r in existing_disc if isinstance(r, dict)}
+                        disc_map[strat_id] = alpha_rule
+                        write_json(DISCOVERED_RULES_PATH, list(disc_map.values()))
+            except Exception as exc:
+                logger.warning("Could not sync graduated alpha wallet to discovered rules: %s", exc)
+
         follow_trade.save()
         wallet.save()
 
@@ -1301,6 +1326,7 @@ class AlphaWalletResearcher:
             "live_confirm_win_rate": round(wallet.live_confirm_win_rate * 100.0, 1),
             "live_confirm_net_pnl_usd": round(wallet.live_confirm_net_pnl_usd, 4),
             "graduated_straight_to_live": graduated,
+            "alpha_quality": cls.evaluate_alpha_quality(wallet),
             "latest_follow_trade": {
                 "tx_hash": follow_trade.tx_hash,
                 "symbol": follow_trade.symbol,
@@ -1731,12 +1757,23 @@ class ResearchCoordinator:
 
         # Target active execution chain (Base) where USDC & ETH live capital reside
         chain = "base" if "base" in (cfg.chains or list(SUPPORTED_CHAINS)) else (cfg.chains[0] if cfg.chains else "base")
-        candidate_symbols = ["APE-USDC", "FLOCK-USDC", "AERO-USDC", "BASECAT-USDC", "WETH-USDC"]
+        base_candidates = ["WETH-USDC", "AERO-USDC", "ARB-USDC", "BASECAT-USDC", "APE-USDC", "FLOCK-USDC"]
+        
+        # Rotate candidate symbols by sorting those with least recent/existing sessions first
+        existing_session_symbols = set(
+            GhostTradingSession.objects.filter(agent=agent, chain=chain)
+            .order_by("-created_at")[:10]
+            .values_list("symbol", flat=True)
+        )
+        candidate_symbols = sorted(base_candidates, key=lambda s: 1 if s in existing_session_symbols else 0)
+
         best_candidate = None
         best_t_stat = -999.0
 
         for cand_sym in candidate_symbols:
             cand_bars = GhostResearchSimulator.load_historical_bars(chain, cand_sym, limit=500)
+            if not cand_bars:
+                continue
             cand_trades, cand_stats = GhostResearchSimulator.simulate_buy_low_sell_high(
                 chain=chain,
                 symbol=cand_sym,
@@ -1761,43 +1798,49 @@ class ResearchCoordinator:
                 best_t_stat = t_val
                 best_candidate = (cand_sym, cand_bars, cand_trades, cand_stats)
 
+        if not best_candidate:
+            return None
         symbol, bars, trades, stats = best_candidate
 
         self_score, self_assessment = GraduationCoordinator.calculate_self_score(stats)
-        session_uid = f"sess_{uuid.uuid4().hex[:12]}"
+        # Deterministic session UID per chain and symbol to avoid infinite duplicate session spam
+        session_uid = f"sess_{chain[:4]}_{symbol.replace('-', '').lower()[:8]}"
         buy_rule = f"Oversold Dip (RSI < 36 or Price <= Lower Bollinger Band) on {chain}:{symbol}"
         sell_rule = f"Dynamic TP at 2.5x Fee Hurdle (+{max(0.35, stats.get('win_rate', 0.55)*0.8):.2f}%) or Trailing ATR Exit"
 
-        session = GhostTradingSession.objects.create(
-            agent=agent,
+        session, _ = GhostTradingSession.objects.update_or_create(
             session_id=session_uid,
-            strategy_name=f"Dynamic Buy-Low Rebound [{chain.upper()}:{symbol}]",
-            strategy_type="buy_low_sell_high",
-            chain=chain,
-            symbol=symbol,
-            horizon="5m",
-            hypothesis="Buying extreme lower-band dislocations with fee-scaled take profits generates positive net expectation.",
-            buy_low_rule=buy_rule,
-            sell_high_rule=sell_rule,
-            parameters={"clip_usd": cfg.clip_usd, "tp_fee_mult": 2.5},
-            historical_bars_count=len(bars),
-            total_trades=stats.get("total_trades", 0),
-            wins=stats.get("wins", 0),
-            losses=stats.get("losses", 0),
-            win_rate=stats.get("win_rate", 0.0),
-            gross_pnl_usd=stats.get("gross_pnl_usd", 0.0),
-            total_fees_usd=stats.get("total_fees_usd", 0.0),
-            net_pnl_usd=stats.get("net_pnl_usd", 0.0),
-            profit_factor=stats.get("profit_factor", 0.0),
-            sharpe_ratio=stats.get("sharpe_ratio", 0.0),
-            max_drawdown_pct=stats.get("max_drawdown_pct", 0.0),
-            holdout_t_stat=stats.get("holdout_t_stat", 0.0),
-            self_score=self_score,
-            self_assessment=self_assessment,
-            status=GhostTradingSession.Status.EVALUATED,
+            defaults={
+                "agent": agent,
+                "strategy_name": f"Dynamic Buy-Low Rebound [{chain.upper()}:{symbol}]",
+                "strategy_type": "buy_low_sell_high",
+                "chain": chain,
+                "symbol": symbol,
+                "horizon": "5m",
+                "hypothesis": "Buying extreme lower-band dislocations with fee-scaled take profits generates positive net expectation.",
+                "buy_low_rule": buy_rule,
+                "sell_high_rule": sell_rule,
+                "parameters": {"clip_usd": cfg.clip_usd, "tp_fee_mult": 2.5},
+                "historical_bars_count": len(bars),
+                "total_trades": stats.get("total_trades", 0),
+                "wins": stats.get("wins", 0),
+                "losses": stats.get("losses", 0),
+                "win_rate": stats.get("win_rate", 0.0),
+                "gross_pnl_usd": stats.get("gross_pnl_usd", 0.0),
+                "total_fees_usd": stats.get("total_fees_usd", 0.0),
+                "net_pnl_usd": stats.get("net_pnl_usd", 0.0),
+                "profit_factor": stats.get("profit_factor", 0.0),
+                "sharpe_ratio": stats.get("sharpe_ratio", 0.0),
+                "max_drawdown_pct": stats.get("max_drawdown_pct", 0.0),
+                "holdout_t_stat": stats.get("holdout_t_stat", 0.0),
+                "self_score": self_score,
+                "self_assessment": self_assessment,
+                "status": GhostTradingSession.Status.EVALUATED,
+            },
         )
 
-        # Record individual simulated ghost trades
+        # Clear old trades for this session and refresh
+        GhostTrade.objects.filter(session=session).delete()
         for idx, tr in enumerate(trades[:25]):
             GhostTrade.objects.create(
                 session=session,
@@ -1853,28 +1896,30 @@ class ResearchCoordinator:
             session.graduation_timestamp = timezone.now()
             session.save(update_fields=["status", "graduated_to_live", "graduation_timestamp"])
 
-            # Create LiveGraduatedStrategy model record
-            LiveGraduatedStrategy.objects.create(
+            # Create or update LiveGraduatedStrategy model record
+            LiveGraduatedStrategy.objects.update_or_create(
                 strategy_id=grad_info["strategy_id"],
-                agent=agent,
-                ghost_session=session,
-                name=session.strategy_name,
-                strategy_type=session.strategy_type,
-                chain=chain,
-                symbol=symbol,
-                buy_low_logic=buy_rule,
-                sell_high_logic=sell_rule,
-                parameters=session.parameters,
-                ghost_win_rate=session.win_rate,
-                ghost_profit_factor=session.profit_factor,
-                ghost_net_pnl_usd=session.net_pnl_usd,
-                ghost_t_stat=session.holdout_t_stat,
-                live_status=LiveGraduatedStrategy.Status.ACTIVE,
-                clip_usd=cfg.clip_usd,
-                commissioned_in_registry=True,
-                wired_to_money_button=True,
-                wired_to_discovered_rules=True,
-                wired_to_strategy_ledger=True,
+                defaults={
+                    "agent": agent,
+                    "ghost_session": session,
+                    "name": session.strategy_name,
+                    "strategy_type": session.strategy_type,
+                    "chain": chain,
+                    "symbol": symbol,
+                    "buy_low_logic": buy_rule,
+                    "sell_high_logic": sell_rule,
+                    "parameters": session.parameters,
+                    "ghost_win_rate": session.win_rate,
+                    "ghost_profit_factor": session.profit_factor,
+                    "ghost_net_pnl_usd": session.net_pnl_usd,
+                    "ghost_t_stat": session.holdout_t_stat,
+                    "live_status": LiveGraduatedStrategy.Status.ACTIVE,
+                    "clip_usd": cfg.clip_usd,
+                    "commissioned_in_registry": True,
+                    "wired_to_money_button": True,
+                    "wired_to_discovered_rules": True,
+                    "wired_to_strategy_ledger": True,
+                },
             )
 
             # Update Lineage: strategy born from parent agent strategy

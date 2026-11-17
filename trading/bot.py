@@ -809,12 +809,12 @@ class TradingBot:
         # cross-chain expansion locks the bot into base-only ghost
         # trading and insufficient_quote on every non-Base candidate.
         try:
-            focus_chains_env = os.getenv("FOCUS_CHAINS", "base,arbitrum,optimism,polygon")
+            focus_chains_env = os.getenv("FOCUS_CHAINS") or os.getenv("LIVE_FOCUS_CHAINS", "base")
             focus_chains = [c.strip().lower() for c in focus_chains_env.split(",") if c.strip()]
-            per_chain = float(os.getenv("GHOST_SIM_PER_CHAIN_USD", "100.0"))
+            per_chain = float(os.getenv("GHOST_SIM_PER_CHAIN_USD", "25.0"))
             for fc in focus_chains:
                 fc_key = (fc, "USDC")
-                if self.sim_quote_balances.get(fc_key, 0.0) < per_chain:
+                if fc_key not in self.sim_quote_balances:
                     self.sim_quote_balances[fc_key] = per_chain
                 # Also seed sim native so gas check passes during ghost
                 if self.sim_native_balances.get(fc, 0.0) < 0.5:
@@ -962,9 +962,9 @@ class TradingBot:
         # Ghost is fake money -- bankroll-per-chain instead of one
         # shared pool is fine; trades on chain A simulate without
         # affecting chain B.
-        focus_chains_env = os.getenv("FOCUS_CHAINS", "base,arbitrum,optimism,polygon")
+        focus_chains_env = os.getenv("FOCUS_CHAINS") or os.getenv("LIVE_FOCUS_CHAINS", "base")
         focus_chains = [c.strip().lower() for c in focus_chains_env.split(",") if c.strip()]
-        ghost_per_chain_usd = float(os.getenv("GHOST_SIM_PER_CHAIN_USD", "100.0"))
+        ghost_per_chain_usd = float(os.getenv("GHOST_SIM_PER_CHAIN_USD", "25.0"))
         for fc in focus_chains:
             fc_key = (fc, "USDC")
             if self.sim_quote_balances.get(fc_key, 0.0) < ghost_per_chain_usd:
@@ -13260,9 +13260,11 @@ class TradingBot:
         if isinstance(sim_native, dict):
             self.sim_native_balances = {str(chain).lower(): float(value) for chain, value in sim_native.items()}
         self.ghost_session_id = int(ghost.get("session_id", self.ghost_session_id)) or 1
-        exposure = ghost.get("active_exposure") if accounting_version >= ACCOUNTING_VERSION else None
-        if isinstance(exposure, dict):
-            self.active_exposure = {str(sym): float(value) for sym, value in exposure.items()}
+        self.active_exposure = {
+            str(sym): max(0.0, float(pos.get("size") or 0.0) * float(pos.get("entry_price") or 0.0))
+            for sym, pos in self.positions.items()
+            if isinstance(pos, dict) and float(pos.get("size") or 0.0) * float(pos.get("entry_price") or 0.0) > 0.0
+        }
         self._auto_execute_approved = bool(ghost.get("auto_execute_approved", False))
         swarm_state = ghost.get("swarm")
         if isinstance(swarm_state, dict):
@@ -14421,10 +14423,23 @@ class TradingBot:
             dict(previous_routes) if isinstance(previous_routes, dict) else {}
         )
         merged_routes.update(self.bus_routes)
+        reconciled_exposure: Dict[str, float] = {}
+        for sym, pos in merged_positions.items():
+            if not isinstance(pos, dict):
+                continue
+            try:
+                notional = max(0.0, float(pos.get("size") or 0.0) * float(pos.get("entry_price") or 0.0))
+            except (TypeError, ValueError):
+                notional = 0.0
+            if notional > 0.0:
+                reconciled_exposure[str(sym)] = notional
+        self.active_exposure = dict(reconciled_exposure)
+
         state["ghost_trading"] = {
             "accounting_version": ACCOUNTING_VERSION,
             "accounting_epoch": previous_ghost.get("accounting_epoch") or int(time.time()),
             "legacy_quarantine": previous_ghost.get("legacy_quarantine"),
+            "initial_bankroll": float(previous_ghost.get("initial_bankroll") or self._sim_initial_pool or 25.0),
             "stable_bank": self.stable_bank,
             "total_profit": self.total_profit,
             "realized_profit": self.realized_profit,
@@ -14435,7 +14450,7 @@ class TradingBot:
             "sim_quote_balances": {f"{chain}:{symbol}": amount for (chain, symbol), amount in self.sim_quote_balances.items()},
             "sim_native_balances": self.sim_native_balances,
             "session_id": self.ghost_session_id,
-            "active_exposure": self.active_exposure,
+            "active_exposure": reconciled_exposure,
             "auto_execute_approved": bool(self._auto_execute_approved),
         }
         # Swarm learning survives restarts — without this every process

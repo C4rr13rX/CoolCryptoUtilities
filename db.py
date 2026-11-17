@@ -1127,6 +1127,7 @@ class TradingDatabase:
             cur.execute(
                 """
                 SELECT COUNT(*) AS closed,
+                       COALESCE(SUM(gross_profit), 0.0) AS gross_profit,
                        COALESCE(SUM(net_profit), 0.0) AS net_profit,
                        COALESCE(SUM(checkpoint), 0.0) AS checkpoint,
                        COALESCE(SUM(fee_cost), 0.0) AS fees,
@@ -1142,13 +1143,16 @@ class TradingDatabase:
         payload = dict(row or {})
         closed = int(payload.get("closed") or 0)
         profitable = int(payload.get("profitable") or 0)
+        fees = float(payload.get("fees") or 0.0)
         return {
             "closed": closed,
             "profitable": profitable,
             "unprofitable": int(payload.get("unprofitable") or 0),
+            "gross_profit": float(payload.get("gross_profit") or 0.0),
+            "fee_cost": fees,
+            "fees": fees,
             "net_profit": float(payload.get("net_profit") or 0.0),
             "checkpoint": float(payload.get("checkpoint") or 0.0),
-            "fees": float(payload.get("fees") or 0.0),
             "win_rate": profitable / closed if closed else 0.0,
             "updated_at": payload.get("updated_at"),
         }
@@ -2260,30 +2264,61 @@ class TradingDatabase:
                 (ts, payload),
             )
 
+    def _cloud_snapshot_archive(self):
+        """Cloud cold-read is opt-in; local SQLite remains the write source."""
+        try:
+            from services.cloud_snapshot_archive import get_cloud_snapshot_archive
+
+            configured = (self.get_control_flag("hybrid_cloud_snapshot_reads_enabled") or "0")
+            enabled = configured.strip().lower() in {"1", "true", "yes", "on"}
+            if not enabled:
+                return None
+            return get_cloud_snapshot_archive(enabled=True)
+        except Exception:  # noqa: BLE001
+            _log_db_warning("cloud-snapshot-reader-unavailable", {})
+            return None
+
     def fetch_latest_organism_snapshot(self) -> Optional[Dict[str, Any]]:
         with self._cursor() as cur:
-            cur.execute("SELECT payload FROM organism_snapshots ORDER BY ts DESC LIMIT 1")
+            cur.execute("SELECT ts, payload FROM organism_snapshots ORDER BY ts DESC LIMIT 1")
             row = cur.fetchone()
-        if not row:
-            return None
-        try:
-            return json.loads(row["payload"])
-        except Exception:
-            return None
+        local_value = None
+        local_ts = None
+        if row:
+            local_ts = float(row["ts"])
+            try:
+                local_value = json.loads(row["payload"])
+            except Exception:
+                pass
+        archive = self._cloud_snapshot_archive()
+        remote_ts = archive.latest_timestamp() if archive else None
+        if archive and remote_ts is not None and (local_ts is None or remote_ts > local_ts):
+            remote = archive.at_or_before(remote_ts)
+            if remote:
+                return remote["payload"]
+        return local_value
 
     def fetch_organism_snapshot_at(self, ts: float) -> Optional[Dict[str, Any]]:
         with self._cursor() as cur:
             cur.execute(
-                "SELECT payload FROM organism_snapshots WHERE ts<=? ORDER BY ts DESC LIMIT 1",
+                "SELECT ts, payload FROM organism_snapshots WHERE ts<=? ORDER BY ts DESC LIMIT 1",
                 (float(ts),),
             )
             row = cur.fetchone()
-        if not row:
-            return None
-        try:
-            return json.loads(row["payload"])
-        except Exception:
-            return None
+        local_value = None
+        local_ts = None
+        if row:
+            local_ts = float(row["ts"])
+            try:
+                local_value = json.loads(row["payload"])
+            except Exception:
+                pass
+        archive = self._cloud_snapshot_archive()
+        if archive:
+            remote = archive.at_or_before(float(ts), after_ts=local_ts)
+            if remote:
+                return remote["payload"]
+        return local_value
 
     def fetch_organism_history(
         self,
@@ -2307,12 +2342,28 @@ class TradingDatabase:
             cur.execute(query, params)
             rows = cur.fetchall()
         history: List[Dict[str, Any]] = []
+        local_timestamps: set[float] = set()
         for row in rows:
             try:
-                history.append(json.loads(row["payload"]))
+                snapshot = json.loads(row["payload"])
+                local_timestamps.add(float(row["ts"]))
+                history.append((float(row["ts"]), snapshot))
             except Exception:
                 continue
-        return history
+        missing = max(0, int(limit) - len(history))
+        archive = self._cloud_snapshot_archive() if missing else None
+        if archive:
+            older = archive.history(
+                start_ts=start_ts, end_ts=end_ts,
+                exclude_ts=local_timestamps, limit=missing,
+            )
+            history.extend(
+                (float(item["ts"]), item["payload"])
+                for item in older
+                if isinstance(item.get("payload"), dict)
+            )
+        history.sort(key=lambda item: item[0], reverse=True)
+        return [snapshot for _, snapshot in history[:max(0, int(limit))]]
 
     # ------------------------------------------------------------------
     # Pair suppression (for unreliable market data)

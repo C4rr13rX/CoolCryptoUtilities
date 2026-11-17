@@ -1672,8 +1672,15 @@ class GhostTradingSupervisor:
                 severity="info",
                 details={"symbols": _condemned[:16]},
             )
-        readiness = self.pipeline.live_readiness_report()
-        transition_plan = self.pipeline.ghost_live_transition_plan()
+        loop = asyncio.get_running_loop()
+        readiness = await loop.run_in_executor(
+            _SELECTION_EXECUTOR,
+            self.pipeline.live_readiness_report,
+        )
+        transition_plan = await loop.run_in_executor(
+            _SELECTION_EXECUTOR,
+            self.pipeline.ghost_live_transition_plan,
+        )
         added_bots: List[str] = []
         added_streams: List[str] = []
         replaced_bots: List[Dict[str, str]] = []
