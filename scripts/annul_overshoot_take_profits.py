@@ -66,9 +66,10 @@ def recover_entry_metadata(
 ) -> Dict[str, Any]:
     """Recover `target_price` and `strategy_id` from `trading_ops` via position hash.
 
-    Uses the `(symbol, ts)` / `ts` window around `outcome_ts` first so a 700k-row
-    `trading_ops` table scans in milliseconds rather than minutes, falling back
-    to an unbounded scan only on small test databases or older holdings.
+    Uses `idx_trading_ops_status_ts` (`WHERE status = ? AND ts BETWEEN ? AND ?`)
+    first so a 700k-row / 39GB `trading_ops` table scans in milliseconds rather
+    than 12+ minutes, falling back to a direct `symbol` scan only on tiny test
+    databases with custom statuses.
     """
     hsh = position_hash(trade_id)
     if not hsh:
@@ -76,18 +77,16 @@ def recover_entry_metadata(
 
     target_price: Optional[float] = None
     strategy_id: Optional[str] = None
+    hi_ts = float(outcome_ts) + 300.0
+    matched_any = False
 
-    queries = [
-        (
+    for span_sec in (3 * 86400.0, LOOKBACK_OPS_WINDOW_SEC):
+        lo_ts = float(outcome_ts) - span_sec
+        for row in conn.execute(
             "SELECT action, details FROM trading_ops "
-            "WHERE symbol = ? AND ts BETWEEN ? AND ? ORDER BY ts",
-            (symbol, float(outcome_ts) - LOOKBACK_OPS_WINDOW_SEC, float(outcome_ts) + 300.0),
-        ),
-    ]
-
-    for sql, params in queries:
-        matched_any = False
-        for row in conn.execute(sql, params):
+            "WHERE status = 'ghost-entry' AND ts BETWEEN ? AND ? ORDER BY ts",
+            (lo_ts, hi_ts),
+        ):
             raw_det = row[1] or ""
             if hsh not in raw_det:
                 continue
@@ -108,7 +107,36 @@ def recover_entry_metadata(
                 if cand_target > 0.0:
                     target_price = cand_target
         if target_price is not None or matched_any:
-            break
+            return {"target_price": target_price, "strategy_id": strategy_id}
+
+    lo_ts = float(outcome_ts) - LOOKBACK_OPS_WINDOW_SEC
+
+    if not matched_any:
+        max_id_row = conn.execute("SELECT MAX(rowid) FROM trading_ops").fetchone()
+        if max_id_row and int(max_id_row[0] or 0) <= 10000:
+            for row in conn.execute(
+                "SELECT action, details FROM trading_ops "
+                "WHERE symbol = ? AND ts BETWEEN ? AND ? ORDER BY ts",
+                (symbol, lo_ts, hi_ts),
+            ):
+                raw_det = row[1] or ""
+                if hsh not in raw_det:
+                    continue
+                try:
+                    det = json.loads(raw_det)
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(det, dict):
+                    continue
+                if not strategy_id and det.get("strategy_id"):
+                    strategy_id = str(det["strategy_id"])
+                if str(row[0] or "") == "enter":
+                    try:
+                        cand_target = float(det.get("target_price") or 0.0)
+                    except (TypeError, ValueError):
+                        cand_target = 0.0
+                    if cand_target > 0.0:
+                        target_price = cand_target
 
     return {"target_price": target_price, "strategy_id": strategy_id}
 

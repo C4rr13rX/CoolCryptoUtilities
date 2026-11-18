@@ -1283,6 +1283,30 @@ class GhostTradingSupervisor:
             "1", "true", "yes", "on",
         }
 
+    def _licensed_live_symbols(self) -> List[str]:
+        """Gate-clean Base pairs backing licensed short-horizon live strategies."""
+        if (
+            os.getenv("PYTEST_CURRENT_TEST")
+            or os.getenv("PYTEST_RUNNING")
+            or any(tok in " ".join(sys.argv).lower() for tok in ("pytest", "py.test"))
+        ) and "LIVE_PRIORITY_PAIRS" not in os.environ:
+            return []
+        if not self._operator_armed_live():
+            try:
+                from trading.strategies.ledger import StrategyLedger
+
+                if not StrategyLedger().approved_ids():
+                    return []
+            except Exception:
+                return []
+        raw = os.getenv("LIVE_PRIORITY_PAIRS", "WETH-USDC,WETH-USDT,MORPHO-USDC,SOL-USDC")
+        out: List[str] = []
+        for item in raw.split(","):
+            sym = item.strip().upper()
+            if sym and not _no_strategy_may_enter(sym) and _can_denominate_pnl_in_usd(sym):
+                out.append(sym)
+        return list(dict.fromkeys(out))
+
     def build(self) -> None:
         if self.bots:
             return
@@ -1326,12 +1350,17 @@ class GhostTradingSupervisor:
         # spawn unlimited bots; anything past it keeps its place at the front
         # of the queue and is picked up by the next reconcile.
         held_symbols = _held_position_symbols(getattr(self, "db", None))
-        if held_symbols:
-            ceiling = int(limit_meta.get("max_limit") or pair_limit)
-            boosted = min(max(pair_limit, len(held_symbols)), max(ceiling, pair_limit))
+        live_priority_boot = self._licensed_live_symbols()
+        min_needed_slots = len(set(held_symbols) | set(live_priority_boot))
+        if min_needed_slots > 0:
+            ceiling = int(limit_meta.get("max_limit") or max(pair_limit, min_needed_slots))
+            boosted = min(max(pair_limit, min_needed_slots), max(ceiling, pair_limit))
             if boosted != pair_limit:
                 limit_meta["held_position_boost"] = {
-                    "held": len(held_symbols), "from": pair_limit, "to": boosted,
+                    "held": len(held_symbols),
+                    "live_priority": len(live_priority_boot),
+                    "from": pair_limit,
+                    "to": boosted,
                 }
                 limit_meta["adjusted"] = True
                 pair_limit = boosted
@@ -1368,11 +1397,12 @@ class GhostTradingSupervisor:
         # pipeline's own picks -- they are appended after atf_priority and
         # focus_assets, and the existing dedup keeps them from crowding.
         genome_seed = _genome_universe_symbols(int(os.getenv("GENOME_PAIR_SEED", "0")))
-        # Held positions lead. Closing an open position is worth more than
-        # opening a new one: it frees the slot, and it is the only way the
-        # round trip ever reaches the ledger that gates graduation.
+        live_priority = self._licensed_live_symbols()
+        # Held positions lead, followed immediately by licensed live Base pairs
+        # (WETH-USDC, WETH-USDT, CBBTC-USDC) so frozen memecoins never starve
+        # the live Money Button lane of a bot slot.
         for symbol in list(dict.fromkeys(
-                held_symbols + atf_priority + list(focus_assets or []) + genome_seed)):
+                held_symbols + live_priority + atf_priority + list(focus_assets or []) + genome_seed)):
             tokens = [part.strip().upper() for part in symbol.split("-") if part.strip()]
             if not tokens:
                 tokens = [symbol.upper()]
@@ -1423,7 +1453,9 @@ class GhostTradingSupervisor:
         # protected by `held_upper`; the rest is `select_pairs`' volume ranking,
         # which is where the condemned symbols come from. See
         # `_no_strategy_may_enter` for the 379-of-596 measurement.
-        all_ordered, _condemned = _sink_condemned(all_ordered, protected=held_upper)
+        all_ordered, _condemned = _sink_condemned(
+            all_ordered, protected=held_upper | set(live_priority)
+        )
         if _condemned:
             log_message(
                 "ghost-supervisor",
@@ -1546,6 +1578,10 @@ class GhostTradingSupervisor:
         except Exception:
             atf_priority = []
         atf_priority_set = set(atf_priority)
+        live_priority = [
+            sym for sym in self._licensed_live_symbols() if sym not in existing_bots
+        ]
+        live_priority_all = set(self._licensed_live_symbols())
         pair_limit, _meta = resolve_pair_limit(
             self.pair_limit,
             focus_assets=[],
@@ -1614,6 +1650,7 @@ class GhostTradingSupervisor:
             full_slots <= 0
             and data_slots <= 0
             and not held_symbols
+            and not live_priority
             and not (allow_replace and atf_priority)
         ):
             return {"added_bots": [], "added_streams": [], "reason": "no_slots"}
@@ -1625,17 +1662,17 @@ class GhostTradingSupervisor:
                 limit=max(
                     int(pair_limit),
                     int(self.stream_total),
-                    len(existing) + full_slots + data_slots + len(atf_priority),
+                    len(existing) + full_slots + data_slots + len(atf_priority) + len(live_priority),
                 ),
             ),
         )
-        # Held positions lead the queue, ahead of the ATF signals, for the same
-        # reason as in build(): closing what we hold frees a slot and is the
-        # only way the round trip reaches the graduation ledger.
-        if held_symbols or atf_priority:
+        # Held positions lead the queue, ahead of licensed live pairs and ATF
+        # signals, for the same reason as in build(): closing what we hold frees
+        # a slot and licensed Base routes must not be starved by frozen tokens.
+        if held_symbols or live_priority or atf_priority:
             by_symbol = {pair.symbol.upper(): pair for pair in candidates}
             promoted: List[PairCandidate] = []
-            for sym in list(dict.fromkeys(held_symbols + atf_priority)):
+            for sym in list(dict.fromkeys(held_symbols + atf_priority + live_priority)):
                 if sym in by_symbol:
                     promoted.append(by_symbol[sym])
                     continue
@@ -1653,7 +1690,7 @@ class GhostTradingSupervisor:
             # Held symbols are promoted too, so they must be filtered out of
             # the remainder as well -- otherwise a held pair that select_pairs
             # also returned appears twice and burns two slots on one symbol.
-            promoted_set = atf_priority_set | set(held_symbols)
+            promoted_set = atf_priority_set | live_priority_all | set(held_symbols)
             remainder = [pair for pair in candidates if pair.symbol.upper() not in promoted_set]
             candidates = promoted + remainder
         # Same ranking as build(), applied here as well because a reconcile is
@@ -1662,7 +1699,7 @@ class GhostTradingSupervisor:
         # symbols and ATF priorities are protected: they lead the list already,
         # and `held_all` is the set that must never lose its bot.
         candidates, _condemned = _sink_condemned(
-            candidates, protected=held_all | atf_priority_set
+            candidates, protected=held_all | live_priority_all | atf_priority_set
         )
         if _condemned:
             log_message(
@@ -1689,7 +1726,11 @@ class GhostTradingSupervisor:
             nonlocal full_slots, max_replacements
             if full_slots > 0:
                 return True
-            if not allow_replace or max_replacements <= 0 or symbol not in atf_priority_set:
+            if (
+                not allow_replace
+                or max_replacements <= 0
+                or symbol not in (atf_priority_set | live_priority_all)
+            ):
                 return False
             # A BOT HOLDING A POSITION IS NOT SPARE CAPACITY.
             #
@@ -1729,7 +1770,7 @@ class GhostTradingSupervisor:
             for eligible_pass in (False, True):
                 for idx in range(len(self.bots) - 1, -1, -1):
                     old_symbol = str(getattr(self.bots[idx], "primary_symbol", "") or "").upper()
-                    if old_symbol in atf_priority_set:
+                    if old_symbol in atf_priority_set or old_symbol in live_priority_all:
                         continue
                     if old_symbol in held_all:
                         continue

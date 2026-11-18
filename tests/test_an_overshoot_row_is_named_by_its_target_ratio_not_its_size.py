@@ -212,3 +212,37 @@ def test_judge_overshoot_row_ignores_gain_size_completely() -> None:
         target_price=18.0,  # target was 18.0 -> ratio 1.000
     )
     assert huge_real_win["is_overshoot"] is False
+
+
+def test_recover_entry_metadata_uses_status_ts_index_without_symbol_scan(tmp_path: Path) -> None:
+    """Ensure ghost-entry lookup recovers target_price on large (>10k rowid) tables without symbol scan."""
+    from scripts.annul_overshoot_take_profits import recover_entry_metadata
+
+    db_path = _make_db(tmp_path)
+    _insert_round_trip(
+        db_path,
+        hash_id="idx999",
+        symbol="WETH-USDC",
+        strategy_id="money_button",
+        entry_price=2000.0,
+        target_price=2015.0,
+        exit_price=2040.0,
+    )
+    con = sqlite3.connect(str(db_path))
+    # Force MAX(rowid) > 10_000 so the small-table symbol fallback cannot mask a broken status='ghost-entry' seek,
+    # and store the entry under a mismatched symbol column to prove only the status+ts index path ran.
+    con.execute("UPDATE trading_ops SET symbol = 'OTHER-PAIR' WHERE action = 'enter'")
+    con.execute(
+        "INSERT INTO trading_ops (rowid, ts, wallet, chain, symbol, action, status, details) "
+        "VALUES (20001, 1790000001.0, 'ghost', 'base', 'NOISE-USDC', 'hold', 'hold', '{}')"
+    )
+    con.commit()
+    meta = recover_entry_metadata(
+        con,
+        symbol="WETH-USDC",
+        trade_id="2:WETH-USDC:idx999",
+        outcome_ts=1_790_000_000.0,
+    )
+    con.close()
+    assert meta["target_price"] == pytest.approx(2015.0)
+    assert meta["strategy_id"] == "money_button"

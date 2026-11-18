@@ -1413,15 +1413,15 @@ class BusScheduler:
         self._log_arbitration(
             state.symbol, chain_name, candidates, ret_dir, arb_method
         )
-        if ret_dir and ret_dir.action == "enter":
+        if live_trading and ret_dir and ret_dir.action == "enter":
             try:
-                size_quote = float(ret_dir.size) * float(ret_dir.target_price or 1.0)
+                size_quote = min(2.0, float(ret_dir.size) * float(ret_dir.target_price or 1.0))
                 res = self.fund_tracker.reserve_funds(
                     chain=chain_name,
                     token=ret_dir.quote_token,
                     amount=size_quote,
                     reason=f"bus_scheduler_directive:{ret_dir.symbol}:{ret_dir.strategy_id}",
-                    ttl_seconds=180.0,
+                    ttl_seconds=45.0,
                 )
                 ret_dir.reservation_id = res.get("id", "")
                 ret_dir.chain = chain_name
@@ -2088,9 +2088,9 @@ class BusScheduler:
         lookback_sec = max(600.0, min(24 * 3600.0, lookback_sec))
 
         try:
-            min_drawdown = float(os.getenv("MONEY_BUTTON_MIN_DRAWDOWN", "0.008"))
+            min_drawdown = float(os.getenv("MONEY_BUTTON_MIN_DRAWDOWN", "0.004"))
         except Exception:
-            min_drawdown = 0.008
+            min_drawdown = 0.004
         try:
             max_drawdown = float(os.getenv("MONEY_BUTTON_MAX_DRAWDOWN", "0.08"))
         except Exception:
@@ -2131,12 +2131,13 @@ class BusScheduler:
         # reversion target) are unconditional.  So skip the TF-gated
         # min_dir_prob/min_exit_conf when both are sitting at neutral.
         is_tf_neutral = (
-            abs(direction_prob - 0.5) < 1e-6
-            and abs(confidence - 0.5) < 1e-6
-            and abs(net_margin) < 1e-9
+            abs(direction_prob - 0.5) < MODEL_NEUTRAL_BAND
+            and abs(confidence - 0.5) < MODEL_NEUTRAL_BAND
+            and abs(net_margin) < 1e-6
         )
+        conf_ok = _confidence_abstains(confidence, direction_prob) or confidence >= min_exit_conf
         if not is_tf_neutral:
-            if direction_prob < min_dir_prob or confidence < min_exit_conf:
+            if direction_prob < min_dir_prob or not conf_ok:
                 return self._mb_gate_refusal(state.symbol, "tf_direction_or_confidence")
 
         try:
@@ -2248,7 +2249,7 @@ class BusScheduler:
             target_price=float(target_price),
             horizon=os.getenv("MONEY_BUTTON_HORIZON", "30m"),
             confidence=float(max(0.0, min(1.0, 0.5 + min(0.35, net_expected * 8.0)))),
-            expected_return=float(net_expected),
+            expected_return=float(take_profit_return),
             reason=f"money_button dip {drawdown:.2%} -> target {take_profit_return:.2%}",
             tier=tier,
             strategy_id=MONEY_BUTTON_DIP_STRATEGY_ID,

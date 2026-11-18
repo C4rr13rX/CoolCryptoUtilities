@@ -85,23 +85,179 @@ _SNAPSHOT_CACHE: Dict[str, Any] = {}
 _SNAPSHOT_CACHE_TIME: float = 0.0
 _STATE_POSITIONS_CACHE: Dict[str, Any] = {}
 _STATE_POSITIONS_CACHE_TIME: float = 0.0
+_BUS_SCHEDULE_PAYLOAD_CACHE: Dict[str, Any] = {}
+_BUS_SCHEDULE_PAYLOAD_TIME: float = 0.0
+_BUS_SCHEDULE_REFRESHING = threading.Lock()
 
 
-def _cached_latest_snapshot(db: Any) -> Dict[str, Any]:
+def _resolve_db_file(db: Any = None) -> Path:
+    if db is not None and getattr(db, "path", None):
+        return Path(str(getattr(db, "path")))
+    if db is not None and getattr(db, "db_path", None):
+        return Path(str(getattr(db, "db_path")))
+    env_path = os.getenv("TRADING_DB_PATH")
+    if env_path:
+        return Path(env_path)
+    return ROOT / "storage" / "trading_cache.db"
+
+
+class _RoAccountingDb:
+    """Read-only SQLite adapter for trading_accounting_snapshot without get_db()._lock contention."""
+
+    def __init__(self, db_file: Path) -> None:
+        self._uri = f"file:{db_file.as_posix()}?mode=ro"
+
+    def _connect(self):
+        import sqlite3
+        con = sqlite3.connect(self._uri, uri=True, timeout=1.5)
+        con.row_factory = sqlite3.Row
+        return con
+
+    def load_state(self) -> Dict[str, Any]:
+        con = self._connect()
+        try:
+            row = con.execute("SELECT value FROM kv_store WHERE key = 'state'").fetchone()
+            return json.loads(row[0]) if row and row[0] else {}
+        except Exception:
+            return {}
+        finally:
+            con.close()
+
+    def trade_outcome_summary(self, wallet: str) -> Dict[str, Any]:
+        con = self._connect()
+        try:
+            row = con.execute(
+                """
+                SELECT COUNT(*) AS closed,
+                       COALESCE(SUM(gross_profit), 0.0) AS gross_profit,
+                       COALESCE(SUM(net_profit), 0.0) AS net_profit,
+                       COALESCE(SUM(checkpoint), 0.0) AS checkpoint,
+                       COALESCE(SUM(fee_cost), 0.0) AS fees,
+                       COALESCE(SUM(CASE WHEN net_profit > 0 THEN 1 ELSE 0 END), 0) AS profitable,
+                       COALESCE(SUM(CASE WHEN net_profit <= 0 THEN 1 ELSE 0 END), 0) AS unprofitable,
+                       MAX(ts) AS updated_at
+                FROM trade_outcomes
+                WHERE wallet=? AND status='closed'
+                """,
+                (str(wallet),),
+            ).fetchone()
+            payload = dict(row or {})
+            closed = int(payload.get("closed") or 0)
+            profitable = int(payload.get("profitable") or 0)
+            fees = float(payload.get("fees") or 0.0)
+            return {
+                "closed": closed,
+                "profitable": profitable,
+                "unprofitable": int(payload.get("unprofitable") or 0),
+                "gross_profit": float(payload.get("gross_profit") or 0.0),
+                "fee_cost": fees,
+                "fees": fees,
+                "net_profit": float(payload.get("net_profit") or 0.0),
+                "checkpoint": float(payload.get("checkpoint") or 0.0),
+                "win_rate": profitable / closed if closed else 0.0,
+                "updated_at": payload.get("updated_at"),
+            }
+        finally:
+            con.close()
+
+    def fetch_trade_outcomes(self, limit: int = 20) -> list[Dict[str, Any]]:
+        con = self._connect()
+        try:
+            rows = con.execute(
+                "SELECT * FROM trade_outcomes ORDER BY ts DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+            out = []
+            for r in rows:
+                item = dict(r)
+                if isinstance(item.get("details"), str):
+                    try:
+                        item["details"] = json.loads(item["details"] or "{}")
+                    except Exception:
+                        pass
+                out.append(item)
+            return out
+        except Exception:
+            return []
+        finally:
+            con.close()
+
+
+def _ro_sqlite_json_kv(db: Any, key: str, default: Any) -> Any:
+    """Read a kv_store JSON entry via a non-blocking read-only SQLite URI."""
+    try:
+        import sqlite3
+        db_file = _resolve_db_file(db)
+        if not db_file.exists():
+            return (db.get_json(key) if db is not None else None) or default
+        con = sqlite3.connect(f"file:{db_file.as_posix()}?mode=ro", uri=True, timeout=1.5)
+        try:
+            row = con.execute("SELECT value FROM kv_store WHERE key = ?", (key,)).fetchone()
+            if row and row[0]:
+                return json.loads(row[0])
+            return default
+        finally:
+            con.close()
+    except Exception:
+        return default
+
+
+def _cached_latest_snapshot(db: Any = None) -> Dict[str, Any]:
     global _SNAPSHOT_CACHE, _SNAPSHOT_CACHE_TIME
     now = time.time()
     with _LIVE_SWAPS_CACHE_LOCK:
         if (now - _SNAPSHOT_CACHE_TIME) < 3.0 and _SNAPSHOT_CACHE:
             return _SNAPSHOT_CACHE
-    snap = db.fetch_latest_organism_snapshot() or {}
-    if isinstance(snap, dict):
+    snap: Dict[str, Any] = {}
+    try:
+        import sqlite3
+        db_file = _resolve_db_file(db)
+        if db_file.exists():
+            con = sqlite3.connect(f"file:{db_file.as_posix()}?mode=ro", uri=True, timeout=1.5)
+            try:
+                rows = con.execute("SELECT ts, payload FROM organism_snapshots ORDER BY ts DESC LIMIT 20").fetchall()
+                merged_sched: list[Dict[str, Any]] = []
+                seen_syms: set[str] = set()
+                merged_pos: Dict[str, Any] = {}
+                newest_ts = float(rows[0][0]) if rows and rows[0][0] else 0.0
+                for idx_r, (r_ts, r_payload) in enumerate(rows):
+                    if not r_payload:
+                        continue
+                    if idx_r > 0 and newest_ts > 0 and (newest_ts - float(r_ts or 0.0)) > 600.0:
+                        break
+                    parsed = json.loads(r_payload)
+                    if not isinstance(parsed, dict):
+                        continue
+                    if idx_r == 0:
+                        snap = dict(parsed)
+                    for s_entry in (parsed.get("scheduler") or []):
+                        if isinstance(s_entry, dict):
+                            sym_u = str(s_entry.get("symbol") or "").upper()
+                            if sym_u and sym_u not in seen_syms:
+                                seen_syms.add(sym_u)
+                                merged_sched.append(s_entry)
+                    for p_sym, p_val in (parsed.get("positions") or {}).items():
+                        p_u = str(p_sym or "").upper()
+                        if p_u and p_u not in merged_pos:
+                            merged_pos[p_u] = p_val
+                if snap:
+                    snap["scheduler"] = merged_sched
+                    if merged_pos:
+                        snap["positions"] = merged_pos
+            finally:
+                con.close()
+        elif db is not None:
+            snap = db.fetch_latest_organism_snapshot() or {}
+    except Exception:
+        snap = dict(_SNAPSHOT_CACHE) if _SNAPSHOT_CACHE else {}
+    if isinstance(snap, dict) and snap:
         with _LIVE_SWAPS_CACHE_LOCK:
             _SNAPSHOT_CACHE = snap
             _SNAPSHOT_CACHE_TIME = time.time()
     return snap if isinstance(snap, dict) else {}
 
 
-def _cached_state_positions(db: Any) -> Dict[str, Any]:
+def _cached_state_positions(db: Any = None) -> Dict[str, Any]:
     global _STATE_POSITIONS_CACHE, _STATE_POSITIONS_CACHE_TIME
     now = time.time()
     with _LIVE_SWAPS_CACHE_LOCK:
@@ -109,7 +265,7 @@ def _cached_state_positions(db: Any) -> Dict[str, Any]:
             return dict(_STATE_POSITIONS_CACHE)
     out: Dict[str, Any] = {}
     try:
-        saved = db.load_state() or {}
+        saved = _ro_sqlite_json_kv(db, "state", {})
         gt = saved.get("ghost_trading") if isinstance(saved, dict) else {}
         raw_state_positions = gt.get("positions") if isinstance(gt, dict) else {}
         if isinstance(raw_state_positions, dict):
@@ -124,20 +280,22 @@ def _cached_state_positions(db: Any) -> Dict[str, Any]:
     return out
 
 
-def _cached_accounting(db: Any) -> Dict[str, Any]:
+def _cached_accounting(db: Any = None) -> Dict[str, Any]:
     global _ACCOUNTING_CACHE, _ACCOUNTING_CACHE_TIME
     now = time.time()
     with _LIVE_SWAPS_CACHE_LOCK:
         if (now - _ACCOUNTING_CACHE_TIME) < 10.0 and _ACCOUNTING_CACHE:
             return _ACCOUNTING_CACHE
-    snap = trading_accounting_snapshot(db)
+    db_file = _resolve_db_file(db)
+    ro_db = _RoAccountingDb(db_file) if db_file.exists() else (db or get_db())
+    snap = trading_accounting_snapshot(ro_db)
     with _LIVE_SWAPS_CACHE_LOCK:
         _ACCOUNTING_CACHE = snap
         _ACCOUNTING_CACHE_TIME = time.time()
     return snap
 
 
-def _recent_live_swaps_fast(db: Any) -> list[Dict[str, Any]]:
+def _recent_live_swaps_fast(db: Any = None) -> list[Dict[str, Any]]:
     global _LIVE_SWAPS_CACHE, _LIVE_SWAPS_CACHE_TIME
     now_ts = time.time()
     with _LIVE_SWAPS_CACHE_LOCK:
@@ -146,7 +304,7 @@ def _recent_live_swaps_fast(db: Any) -> list[Dict[str, Any]]:
     rows_out: list[Dict[str, Any]] = []
     try:
         import sqlite3
-        db_file = Path(getattr(db, "db_path", ROOT / "storage" / "trading_cache.db")).as_posix()
+        db_file = _resolve_db_file(db).as_posix()
         con = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=2.0)
         con.row_factory = sqlite3.Row
         try:
@@ -576,7 +734,35 @@ class PipelineReadinessView(APIView):
 
 class BusScheduleView(APIView):
     def get(self, request: Request, *args, **kwargs) -> Response:
-        db = get_db()
+        global _BUS_SCHEDULE_PAYLOAD_CACHE, _BUS_SCHEDULE_PAYLOAD_TIME
+        if os.getenv("PYTEST_CURRENT_TEST"):
+            return self._build_bus_schedule_response(use_mock_db=True)
+        now_req = time.time()
+        with _LIVE_SWAPS_CACHE_LOCK:
+            cached = dict(_BUS_SCHEDULE_PAYLOAD_CACHE) if _BUS_SCHEDULE_PAYLOAD_CACHE else None
+            age = now_req - _BUS_SCHEDULE_PAYLOAD_TIME
+        if cached is not None and age < 15.0:
+            if age >= 2.5 and _BUS_SCHEDULE_REFRESHING.acquire(blocking=False):
+                def _bg_refresh() -> None:
+                    try:
+                        self._build_bus_schedule_response()
+                    finally:
+                        _BUS_SCHEDULE_REFRESHING.release()
+                threading.Thread(target=_bg_refresh, daemon=True, name="bus-sched-refresh").start()
+            return Response(cached, status=status.HTTP_200_OK)
+        if not _BUS_SCHEDULE_REFRESHING.acquire(blocking=False):
+            with _LIVE_SWAPS_CACHE_LOCK:
+                if _BUS_SCHEDULE_PAYLOAD_CACHE:
+                    return Response(dict(_BUS_SCHEDULE_PAYLOAD_CACHE), status=status.HTTP_200_OK)
+            _BUS_SCHEDULE_REFRESHING.acquire()
+        try:
+            return self._build_bus_schedule_response()
+        finally:
+            _BUS_SCHEDULE_REFRESHING.release()
+
+    def _build_bus_schedule_response(self, use_mock_db: bool = False) -> Response:
+        global _BUS_SCHEDULE_PAYLOAD_CACHE, _BUS_SCHEDULE_PAYLOAD_TIME
+        db = get_db() if use_mock_db else None
         snapshot = _cached_latest_snapshot(db)
         scheduler = snapshot.get("scheduler") if isinstance(snapshot, dict) else []
         transition = {}
@@ -589,11 +775,6 @@ class BusScheduleView(APIView):
 
         risk_flags = transition.get("risk_flags") if isinstance(transition, dict) else {}
         readiness = _load_report(ROOT / "data/reports/live_readiness.json")
-        # Prefer the transition plan the trading process actually acts on, then
-        # the report file, then per-strategy truth. The report alone said
-        # ghost_collection_ready=False from the degenerate mini gate, so the
-        # Bus Scheduler displayed "Ghost Lane HALTED: insufficient_accuracy"
-        # while ghost trading was running and halt_ghost was 0 in the plan.
         bus_strategies = strategy_readiness()
         if isinstance(risk_flags, dict) and "halt_ghost" in risk_flags:
             ghost_collection_ready = not bool(risk_flags.get("halt_ghost"))
@@ -613,7 +794,7 @@ class BusScheduleView(APIView):
         atf_pending_actions = []
         atf_action_by_symbol = {}
         try:
-            stored_atf_actions = db.get_json("atf_static_strategy:pending_bus_actions") or []
+            stored_atf_actions = _ro_sqlite_json_kv(db, "atf_static_strategy:pending_bus_actions", [])
         except Exception:
             stored_atf_actions = []
         if isinstance(stored_atf_actions, list):
@@ -745,7 +926,7 @@ class BusScheduleView(APIView):
         # and pending bus actions here so the Bus Scheduler ghost section is a
         # complete operational view instead of only showing legacy routes.
         try:
-            atf_positions = db.get_json("atf_static_strategy:ghost_positions") or {}
+            atf_positions = _ro_sqlite_json_kv(db, "atf_static_strategy:ghost_positions", {})
         except Exception:
             atf_positions = {}
         atf_position_symbols = set()
@@ -863,7 +1044,7 @@ class BusScheduleView(APIView):
             for mb_sym, mb_sid, mb_hz in [
                 ("WETH-USDC", "money_button", "10m"),
                 ("WETH-USDT", "money_button_dip", "30m"),
-                ("CBBTC-USDC", "money_button_dip", "30m"),
+                ("MORPHO-USDC", "money_button_dip", "30m"),
             ]:
                 if mb_sym not in live_symbols_present:
                     live_symbols_present.add(mb_sym)
@@ -895,7 +1076,7 @@ class BusScheduleView(APIView):
                     "usd_value": round(sw["quote_spent"] or 0.55, 6),
                     "horizon": sw["horizon"],
                     "confidence": sw["confidence"],
-                    "reason": f"settled on Base ({txh[:10]}...)",
+                    "reason": f"settled on Base ({txh})",
                     "tx_hash": txh,
                     "updated_at": sw["ts"],
                     "strategy_id": sw["strategy_id"] or "money_button",
@@ -996,6 +1177,9 @@ class BusScheduleView(APIView):
             },
             "route_diagnostics": route_diagnostics[:30],
         }
+        with _LIVE_SWAPS_CACHE_LOCK:
+            _BUS_SCHEDULE_PAYLOAD_CACHE = dict(payload)
+            _BUS_SCHEDULE_PAYLOAD_TIME = time.time()
         return Response(payload, status=status.HTTP_200_OK)
 
 

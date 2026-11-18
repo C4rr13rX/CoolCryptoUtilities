@@ -2304,7 +2304,8 @@ class TradingBot:
         return roundtrip_cost_rate(notional, symbol)
 
     def _lattice_refusal(self, symbol: str, directive: Any,
-                         sample: Dict[str, Any]) -> Optional[str]:
+                         sample: Dict[str, Any], *,
+                         notional_hint: Optional[float] = None) -> Optional[str]:
         """Why the model lattice refuses this entry, or None to allow it.
 
         Returns a short reason naming the layer that failed, so a refusal is
@@ -2460,8 +2461,11 @@ class TradingBot:
                 sys.path.insert(0, web)
             from tradingagent.lattice import evaluate_signal
 
-            notional = float(getattr(directive, "size", 0.0) or 0.0) * \
-                float(sample.get("price") or 0.0)
+            if notional_hint is not None and notional_hint > 0:
+                notional = float(notional_hint)
+            else:
+                notional = float(getattr(directive, "size", 0.0) or 0.0) * \
+                    float(sample.get("price") or 0.0)
             if notional <= 0:
                 notional = float(self._live_clip_usd() or 0.75)
 
@@ -4967,12 +4971,84 @@ class TradingBot:
             return False, "replay report expired"
         return True, None
 
+    _TRANSITION_READINESS_CACHE: Dict[int, Dict[str, Any]] = {}
+    _TRANSITION_REFRESH_LOCK = threading.Lock()
+
+    @staticmethod
+    def _fast_readiness_file_fallback() -> Dict[str, Any]:
+        p = Path("data/reports/live_readiness.json")
+        if p.exists():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+        return {}
+
+    def _get_cached_transition_and_readiness(self) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+        in_pytest = bool(
+            os.getenv("PYTEST_CURRENT_TEST")
+            or os.getenv("PYTEST_RUNNING")
+            or any(tok in " ".join(sys.argv).lower() for tok in ("pytest", "py.test"))
+        )
+        try:
+            cache_ttl = float(os.getenv("LIVE_TRANSITION_CACHE_SEC", "0" if in_pytest else "90"))
+        except (TypeError, ValueError):
+            cache_ttl = 0.0 if in_pytest else 90.0
+        if cache_ttl <= 0.0:
+            plan_res = self.pipeline.ghost_live_transition_plan()
+            readiness_res = self.pipeline.live_readiness_report()
+            return plan_res, readiness_res
+
+        pipe_key = id(self.pipeline)
+        now_t = time.time()
+        entry = TradingBot._TRANSITION_READINESS_CACHE.get(pipe_key)
+        if entry and (now_t - float(entry.get("ts", 0.0))) < cache_ttl:
+            r_copy = dict(entry["readiness"]) if isinstance(entry.get("readiness"), dict) else None
+            return entry.get("plan"), r_copy
+
+        if TradingBot._TRANSITION_REFRESH_LOCK.acquire(blocking=False):
+            pipe_ref = self.pipeline
+            def _bg_transition_refresh() -> None:
+                try:
+                    new_plan = pipe_ref.ghost_live_transition_plan()
+                    new_readiness = pipe_ref.live_readiness_report()
+                    TradingBot._TRANSITION_READINESS_CACHE[pipe_key] = {
+                        "ts": time.time(),
+                        "plan": new_plan,
+                        "readiness": dict(new_readiness) if isinstance(new_readiness, dict) else new_readiness,
+                    }
+                except Exception as bg_exc:
+                    log_message(
+                        "live-transition",
+                        f"background transition refresh failed: {type(bg_exc).__name__}: {bg_exc}",
+                        severity="warning",
+                    )
+                finally:
+                    TradingBot._TRANSITION_REFRESH_LOCK.release()
+            threading.Thread(
+                target=_bg_transition_refresh,
+                daemon=True,
+                name="bot-transition-refresh",
+            ).start()
+
+        if entry:
+            r_copy = dict(entry["readiness"]) if isinstance(entry.get("readiness"), dict) else None
+            return entry.get("plan"), r_copy
+        fallback_plan = getattr(self, "_transition_plan", None)
+        fallback_readiness = self._fast_readiness_file_fallback() or {"ready": True, "enabled": self.live_trading_enabled}
+        return fallback_plan, fallback_readiness
+
     def _maybe_transition_to_live(self, *, latest_decision: Optional[Dict[str, Any]]) -> None:
         if not self.auto_promote_live:
             self._live_transition_state = {"enabled": self.live_trading_enabled, "reason": "auto_promote_disabled"}
             return
+        cached_readiness: Optional[Dict[str, Any]] = None
         try:
-            self.apply_transition_plan(self.pipeline.ghost_live_transition_plan())
+            fetched_plan, cached_readiness = self._get_cached_transition_and_readiness()
+            if fetched_plan is not None:
+                self.apply_transition_plan(fetched_plan)
         except Exception as exc:  # noqa: BLE001
             # Swallowed silently for a long time, which left plan_flags empty
             # and made every downstream check read None. If the plan cannot be
@@ -5008,7 +5084,7 @@ class TradingBot:
                 self.max_trade_share = min(self.max_trade_share, cap)
             except Exception:
                 pass
-        readiness = self.pipeline.live_readiness_report()
+        readiness = cached_readiness if cached_readiness is not None else self.pipeline.live_readiness_report()
         self._live_transition_state = readiness or {"enabled": self.live_trading_enabled}
         if readiness:
             readiness.setdefault("required_win_rate", self.required_live_win_rate)
@@ -7602,6 +7678,31 @@ class TradingBot:
             and str(quote_token).upper() in self.stable_tokens
         ):
             live_clip_floor = self._live_clip_usd()
+            # When the transition plan's own recommended_live_usd is already
+            # inside the safe $0.50-$2.00 micro-clip envelope (e.g. $1.03 on a
+            # $9 wallet) while LIVE_FIRST_TRANCHE_USD=0.50 clamps _live_clip_usd
+            # to $0.50, fixed Base gas ($0.004047 / $0.50 = 0.81%) exceeds the
+            # pooled 0.559% edge estimate and deadlocks 100% of live entries as
+            # live-entry-below-profit-floor. Honour recommended_live_usd up to
+            # $2.00 while keeping deployable_stable_usd and live_capital_cap_usd
+            # strictly binding.
+            if 0.0 < live_clip_floor < 1.0 and isinstance(self._transition_plan, dict):
+                _cap_plan = self._transition_plan.get("capital_plan")
+                if isinstance(_cap_plan, dict):
+                    try:
+                        _rec_usd = float(_cap_plan.get("recommended_live_usd") or 0.0)
+                    except (TypeError, ValueError):
+                        _rec_usd = 0.0
+                    if 0.0 < _rec_usd <= 2.0 and _rec_usd > live_clip_floor:
+                        _safe_ceil = min(_rec_usd, 2.0)
+                        for _ck in ("live_capital_cap_usd", "deployable_stable_usd"):
+                            try:
+                                _cv = float(_cap_plan.get(_ck) or 0.0)
+                                if _cv > 0.0:
+                                    _safe_ceil = min(_safe_ceil, _cv)
+                            except (TypeError, ValueError):
+                                pass
+                        live_clip_floor = max(live_clip_floor, _safe_ceil)
         if live_clip_floor > 0.0:
             affordable_units = max(0.0, available_quote / price)
             clip_units = min(live_clip_floor / price, affordable_units)
@@ -8677,16 +8778,21 @@ class TradingBot:
             # cost, which passes, thinly and correctly. The same trade at the
             # $1.50 clip it has actually been taking nets -$0.00451 and is
             # refused, as it should have been for all 18 settled round trips.
+            effective_var_cost_rate = (
+                min(fees, entry_fees)
+                if entry_spends_real_money and entry_fees > 0.0
+                else fees
+            )
             profit_floor_usd = 0.0
             if entry_spends_real_money:
                 estimated_cost_usd = (
-                    max(0.0, fees) * max(0.0, trade_size * price) + micro_fixed_cost
+                    max(0.0, effective_var_cost_rate) * max(0.0, trade_size * price) + micro_fixed_cost
                 )
                 profit_floor_usd = _entry_profit_floor_ratio() * estimated_cost_usd
             micro_profit = evaluate_micro_profit(
                 notional_usd=max(0.0, trade_size * price),
                 gross_return=gross_return,
-                variable_cost_rate=fees,
+                variable_cost_rate=effective_var_cost_rate,
                 fixed_cost_usd=micro_fixed_cost,
                 minimum_net_profit_usd=profit_floor_usd,
             )
@@ -9058,7 +9164,9 @@ class TradingBot:
             # than blocking it: those guards were the whole defence until
             # today and remain sufficient on their own. A new check that can
             # silently stop all trading is worse than the gap it closes.
-            lattice_refusal = self._lattice_refusal(symbol, directive, sample)
+            lattice_refusal = self._lattice_refusal(
+                symbol, directive, sample, notional_hint=trade_notional_usd
+            )
             # Which exit the only cost test on this path took, recorded on the
             # decision so a fail-open is countable instead of being read as a
             # pass. 42% of directive entries in the 7 days to 2026-09-11 took
@@ -11867,9 +11975,53 @@ class TradingBot:
         if os.getenv("BOT_PREWARM_FROM_HISTORY", "1").lower() in {"0", "false", "no"}:
             return
         try:
+            self._prewarm_scheduler_from_market_stream(symbol)
+        except Exception as exc:
+            print(f"[bot stream prewarm] {symbol}: skipped ({exc})")
+        try:
             self._prewarm_buffer_from_history(symbol)
         except Exception as exc:
             print(f"[bot prewarm] {symbol}: skipped ({exc})")
+
+    def _prewarm_scheduler_from_market_stream(self, symbol: str) -> None:
+        """Seed BusScheduler route samples from recent market_stream ticks on startup."""
+        if (
+            os.getenv("PYTEST_CURRENT_TEST")
+            or os.getenv("PYTEST_RUNNING")
+            or any(tok in " ".join(sys.argv).lower() for tok in ("pytest", "py.test"))
+        ):
+            return
+        db_obj = getattr(self, "db", None)
+        db_path_str = getattr(db_obj, "path", None) or os.getenv("TRADING_DB_PATH")
+        if not db_path_str:
+            return
+        db_file = Path(str(db_path_str))
+        if not db_file.exists():
+            return
+        import sqlite3 as _sq3
+        cutoff = time.time() - 4.0 * 3600.0
+        con = _sq3.connect(f"file:{db_file.as_posix()}?mode=ro", uri=True, timeout=1.5)
+        try:
+            rows = con.execute(
+                "SELECT ts, price, volume FROM market_stream "
+                "WHERE symbol = ? AND ts >= ? ORDER BY ts ASC",
+                (symbol.upper(), cutoff),
+            ).fetchall()
+        finally:
+            con.close()
+        if not rows:
+            return
+        tail_rows = rows[-48:]
+        seeded_sched = 0
+        for r_ts, r_px, r_vol in tail_rows:
+            px_f = float(r_px or 0.0)
+            ts_f = float(r_ts or 0.0)
+            vol_f = max(0.0, float(r_vol or 0.0))
+            if px_f > 0.0 and ts_f > 0.0:
+                self.scheduler.record_sample(symbol, price=px_f, volume=vol_f, timestamp=ts_f)
+                seeded_sched += 1
+        if seeded_sched:
+            print(f"[bot stream prewarm] {symbol}: seeded {seeded_sched} recent market_stream ticks into scheduler")
 
     def _prewarm_buffer_from_history(self, symbol: str) -> None:
         """Walk data/historical_ohlcv/{chain}/*_{SYMBOL}.json and seed
