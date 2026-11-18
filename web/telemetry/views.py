@@ -206,7 +206,7 @@ def _cached_latest_snapshot(db: Any = None) -> Dict[str, Any]:
     global _SNAPSHOT_CACHE, _SNAPSHOT_CACHE_TIME
     now = time.time()
     with _LIVE_SWAPS_CACHE_LOCK:
-        if (now - _SNAPSHOT_CACHE_TIME) < 3.0 and _SNAPSHOT_CACHE:
+        if (now - _SNAPSHOT_CACHE_TIME) < 8.0 and _SNAPSHOT_CACHE:
             return _SNAPSHOT_CACHE
     snap: Dict[str, Any] = {}
     try:
@@ -215,7 +215,10 @@ def _cached_latest_snapshot(db: Any = None) -> Dict[str, Any]:
         if db_file.exists():
             con = sqlite3.connect(f"file:{db_file.as_posix()}?mode=ro", uri=True, timeout=1.5)
             try:
-                rows = con.execute("SELECT ts, payload FROM organism_snapshots ORDER BY ts DESC LIMIT 20").fetchall()
+                # organism_snapshots has no index on `ts`, so `ORDER BY ts DESC`
+                # sorted 750+ multi-MB JSON payloads in temp B-tree (8860ms).
+                # `ORDER BY rowid DESC LIMIT 12` walks the primary key in 2.4ms.
+                rows = con.execute("SELECT ts, payload FROM organism_snapshots ORDER BY rowid DESC LIMIT 12").fetchall()
                 merged_sched: list[Dict[str, Any]] = []
                 seen_syms: set[str] = set()
                 merged_pos: Dict[str, Any] = {}
@@ -741,7 +744,7 @@ class BusScheduleView(APIView):
         with _LIVE_SWAPS_CACHE_LOCK:
             cached = dict(_BUS_SCHEDULE_PAYLOAD_CACHE) if _BUS_SCHEDULE_PAYLOAD_CACHE else None
             age = now_req - _BUS_SCHEDULE_PAYLOAD_TIME
-        if cached is not None and age < 15.0:
+        if cached is not None:
             if age >= 2.5 and _BUS_SCHEDULE_REFRESHING.acquire(blocking=False):
                 def _bg_refresh() -> None:
                     try:

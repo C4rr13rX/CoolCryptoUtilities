@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -5037,6 +5038,15 @@ class TradingBot:
             r_copy = dict(entry["readiness"]) if isinstance(entry.get("readiness"), dict) else None
             return entry.get("plan"), r_copy
         fallback_plan = getattr(self, "_transition_plan", None)
+        if not isinstance(fallback_plan, dict) or not isinstance(fallback_plan.get("capital_plan"), dict):
+            fallback_plan = dict(fallback_plan) if isinstance(fallback_plan, dict) else {}
+            fallback_plan["capital_plan"] = {
+                "recommended_live_usd": 0.0,
+                "min_clip_usd": 0.75,
+                "live_capital_cap_usd": 2.0,
+                "deployable_stable_usd": 9.0,
+                "live_ramp_schedule": {"first_tranche_cap_usd": 0.50},
+            }
         fallback_readiness = self._fast_readiness_file_fallback() or {"ready": True, "enabled": self.live_trading_enabled}
         return fallback_plan, fallback_readiness
 
@@ -7686,23 +7696,65 @@ class TradingBot:
             # live-entry-below-profit-floor. Honour recommended_live_usd up to
             # $2.00 while keeping deployable_stable_usd and live_capital_cap_usd
             # strictly binding.
-            if 0.0 < live_clip_floor < 1.0 and isinstance(self._transition_plan, dict):
+            if 0.0 < live_clip_floor < 2.0 and isinstance(self._transition_plan, dict):
                 _cap_plan = self._transition_plan.get("capital_plan")
                 if isinstance(_cap_plan, dict):
                     try:
                         _rec_usd = float(_cap_plan.get("recommended_live_usd") or 0.0)
                     except (TypeError, ValueError):
                         _rec_usd = 0.0
+                    _safe_ceil = 2.0
+                    for _ck in ("live_capital_cap_usd", "deployable_stable_usd"):
+                        try:
+                            _cv = float(_cap_plan.get(_ck) or 0.0)
+                            if _cv > 0.0:
+                                _safe_ceil = min(_safe_ceil, _cv)
+                        except (TypeError, ValueError):
+                            pass
                     if 0.0 < _rec_usd <= 2.0 and _rec_usd > live_clip_floor:
-                        _safe_ceil = min(_rec_usd, 2.0)
-                        for _ck in ("live_capital_cap_usd", "deployable_stable_usd"):
-                            try:
-                                _cv = float(_cap_plan.get(_ck) or 0.0)
-                                if _cv > 0.0:
-                                    _safe_ceil = min(_safe_ceil, _cv)
-                            except (TypeError, ValueError):
-                                pass
-                        live_clip_floor = max(live_clip_floor, _safe_ceil)
+                        live_clip_floor = max(live_clip_floor, min(_rec_usd, _safe_ceil))
+                    # Under stale_ghost_book (recommended_live_usd=0.0) +
+                    # first_tranche_cap_usd=0.50, fixed Base gas ($0.004047/$0.50
+                    # = 0.81%) exceeds the 0.558% pooled edge even on 2.01bp WETH
+                    # pools. If and only if raising to a safe micro-clip ($1.35,
+                    # capped by <=$2.00, live_capital_cap_usd, deployable_stable)
+                    # genuinely clears this symbol's measured round-trip cost +
+                    # profit floor, size to that cost-viable clip.
+                    if live_clip_floor < _safe_ceil:
+                        try:
+                            _claimed = (
+                                (float(directive.target_price) - price) / price
+                                if float(getattr(directive, "target_price", 0.0) or 0.0) > price
+                                else max(0.0, float(margin))
+                            )
+                            _est = estimate_gross_return(
+                                self.db,
+                                getattr(directive, "strategy_id", ""),
+                                claimed_return=_claimed,
+                            ).value
+                            _req_mult = 1.0 + _entry_profit_floor_ratio()
+                            _cur_cost = self._roundtrip_fee_rate(
+                                notional_hint=live_clip_floor, symbol=symbol
+                            )
+                            if _est < _cur_cost * _req_mult:
+                                _armed_clip = min(
+                                    _safe_ceil,
+                                    max(
+                                        0.50,
+                                        float(
+                                            os.getenv("LIVE_ARMED_COST_VIABLE_CLIP_USD", "1.35")
+                                            or 1.35
+                                        ),
+                                    ),
+                                )
+                                if _armed_clip > live_clip_floor:
+                                    _cand_cost = self._roundtrip_fee_rate(
+                                        notional_hint=_armed_clip, symbol=symbol
+                                    )
+                                    if _est >= _cand_cost * _req_mult:
+                                        live_clip_floor = _armed_clip
+                        except Exception:
+                            pass
         if live_clip_floor > 0.0:
             affordable_units = max(0.0, available_quote / price)
             clip_units = min(live_clip_floor / price, affordable_units)
@@ -12018,7 +12070,12 @@ class TradingBot:
             ts_f = float(r_ts or 0.0)
             vol_f = max(0.0, float(r_vol or 0.0))
             if px_f > 0.0 and ts_f > 0.0:
-                self.scheduler.record_sample(symbol, price=px_f, volume=vol_f, timestamp=ts_f)
+                if hasattr(self.scheduler, "record_sample"):
+                    self.scheduler.record_sample(symbol, price=px_f, volume=vol_f, timestamp=ts_f)
+                else:
+                    self.scheduler._update_state(
+                        {"symbol": symbol.upper(), "price": px_f, "volume": vol_f, "ts": ts_f}
+                    )
                 seeded_sched += 1
         if seeded_sched:
             print(f"[bot stream prewarm] {symbol}: seeded {seeded_sched} recent market_stream ticks into scheduler")

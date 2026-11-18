@@ -1168,6 +1168,34 @@ def _held_position_symbols(db: Optional["TradingDatabase"]) -> List[str]:
     return list(dict.fromkeys(held))
 
 
+def _build_market_stream(*, symbol: str, chain: str) -> MarketDataStream:
+    """Build a MarketDataStream configured for reliable Base DEX / spot polling.
+
+    Measured 2026-11-18 in logs/stream_debug.log: Base pairs listed on MEXC
+    (WETH-USDC, WETH-USDT, MORPHO-USDC, SOL-USDC, ETH-USDC, ARB-USDC) bound to
+    legacy ``wss://wbs.mexc.com/ws``, which ignores JSON subscribe frames while
+    holding ``ws.receive()`` open indefinitely, starving all four licensed live
+    Base routes to 0 market_stream ticks while REST-only CBBTC-USDC ticked.
+    Defaulting Base streams to REST consensus (unless MARKET_BASE_WS_ENABLED=1
+    or an explicit WS template is configured) routes every licensed Base pair
+    straight to live DexScreener/GeckoTerminal/Coinbase/Kraken polling.
+    """
+    stream = MarketDataStream(symbol=symbol, chain=chain)
+    if (
+        str(chain or "").lower() == "base"
+        and not getattr(stream, "_template", None)
+        and (os.getenv("MARKET_BASE_WS_ENABLED", "0") or "0").strip().lower()
+        not in {"1", "true", "yes", "on"}
+    ):
+        try:
+            stream._ws_disabled = True
+            stream._ws_disabled_reason = "base_rest_consensus"
+            stream.url = None
+        except AttributeError:
+            pass
+    return stream
+
+
 class GhostTradingSupervisor:
     def __init__(
         self,
@@ -1478,7 +1506,7 @@ class GhostTradingSupervisor:
             if self.stream_total > pair_limit else []
         )
         for pair in ordered:
-            stream = MarketDataStream(symbol=pair.symbol, chain=PRIMARY_CHAIN)
+            stream = _build_market_stream(symbol=pair.symbol, chain=PRIMARY_CHAIN)
             bot = TradingBot(db=self.db, stream=stream, pipeline=self.pipeline)
             bot.configure_route(pair.symbol, pair.tokens)
             bot.stable_checkpoint_ratio = self.stable_checkpoint_ratio
@@ -1498,7 +1526,7 @@ class GhostTradingSupervisor:
         for pair in data_pairs:
             try:
                 self.data_streams.append(
-                    MarketDataStream(symbol=pair.symbol, chain=PRIMARY_CHAIN))
+                    _build_market_stream(symbol=pair.symbol, chain=PRIMARY_CHAIN))
             except Exception:
                 continue
         if self.data_streams:
@@ -1825,7 +1853,7 @@ class GhostTradingSupervisor:
                             await stale_stream.stop()
                     except Exception:
                         pass
-                stream = MarketDataStream(symbol=symbol, chain=PRIMARY_CHAIN)
+                stream = _build_market_stream(symbol=symbol, chain=PRIMARY_CHAIN)
                 bot = TradingBot(db=self.db, stream=stream, pipeline=self.pipeline)
                 bot.configure_route(symbol, pair.tokens)
                 bot.stable_checkpoint_ratio = self.stable_checkpoint_ratio
@@ -1862,7 +1890,7 @@ class GhostTradingSupervisor:
                 continue
             if data_slots > 0:
                 existing.add(symbol)
-                stream = MarketDataStream(symbol=symbol, chain=PRIMARY_CHAIN)
+                stream = _build_market_stream(symbol=symbol, chain=PRIMARY_CHAIN)
                 self.data_streams.append(stream)
                 task = asyncio.create_task(self._run_data_stream_forever(stream))
                 self._tasks.append(task)
