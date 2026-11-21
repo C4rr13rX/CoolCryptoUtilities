@@ -1,0 +1,471 @@
+{
+  "round": 3,
+  "timestamp": "2026-11-21T08:28:32-05:00",
+  "passed": 31,
+  "total": 40,
+  "pass_rate_pct": 77.5,
+  "p50_ms": 14.54,
+  "p95_ms": 2044.91,
+  "max_ms": 8318.01,
+  "weaknesses_count": 9,
+  "results": [
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:09-05:00",
+      "id": "lead_ops_01",
+      "domain": "multi_pc_ops",
+      "prompt": "Hey, give me a quick status check on our multi-PC Wizard cluster \u2014 which local and LAN nodes are reachable right now, and how is memory looking?",
+      "ok": false,
+      "ms": 2038.08,
+      "weakness_reasons": [
+        "HTTP 599"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:11-05:00",
+      "id": "lead_ops_02",
+      "domain": "multi_pc_ops",
+      "prompt": "Can you check recent git commits in the repo so I can see what landed most recently?",
+      "ok": false,
+      "ms": 2017.04,
+      "weakness_reasons": [
+        "HTTP 599"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:13-05:00",
+      "id": "lead_ops_03",
+      "domain": "multi_pc_ops",
+      "prompt": "Look up how our peer experience exchange works across LAN nodes and summarize the safety and approval rules for me.",
+      "ok": false,
+      "ms": 2044.91,
+      "weakness_reasons": [
+        "HTTP 599"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:15-05:00",
+      "id": "lead_ops_04",
+      "domain": "multi_pc_ops",
+      "prompt": "Write a quick Python health-probe script that checks 127.0.0.1:8090/health and 10.0.0.5:39106/health with short timeouts and prints structured JSON status, and run it.",
+      "ok": false,
+      "ms": 2026.84,
+      "weakness_reasons": [
+        "HTTP 599"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:17-05:00",
+      "id": "lead_stem_01",
+      "domain": "stem_computing",
+      "prompt": "We need a 4th-order Runge-Kutta (RK4) ODE solver in Python for a damped harmonic oscillator (x'' + 2*zeta*w0*x' + w0^2*x = 0), plus a quick verification showing amplitude decay. Build and run it.",
+      "ok": false,
+      "ms": 2033.98,
+      "weakness_reasons": [
+        "HTTP 599"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:19-05:00",
+      "id": "lead_stem_02",
+      "domain": "stem_computing",
+      "prompt": "Build a spectral FFT / DFT frequency analyzer in Python that detects the dominant frequencies in a noisy two-tone signal (50 Hz and 120 Hz sampled at 1000 Hz) and verify it.",
+      "ok": false,
+      "ms": 2038.48,
+      "weakness_reasons": [
+        "HTTP 599"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:21-05:00",
+      "id": "lead_stem_03",
+      "domain": "stem_computing",
+      "prompt": "Write a Monte Carlo uncertainty propagation routine in Python for electrical power P = V^2 / R given Gaussian tolerances V = 24.0 +/- 0.2 V and R = 8.0 +/- 0.1 Ohm (5000 samples) and report mean + 95% confidence interval.",
+      "ok": false,
+      "ms": 2039.3,
+      "weakness_reasons": [
+        "HTTP 599"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:23-05:00",
+      "id": "lead_stem_04",
+      "domain": "stem_computing",
+      "prompt": "Build a linear least-squares calibration curve fitter (y = m*x + b with R^2 and residual standard error) for sensor voltage vs pressure data in Python, and run a test case.",
+      "ok": false,
+      "ms": 2036.96,
+      "weakness_reasons": [
+        "HTTP 599"
+      ],
+      "answer_preview": ""
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_lab_01",
+      "domain": "research_labs",
+      "prompt": "Our wet lab needs a FASTA DNA sequence analyzer in Python: compute length, GC-content percentage, reverse complement, and all ATG start-codon positions, then verify it on a sample sequence.",
+      "ok": true,
+      "ms": 8318.01,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python COMPLEMENT_MAP = str.maketrans(\"ACGTacgtNn"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_lab_02",
+      "domain": "research_labs",
+      "prompt": "Build a laboratory molarity dilution (C1*V1 = C2*V2) and molecular weight calculator in Python supporting chemical formulas like H2O, C6H12O6, and NaCl, and verify it.",
+      "ok": true,
+      "ms": 21.68,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import re  ATOMIC_WEIGHTS: dict[str, float"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_lab_03",
+      "domain": "research_labs",
+      "prompt": "Create a LIMS high-throughput screening assay QC module in Python that computes Z-prime factor (1 - 3*(sigma_p + sigma_n)/|mu_p - mu_n|), classifies plate quality, and run a verification check.",
+      "ok": true,
+      "ms": 12.04,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import statistics  def compute_z_prime(pos"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_lab_04",
+      "domain": "research_labs",
+      "prompt": "Build a pharmacokinetic 1-compartment IV bolus concentration model (C(t) = C0 * exp(-ke * t), half-life, and trapezoidal AUC) in Python and test it.",
+      "ok": true,
+      "ms": 7.6,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import math  def simulate_iv_bolus_pk(    "
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_steam_01",
+      "domain": "steam_creative",
+      "prompt": "Build a pure-Python 16-bit PCM audio synthesizer + Biquad low-pass DSP filter that generates a 440 Hz A4 tone with ADSR envelope and verifies peak and RMS levels.",
+      "ok": true,
+      "ms": 16.27,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import math import struct  def adsr_envelo"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_steam_02",
+      "domain": "steam_creative",
+      "prompt": "Generate a procedural SVG golden-angle phyllotaxis spiral generator in Python and verify the SVG output structure.",
+      "ok": true,
+      "ms": 8.77,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import math  GOLDEN_ANGLE_DEG = 137.507764"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_steam_03",
+      "domain": "steam_creative",
+      "prompt": "Write a GLSL WebGL fragment shader for an animated signed-distance-field (SDF) smooth-min metaball surface.",
+      "ok": true,
+      "ms": 2.51,
+      "weakness_reasons": [],
+      "answer_preview": "**WebGL / GLSL Animated SDF Smooth-Min Metaball Fragment Shader** *(`glsl`)*  ```glsl precision highp float;  "
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_steam_04",
+      "domain": "steam_creative",
+      "prompt": "Build a color-science accessibility utility in Python that converts sRGB hex to linear RGB, relative luminance, and WCAG 2.1 contrast ratio (AA/AAA compliance), and test black-on-white vs low-contrast pairs.",
+      "ok": true,
+      "ms": 9.35,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python def srgb_channel_to_linear(c_8bit: int) ->"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_mm_01",
+      "domain": "mm_saas",
+      "prompt": "Hey, build a thread-safe Token Bucket rate limiter in Python for our multi-tenant SaaS API, with unit tests proving burst allowance and throttling.",
+      "ok": true,
+      "ms": 8.05,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import threading import time  class MultiT"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_mm_02",
+      "domain": "mm_saas",
+      "prompt": "We need an idempotent webhook receiver helper in Python with HMAC-SHA256 signature verification, replay-window timestamp check, and deduplication cache. Build and test it.",
+      "ok": true,
+      "ms": 12.14,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import hashlib import hmac import threadin"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_mm_03",
+      "domain": "mm_saas",
+      "prompt": "Write a resilient Circuit Breaker + exponential-backoff-with-jitter retry module in Python (CLOSED -> OPEN -> HALF_OPEN -> CLOSED state machine) and verify all state transitions.",
+      "ok": true,
+      "ms": 19.55,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import random import threading from typing"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_mm_04",
+      "domain": "mm_saas",
+      "prompt": "Create a TypeScript RBAC permission & multi-tenant isolation guard (`orgId`, roles, scopes, and structured audit hook) for our B2B API.",
+      "ok": true,
+      "ms": 3.98,
+      "weakness_reasons": [],
+      "answer_preview": "**TypeScript Multi-Tenant RBAC & Scope Isolation Guard** *(`typescript`)*  ```typescript export type Role = 'o"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ent_01",
+      "domain": "enterprise_billion",
+      "prompt": "Build an immutable double-entry accounting ledger engine in Python using Decimal (zero float drift), enforcing balanced debits == credits per journal entry, trial balance check, and SHA-256 audit hash chaining. Run tests on it.",
+      "ok": true,
+      "ms": 14.54,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from dataclasses import dataclass from dec"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ent_02",
+      "domain": "enterprise_billion",
+      "prompt": "Implement a Consistent Hashing ring with virtual nodes in Python for sharding keys across our multi-PC cluster, and verify that removing 1 of 4 nodes moves less than 40% of keys.",
+      "ok": true,
+      "ms": 27.16,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import bisect import hashlib  class Consis"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ent_03",
+      "domain": "enterprise_billion",
+      "prompt": "Build a quantitative risk & execution analytics module in Python: compute Historical VaR (95% and 99%), Expected Shortfall (CVaR), maximum drawdown, Sharpe ratio, and VWAP execution slicing, and run a test portfolio.",
+      "ok": true,
+      "ms": 12.41,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import math import statistics  def compute"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ent_04",
+      "domain": "enterprise_billion",
+      "prompt": "Write a production SQL enterprise reconciliation query using CTEs and window functions that detects ledger balance gaps, duplicate idempotency keys, and rolling 7-day revenue anomalies per tenant.",
+      "ok": true,
+      "ms": 3.2,
+      "weakness_reasons": [],
+      "answer_preview": "**Enterprise Ledger Reconciliation & Anomaly Detection SQL (`WITH` CTEs + Window Functions)** *(`sql`)*  ```sq"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_followup_01",
+      "domain": "multi_turn_lead",
+      "prompt": "Build a thread-safe LRU cache with TTL expiration in Python and run quick tests on eviction and expiry.",
+      "ok": true,
+      "ms": 6.35,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from collections import OrderedDict import"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_followup_02",
+      "domain": "multi_turn_lead",
+      "prompt": "Nice \u2014 now save that last Python module to scratch/lead_lru_ttl.py and run a benchmark of 10,000 lookups on it.",
+      "ok": true,
+      "ms": 16.38,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Stateful Session Follow-Up]** - **Saved previous `python` module to workspace**: `scratch/l"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_ops_05",
+      "domain": "multi_pc_ops",
+      "prompt": "Hey, check git status for me so I can see what branch we're on and whether any files are modified.",
+      "ok": true,
+      "ms": 164.87,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Git Working Tree (`\u2713 Exit 0`)]**  ```text ## main...origin/main  M data/token_addresses.jso"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_ops_06",
+      "domain": "multi_pc_ops",
+      "prompt": "How is the W1z4rD multi-PC cluster structured between Pegasus and DESKTOP-6E34B18?",
+      "ok": true,
+      "ms": 81.95,
+      "weakness_reasons": [],
+      "answer_preview": "**W1z4rD Multi-PC Cluster Topology (`Pegasus` <-> `DESKTOP-6E34B18`)**  - **Pegasus (`10.0.0.2`)**: Runs the p"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_stem_05",
+      "domain": "stem_computing",
+      "prompt": "Write a 1D explicit finite-difference heat diffusion PDE solver in Python with Fourier stability verification and run it.",
+      "ok": false,
+      "ms": 14.61,
+      "weakness_reasons": [
+        "missing expected domain evidence ['exit 0']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python def solve_heat_1d(     alpha: float = 1e-4"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_stem_06",
+      "domain": "stem_computing",
+      "prompt": "Build a Newton-Raphson nonlinear root finder in Python and verify quadratic convergence on sqrt(2).",
+      "ok": true,
+      "ms": 10.1,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Callable  def newton_ra"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_stem_07",
+      "domain": "stem_computing",
+      "prompt": "Implement composite Simpson's 1/3 numerical integration in Python and verify integrating sin(x) from 0 to pi.",
+      "ok": true,
+      "ms": 8.16,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import math from typing import Callable  d"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_lab_05",
+      "domain": "research_labs",
+      "prompt": "Our biochemistry team needs a Michaelis-Menten enzyme kinetics nonlinear fitter for Vmax and Km in Python \u2014 build and test it.",
+      "ok": true,
+      "ms": 10.85,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python def fit_michaelis_menten(substrate_mm: lis"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_steam_05",
+      "domain": "steam_creative",
+      "prompt": "Generate a procedural L-system botanical fractal tree in SVG using Python and verify the SVG line segments.",
+      "ok": true,
+      "ms": 9.65,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import math  def generate_lsystem_svg(iter"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_steam_06",
+      "domain": "steam_creative",
+      "prompt": "Write a WebGL GLSL 3D raymarching SDF fragment shader with surface normal lighting.",
+      "ok": true,
+      "ms": 2.73,
+      "weakness_reasons": [],
+      "answer_preview": "**WebGL / GLSL Raymarched Signed-Distance-Field (SDF) Fragment Shader** *(`glsl`)*  ```glsl precision highp fl"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_mm_05",
+      "domain": "mm_saas",
+      "prompt": "Build a SOC2 and GDPR PII log redaction sanitizer in Python that scrubs emails, SSNs, Bearer tokens, and Luhn credit card numbers, and test it.",
+      "ok": true,
+      "ms": 8.69,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import re  EMAIL_RE = re.compile(r\"\\b[A-Za"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_mm_06",
+      "domain": "mm_saas",
+      "prompt": "Implement a W3C traceparent OpenTelemetry distributed tracing context propagator in Python and test parent-child span linking.",
+      "ok": true,
+      "ms": 12.53,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import os import re import time  TRACEPARE"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_ent_05",
+      "domain": "enterprise_billion",
+      "prompt": "Build an enterprise Saga distributed transaction coordinator in Python with automatic reverse compensating rollbacks on failure, and verify rollback order.",
+      "ok": true,
+      "ms": 12.37,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from dataclasses import dataclass from typ"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_mt_01",
+      "domain": "multi_turn_lead",
+      "prompt": "Build a Consistent Hashing ring with virtual nodes in Python for our 4-node cluster and verify key movement.",
+      "ok": true,
+      "ms": 33.27,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python import bisect import hashlib  class Consis"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_mt_02",
+      "domain": "multi_turn_lead",
+      "prompt": "Great, save that last module to scratch/cluster_ring.py and benchmark 15,000 shard lookups on it.",
+      "ok": true,
+      "ms": 62.69,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Stateful Session Follow-Up]** - **Saved previous `python` module to workspace**: `scratch/c"
+    },
+    {
+      "round": 3,
+      "ts": "2026-11-21T08:28:32-05:00",
+      "id": "lead_ext_mt_03",
+      "domain": "multi_turn_lead",
+      "prompt": "read scratch/cluster_ring.py",
+      "ok": true,
+      "ms": 10.34,
+      "weakness_reasons": [],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 `scratch/cluster_ring.py`]** *(showing up to 165 lines)*  ```py import bisect import hashli"
+    }
+  ]
+}

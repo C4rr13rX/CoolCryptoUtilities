@@ -1,0 +1,18 @@
+{
+  "compiled_at": "2026-11-21T09:10:58-05:00",
+  "license": "CC0-1.0 / Public Domain Scientific Invariant",
+  "discoveries_count": 30,
+  "course_lessons_count": 30,
+  "redundant_episodes_count": 540,
+  "convergence": {
+    "discoveries": 30,
+    "episodes_trained": 540,
+    "surviving_noise_features": 30,
+    "invariance_ratio": 3.46
+  },
+  "live_training": {
+    "anchored_lessons": 30,
+    "chat_pool_pairs_trained": 16,
+    "causal_pool_redundant_exposures_trained": 114
+  }
+}

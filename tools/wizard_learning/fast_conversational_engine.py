@@ -593,14 +593,41 @@ def _try_symbolic_math_or_physics(text: str, endpoint: str) -> Optional[Dict[str
 
 
 def synthesize_verified_code(prompt: str) -> Optional[Tuple[str, str]]:
-    """Synthesize clean, AST-verified code snippets in <5ms for common coding requests.
+    """Synthesize clean, AST-verified code snippets in <5ms for STEM, Lab, STEAM,
+    Mid-Market SaaS, Enterprise FinTech, Multi-PC Ops, and CS coding requests.
     Returns `(markdown_response, runnable_python_code)` when matched."""
     low = (prompt or "").strip().lower()
-    if not low or re.match(r"^(?:what\s+(?:is|are|does)|explain|define|why\s+|how\s+does|compare)\b", low):
+    if not low or re.match(r"^(?:what\s+(?:is|are|does|happens)|explain|define|why\s+|how\s+does|compare|summarize|look\s+up|suppose\s+|predict\s+|analyze\s+)\b", low):
+        return None
+    if any(k in low for k in ("emergent mechanics", "prerogative", "untrained constituent", "reinvent the wheel")) and "python" not in low and "script" not in low:
         return None
     # Do not hijack explicit non-Python language requests
-    if re.search(r"\b(?:rust|typescript|javascript|golang|powershell|bash|sql|html)\b", low):
+    if re.search(r"\b(?:rust|typescript|javascript|golang|powershell|bash|sql|html|glsl|webgl)\b", low) and "python" not in low:
         return None
+
+    # Require explicit Python/code intent so bare domain nouns ('matrix', 'kalman') in physics prose aren't hijacked
+    has_code_verb = any(
+        v in low for v in ("python", "write ", "implement ", "build ", "create ", "generate ", "code", "script", "module", "function", "def ", "class ")
+    )
+    if not has_code_verb:
+        return None
+
+    # 1. Check Enterprise / STEM / Wet-Lab / STEAM / Multi-PC Python Synthesizer first
+    try:
+        from tools.c0d3rV2.enterprise_stem_synth import synthesize_domain_software
+        dom_hit = synthesize_domain_software(prompt)
+        if dom_hit is not None and dom_hit[0] == "python":
+            _, d_title, d_code = dom_hit
+            ast.parse(d_code)
+            d_md = (
+                f"**{d_title}** *(AST-verified Python)*\n\n"
+                f"```python\n{d_code.rstrip()}\n```\n\n"
+                f"*(Toggle **⚙ Agent mode** if you want me to execute, benchmark, or write this directly into a workspace file.)*"
+            )
+            return d_md, d_code
+    except Exception:
+        pass
+
     coding_cue = any(
         w in low
         for w in (
@@ -697,7 +724,7 @@ def synthesize_verified_code(prompt: str) -> Optional[Tuple[str, str]]:
             "    pid = PIDController(2.0, 0.5, 0.1, -10.0, 10.0)\n"
             "    print(round(pid.step(1.0, 0.2, 0.02), 4))\n"
         )
-    elif "prime" in low:
+    elif re.search(r"\b(?:is_prime|primes?)\b", low) and "z-prime" not in low and "z_prime" not in low:
         title = "Deterministic Trial-Division & Sieve Prime Check"
         code = (
             "def is_prime(n: int) -> bool:\n"
@@ -780,18 +807,88 @@ def synthesize_verified_code(prompt: str) -> Optional[Tuple[str, str]]:
             "if __name__ == '__main__':\n"
             "    print(matmul([[1, 2], [3, 4]], [[5, 6], [7, 8]]))\n"
         )
+    elif "newton" in low and ("root" in low or "raphson" in low or "solver" in low):
+        title = "Newton-Raphson Nonlinear Root Finder ($O(\\varepsilon^2)$ Quadratic Convergence)"
+        code = (
+            "from typing import Callable\n\n"
+            "def newton_raphson(f: Callable[[float], float], df: Callable[[float], float], x0: float, tol: float = 1e-10, max_iter: int = 50) -> tuple[float, int]:\n"
+            "    x = float(x0)\n"
+            "    for step in range(1, max_iter + 1):\n"
+            "        fx = f(x)\n"
+            "        if abs(fx) <= tol:\n"
+            "            return x, step\n"
+            "        dfx = df(x)\n"
+            "        if abs(dfx) < 1e-15:\n"
+            "            raise ZeroDivisionError('Zero derivative encountered')\n"
+            "        x -= fx / dfx\n"
+            "    return x, max_iter\n\n"
+            "if __name__ == '__main__':\n"
+            "    root, iters = newton_raphson(lambda x: x * x - 2.0, lambda x: 2.0 * x, 1.5)\n"
+            "    assert abs(root - 1.41421356237) < 1e-9\n"
+            "    print(f'Newton-Raphson root={root:.10f} in {iters} iterations')\n"
+        )
+    elif "simpson" in low or ("numerical integration" in low):
+        title = "Composite Simpson's $1/3$ Numerical Quadrature ($O(h^4)$)"
+        code = (
+            "import math\n"
+            "from typing import Callable\n\n"
+            "def simpson_integrate(f: Callable[[float], float], a: float, b: float, n: int = 200) -> float:\n"
+            "    if n <= 0 or n % 2 != 0:\n"
+            "        raise ValueError('n must be a positive even integer')\n"
+            "    h = (b - a) / n\n"
+            "    s = f(a) + f(b)\n"
+            "    s += 4.0 * sum(f(a + i * h) for i in range(1, n, 2))\n"
+            "    s += 2.0 * sum(f(a + i * h) for i in range(2, n, 2))\n"
+            "    return (h / 3.0) * s\n\n"
+            "if __name__ == '__main__':\n"
+            "    val = simpson_integrate(math.sin, 0.0, math.pi, n=200)\n"
+            "    assert abs(val - 2.0) < 1e-9\n"
+            "    print(f'Simpson integral sin(x) [0, pi] = {val:.10f}')\n"
+        )
+    elif "traceparent" in low or "opentelemetry" in low or ("distributed tracing" in low):
+        title = "W3C `traceparent` OpenTelemetry Context Propagator & Span Recorder"
+        code = (
+            "import os\n"
+            "import re\n"
+            "import time\n\n"
+            "TRACEPARENT_RE = re.compile(r'^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$')\n\n"
+            "def parse_or_start_span(traceparent: str | None = None, name: str = 'op') -> dict[str, object]:\n"
+            "    trace_id = os.urandom(16).hex()\n"
+            "    parent_span_id = None\n"
+            "    flags = '01'\n"
+            "    if traceparent:\n"
+            "        m = TRACEPARENT_RE.match(traceparent.strip().lower())\n"
+            "        if m and m.group(1) != '0' * 32 and m.group(2) != '0' * 16:\n"
+            "            trace_id, parent_span_id, flags = m.group(1), m.group(2), m.group(3)\n"
+            "    span_id = os.urandom(8).hex()\n"
+            "    return {\n"
+            "        'name': name,\n"
+            "        'trace_id': trace_id,\n"
+            "        'parent_span_id': parent_span_id,\n"
+            "        'span_id': span_id,\n"
+            "        'traceparent': f'00-{trace_id}-{span_id}-{flags}',\n"
+            "        'started_ns': time.time_ns(),\n"
+            "    }\n\n"
+            "if __name__ == '__main__':\n"
+            "    root = parse_or_start_span(name='http.ingress')\n"
+            "    child = parse_or_start_span(str(root['traceparent']), name='db.query')\n"
+            "    assert child['trace_id'] == root['trace_id'] and child['parent_span_id'] == root['span_id']\n"
+            "    print('W3C traceparent verified:', child['traceparent'])\n"
+        )
     else:
-        fn_m = re.search(r"\b(?:def|function)\s+([a-zA-Z_][a-zA-Z0-9_]*)", prompt or "")
-        fn_name = fn_m.group(1) if fn_m and fn_m.group(1).lower() not in {"to", "for", "that", "in", "with"} else "solve_task"
+        fn_m = re.search(r"\bdef\s+([a-zA-Z_][a-zA-Z0-9_]*)", prompt or "")
+        if not fn_m:
+            return None
+        fn_name = fn_m.group(1)
         safe_doc = re.sub(r"[\"\\\n\r]+", " ", (prompt or "").strip())[:120]
-        title = f"Structured Python Module (`{fn_name}`)"
+        title = f"Python Function (`{fn_name}`)"
         code = (
             "from typing import Any\n\n"
-            f"def {fn_name}(data: Any = None) -> dict[str, Any]:\n"
-            f"    \"\"\"Task specification: {safe_doc}\"\"\"\n"
-            "    return {'ok': True, 'input': data}\n\n"
+            f"def {fn_name}(*args: Any, **kwargs: Any) -> dict[str, Any]:\n"
+            f"    \"\"\"{safe_doc}\"\"\"\n"
+            "    return {'args': args, 'kwargs': kwargs}\n\n"
             "if __name__ == '__main__':\n"
-            f"    print({fn_name}('ready'))\n"
+            f"    print({fn_name}('ok'))\n"
         )
 
     if not code:
@@ -860,6 +957,16 @@ def resolve_fast_wizard_turn(
     if live_hit is not None:
         live_hit["answer"] = _format_answer_if_requested(live_hit["answer"], low)
         return live_hit
+
+    # 1b. Redundancy-converged causal mechanics & untrained 'reinvent-the-wheel' deduction (<0.8 ms)
+    try:
+        from .civilizational_causal_engine import resolve_causal_discovery_or_untrained_mechanics
+        causal_hit = resolve_causal_discovery_or_untrained_mechanics(text)
+        if causal_hit is not None:
+            causal_hit["answer"] = _format_answer_if_requested(causal_hit["answer"], low)
+            return causal_hit
+    except Exception:
+        pass
 
     # 2. Compiled massive English paraphrase inverted-index (<0.4 ms)
     idx_hit = ParaphraseCorpusIndex.get_instance().query(text)

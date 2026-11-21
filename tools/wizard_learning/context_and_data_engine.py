@@ -18,6 +18,9 @@ from .runtime_context import WORLD_TZ_OFFSETS, build_runtime_context, convert_ti
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CORPUS_DIR = _PROJECT_ROOT / "data" / "wizard_learning" / "massive_context_corpus"
+ENTERPRISE_CORPUS_DIR = _PROJECT_ROOT / "data" / "wizard_learning" / "enterprise_stem_steam_corpus"
+CIVILIZATIONAL_COURSE_DIR = _PROJECT_ROOT / "data" / "wizard_learning" / "civilizational_discovery_course"
+CORPUS_DIRS = (CORPUS_DIR, ENTERPRISE_CORPUS_DIR, CIVILIZATIONAL_COURSE_DIR)
 
 _STOPWORDS = frozenset({
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
@@ -491,13 +494,22 @@ class ParaphraseCorpusIndex:
                     cls._instance = cls()
         return cls._instance
 
+    def _iter_corpus_files(self) -> List[Path]:
+        files: List[Path] = []
+        for cdir in CORPUS_DIRS:
+            if not cdir.is_dir():
+                continue
+            for p in sorted(cdir.glob("*.jsonl")):
+                if p.name == "weakness_log.jsonl":
+                    continue
+                files.append(p)
+        return files
+
     def _dir_sig(self) -> Tuple[Tuple[str, int], ...]:
-        if not CORPUS_DIR.is_dir():
-            return ()
         sig = []
-        for p in sorted(CORPUS_DIR.glob("*.jsonl")):
+        for p in self._iter_corpus_files():
             try:
-                sig.append((p.name, p.stat().st_mtime_ns))
+                sig.append((f"{p.parent.name}/{p.name}", p.stat().st_mtime_ns))
             except Exception:
                 pass
         return tuple(sig)
@@ -517,7 +529,7 @@ class ParaphraseCorpusIndex:
             exact: Dict[str, int] = {}
             inv: Dict[str, List[int]] = {}
             tok_sets: List[Set[str]] = []
-            for p in sorted(CORPUS_DIR.glob("*.jsonl")):
+            for p in self._iter_corpus_files():
                 try:
                     for ln in p.read_text(encoding="utf-8").splitlines():
                         ln = ln.strip()
@@ -584,10 +596,19 @@ class ParaphraseCorpusIndex:
 
         best_idx = -1
         best_score = 0.0
+        generic_stems = {
+            "check", "python", "rust", "typescript", "javascript", "sql",
+            "write", "cod", "code", "build", "creat", "create", "implement",
+            "function", "modul", "module", "number", "data", "test", "run",
+            "verifi", "verify", "solver", "summar", "overview", "archit",
+        }
+        q_specific = q_toks - generic_stems
         for idx, overlap in counts.items():
             if overlap < 2:
                 continue
             item_t = self._item_tokens[idx]
+            if q_specific and (len(q_specific & item_t) / len(q_specific)) < 0.6:
+                continue
             recall_q = overlap / max(1, len(q_toks))
             # Check best paraphrase precision too
             rec = self._items[idx]
@@ -630,6 +651,10 @@ def resolve_online_lookup_if_needed(
     on an ungrounded factual prompt), then anchor + train the learned answer immediately."""
     raw = (text or "").strip()
     if not raw:
+        return None
+    low = raw.lower()
+    # Never leak or delay internal W1z4rD / cluster / workspace questions on external web APIs
+    if any(k in low for k in ("our ", "w1z4rd", "wbrain", "c0d3r", "revenir", "pegasus", "39106", "39105", "8090")):
         return None
     is_explicit = bool(_ONLINE_EXPLICIT_RE.match(raw))
     if not is_explicit and not allow_auto_lookup:

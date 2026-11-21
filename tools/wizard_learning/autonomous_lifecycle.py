@@ -222,6 +222,18 @@ class AutonomousLifecycle:
         except Exception:
             return False
 
+    @staticmethod
+    def _wizard_node_process_alive() -> Optional[int]:
+        """Return PID if w1z4rd_node is alive on the OS (distinguishing busy .wbrain settling from dead/offline)."""
+        try:
+            for proc in psutil.process_iter(["pid", "name"]):
+                nm = (proc.info.get("name") or "").lower()
+                if "w1z4rd_node" in nm:
+                    return int(proc.info["pid"])
+        except Exception:
+            pass
+        return None
+
     def train_pair(self, prompt: str, target: str, passes: int = 10) -> bool:
         """Train a deterministic Q&A pair into both the 5-pool W1z4rD Brain (`/brain/pretrain_binding`
         with EEM symbolic relation induction) and `/multi_pool/train_pair`, registering for post-sleep verification."""
@@ -725,9 +737,18 @@ class AutonomousLifecycle:
         t0 = time.time()
 
         if not self._node_online():
+            live_node_pid = self._wizard_node_process_alive()
+            if live_node_pid is not None:
+                self.cognitive.set_mode(
+                    "SLEEPING_SETTLING",
+                    detail=f"W1z4rD node (PID {live_node_pid}) consolidating .wbrain; Living Eye sleeping while fast chat stays active.",
+                    can_chat=True,
+                    is_daemon=True,
+                )
+                return {"cycle": self.cycle_count, "skipped": "node_settling_busy"}
             self.cognitive.set_mode(
                 "OFFLINE",
-                detail="W1z4rD node (:8090) unreachable; waiting for supervisor recovery.",
+                detail="W1z4rD node (:8090) process not running; waiting for supervisor recovery.",
                 can_chat=False,
                 is_daemon=True,
             )

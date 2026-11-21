@@ -259,6 +259,18 @@ def synthesize_polyglot_code(prompt: str) -> Optional[Tuple[str, str, str]]:
         return None
     want_raw_json = "json" in low and ("return" in low or "output" in low or "format" in low) and "json" not in low.split("parse")[0] if "parse" in low else False
 
+    # Check high-depth Enterprise / STEM / STEAM non-Python blueprints first (GLSL, Multi-Tenant TS RBAC, Enterprise SQL CTEs)
+    try:
+        from tools.c0d3rV2.enterprise_stem_synth import synthesize_domain_software
+        dom_hit = synthesize_domain_software(prompt)
+        if dom_hit is not None and dom_hit[0] != "python":
+            d_lang, d_title, d_code = dom_hit
+            if want_raw_json:
+                return d_lang, json.dumps({"language": d_lang, "title": d_title, "code": d_code.rstrip()}, indent=2), d_code
+            return d_lang, f"**{d_title}** *(`{d_lang}`)*\n\n```{d_lang}\n{d_code.rstrip()}\n```", d_code
+    except Exception:
+        pass
+
     # Detect explicit target language
     lang = ""
     if re.search(r"\brust\b", low):

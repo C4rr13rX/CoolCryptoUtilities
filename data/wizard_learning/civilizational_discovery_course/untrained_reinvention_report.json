@@ -1,0 +1,43 @@
+{
+  "evaluated_at": "2026-11-21T09:25:00-05:00",
+  "trained_utterances_audited": 1497,
+  "training_overlap_count": 0,
+  "total_untrained_questions": 2700,
+  "passed": 2700,
+  "pass_rate_pct": 100.0,
+  "wall_seconds": 41.17,
+  "p50_ms": 134.98,
+  "p95_ms": 332.57,
+  "p99_ms": 605.79,
+  "families": {
+    "austere_reinvention": {
+      "passed": 900,
+      "total": 900,
+      "pass_rate_pct": 100.0,
+      "p50_ms": 146.23,
+      "p95_ms": 382.25
+    },
+    "cross_domain_composition": {
+      "passed": 800,
+      "total": 800,
+      "pass_rate_pct": 100.0,
+      "p50_ms": 125.92,
+      "p95_ms": 302.42
+    },
+    "counterfactual_broken_condition": {
+      "passed": 640,
+      "total": 640,
+      "pass_rate_pct": 100.0,
+      "p50_ms": 130.74,
+      "p95_ms": 270.71
+    },
+    "alien_constituent_transfer": {
+      "passed": 360,
+      "total": 360,
+      "pass_rate_pct": 100.0,
+      "p50_ms": 151.35,
+      "p95_ms": 415.53
+    }
+  },
+  "sample_failures": []
+}

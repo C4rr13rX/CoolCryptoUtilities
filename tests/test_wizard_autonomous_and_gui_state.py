@@ -401,3 +401,92 @@ def test_context_clock_data_polyglot_and_silence_contract():
         # 6. Caller context extraction
         c_res = fce.resolve_fast_wizard_turn("What is the project_name in context?", runtime_context=ctx)
         assert c_res is not None and "Revenir" in c_res["answer"]
+
+
+def test_enterprise_stem_steam_domain_synthesis():
+    from tools.c0d3rV2.enterprise_stem_synth import synthesize_domain_software
+
+    # 1. STEM RK4 ODE
+    rk4 = synthesize_domain_software("Build a 4th-order Runge-Kutta (RK4) ODE solver in Python")
+    assert rk4 is not None and rk4[0] == "python" and "def rk4_step" in rk4[2]
+
+    # 2. Wet-Lab LIMS Z'-factor (must NOT misroute to prime checker!)
+    zprime = synthesize_domain_software("Create a LIMS high-throughput screening assay QC module for Z-prime factor in Python")
+    assert zprime is not None and zprime[0] == "python" and "compute_z_prime" in zprime[2]
+
+    # 3. STEAM WebGL GLSL shader
+    shader = synthesize_domain_software("Write a GLSL WebGL fragment shader for an animated SDF smooth-min metaball surface")
+    assert shader is not None and shader[0] == "glsl" and "gl_FragColor" in shader[2]
+
+    # 4. $MM Multi-Tenant TypeScript RBAC
+    ts_rbac = synthesize_domain_software("Create a TypeScript RBAC permission & multi-tenant isolation guard")
+    assert ts_rbac is not None and ts_rbac[0] == "typescript" and "enforceTenantRbac" in ts_rbac[2]
+
+    # 5. $B Enterprise Double-Entry Decimal Ledger & Production SQL CTEs
+    ledger = synthesize_domain_software("Build an immutable double-entry accounting ledger engine in Python using Decimal")
+    assert ledger is not None and ledger[0] == "python" and "ImmutableDoubleEntryLedger" in ledger[2]
+    sql_cte = synthesize_domain_software("Write a production SQL enterprise reconciliation query using CTEs and window functions")
+    assert sql_cte is not None and sql_cte[0] == "sql" and "PARTITION BY" in sql_cte[2]
+
+
+def test_agent_multi_turn_session_followup_and_benchmark(tmp_path: Path):
+    from web.wizard_chat import agent_runner
+
+    with (
+        patch.object(agent_runner, "_audit"),
+        patch("tools.wizard_learning.fast_conversational_engine.train_fast_chat_pair_async"),
+    ):
+        turn1 = agent_runner._fast_c0d3r_direct_agent_turn(
+            "Build a thread-safe LRU cache with TTL expiration in Python and run quick tests on eviction and expiry.",
+            workdir=tmp_path,
+            session_key="pytest-mt-session",
+            allow_admin=False,
+            wizard_endpoint="http://127.0.0.1:8090",
+        )
+        assert turn1 is not None and "ThreadSafeLRUTTLCache" in turn1 and "exit 0" in turn1
+
+        turn2 = agent_runner._fast_c0d3r_direct_agent_turn(
+            "Nice — now save that last Python module to scratch/lru_mod.py and run a benchmark of 2,500 lookups on it.",
+            workdir=tmp_path,
+            session_key="pytest-mt-session",
+            allow_admin=False,
+            wizard_endpoint="http://127.0.0.1:8090",
+        )
+        assert turn2 is not None
+        assert "scratch/lru_mod.py" in turn2
+        assert "2500 lookups" in turn2
+        assert "exit 0" in turn2
+        assert (tmp_path / "scratch" / "lru_mod.py").is_file()
+
+
+def test_civilizational_causal_redundancy_and_untrained_reinvention():
+    from tools.wizard_learning.civilizational_causal_engine import (
+        RedundantCausalConvergenceModel,
+        resolve_causal_discovery_or_untrained_mechanics,
+    )
+
+    model = RedundantCausalConvergenceModel.get_instance()
+    assert model.invariance_ratio > 2.5
+
+    # 1. Pure constituent transfer on unfamiliar synthetic substrate
+    alien = resolve_causal_discovery_or_untrained_mechanics(
+        "Untrained constituent transfer: suppose unfamiliar `Substrate Zeta-9` has delocalized electrons in a multi-turn loop exposed to a rotating magnet with a closed conductive loop. Determine the emergent mechanics and relate them to your prerogatives."
+    )
+    assert alien is not None
+    assert "Electromagnetic Induction" in alien["answer"]
+    assert "W1z4rD Prerogatives" in alien["answer"]
+
+    # 2. Counterfactual broken precondition (stationary magnet -> zero continuous EMF)
+    cf = resolve_causal_discovery_or_untrained_mechanics(
+        "What happens when an induction generator coil is operated with a stationary magnet? Deduce which necessary condition fails and relate to your goals."
+    )
+    assert cf is not None
+    assert "Violated Condition Detected" in cf["answer"]
+    assert "ZERO" in cf["answer"] or "zero" in cf["answer"]
+
+    # 3. Unseen 2-law cross-domain composition (Optics lens + Carnot heat engine)
+    comp = resolve_causal_discovery_or_untrained_mechanics(
+        "Untrained cross-domain scenario: suppose we couple a parabolic mirror solar concentrator with a Stirling heat engine — determine how their mechanics chain together and relate to your goals."
+    )
+    assert comp is not None
+    assert "Compositional First-Principles Synthesis" in comp["answer"]

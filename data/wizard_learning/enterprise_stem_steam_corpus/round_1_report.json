@@ -1,0 +1,379 @@
+{
+  "round": 1,
+  "timestamp": "2026-11-21T08:07:03-05:00",
+  "passed": 0,
+  "total": 26,
+  "pass_rate_pct": 0.0,
+  "p50_ms": 6.15,
+  "p95_ms": 973.28,
+  "max_ms": 1465.66,
+  "weaknesses_count": 26,
+  "results": [
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:01-05:00",
+      "id": "lead_ops_01",
+      "domain": "multi_pc_ops",
+      "prompt": "Hey, give me a quick status check on our multi-PC Wizard cluster \u2014 which local and LAN nodes are reachable right now, and how is memory looking?",
+      "ok": false,
+      "ms": 1465.66,
+      "weakness_reasons": [
+        "hit forbidden fallback 'isn't grounded in my neural pools yet'",
+        "missing expected domain evidence ['8090', '39106', '10.0.0.5', 'cluster']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Ready]** That request isn't grounded in my neural pools yet \u2014 I've queued it for autonomous"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:01-05:00",
+      "id": "lead_ops_02",
+      "domain": "multi_pc_ops",
+      "prompt": "Can you check recent git commits in the repo so I can see what landed most recently?",
+      "ok": false,
+      "ms": 661.35,
+      "weakness_reasons": [
+        "hit forbidden fallback 'isn't grounded in my neural pools yet'",
+        "missing expected domain evidence ['7270a4d', 'e4b424d', 'feat(', 'fix(']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Ready]** That request isn't grounded in my neural pools yet \u2014 I've queued it for autonomous"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_ops_03",
+      "domain": "multi_pc_ops",
+      "prompt": "Look up how our peer experience exchange works across LAN nodes and summarize the safety and approval rules for me.",
+      "ok": false,
+      "ms": 725.39,
+      "weakness_reasons": [
+        "hit forbidden fallback 'isn't grounded in my neural pools yet'",
+        "missing expected domain evidence ['wbrain', 'neuron', '128']",
+        "missing expected domain evidence ['approve', 'duplicate', 'token', '39106', '39105']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Ready]** That request isn't grounded in my neural pools yet \u2014 I've queued it for autonomous"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_ops_04",
+      "domain": "multi_pc_ops",
+      "prompt": "Write a quick Python health-probe script that checks 127.0.0.1:8090/health and 10.0.0.5:39106/health with short timeouts and prints structured JSON status, and run it.",
+      "ok": false,
+      "ms": 31.19,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_stem_01",
+      "domain": "stem_computing",
+      "prompt": "We need a 4th-order Runge-Kutta (RK4) ODE solver in Python for a damped harmonic oscillator (x'' + 2*zeta*w0*x' + w0^2*x = 0), plus a quick verification showing amplitude decay. Build and run it.",
+      "ok": false,
+      "ms": 3.72,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_stem_02",
+      "domain": "stem_computing",
+      "prompt": "Build a spectral FFT / DFT frequency analyzer in Python that detects the dominant frequencies in a noisy two-tone signal (50 Hz and 120 Hz sampled at 1000 Hz) and verify it.",
+      "ok": false,
+      "ms": 3.99,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['50', '120']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_stem_03",
+      "domain": "stem_computing",
+      "prompt": "Write a Monte Carlo uncertainty propagation routine in Python for electrical power P = V^2 / R given Gaussian tolerances V = 24.0 +/- 0.2 V and R = 8.0 +/- 0.1 Ohm (5000 samples) and report mean + 95% confidence interval.",
+      "ok": false,
+      "ms": 4.24,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['72.']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_stem_04",
+      "domain": "stem_computing",
+      "prompt": "Build a linear least-squares calibration curve fitter (y = m*x + b with R^2 and residual standard error) for sensor voltage vs pressure data in Python, and run a test case.",
+      "ok": false,
+      "ms": 4.7,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['r2', 'r_squared', 'slope']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_lab_01",
+      "domain": "research_labs",
+      "prompt": "Our wet lab needs a FASTA DNA sequence analyzer in Python: compute length, GC-content percentage, reverse complement, and all ATG start-codon positions, then verify it on a sample sequence.",
+      "ok": false,
+      "ms": 4.05,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['atg']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_lab_02",
+      "domain": "research_labs",
+      "prompt": "Build a laboratory molarity dilution (C1*V1 = C2*V2) and molecular weight calculator in Python supporting chemical formulas like H2O, C6H12O6, and NaCl, and verify it.",
+      "ok": false,
+      "ms": 4.14,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['18.0', '180.1', '58.4']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_lab_03",
+      "domain": "research_labs",
+      "prompt": "Create a LIMS high-throughput screening assay QC module in Python that computes Z-prime factor (1 - 3*(sigma_p + sigma_n)/|mu_p - mu_n|), classifies plate quality, and run a verification check.",
+      "ok": false,
+      "ms": 5.04,
+      "weakness_reasons": [
+        "missing expected domain evidence ['z_prime', \"z'\"]",
+        "missing expected domain evidence ['0.5']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python def is_prime(n: int) -> bool:     if n < 2"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_lab_04",
+      "domain": "research_labs",
+      "prompt": "Build a pharmacokinetic 1-compartment IV bolus concentration model (C(t) = C0 * exp(-ke * t), half-life, and trapezoidal AUC) in Python and test it.",
+      "ok": false,
+      "ms": 4.71,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['half_life', 't_half']",
+        "missing expected domain evidence ['auc']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_steam_01",
+      "domain": "steam_creative",
+      "prompt": "Build a pure-Python 16-bit PCM audio synthesizer + Biquad low-pass DSP filter that generates a 440 Hz A4 tone with ADSR envelope and verifies peak and RMS levels.",
+      "ok": false,
+      "ms": 3.55,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['rms']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:02-05:00",
+      "id": "lead_steam_02",
+      "domain": "steam_creative",
+      "prompt": "Generate a procedural SVG golden-angle phyllotaxis spiral generator in Python and verify the SVG output structure.",
+      "ok": false,
+      "ms": 3.73,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['<svg']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_steam_03",
+      "domain": "steam_creative",
+      "prompt": "Write a GLSL WebGL fragment shader for an animated signed-distance-field (SDF) smooth-min metaball surface.",
+      "ok": false,
+      "ms": 973.28,
+      "weakness_reasons": [
+        "hit forbidden fallback 'isn't grounded'",
+        "missing expected domain evidence ['gl_fragcolor', 'fragcolor']",
+        "missing expected domain evidence ['smin', 'smooth', 'length(']",
+        "missing expected domain evidence ['uniform']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Ready]** That request isn't grounded in my neural pools yet \u2014 I've queued it for autonomous"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_steam_04",
+      "domain": "steam_creative",
+      "prompt": "Build a color-science accessibility utility in Python that converts sRGB hex to linear RGB, relative luminance, and WCAG 2.1 contrast ratio (AA/AAA compliance), and test black-on-white vs low-contrast pairs.",
+      "ok": false,
+      "ms": 6.15,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['21.0', '21:1', '21.0']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_mm_01",
+      "domain": "mm_saas",
+      "prompt": "Hey, build a thread-safe Token Bucket rate limiter in Python for our multi-tenant SaaS API, with unit tests proving burst allowance and throttling.",
+      "ok": false,
+      "ms": 10.07,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['lock', 'threading']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_mm_02",
+      "domain": "mm_saas",
+      "prompt": "We need an idempotent webhook receiver helper in Python with HMAC-SHA256 signature verification, replay-window timestamp check, and deduplication cache. Build and test it.",
+      "ok": false,
+      "ms": 8.24,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['compare_digest']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_mm_03",
+      "domain": "mm_saas",
+      "prompt": "Write a resilient Circuit Breaker + exponential-backoff-with-jitter retry module in Python (CLOSED -> OPEN -> HALF_OPEN -> CLOSED state machine) and verify all state transitions.",
+      "ok": false,
+      "ms": 10.48,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_mm_04",
+      "domain": "mm_saas",
+      "prompt": "Create a TypeScript RBAC permission & multi-tenant isolation guard (`orgId`, roles, scopes, and structured audit hook) for our B2B API.",
+      "ok": false,
+      "ms": 2.03,
+      "weakness_reasons": [
+        "missing expected domain evidence ['orgid', 'tenant']",
+        "missing expected domain evidence ['role', 'scope']"
+      ],
+      "answer_preview": "**Type-Safe TypeScript Utility Function** *(`typescript`)*  ```typescript export function groupBy<T, K extends"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_ent_01",
+      "domain": "enterprise_billion",
+      "prompt": "Build an immutable double-entry accounting ledger engine in Python using Decimal (zero float drift), enforcing balanced debits == credits per journal entry, trial balance check, and SHA-256 audit hash chaining. Run tests on it.",
+      "ok": false,
+      "ms": 11.3,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['debit', 'credit']",
+        "missing expected domain evidence ['sha256']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_ent_02",
+      "domain": "enterprise_billion",
+      "prompt": "Implement a Consistent Hashing ring with virtual nodes in Python for sharding keys across our multi-PC cluster, and verify that removing 1 of 4 nodes moves less than 40% of keys.",
+      "ok": false,
+      "ms": 12.36,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_ent_03",
+      "domain": "enterprise_billion",
+      "prompt": "Build a quantitative risk & execution analytics module in Python: compute Historical VaR (95% and 99%), Expected Shortfall (CVaR), maximum drawdown, Sharpe ratio, and VWAP execution slicing, and run a test portfolio.",
+      "ok": false,
+      "ms": 7.88,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'",
+        "missing expected domain evidence ['drawdown']",
+        "missing expected domain evidence ['sharpe']",
+        "missing expected domain evidence ['vwap']"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_ent_04",
+      "domain": "enterprise_billion",
+      "prompt": "Write a production SQL enterprise reconciliation query using CTEs and window functions that detects ledger balance gaps, duplicate idempotency keys, and rolling 7-day revenue anomalies per tenant.",
+      "ok": false,
+      "ms": 4.71,
+      "weakness_reasons": [
+        "missing expected domain evidence ['with ']",
+        "missing expected domain evidence ['over (', 'over(']",
+        "missing expected domain evidence ['partition by']"
+      ],
+      "answer_preview": "**SQL Find Duplicate Keys Query** *(`sql`)*  ```sql SELECT email, COUNT(*) AS occurrences FROM users GROUP BY "
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_followup_01",
+      "domain": "multi_turn_lead",
+      "prompt": "Build a thread-safe LRU cache with TTL expiration in Python and run quick tests on eviction and expiry.",
+      "ok": false,
+      "ms": 12.55,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    },
+    {
+      "round": 1,
+      "ts": "2026-11-21T08:07:03-05:00",
+      "id": "lead_followup_02",
+      "domain": "multi_turn_lead",
+      "prompt": "Nice \u2014 now save that last Python module to scratch/lead_lru_ttl.py and run a benchmark of 10,000 lookups on it.",
+      "ok": false,
+      "ms": 5.12,
+      "weakness_reasons": [
+        "hit forbidden fallback 'solve_task'"
+      ],
+      "answer_preview": "**[C0d3rV2 Agent \u00b7 Synthesized & Live-Verified Python]**  ```python from typing import Any  def solve_task(dat"
+    }
+  ]
+}

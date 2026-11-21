@@ -199,3 +199,12 @@ data/strategy_registry*
 data/fund_reservations.json
 data/fund_reservations.json.lock
 data/discovered_rules.json
+
+# SQLite WAL/SHM & local scratch/runtime dirs
+*.db-shm
+*.db-wal
+*.sqlite3-shm
+*.sqlite3-wal
+brain-data/
+.c0d3r/
+scratch/

@@ -1,0 +1,24 @@
+{
+  "compiled_at": "2026-11-21T08:29:44-05:00",
+  "total_canonical_items": 30,
+  "total_paraphrased_utterances": 265,
+  "files": {
+    "multi_pc_cluster_and_ops.jsonl": {
+      "items": 3,
+      "utterances": 31
+    },
+    "stem_and_lab_software.jsonl": {
+      "items": 10,
+      "utterances": 90
+    },
+    "steam_creative_tech.jsonl": {
+      "items": 6,
+      "utterances": 54
+    },
+    "enterprise_mm_and_billion_corp.jsonl": {
+      "items": 11,
+      "utterances": 90
+    }
+  },
+  "live_training": {}
+}
