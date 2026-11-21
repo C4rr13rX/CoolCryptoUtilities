@@ -340,6 +340,40 @@ def _build_flow(
         tools.register(CausalMechanicsTool())
     except Exception:
         pass
+    try:
+        from tool_registry import Tool
+
+        class PcDiagnosticsTool(Tool):
+            name = "pc_diagnostics"
+            description = "Run 100% read-only, harmless live PC, S.M.A.R.T., WSL2 Linux, and VirtualBox diagnostics."
+            use_when = "Inspecting host hardware, RAM, physical disks, session isolation, WSL2 Linux, or VirtualBox state."
+            params_schema = {"force_refresh": "bool — optional refresh flag"}
+
+            def execute(self, params: dict) -> dict:
+                from tools.wizard_learning.pc_diagnostics_and_os_engine import run_harmless_live_pc_diagnostics
+                return run_harmless_live_pc_diagnostics(force_refresh=bool((params or {}).get("force_refresh", False)))
+
+        class DesktopVisionNavigatorTool(Tool):
+            name = "desktop_vision_navigator"
+            description = "Extract multimodal desktop UI features from a screenshot and mutate action plans based on observations."
+            use_when = "Analyzing desktop screenshots or planning OS-agnostic GUI navigation actions."
+            params_schema = {"image_path": "str — screenshot path", "goal": "str — desired user goal"}
+
+            def execute(self, params: dict) -> dict:
+                from tools.wizard_learning.multimodal_desktop_navigator import (
+                    extract_desktop_visual_features,
+                    plan_and_mutate_desktop_action,
+                )
+                ip = Path(str((params or {}).get("image_path") or ""))
+                if not ip.is_absolute():
+                    ip = (workdir / ip).resolve()
+                vf = extract_desktop_visual_features(ip.read_bytes())
+                return {"visual_features": vf, "plan": plan_and_mutate_desktop_action(str((params or {}).get("goal") or ""), vf)}
+
+        tools.register(PcDiagnosticsTool())
+        tools.register(DesktopVisionNavigatorTool())
+    except Exception:
+        pass
 
     flow = ProcessFlow(
         session=session,
@@ -674,6 +708,40 @@ def _fast_c0d3r_direct_agent_turn(
         body = "\n".join(hits) if hits else f"No matches found for '{needle}'."
         return f"**[C0d3rV2 Agent · Workspace Search `{needle}`]** ({len(hits)} files)\n\n```text\n{body}\n```"
 
+    # 3d. Multimodal Desktop Screenshot Vision + Observation-Driven Action Mutation
+    img_nav_m = re.search(
+        r"(?:analyze|inspect|navigate)\s+(?:desktop\s+)?(?:screenshot|image)\s+[`'\"]?([A-Za-z0-9_.:/\\-]+\.(?:png|jpg|jpeg|bmp|webp))[`'\"]?(?:\s+(?:for\s+goal|to|goal)\s*:?\s*(.+))?$",
+        raw,
+        flags=re.I,
+    )
+    if img_nav_m:
+        raw_img_p = img_nav_m.group(1).strip()
+        goal_str = (img_nav_m.group(2) or raw).strip()
+        cand_p = Path(raw_img_p) if Path(raw_img_p).is_absolute() else (workdir / raw_img_p).resolve()
+        if cand_p.is_file():
+            try:
+                from tools.wizard_learning.multimodal_desktop_navigator import (
+                    cofire_desktop_episode_to_wizard,
+                    extract_desktop_visual_features,
+                    format_visual_desktop_analysis,
+                    plan_and_mutate_desktop_action,
+                )
+                img_bytes = cand_p.read_bytes()
+                vf = extract_desktop_visual_features(img_bytes)
+                plan = plan_and_mutate_desktop_action(goal_str, vf, env_vars=(runtime_context or {}))
+                threading.Thread(
+                    target=cofire_desktop_episode_to_wizard,
+                    args=(goal_str, vf, plan),
+                    kwargs={"endpoint": wizard_endpoint or "http://127.0.0.1:8090"},
+                    daemon=True,
+                ).start()
+                _audit("desktop_vision_nav", session=session_key, image=str(cand_p.name), mutated=plan.get("mutated"))
+                return "**[C0d3rV2 Agent · Multimodal Desktop Vision & Action Mutator]**\n\n" + format_visual_desktop_analysis(
+                    vf, plan, filename=cand_p.name
+                )
+            except Exception as exc:
+                return f"**[C0d3rV2 Agent · Vision Error]** `{exc}`"
+
     # 4. Polyglot code OR Python synthesis + live sandboxed execution & optional file save
     try:
         from tools.c0d3rV2.context_tools import synthesize_polyglot_code
@@ -736,11 +804,12 @@ def _fast_c0d3r_direct_agent_turn(
         return ans
 
     # 5. Fast W1z4rD context-aware / data / polyglot / telemetry / physics / associative resolution (<15ms)
+    allow_web = bool((runtime_context or {}).get("allow_web_lookup", True))
     fast_turn = resolve_fast_wizard_turn(
         raw,
         endpoint=wizard_endpoint,
         runtime_context=runtime_context,
-        allow_web_lookup=True,
+        allow_web_lookup=allow_web,
     )
     if fast_turn is not None and fast_turn.get("answer"):
         return str(fast_turn["answer"])

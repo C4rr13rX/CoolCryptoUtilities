@@ -1,0 +1,100 @@
+{
+  "timestamp_utc": "2026-11-21T17:14:23Z",
+  "live_host_diagnostics": {
+    "passed": true,
+    "checks": {
+      "msg_non_hypothesis": true,
+      "has_windows_host": true,
+      "has_memory_gb": true,
+      "has_wsl2_ubuntu": true,
+      "has_virtualbox": true,
+      "agent_matches": true
+    },
+    "sample_excerpt": "**Live Multi-OS & Hardware Diagnostic Report \u2014 `Pegasus`** *(100% Read-Only Empirical Probe)*\n\n- **Windows Host OS**: `Windows 11 (10.0.26300)` (`AMD64`, Python `3.13.17`)\n- **CPU & Memory**: `6` logical cores (`6` physical, `100.0%` instant load) \u00b7 **3.28 GB available** of `31.78 GB` RAM (`89.7%` used)\n- **Physical Disk S.M.A.R.T. & Volumes**: **PNY CS1311 960GB SSD** (SSD \u2014 `Healthy` / `OK`), **ADATA LEGEND 700** ("
+  },
+  "live_virtualbox_disposable_lab": {
+    "passed": true,
+    "vm_name": "w1z4rd_disposable_aplus_38fd837e",
+    "observed_nic1_hostonly_before": true,
+    "wizard_recommended_nat_mutation": true,
+    "verified_nic1_nat_after": true
+  },
+  "live_wsl_x11_closed_loop_navigation": {
+    "passed": true,
+    "completed": "6/6",
+    "transport": "WSL2 Xvfb Live X11 Pipe <-> Windows :8001 HTTP",
+    "outcomes": [
+      {
+        "obstacle_id": "modal_blocks_apply",
+        "goal_completed": true,
+        "steps_taken": 2,
+        "mutated_by_observation": true,
+        "actions_log": [
+          "hit:modal_ack_btn@(626,448)",
+          "hit:apply_button@(770,551)"
+        ]
+      },
+      {
+        "obstacle_id": "disabled_prereq_flow",
+        "goal_completed": true,
+        "steps_taken": 2,
+        "mutated_by_observation": true,
+        "actions_log": [
+          "hit:prereq_checkbox@(196,486)",
+          "hit:enabled_continue@(769,550)"
+        ]
+      },
+      {
+        "obstacle_id": "macos_topleft_close",
+        "goal_completed": true,
+        "steps_taken": 1,
+        "mutated_by_observation": true,
+        "actions_log": [
+          "hit:topleft_close@(146,99)"
+        ]
+      },
+      {
+        "obstacle_id": "ubuntu_dock_launcher",
+        "goal_completed": true,
+        "steps_taken": 1,
+        "mutated_by_observation": true,
+        "actions_log": [
+          "hit:left_dock_launcher@(35,76)"
+        ]
+      },
+      {
+        "obstacle_id": "relocated_top_panel",
+        "goal_completed": true,
+        "steps_taken": 1,
+        "mutated_by_observation": true,
+        "actions_log": [
+          "hit:top_launcher@(41,20)"
+        ]
+      },
+      {
+        "obstacle_id": "open_terminal_focus",
+        "goal_completed": true,
+        "steps_taken": 1,
+        "mutated_by_observation": true,
+        "actions_log": [
+          "hit:terminal_pane@(510,360)"
+        ]
+      }
+    ]
+  },
+  "untrained_2000_battery": {
+    "passed": 2000,
+    "total": 2000,
+    "accuracy_pct": 100.0,
+    "elapsed_s": 47.67,
+    "p50_ms": 247.75,
+    "p95_ms": 483.39,
+    "by_category": {
+      "hardware_raid_aplus": "500/500 (100.00%)",
+      "multi_os_mutation": "500/500 (100.00%)",
+      "network_security_vm": "500/500 (100.00%)",
+      "desktop_multimodal_mutation": "500/500 (100.00%)"
+    },
+    "sample_failures": []
+  }
+}

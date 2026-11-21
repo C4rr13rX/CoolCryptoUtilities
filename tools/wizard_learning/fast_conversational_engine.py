@@ -968,18 +968,41 @@ def resolve_fast_wizard_turn(
     except Exception:
         pass
 
-    # 2. Compiled massive English paraphrase inverted-index (<0.4 ms)
-    idx_hit = ParaphraseCorpusIndex.get_instance().query(text)
-    if idx_hit is not None:
-        return idx_hit
+    # 1c. Multi-OS PC Diagnostics, CompTIA A+ Triage & Live Harmless Host Probe (<1 ms)
+    try:
+        from .pc_diagnostics_and_os_engine import resolve_pc_diagnostics_or_aplus_query
+        pc_hit = resolve_pc_diagnostics_or_aplus_query(text)
+        if pc_hit is not None:
+            pc_hit["answer"] = _format_answer_if_requested(
+                pc_hit["answer"],
+                low,
+                pc_hit.get("structured_diagnostics"),
+            )
+            return pc_hit
+    except Exception:
+        pass
 
-    # 3. Symbolic math, NIST/NASA empirical physics, or parametric robot deduction (<5 ms)
+    # 1d. Multimodal Desktop Feature Recognition & Observation-Overrides-Experience Action Mutator (<1 ms)
+    try:
+        from .multimodal_desktop_navigator import resolve_desktop_navigation_or_mutation_query
+        desk_hit = resolve_desktop_navigation_or_mutation_query(text)
+        if desk_hit is not None:
+            desk_hit["answer"] = _format_answer_if_requested(
+                desk_hit["answer"],
+                low,
+                desk_hit.get("desktop_plan"),
+            )
+            return desk_hit
+    except Exception:
+        pass
+
+    # 2. Symbolic math, NIST/NASA empirical physics, or parametric robot deduction (<5 ms, zero disk I/O)
     sci_hit = _try_symbolic_math_or_physics(text, endpoint=endpoint)
     if sci_hit is not None:
         sci_hit["answer"] = _format_answer_if_requested(sci_hit["answer"], low)
         return sci_hit
 
-    # 4. Polyglot & AST-verified C0d3rV2 code synthesis (<1.5 ms)
+    # 3. Polyglot & AST-verified C0d3rV2 code synthesis (<1.5 ms, zero disk I/O)
     try:
         from tools.c0d3rV2.context_tools import synthesize_polyglot_code
         poly_hit = synthesize_polyglot_code(text)
@@ -1010,6 +1033,11 @@ def resolve_fast_wizard_turn(
             "hypothesis": False,
             "activated_concepts": ["code:python", "verifier:ast_parse"],
         }
+
+    # 4. Compiled massive English + Online-Learned + PC/A+ paraphrase inverted-index (<0.4 ms warm)
+    idx_hit = ParaphraseCorpusIndex.get_instance().query(text)
+    if idx_hit is not None:
+        return idx_hit
 
     # 5. Live `:8090` neural multi-pool recall (~2 ms when idle; 50ms circuit-breaker when settling)
     mp_hit = query_fast_multi_pool(text, endpoint=endpoint, node_busy=node_busy)

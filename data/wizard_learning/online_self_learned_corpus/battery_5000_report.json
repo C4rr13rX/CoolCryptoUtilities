@@ -1,0 +1,807 @@
+{
+  "evaluated_at": "2026-11-21T11:25:29-05:00",
+  "total_unknown_questions": 5000,
+  "domains_covered": 25,
+  "precheck_known_before_online": "86/100",
+  "pass1_online_discovery_and_self_train": {
+    "passed": 4935,
+    "total": 5000,
+    "accuracy_pct": 98.7,
+    "wall_seconds": 173.48,
+    "p50_ms": 158.47,
+    "p95_ms": 698.7
+  },
+  "licensed_training_records_saved": 4828,
+  "final_settling_result": "{\"cycle\": 1, \"ts\": \"2026-11-21T11:24:08-05:00\", \"reason\": \"post_online_corpus_settle\", \"learned_total\": 497, \"verified_sample_size\": 25, \"post_settle_retention_pct\": 100.0, \"node_ram_mb\": 7121.09, \"elapsed_ms\": 1269.04}",
+  "pass2_offline_post_settling_recall": {
+    "passed": 4919,
+    "total": 5000,
+    "accuracy_pct": 98.38,
+    "web_used_count": 0,
+    "wall_seconds": 81.05,
+    "p50_ms": 249.7,
+    "p95_ms": 467.22
+  },
+  "per_domain": {
+    "01_geography_capitals": {
+      "count": 205,
+      "pass1_online_pct": 98.05,
+      "pass2_offline_recall_pct": 98.05
+    },
+    "02_economics_currencies": {
+      "count": 195,
+      "pass1_online_pct": 100.0,
+      "pass2_offline_recall_pct": 100.0
+    },
+    "03_geography_continents": {
+      "count": 193,
+      "pass1_online_pct": 98.45,
+      "pass2_offline_recall_pct": 97.93
+    },
+    "04_linguistics_official_languages": {
+      "count": 119,
+      "pass1_online_pct": 99.16,
+      "pass2_offline_recall_pct": 99.16
+    },
+    "05_linguistics_writing_systems": {
+      "count": 260,
+      "pass1_online_pct": 99.62,
+      "pass2_offline_recall_pct": 99.62
+    },
+    "06_chemistry_atomic_numbers": {
+      "count": 119,
+      "pass1_online_pct": 100.0,
+      "pass2_offline_recall_pct": 100.0
+    },
+    "07_chemistry_element_symbols": {
+      "count": 119,
+      "pass1_online_pct": 89.08,
+      "pass2_offline_recall_pct": 76.47
+    },
+    "08_chemistry_compounds_formulas": {
+      "count": 11,
+      "pass1_online_pct": 100.0,
+      "pass2_offline_recall_pct": 100.0
+    },
+    "09_astronomy_moons": {
+      "count": 4,
+      "pass1_online_pct": 100.0,
+      "pass2_offline_recall_pct": 100.0
+    },
+    "10_astronomy_constellations": {
+      "count": 272,
+      "pass1_online_pct": 99.26,
+      "pass2_offline_recall_pct": 99.26
+    },
+    "11_literature_novels": {
+      "count": 272,
+      "pass1_online_pct": 98.16,
+      "pass2_offline_recall_pct": 98.16
+    },
+    "12_biology_species_taxonomy": {
+      "count": 272,
+      "pass1_online_pct": 99.63,
+      "pass2_offline_recall_pct": 99.63
+    },
+    "12_theater_plays": {
+      "count": 2,
+      "pass1_online_pct": 50.0,
+      "pass2_offline_recall_pct": 50.0
+    },
+    "13_computing_video_games_devs": {
+      "count": 272,
+      "pass1_online_pct": 100.0,
+      "pass2_offline_recall_pct": 100.0
+    },
+    "14_visual_arts_paintings": {
+      "count": 272,
+      "pass1_online_pct": 100.0,
+      "pass2_offline_recall_pct": 100.0
+    },
+    "15_cinema_films": {
+      "count": 270,
+      "pass1_online_pct": 97.41,
+      "pass2_offline_recall_pct": 97.41
+    },
+    "16_computing_programming_languages": {
+      "count": 173,
+      "pass1_online_pct": 91.91,
+      "pass2_offline_recall_pct": 91.91
+    },
+    "17_architecture_landmarks": {
+      "count": 272,
+      "pass1_online_pct": 100.0,
+      "pass2_offline_recall_pct": 100.0
+    },
+    "18_earth_science_mountains": {
+      "count": 272,
+      "pass1_online_pct": 99.63,
+      "pass2_offline_recall_pct": 99.63
+    },
+    "19_hydrology_rivers": {
+      "count": 272,
+      "pass1_online_pct": 99.63,
+      "pass2_offline_recall_pct": 99.63
+    },
+    "20_cultural_heritage_sites": {
+      "count": 271,
+      "pass1_online_pct": 99.63,
+      "pass2_offline_recall_pct": 99.63
+    },
+    "21_aerospace_spacecraft": {
+      "count": 70,
+      "pass1_online_pct": 94.29,
+      "pass2_offline_recall_pct": 94.29
+    },
+    "22_global_universities_countries": {
+      "count": 271,
+      "pass1_online_pct": 98.89,
+      "pass2_offline_recall_pct": 98.89
+    },
+    "23_lakes_countries": {
+      "count": 271,
+      "pass1_online_pct": 100.0,
+      "pass2_offline_recall_pct": 100.0
+    },
+    "24_museums_countries": {
+      "count": 271,
+      "pass1_online_pct": 98.89,
+      "pass2_offline_recall_pct": 98.89
+    }
+  },
+  "sample_pass1_failures": [
+    {
+      "idx": 12,
+      "domain": "12_theater_plays",
+      "question": "Who wrote the play Beggar My Neighbour (play)?",
+      "expected": [
+        "Thomas Morton"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": false,
+      "ms": 286.67,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future training.  You "
+    },
+    {
+      "idx": 176,
+      "domain": "11_literature_novels",
+      "question": "Who wrote the literary work The Colour of Magic?",
+      "expected": [
+        "Terry Pratchett"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": false,
+      "ms": 150.57,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future training.  You "
+    },
+    {
+      "idx": 337,
+      "domain": "16_computing_programming_languages",
+      "question": "Who designed the programming language E (programming language)?",
+      "expected": [
+        "Mark S. Miller"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 46.48,
+      "preview": "**Designer / Developer of Raku**: **Larry Wall**, **Damian Conway**, **Audrey Tang**. Raku is a member of the Perl family of progr"
+    },
+    {
+      "idx": 469,
+      "domain": "16_computing_programming_languages",
+      "question": "Who designed the programming language XL (programming language)?",
+      "expected": [
+        "Christophe de Dinechin"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 1630.04,
+      "preview": "**XL Recordings** \u2014 British record label.  *(Open-Licensed Training Source: Wikidata (Q1123947), dedicated to the Public Domain un"
+    },
+    {
+      "idx": 474,
+      "domain": "21_aerospace_spacecraft",
+      "question": "Which space agency operated the space probe Galileo Probe?",
+      "expected": [
+        "Ames Research Center"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 1547.16,
+      "preview": "**Operator of Galileo**: **Jet Propulsion Laboratory**, **Messerschmitt-B\u00f6lkow-Blohm**, **General Electric**. Galileo was an Ameri"
+    },
+    {
+      "idx": 524,
+      "domain": "03_geography_continents",
+      "question": "On which continent is United States located?",
+      "expected": [
+        "North America"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 52.53,
+      "preview": "**Country of Air University**: **United States**. Air University is a professional military education university system of the Uni"
+    },
+    {
+      "idx": 572,
+      "domain": "07_chemistry_element_symbols",
+      "question": "What is the chemical symbol for the element Californium?",
+      "expected": [
+        "Cf"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 164.48,
+      "preview": "**Atomic number of californium**: **98**.  *(Open-Licensed Training Source: Wikidata (Q1888), dedicated to the Public Domain under"
+    },
+    {
+      "idx": 710,
+      "domain": "16_computing_programming_languages",
+      "question": "Who designed the programming language P\u2032\u2032?",
+      "expected": [
+        "Corrado B\u00f6hm"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 8.42,
+      "preview": "**Designer / Developer of Raku**: **Larry Wall**, **Damian Conway**, **Audrey Tang**. Raku is a member of the Perl family of progr"
+    },
+    {
+      "idx": 725,
+      "domain": "07_chemistry_element_symbols",
+      "question": "What is the chemical symbol for the element Untriunium?",
+      "expected": [
+        "Utu"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 177.67,
+      "preview": "**Atomic number of untriunium**: **131**.  *(Open-Licensed Training Source: Wikidata (Q428629), dedicated to the Public Domain und"
+    },
+    {
+      "idx": 791,
+      "domain": "07_chemistry_element_symbols",
+      "question": "What is the chemical symbol for the element Unbipentium?",
+      "expected": [
+        "Ubp"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 123.24,
+      "preview": "**Atomic number of unbipentium**: **125**.  *(Open-Licensed Training Source: Wikidata (Q428685), dedicated to the Public Domain un"
+    },
+    {
+      "idx": 813,
+      "domain": "07_chemistry_element_symbols",
+      "question": "What is the chemical symbol for the element Unbiquadium?",
+      "expected": [
+        "Ubq"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 124.18,
+      "preview": "**Atomic number of unbiquadium**: **124**.  *(Open-Licensed Training Source: Wikidata (Q428741), dedicated to the Public Domain un"
+    },
+    {
+      "idx": 878,
+      "domain": "07_chemistry_element_symbols",
+      "question": "What is the chemical symbol for the element Untrinilium?",
+      "expected": [
+        "Utn"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 156.17,
+      "preview": "**Atomic number of untrinilium**: **130**.  *(Open-Licensed Training Source: Wikidata (Q428648), dedicated to the Public Domain un"
+    },
+    {
+      "idx": 973,
+      "domain": "16_computing_programming_languages",
+      "question": "Who designed the programming language B (programming language)?",
+      "expected": [
+        "Ken Thompson"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 106.49,
+      "preview": "**Designer / Developer of Raku**: **Larry Wall**, **Damian Conway**, **Audrey Tang**. Raku is a member of the Perl family of progr"
+    },
+    {
+      "idx": 999,
+      "domain": "20_cultural_heritage_sites",
+      "question": "In which country is the heritage site Roman Monuments, Cathedral of St Peter and Church of Our Lady in Trier located?",
+      "expected": [
+        "Germany"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": false,
+      "ms": 120.67,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future training.  You "
+    },
+    {
+      "idx": 1113,
+      "domain": "24_museums_countries",
+      "question": "In which country is the museum Cathedral of Our Lady (Antwerp) located?",
+      "expected": [
+        "Belgium"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": false,
+      "ms": 248.93,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future training.  You "
+    },
+    {
+      "idx": 1127,
+      "domain": "16_computing_programming_languages",
+      "question": "Who designed the programming language BASIC Programming?",
+      "expected": [
+        "Warren Robinett"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 164.12,
+      "preview": "**Designer / Developer of Dartmouth BASIC**: **John George Kemeny**, **Thomas E. Kurtz**. Dartmouth BASIC is the original version "
+    },
+    {
+      "idx": 1237,
+      "domain": "16_computing_programming_languages",
+      "question": "Who designed the programming language C++?",
+      "expected": [
+        "Bjarne Stroustrup"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 268.98,
+      "preview": "**Designer / Developer of Raku**: **Larry Wall**, **Damian Conway**, **Audrey Tang**. Raku is a member of the Perl family of progr"
+    },
+    {
+      "idx": 1286,
+      "domain": "21_aerospace_spacecraft",
+      "question": "Which space agency operated the space probe Mars 2?",
+      "expected": [
+        "Soviet Union"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 140.66,
+      "preview": "**Operator of Mars 2020**: **National Aeronautics and Space Administration**, **Jet Propulsion Laboratory**, **Boeing**, **Lockhee"
+    },
+    {
+      "idx": 1308,
+      "domain": "21_aerospace_spacecraft",
+      "question": "Which space agency operated the space probe Mars 5?",
+      "expected": [
+        "NPO Lavochkin"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 182.22,
+      "preview": "**Operator of Mars 2020**: **National Aeronautics and Space Administration**, **Jet Propulsion Laboratory**, **Boeing**, **Lockhee"
+    },
+    {
+      "idx": 1325,
+      "domain": "16_computing_programming_languages",
+      "question": "Who designed the programming language C (programming language)?",
+      "expected": [
+        "Dennis M. Ritchie"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 192.97,
+      "preview": "**Designer / Developer of Raku**: **Larry Wall**, **Damian Conway**, **Audrey Tang**. Raku is a member of the Perl family of progr"
+    },
+    {
+      "idx": 1330,
+      "domain": "21_aerospace_spacecraft",
+      "question": "Which space agency operated the space probe Mars 4?",
+      "expected": [
+        "NPO Lavochkin"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 14.18,
+      "preview": "**Operator of Mars 2020**: **National Aeronautics and Space Administration**, **Jet Propulsion Laboratory**, **Boeing**, **Lockhee"
+    },
+    {
+      "idx": 1507,
+      "domain": "22_global_universities_countries",
+      "question": "In which country is the university Medical University of \u0141\u00f3d\u017a located?",
+      "expected": [
+        "Poland"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 80.39,
+      "preview": "**Country of Fukushima Medical University**: **Japan**.  *(Open-Licensed Training Source: Wikidata (Q595437), dedicated to the Pub"
+    },
+    {
+      "idx": 1515,
+      "domain": "07_chemistry_element_symbols",
+      "question": "What is the chemical symbol for the element Untriennium?",
+      "expected": [
+        "Ute"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 82.34,
+      "preview": "**Atomic number of untriennium**: **139**.  *(Open-Licensed Training Source: Wikidata (Q548592), dedicated to the Public Domain un"
+    },
+    {
+      "idx": 1544,
+      "domain": "16_computing_programming_languages",
+      "question": "Who designed the programming language C--?",
+      "expected": [
+        "Norman Ramsey",
+        "Simon Peyton Jones"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 348.29,
+      "preview": "**Designer / Developer of Raku**: **Larry Wall**, **Damian Conway**, **Audrey Tang**. Raku is a member of the Perl family of progr"
+    },
+    {
+      "idx": 1565,
+      "domain": "15_cinema_films",
+      "question": "Who directed the film Soldier of Orange?",
+      "expected": [
+        "Paul Verhoeven"
+      ],
+      "ok": false,
+      "ok_gt": false,
+      "has_license": true,
+      "ms": 270.37,
+      "preview": "**Director of Soldier of Orange**: **Theu Boermans**.  *(Open-Licensed Training Source: Wikidata (Q2658518), dedicated to the Publ"
+    }
+  ],
+  "sample_pass2_failures": [
+    {
+      "idx": 12,
+      "domain": "12_theater_plays",
+      "mode": "exact",
+      "question_asked": "Who wrote the play Beggar My Neighbour (play)?",
+      "expected": [
+        "Thomas Morton"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 298.71,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future train"
+    },
+    {
+      "idx": 176,
+      "domain": "11_literature_novels",
+      "mode": "exact",
+      "question_asked": "Who wrote the literary work The Colour of Magic?",
+      "expected": [
+        "Terry Pratchett"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 594.49,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future train"
+    },
+    {
+      "idx": 265,
+      "domain": "07_chemistry_element_symbols",
+      "mode": "paraphrase",
+      "question_asked": "Chemical symbol of Samarium",
+      "expected": [
+        "Sm"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 561.48,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future train"
+    },
+    {
+      "idx": 287,
+      "domain": "07_chemistry_element_symbols",
+      "mode": "paraphrase",
+      "question_asked": "Chemical symbol of Lithium",
+      "expected": [
+        "Li"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 129.41,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future train"
+    },
+    {
+      "idx": 309,
+      "domain": "07_chemistry_element_symbols",
+      "mode": "paraphrase",
+      "question_asked": "Chemical symbol of Holmium",
+      "expected": [
+        "Ho"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 220.43,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future train"
+    },
+    {
+      "idx": 337,
+      "domain": "16_computing_programming_languages",
+      "mode": "paraphrase",
+      "question_asked": "Designer / Developer of E (programming language)",
+      "expected": [
+        "Mark S. Miller"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 202.78,
+      "preview": "**Designer / Developer of Raku**: **Larry Wall**, **Damian Conway**, **Audrey Tang**. Raku is a member of the Perl famil"
+    },
+    {
+      "idx": 469,
+      "domain": "16_computing_programming_languages",
+      "mode": "paraphrase",
+      "question_asked": "Designer / Developer of XL (programming language)",
+      "expected": [
+        "Christophe de Dinechin"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 198.37,
+      "preview": "**XL Recordings** \u2014 British record label.  *(Open-Licensed Training Source: Wikidata (Q1123947), dedicated to the Public"
+    },
+    {
+      "idx": 474,
+      "domain": "21_aerospace_spacecraft",
+      "mode": "exact",
+      "question_asked": "Which space agency operated the space probe Galileo Probe?",
+      "expected": [
+        "Ames Research Center"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 412.17,
+      "preview": "**Operator of Galileo**: **Jet Propulsion Laboratory**, **Messerschmitt-B\u00f6lkow-Blohm**, **General Electric**. Galileo wa"
+    },
+    {
+      "idx": 524,
+      "domain": "03_geography_continents",
+      "mode": "exact",
+      "question_asked": "On which continent is United States located?",
+      "expected": [
+        "North America"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 462.11,
+      "preview": "**Country of Air University**: **United States**. Air University is a professional military education university system "
+    },
+    {
+      "idx": 572,
+      "domain": "07_chemistry_element_symbols",
+      "mode": "exact",
+      "question_asked": "What is the chemical symbol for the element Californium?",
+      "expected": [
+        "Cf"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 258.67,
+      "preview": "**Atomic number of californium**: **98**.  *(Open-Licensed Training Source: Wikidata (Q1888), dedicated to the Public Do"
+    },
+    {
+      "idx": 710,
+      "domain": "16_computing_programming_languages",
+      "mode": "exact",
+      "question_asked": "Who designed the programming language P\u2032\u2032?",
+      "expected": [
+        "Corrado B\u00f6hm"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 9.33,
+      "preview": "**Designer / Developer of Raku**: **Larry Wall**, **Damian Conway**, **Audrey Tang**. Raku is a member of the Perl famil"
+    },
+    {
+      "idx": 725,
+      "domain": "07_chemistry_element_symbols",
+      "mode": "paraphrase",
+      "question_asked": "Chemical symbol of Untriunium",
+      "expected": [
+        "Utu"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 312.22,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future train"
+    },
+    {
+      "idx": 791,
+      "domain": "07_chemistry_element_symbols",
+      "mode": "paraphrase",
+      "question_asked": "Chemical symbol of Unbipentium",
+      "expected": [
+        "Ubp"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 287.61,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future train"
+    },
+    {
+      "idx": 813,
+      "domain": "07_chemistry_element_symbols",
+      "mode": "paraphrase",
+      "question_asked": "Chemical symbol of Unbiquadium",
+      "expected": [
+        "Ubq"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 313.3,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future train"
+    },
+    {
+      "idx": 878,
+      "domain": "07_chemistry_element_symbols",
+      "mode": "exact",
+      "question_asked": "What is the chemical symbol for the element Untrinilium?",
+      "expected": [
+        "Utn"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 422.87,
+      "preview": "**Atomic number of untrinilium**: **130**.  *(Open-Licensed Training Source: Wikidata (Q428648), dedicated to the Public"
+    },
+    {
+      "idx": 973,
+      "domain": "16_computing_programming_languages",
+      "mode": "paraphrase",
+      "question_asked": "Designer / Developer of B (programming language)",
+      "expected": [
+        "Ken Thompson"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 307.89,
+      "preview": "**Designer / Developer of Raku**: **Larry Wall**, **Damian Conway**, **Audrey Tang**. Raku is a member of the Perl famil"
+    },
+    {
+      "idx": 999,
+      "domain": "20_cultural_heritage_sites",
+      "mode": "paraphrase",
+      "question_asked": "Country of Roman Monuments, Cathedral of St Peter and Church of Our Lady in Trier",
+      "expected": [
+        "Germany"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 350.3,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future train"
+    },
+    {
+      "idx": 1113,
+      "domain": "24_museums_countries",
+      "mode": "paraphrase",
+      "question_asked": "Country of Cathedral of Our Lady (Antwerp)",
+      "expected": [
+        "Belgium"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 442.74,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future train"
+    },
+    {
+      "idx": 1127,
+      "domain": "16_computing_programming_languages",
+      "mode": "paraphrase",
+      "question_asked": "Designer / Developer of BASIC Programming",
+      "expected": [
+        "Warren Robinett"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 269.33,
+      "preview": "**Designer / Developer of Dartmouth BASIC**: **John George Kemeny**, **Thomas E. Kurtz**. Dartmouth BASIC is the origina"
+    },
+    {
+      "idx": 1237,
+      "domain": "16_computing_programming_languages",
+      "mode": "paraphrase",
+      "question_asked": "Designer / Developer of C++",
+      "expected": [
+        "Bjarne Stroustrup"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 204.49,
+      "preview": "The W1z4rD node doesn't have a confident answer for this yet. It has been added to the hypothesis queue for future train"
+    },
+    {
+      "idx": 1286,
+      "domain": "21_aerospace_spacecraft",
+      "mode": "exact",
+      "question_asked": "Which space agency operated the space probe Mars 2?",
+      "expected": [
+        "Soviet Union"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 287.99,
+      "preview": "**Operator of Mars 2020**: **National Aeronautics and Space Administration**, **Jet Propulsion Laboratory**, **Boeing**,"
+    },
+    {
+      "idx": 1308,
+      "domain": "21_aerospace_spacecraft",
+      "mode": "exact",
+      "question_asked": "Which space agency operated the space probe Mars 5?",
+      "expected": [
+        "NPO Lavochkin"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 173.99,
+      "preview": "**Operator of Mars 2020**: **National Aeronautics and Space Administration**, **Jet Propulsion Laboratory**, **Boeing**,"
+    },
+    {
+      "idx": 1325,
+      "domain": "16_computing_programming_languages",
+      "mode": "paraphrase",
+      "question_asked": "Designer / Developer of C (programming language)",
+      "expected": [
+        "Dennis M. Ritchie"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 300.48,
+      "preview": "**Designer / Developer of Raku**: **Larry Wall**, **Damian Conway**, **Audrey Tang**. Raku is a member of the Perl famil"
+    },
+    {
+      "idx": 1330,
+      "domain": "21_aerospace_spacecraft",
+      "mode": "exact",
+      "question_asked": "Which space agency operated the space probe Mars 4?",
+      "expected": [
+        "NPO Lavochkin"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 6.96,
+      "preview": "**Operator of Mars 2020**: **National Aeronautics and Space Administration**, **Jet Propulsion Laboratory**, **Boeing**,"
+    },
+    {
+      "idx": 1507,
+      "domain": "22_global_universities_countries",
+      "mode": "paraphrase",
+      "question_asked": "Country of Medical University of \u0141\u00f3d\u017a",
+      "expected": [
+        "Poland"
+      ],
+      "ok": false,
+      "web_used": false,
+      "ms": 286.48,
+      "preview": "**Country of Fukushima Medical University**: **Japan**.  *(Open-Licensed Training Source: Wikidata (Q595437), dedicated "
+    }
+  ]
+}

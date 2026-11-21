@@ -490,3 +490,70 @@ def test_civilizational_causal_redundancy_and_untrained_reinvention():
     )
     assert comp is not None
     assert "Compositional First-Principles Synthesis" in comp["answer"]
+
+
+def test_pc_diagnostics_aplus_and_observation_override_engine():
+    from tools.wizard_learning.pc_diagnostics_and_os_engine import (
+        resolve_pc_diagnostics_or_aplus_query,
+        run_harmless_live_pc_diagnostics,
+    )
+
+    # 1. Live harmless multi-OS diagnostic probe
+    diag = run_harmless_live_pc_diagnostics()
+    assert diag["read_only_harmless"] is True
+    assert diag["memory"]["total_gb"] > 0
+    assert len(diag["volumes"]) >= 1
+
+    # 2. RAID math + broken precondition detection
+    r6 = resolve_pc_diagnostics_or_aplus_query("Calculate usable capacity for 6 x 8 TB NVMe drives in RAID 6.")
+    assert r6 is not None and "32 TB" in r6["answer"]
+    r5_bad = resolve_pc_diagnostics_or_aplus_query("Configure 2 x 4 TB SSDs in RAID 5 — what happens?")
+    assert r5_bad is not None and "Precondition Failure" in r5_bad["answer"]
+
+    # 3. APIPA observation overriding DNS assumption + S.M.A.R.T. overriding chkdsk /r
+    apipa = resolve_pc_diagnostics_or_aplus_query(
+        "User blames DNS, but ipconfig shows IPv4 169.254.44.19. What failed?"
+    )
+    assert apipa is not None and "DHCP" in apipa["answer"]
+    smart = resolve_pc_diagnostics_or_aplus_query(
+        "Admin plans chkdsk /r, but smartctl shows Current_Pending_Sector = 38. How must the plan mutate?"
+    )
+    assert smart is not None and "ddrescue" in smart["answer"]
+
+
+def test_multimodal_desktop_visual_feature_recognition_and_action_mutation():
+    import cv2
+    import numpy as np
+    from tools.wizard_learning.multimodal_desktop_navigator import (
+        extract_desktop_visual_features,
+        plan_and_mutate_desktop_action,
+    )
+
+    # Synthesize a 1024x768 desktop frame with bottom taskbar + app window + centered red blocking modal
+    img = np.full((768, 1024, 3), (71, 52, 36), dtype=np.uint8)
+    # Bottom taskbar
+    cv2.rectangle(img, (0, 720), (1024, 768), (29, 22, 17), -1)
+    cv2.rectangle(img, (14, 730), (46, 758), (239, 164, 0), -1)
+    # App window
+    cv2.rectangle(img, (130, 80), (890, 620), (252, 250, 247), -1)
+    cv2.rectangle(img, (130, 80), (890, 116), (240, 232, 226), -1)
+    cv2.rectangle(img, (852, 86), (882, 110), (62, 62, 229), -1)
+    # Centered red blocking modal with Acknowledge button
+    cv2.rectangle(img, (310, 235), (714, 485), (255, 255, 255), -1)
+    cv2.rectangle(img, (310, 235), (714, 485), (44, 32, 26), 2)
+    cv2.rectangle(img, (310, 235), (714, 277), (37, 48, 217), -1)
+    cv2.rectangle(img, (566, 429), (686, 467), (176, 108, 43), -1)
+
+    ok, png_buf = cv2.imencode(".png", img)
+    assert ok
+    vf = extract_desktop_visual_features(png_buf.tobytes())
+    assert "bottom" in vf["layout"]["panel_edges"]
+    assert "ui:modal_blocker_center" in vf["pool_image_tokens"]
+    assert "modal_action_button" in vf["affordances"]
+
+    plan = plan_and_mutate_desktop_action("Click Continue primary button", vf, assumed_os="windows11")
+    assert plan["mutated"] is True
+    assert plan["selected_action"]["action_type"] == "click_modal_dismiss_or_ack"
+    assert 566 <= plan["selected_action"]["x"] <= 686
+    assert 429 <= plan["selected_action"]["y"] <= 467
+

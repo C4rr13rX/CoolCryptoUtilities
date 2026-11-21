@@ -1,0 +1,129 @@
+{
+  "license": "CC0-1.0 Universal (Public Domain Dedication \u2014 Original First-Principles & Open Standards)",
+  "license_doc": "data\\wizard_learning\\pc_aplus_and_desktop_course\\LICENSE_AND_PROVENANCE.md",
+  "foundations_records": 33,
+  "live_x11_multimodal_scenes": 10,
+  "wizard_multi_pool_trained": 0,
+  "elapsed_s": 51.29,
+  "x11_scene_verifications": [
+    {
+      "scene_id": "ubuntu_gnome_normal",
+      "inferred_family": "ubuntu_gnome_top_and_left_dock",
+      "anomalies": [],
+      "mutated": true,
+      "action_type": "click_dock_launcher_left",
+      "coords": [
+        35,
+        76
+      ]
+    },
+    {
+      "scene_id": "win11_centered_normal",
+      "inferred_family": "windows11_or_centered_dock",
+      "anomalies": [],
+      "mutated": false,
+      "action_type": "click_bottom_launcher",
+      "coords": [
+        461,
+        742
+      ]
+    },
+    {
+      "scene_id": "macos_topleft_controls",
+      "inferred_family": "macos_aqua_or_topleft_wm",
+      "anomalies": [],
+      "mutated": true,
+      "action_type": "click_window_close",
+      "coords": [
+        146,
+        99
+      ]
+    },
+    {
+      "scene_id": "win_kde_topright_controls",
+      "inferred_family": "windows10_kde_or_xfce_bottom_panel",
+      "anomalies": [],
+      "mutated": true,
+      "action_type": "click_window_close",
+      "coords": [
+        871,
+        99
+      ]
+    },
+    {
+      "scene_id": "blocking_red_error_modal",
+      "inferred_family": "windows10_kde_or_xfce_bottom_panel",
+      "anomalies": [
+        "modal_blocker:error_red"
+      ],
+      "mutated": true,
+      "action_type": "click_modal_dismiss_or_ack",
+      "coords": [
+        626,
+        448
+      ]
+    },
+    {
+      "scene_id": "blocking_amber_auth_modal",
+      "inferred_family": "windows10_kde_or_xfce_bottom_panel",
+      "anomalies": [
+        "modal_blocker:auth_or_warning_amber"
+      ],
+      "mutated": true,
+      "action_type": "click_modal_dismiss_or_ack",
+      "coords": [
+        626,
+        448
+      ]
+    },
+    {
+      "scene_id": "disabled_btn_unchecked_prereq",
+      "inferred_family": "windows10_kde_or_xfce_bottom_panel",
+      "anomalies": [
+        "primary_button_disabled",
+        "prerequisite_unchecked"
+      ],
+      "mutated": true,
+      "action_type": "click_prerequisite_checkbox",
+      "coords": [
+        196,
+        486
+      ]
+    },
+    {
+      "scene_id": "enabled_btn_checked_prereq",
+      "inferred_family": "windows10_kde_or_xfce_bottom_panel",
+      "anomalies": [],
+      "mutated": false,
+      "action_type": "click_primary_button",
+      "coords": [
+        770,
+        551
+      ]
+    },
+    {
+      "scene_id": "open_terminal_pane_top_panel",
+      "inferred_family": "top_panel_desktop_xfce_gnome_or_mutated_win",
+      "anomalies": [],
+      "mutated": true,
+      "action_type": "focus_existing_terminal",
+      "coords": [
+        510,
+        360
+      ]
+    },
+    {
+      "scene_id": "uefi_blue_tui_console",
+      "inferred_family": "uefi_or_recovery_tui",
+      "anomalies": [
+        "uefi_or_recovery_tui"
+      ],
+      "mutated": true,
+      "action_type": "keyboard_tui_navigation",
+      "coords": [
+        null,
+        null
+      ]
+    }
+  ]
+}

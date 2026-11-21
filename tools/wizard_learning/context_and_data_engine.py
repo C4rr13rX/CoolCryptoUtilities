@@ -20,7 +20,15 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CORPUS_DIR = _PROJECT_ROOT / "data" / "wizard_learning" / "massive_context_corpus"
 ENTERPRISE_CORPUS_DIR = _PROJECT_ROOT / "data" / "wizard_learning" / "enterprise_stem_steam_corpus"
 CIVILIZATIONAL_COURSE_DIR = _PROJECT_ROOT / "data" / "wizard_learning" / "civilizational_discovery_course"
-CORPUS_DIRS = (CORPUS_DIR, ENTERPRISE_CORPUS_DIR, CIVILIZATIONAL_COURSE_DIR)
+ONLINE_LEARNED_DIR = _PROJECT_ROOT / "data" / "wizard_learning" / "online_self_learned_corpus"
+PC_APLUS_COURSE_DIR = _PROJECT_ROOT / "data" / "wizard_learning" / "pc_aplus_and_desktop_course"
+CORPUS_DIRS = (
+    CORPUS_DIR,
+    ENTERPRISE_CORPUS_DIR,
+    CIVILIZATIONAL_COURSE_DIR,
+    PC_APLUS_COURSE_DIR,
+    ONLINE_LEARNED_DIR,
+)
 
 _STOPWORDS = frozenset({
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
@@ -500,10 +508,35 @@ class ParaphraseCorpusIndex:
             if not cdir.is_dir():
                 continue
             for p in sorted(cdir.glob("*.jsonl")):
-                if p.name == "weakness_log.jsonl":
+                if p.name in ("weakness_log.jsonl", "settling_cycles.jsonl"):
                     continue
                 files.append(p)
         return files
+
+    def insert_live_record(self, rec: Dict[str, Any]) -> None:
+        """Incrementally index a newly online-learned record in O(1) RAM (<0.03 ms)
+        without re-reading all JSONL files from disk."""
+        self.ensure_loaded()
+        q = str(rec.get("question") or "").strip()
+        a = str(rec.get("answer") or "").strip()
+        if not q or not a:
+            return
+        with self._lock:
+            idx = len(self._items)
+            self._items.append(rec)
+            all_qs = [q] + [str(v).strip() for v in (rec.get("paraphrases") or []) if str(v).strip()]
+            tset: Set[str] = set()
+            for qv in all_qs:
+                ek = re.sub(r"\s+", " ", qv.lower()).rstrip("?!.").strip()
+                if ek:
+                    self._exact[ek] = idx
+                for tok in _tokenize_for_index(qv):
+                    tset.add(tok)
+            self._item_tokens.append(tset)
+            for tok in tset:
+                self._inverted.setdefault(tok, []).append(idx)
+            self._loaded_sig = self._dir_sig()
+            self._last_check_ts = time.time()
 
     def _dir_sig(self) -> Tuple[Tuple[str, int], ...]:
         sig = []
@@ -587,6 +620,45 @@ class ParaphraseCorpusIndex:
         q_toks = set(_tokenize_for_index(text))
         if len(q_toks) < 2:
             return None
+
+        generic_stems = {
+            "check", "python", "rust", "typescript", "javascript", "sql",
+            "write", "cod", "code", "build", "creat", "create", "implement",
+            "function", "modul", "module", "number", "data", "test", "run",
+            "verifi", "verify", "solver", "summar", "overview", "archit",
+        }
+        # Relation words distinguish WHAT property of an entity is asked (e.g. symbol vs atomic number,
+        # continent vs capital vs currency), while entity tokens identify WHICH subject is asked!
+        relation_frame_stems = {
+            "capital", "citi", "city", "countri", "country", "currenc", "currency",
+            "continent", "offici", "official", "languag", "language", "system",
+            "script", "alphabet", "used", "atom", "atomic", "chemic", "chemical",
+            "element", "symbol", "formula", "miner", "mineral", "compound",
+            "planet", "moon", "orbit", "parent", "astronom", "astronomical", "bodi", "body",
+            "constell", "constellation", "star", "locat", "located", "situat",
+            "wrote", "author", "literari", "literary", "work", "novel", "book", "play",
+            "compos", "composer", "opera", "music", "musical", "paint", "painted", "creator",
+            "direct", "director", "film", "design", "designer", "develop", "developer",
+            "program", "programming", "software", "discov", "discovered", "invent", "inventor",
+            "mountain", "rang", "range", "peak", "river", "water", "flow", "mouth", "watercours",
+            "heritag", "heritage", "site", "space", "agenc", "agency", "oper", "operated", "operator", "probe", "spacecraft",
+            "univers", "university", "lake", "museum", "headquart", "headquarters",
+            "taxon", "species", "belong", "organ", "organism", "born", "place", "birth", "architect", "building",
+        }
+        q_entity_toks = q_toks - generic_stems - relation_frame_stems
+        q_rel_toks = q_toks & relation_frame_stems
+        q_specific = q_toks - generic_stems
+
+        # Single-letter subject (e.g. 'E (programming language)' or 'C') leaves q_entity_toks empty
+        # when relation words are present -> require exact match only so 'E' never matches 'Java'!
+        if q_rel_toks and not q_entity_toks:
+            return None
+
+        # Any unseen entity token means this subject is NOT in local memory yet -> return None for online lookup!
+        for et in q_entity_toks:
+            if et not in self._inverted:
+                return None
+
         counts: Dict[int, int] = {}
         for tok in q_toks:
             for idx in self._inverted.get(tok, ()):
@@ -596,22 +668,24 @@ class ParaphraseCorpusIndex:
 
         best_idx = -1
         best_score = 0.0
-        generic_stems = {
-            "check", "python", "rust", "typescript", "javascript", "sql",
-            "write", "cod", "code", "build", "creat", "create", "implement",
-            "function", "modul", "module", "number", "data", "test", "run",
-            "verifi", "verify", "solver", "summar", "overview", "archit",
-        }
-        q_specific = q_toks - generic_stems
         for idx, overlap in counts.items():
             if overlap < 2:
                 continue
             item_t = self._item_tokens[idx]
-            if q_specific and (len(q_specific & item_t) / len(q_specific)) < 0.6:
+            # 1. ALL entity tokens with df <= 25 MUST appear in the candidate item
+            if q_entity_toks:
+                rare_ent = {t for t in q_entity_toks if len(self._inverted.get(t, ())) <= 25}
+                if rare_ent and not rare_ent.issubset(item_t):
+                    continue
+                if (len(q_entity_toks & item_t) / len(q_entity_toks)) < 0.85:
+                    continue
+            # 2. If relation words are present (e.g. 'symbol' vs 'atomic', 'continent' vs 'currency'),
+            #    at least one relation token MUST also match the candidate item!
+            if q_rel_toks and not (q_rel_toks & item_t):
+                continue
+            if q_specific and (len(q_specific & item_t) / len(q_specific)) < 0.65:
                 continue
             recall_q = overlap / max(1, len(q_toks))
-            # Check best paraphrase precision too
-            rec = self._items[idx]
             best_prec = overlap / max(1, len(item_t))
             score = 0.65 * recall_q + 0.35 * best_prec
             if recall_q >= 0.72 and score > best_score:
@@ -647,12 +721,27 @@ def resolve_online_lookup_if_needed(
     endpoint: str = "http://127.0.0.1:8090",
     allow_auto_lookup: bool = False,
 ) -> Optional[Dict[str, Any]]:
-    """Run FastWebLookupTool when explicitly requested (or when `allow_auto_lookup=True`
-    on an ungrounded factual prompt), then anchor + train the learned answer immediately."""
+    """When W1z4rD does not know an answer locally (or when online search is explicitly
+    requested), look it up from strictly open-licensed online sources (Wikidata CC0 /
+    Wikipedia CC BY-SA 4.0), persist licensable training material, self-train, and
+    track biological settling."""
     raw = (text or "").strip()
     if not raw:
         return None
     low = raw.lower()
+    if low == "[settle_online_memory]" or "settle and verify online learned memory" in low:
+        from .open_licensed_online_learner import OpenLicensedOnlineLearner
+        srec = OpenLicensedOnlineLearner.get_instance().settle_and_verify(reason="post_online_corpus_settle")
+        return {
+            "question": text,
+            "answer": json.dumps(srec, ensure_ascii=False),
+            "decoder": "settling_controller",
+            "confidence": 1.0,
+            "confidence_tier": "high",
+            "hypothesis": False,
+            "web_used": False,
+            "activated_concepts": ["lifecycle:settling_verified"],
+        }
     # Never leak or delay internal W1z4rD / cluster / workspace questions on external web APIs
     if any(k in low for k in ("our ", "w1z4rd", "wbrain", "c0d3r", "revenir", "pegasus", "39106", "39105", "8090")):
         return None
@@ -660,20 +749,36 @@ def resolve_online_lookup_if_needed(
     if not is_explicit and not allow_auto_lookup:
         return None
 
-    from tools.c0d3rV2.context_tools import FastWebLookupTool
-    res = FastWebLookupTool().execute({"query": raw, "train_on_hit": True, "timeout": 2.5})
-    if not res.get("ok") or not res.get("answer"):
-        return None
+    # 1. Primary Open-Licensed Coalescing Online Learner (Wikidata CC0 + Wikipedia CC BY-SA 4.0)
+    try:
+        from .open_licensed_online_learner import OpenLicensedOnlineLearner
+        learned = OpenLicensedOnlineLearner.get_instance().lookup_train_and_remember(raw)
+        if learned and learned.get("answer"):
+            ans = _format_answer_if_requested(
+                str(learned["answer"]),
+                low,
+                {
+                    "query": raw,
+                    "answer": learned["answer"],
+                    "subject": learned.get("subject", ""),
+                    "fact_values": learned.get("fact_values", []),
+                    "source_url": learned.get("source_url", ""),
+                    "license": learned.get("license", ""),
+                },
+            )
+            return {
+                "question": text,
+                "answer": ans,
+                "decoder": "online_licensed_self_trained",
+                "confidence": 0.94,
+                "confidence_tier": "high",
+                "hypothesis": False,
+                "web_used": True,
+                "license": learned.get("license", ""),
+                "source_url": learned.get("source_url", ""),
+                "activated_concepts": ["tool:open_licensed_online_learner", "memory:self_trained", f"license:{learned.get('source_name', 'open')}"],
+            }
+    except Exception:
+        pass
 
-    ans = f"{res['answer']}\n\n*(Learned online from {res.get('source', 'web')} and trained into W1z4rD)*"
-    ans = _format_answer_if_requested(ans, raw.lower(), {"query": raw, "answer": res["answer"], "source": res.get("source", "")})
-    return {
-        "question": text,
-        "answer": ans,
-        "decoder": "web_lookup_learned",
-        "confidence": 0.90,
-        "confidence_tier": "high",
-        "hypothesis": False,
-        "web_used": True,
-        "activated_concepts": ["tool:web_lookup", "memory:auto_trained"],
-    }
+    return None

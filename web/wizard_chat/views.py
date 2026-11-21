@@ -853,9 +853,19 @@ def _extract_file_text(name: str, data: bytes, mime: str) -> str:
             text = "".join(chr(b) for b in data if 32 <= b < 127 or b in (9, 10, 13))
             return text[:8000] if text.strip() else f"[Binary .doc file: {name}]"
 
-        # Images — no vision on the wizard node yet
-        if name_lower.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".svg")):
-            return f"[Image file: {name}, {len(data):,} bytes — image analysis not yet available on this node]"
+        # Images — extract genuine multimodal desktop/visual features via OpenCV + W1z4rD POOL_IMAGE=2
+        if name_lower.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff")) or mime.startswith("image/"):
+            if not name_lower.endswith(".svg"):
+                try:
+                    from tools.wizard_learning.multimodal_desktop_navigator import (
+                        extract_desktop_visual_features,
+                        format_visual_desktop_analysis,
+                    )
+                    vf = extract_desktop_visual_features(data)
+                    return format_visual_desktop_analysis(vf, filename=name)
+                except Exception as img_exc:
+                    return f"[Image file: {name}, {len(data):,} bytes — decode note: {img_exc}]"
+            return data.decode("utf-8", errors="replace")[:8000]
 
         # Video
         if name_lower.endswith((".mp4", ".mov", ".avi", ".webm", ".mkv", ".flv", ".wmv")):
@@ -908,10 +918,20 @@ def _build_answer(wizard_data: dict, web_snippet: str, question: str) -> dict:
         return {"answer": answer, "is_hypothesis": True, "confidence_tier": "offline",
                 "web_used": bool(web_snippet), "concepts": []}
 
-    # Good answer from node
+    # Good answer from node (or open-licensed online self-training)
     if raw_answer and not is_hypothesis:
-        return {"answer": raw_answer, "is_hypothesis": False,
-                "confidence_tier": tier, "web_used": False, "concepts": concepts}
+        out_ans = {
+            "answer": raw_answer,
+            "is_hypothesis": False,
+            "confidence_tier": tier,
+            "web_used": bool(wizard_data.get("web_used", False)),
+            "concepts": concepts,
+        }
+        if wizard_data.get("license"):
+            out_ans["license"] = wizard_data["license"]
+        if wizard_data.get("source_url"):
+            out_ans["source_url"] = wizard_data["source_url"]
+        return out_ans
 
     # Hypothesis / low confidence — enrich with web search
     if web_snippet:
@@ -960,8 +980,34 @@ class WizardChatMessageView(View):
 
         text = (body.get("text") or "").strip()
         session_id = (body.get("session_id") or str(uuid.uuid4()))
-        attachment_texts: list[str] = body.get("attachment_texts") or []
-        if attachment_texts:
+        attachment_texts: list[str] = list(body.get("attachment_texts") or [])
+        image_b64 = (body.get("image_b64") or "").strip()
+        direct_vision_payload: dict | None = None
+        if image_b64:
+            try:
+                raw_img = base64.b64decode(image_b64.split(",", 1)[-1])
+                from tools.wizard_learning.multimodal_desktop_navigator import (
+                    cofire_desktop_episode_to_wizard,
+                    extract_desktop_visual_features,
+                    format_visual_desktop_analysis,
+                    plan_and_mutate_desktop_action,
+                )
+                vf = extract_desktop_visual_features(raw_img)
+                assumed_os = str((body.get("context") or {}).get("assumed_os") or "windows11")
+                env_vars = body.get("env_vars") if isinstance(body.get("env_vars"), dict) else {}
+                plan = plan_and_mutate_desktop_action(text or "navigate desktop", vf, env_vars=env_vars, assumed_os=assumed_os)
+                direct_vision_payload = {"visual_features": vf, "desktop_plan": plan}
+                attachment_texts.append(format_visual_desktop_analysis(vf, plan, filename="inline_frame.png"))
+                _thread_pool.submit(
+                    cofire_desktop_episode_to_wizard,
+                    text or "navigate desktop",
+                    vf,
+                    plan,
+                )
+            except Exception as img_exc:
+                attachment_texts.append(f"[Inline image decode error: {img_exc}]")
+
+        if attachment_texts and not direct_vision_payload:
             from .learning_views import blocked_response
             blocked = blocked_response(_brain_for_request(request))
             if blocked is not None: return blocked
@@ -1058,19 +1104,38 @@ class WizardChatMessageView(View):
             session_id=session_id,
             active_topic=CONV_STORE.snapshot(session_id).get("active_topic", ""),
         )
-        allow_web_lookup = bool(body.get("allow_web_lookup", False))
+        # Default allow_web_lookup=True so unknown questions automatically trigger
+        # open-licensed online discovery + self-training + periodic settling; callers
+        # may pass allow_web_lookup=False to test strictly offline post-settling recall.
+        allow_web_lookup = bool(body.get("allow_web_lookup", True))
 
         # Direct query — millisecond associative / context / symbolic / code path on local node
-        query_input = text if (text and not attachment_texts) else full_prompt
-        wizard_data = _wizard_ask(
-            query_input,
-            session_id,
-            endpoint=brain["endpoint"],
-            chat_path=brain["chat_path"],
-            node_busy=is_settling_or_locked,
-            runtime_context=runtime_ctx,
-            allow_web_lookup=allow_web_lookup,
-        )
+        if direct_vision_payload is not None:
+            from tools.wizard_learning.multimodal_desktop_navigator import format_visual_desktop_analysis
+            vf = direct_vision_payload["visual_features"]
+            plan = direct_vision_payload["desktop_plan"]
+            wizard_data = {
+                "question": text or "analyze desktop screenshot",
+                "answer": format_visual_desktop_analysis(vf, plan, filename="live_desktop_frame.png"),
+                "decoder": "multimodal_desktop_vision_mutator",
+                "confidence": 0.99,
+                "confidence_tier": "high",
+                "hypothesis": False,
+                "activated_concepts": ["pool:POOL_IMAGE->POOL_ACTION", f"desktop:{plan.get('inferred_desktop_family')}"],
+                "visual_features": vf,
+                "desktop_plan": plan,
+            }
+        else:
+            query_input = text if (text and not attachment_texts) else full_prompt
+            wizard_data = _wizard_ask(
+                query_input,
+                session_id,
+                endpoint=brain["endpoint"],
+                chat_path=brain["chat_path"],
+                node_busy=is_settling_or_locked,
+                runtime_context=runtime_ctx,
+                allow_web_lookup=allow_web_lookup,
+            )
         if slow_brain and not (wizard_data.get("answer") or "").strip():
             from tools.wizard_learning.self_design import context as self_design_context
             decorated_prompt = self_design_context(brain) + "\n\n" + full_prompt
@@ -1094,7 +1159,7 @@ class WizardChatMessageView(View):
             answer_matches_model=(result.get("answer") or "").strip() == (wizard_data.get("answer") or "").strip(),
         ))
         result["node_online"] = node_up
-        for k in ("decoder", "integrated_confidence", "fabric_confidence", "eem_confidence", "confidence"):
+        for k in ("decoder", "integrated_confidence", "fabric_confidence", "eem_confidence", "confidence", "visual_features", "desktop_plan"):
             if k in wizard_data:
                 result[k] = wizard_data[k]
         if isinstance(wizard_data.get("visual_proposal"), dict):

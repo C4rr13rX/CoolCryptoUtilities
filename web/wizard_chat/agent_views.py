@@ -103,6 +103,7 @@ class WizardChatAgentView(View):
             session_id=session_id,
             active_topic=CONV_STORE.snapshot(session_id).get("active_topic", ""),
         )
+        runtime_ctx["allow_web_lookup"] = bool(body.get("allow_web_lookup", True))
 
         try:
             answer = agent_runner.run(
