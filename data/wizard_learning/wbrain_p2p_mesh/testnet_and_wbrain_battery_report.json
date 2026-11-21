@@ -1,0 +1,15 @@
+{
+  "timestamp_utc": "2026-11-21T18:13:49Z",
+  "mainnet_hard_block_checks": "5/5",
+  "multi_domain_wbrain_exports": "4/4",
+  "tamper_rejection_checks": "4/4",
+  "p2p_imported_shard_offline_recall": "25/25",
+  "testnet_500_stress_ops": {
+    "passed": 500,
+    "total": 500,
+    "accuracy_pct": 100.0,
+    "elapsed_s": 1.98
+  },
+  "hub_manifest_endpoint_ok": true,
+  "all_passed": true
+}

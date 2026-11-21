@@ -557,3 +557,44 @@ def test_multimodal_desktop_visual_feature_recognition_and_action_mutation():
     assert 566 <= plan["selected_action"]["x"] <= 686
     assert 429 <= plan["selected_action"]["y"] <= 467
 
+
+def test_wbrain_v4_decentralized_p2p_mesh_and_strict_testnet_gate():
+    import pytest
+    from tools.wizard_learning.wbrain_decentralized_mesh import (
+        MainnetBlockedError,
+        WbrainDecentralizedMeshManager,
+        assert_testnet_only,
+        pack_wbrain_v4_shard,
+        unpack_wbrain_v4_shard,
+    )
+
+    # 1. Strict Testnet-Only gate MUST reject mainnet chains
+    for bad_chain in ("ETHEREUM_MAINNET", "BASE_MAINNET", "SOLANA_MAINNET", "ETH_LIVE"):
+        with pytest.raises(MainnetBlockedError):
+            assert_testnet_only(bad_chain)
+    assert assert_testnet_only("BASE_SEPOLIA") == "BASE_SEPOLIA"
+
+    # 2. Exact W1ZBRAIN v4 binary container roundtrip + SHA-256 tamper rejection
+    raw, meta = pack_wbrain_v4_shard(
+        [{"question": "Rapid Diplomat P2P Check", "answer": "Verified W1ZBRAIN v4 shard"}],
+        domain="unit_test_mesh",
+        generation=2,
+    )
+    assert raw[:8] == b"W1ZBRAIN"
+    mf, recs = unpack_wbrain_v4_shard(raw)
+    assert mf["generation"] == 2
+    assert len(recs) == 1 and recs[0]["answer"] == "Verified W1ZBRAIN v4 shard"
+
+    tampered = bytearray(raw)
+    tampered[-3] ^= 0xFF
+    with pytest.raises(ValueError):
+        unpack_wbrain_v4_shard(bytes(tampered))
+
+    # 3. Out-of-order P2P chunk reassembly
+    mgr = WbrainDecentralizedMeshManager.get_instance()
+    dm, chunks = mgr.chunk_wbrain_for_p2p(raw, meta, chunk_size=1024)
+    assert len(chunks) >= 4
+    reassembled = mgr.reassemble_p2p_chunks(dm, list(reversed(chunks)))
+    assert reassembled == raw
+
+

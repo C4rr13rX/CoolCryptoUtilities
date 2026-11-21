@@ -3,6 +3,7 @@ from . import node_update_views, views
 from . import agent_views
 from . import learning_views
 from . import settling_views
+from . import wbrain_views
 from .self_design_views import WizardSelfDesignView
 
 from .cluster_views import WizardClusterView
@@ -76,4 +77,13 @@ urlpatterns = [
     path("node/status/", node_update_views.WizardNodeUpdateStatusView.as_view(),
          name="node_update_status"),
     path("node/status", node_update_views.WizardNodeUpdateStatusView.as_view()),
+    # ── Decentralized .wbrain v4 P2P DataMesh & Strict Testnet-Only Ledger ─
+    path("wbrain/manifests/", wbrain_views.WizardWbrainManifestsView.as_view(), name="wbrain_manifests"),
+    path("wbrain/manifests", wbrain_views.WizardWbrainManifestsView.as_view()),
+    path("wbrain/export/", wbrain_views.WizardWbrainExportView.as_view(), name="wbrain_export"),
+    path("wbrain/export", wbrain_views.WizardWbrainExportView.as_view()),
+    path("wbrain/import/", wbrain_views.WizardWbrainImportView.as_view(), name="wbrain_import"),
+    path("wbrain/import", wbrain_views.WizardWbrainImportView.as_view()),
+    path("wbrain/testnet/", wbrain_views.WizardWbrainTestnetView.as_view(), name="wbrain_testnet"),
+    path("wbrain/testnet", wbrain_views.WizardWbrainTestnetView.as_view()),
 ]
