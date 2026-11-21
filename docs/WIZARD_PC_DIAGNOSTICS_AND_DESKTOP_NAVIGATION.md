@@ -76,6 +76,8 @@
   - **Multi-Domain `.wbrain` v4 Binary Exports & Dual-Slot SHA-256 Tamper Rejection**: **`4 / 4 (100%)`** exports + **`4 / 4 (100%)`** tamper rejections.
   - **Out-of-Order Chunked P2P Import -> Offline Brain Recall**: **`25 / 25 (100%)`** (`web_used = False`).
   - **Concurrent `500`-Op Testnet `tW1Z` Faucet/Escrow/Mainnet-Guard Stress Battery**: **`500 / 500 (100.00%)`** in `1.98s`.
-  - **Android `Rapid Diplomat` Unit Suite + Cross-Platform Python->Kotlin `.wbrain` Interop**: **`104 / 104 passed (100.00%)`**.
+  - **Android `Rapid Diplomat` Unit Suite + Cross-Platform Python->Kotlin `.wbrain` Interop + 2025 Chevy Colorado Cockpit**: **`107 / 107` tests** (`ColoradoCockpitAndC0d3rV2DriveTest.kt`).
+  - **2025 Chevy Colorado 11.3" Companion Endpoint (`web/wizard_chat/vehicle_companion_views.py`)**: `/api/wizard-chat/vehicle-companion/` providing NHTSA eyes-free spoken summaries, open-licensed internet search + self-training, and path-confined multi-file C0d3rV2 project engineering (`data/wizard_learning/vehicle_projects/`), verified in `pytest` (**`20 / 20 passed`**).
+
 
 

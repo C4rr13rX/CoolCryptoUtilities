@@ -598,3 +598,42 @@ def test_wbrain_v4_decentralized_p2p_mesh_and_strict_testnet_gate():
     assert reassembled == raw
 
 
+def test_chevy_colorado_vehicle_companion_projects_and_safety():
+    import pytest
+    import shutil
+    from web.wizard_chat.vehicle_companion_views import (
+        VEHICLE_PROJECTS_ROOT,
+        _concise_spoken_summary,
+        _handle_project_intent,
+        _safe_project_path,
+    )
+
+    # 1. Path traversal outside vehicle_projects sandbox MUST be blocked
+    with pytest.raises(ValueError):
+        _safe_project_path("colorado_test", "../../outside.py")
+
+    # 2. Spoken summary strips raw fenced code blocks for NHTSA driving safety
+    spoken = _concise_spoken_summary("Built module:\n```python\ndef foo():\n    return 42\n```\nReady for review.")
+    assert "```" not in spoken
+    assert len(spoken) <= 260
+
+    # 3. Multi-file Python project scaffolding + AST verification
+    slug = "pytest_colorado_telemetry"
+    proj_dir = VEHICLE_PROJECTS_ROOT / slug
+    if proj_dir.exists():
+        shutil.rmtree(proj_dir)
+    try:
+        res = _handle_project_intent("Create project pytest_colorado_telemetry in Python for CAN anomaly detection")
+        assert res is not None and res["mode"] == "project_engineering"
+        assert res["project_manifest"]["all_verified"] is True
+        assert len(res["project_manifest"]["files"]) >= 4
+
+        upd = _handle_project_intent("Work on project pytest_colorado_telemetry and add module alert_router")
+        assert upd is not None and upd["project_manifest"]["all_verified"] is True
+        assert len(upd["project_manifest"]["files"]) >= 5
+    finally:
+        if proj_dir.exists():
+            shutil.rmtree(proj_dir)
+
+
+

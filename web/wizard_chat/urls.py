@@ -3,6 +3,7 @@ from . import node_update_views, views
 from . import agent_views
 from . import learning_views
 from . import settling_views
+from . import vehicle_companion_views
 from . import wbrain_views
 from .self_design_views import WizardSelfDesignView
 
@@ -86,4 +87,7 @@ urlpatterns = [
     path("wbrain/import", wbrain_views.WizardWbrainImportView.as_view()),
     path("wbrain/testnet/", wbrain_views.WizardWbrainTestnetView.as_view(), name="wbrain_testnet"),
     path("wbrain/testnet", wbrain_views.WizardWbrainTestnetView.as_view()),
+    # ── 2025 Chevy Colorado 11.3" Infotainment Companion (Web + Sandboxed Projects + W1z4rD) ─
+    path("vehicle-companion/", vehicle_companion_views.WizardVehicleCompanionView.as_view(), name="vehicle_companion"),
+    path("vehicle-companion", vehicle_companion_views.WizardVehicleCompanionView.as_view()),
 ]
