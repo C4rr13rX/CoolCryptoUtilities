@@ -34,6 +34,16 @@ export async function fetchDashboardSummary() {
   return data;
 }
 
+export async function fetchHybridStorageSettings() {
+  const { data } = await api.get('/hybrid/storage-settings/');
+  return data;
+}
+
+export async function updateHybridStorageSettings(settings: Record<string, boolean>) {
+  const { data } = await api.post('/hybrid/storage-settings/', { settings });
+  return data;
+}
+
 export async function fetchPipelineReadiness() {
   const { data } = await api.get('/telemetry/pipeline/readiness/');
   return data;

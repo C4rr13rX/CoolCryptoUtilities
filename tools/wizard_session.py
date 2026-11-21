@@ -67,20 +67,20 @@ def _wizard_endpoint() -> str:
         os.getenv("WIZARD_BRAIN_CHAT_URL")
         or os.getenv("WIZARD_BRAIN_URL")
         or os.getenv("WIZARD_NODE_URL")
-        or "http://localhost:8090"
+        or "http://127.0.0.1:8090"
     )
 
 
 def _wizard_chat_path() -> str:
     """Path component for chat requests.
 
-    Default: /chat (the canonical top-level endpoint for brain chat).
-    Set WIZARD_USE_BRAIN_PREFIX=1 to route to /brain/chat.
+    Default: /brain/chat (the high-performance indexed trained-binding endpoint).
+    Set WIZARD_USE_BRAIN_PREFIX=0 to fall back to top-level /chat.
     """
-    raw = os.getenv("WIZARD_USE_BRAIN_PREFIX", "0").strip().lower()
-    if raw in {"1", "true", "yes"}:
-        return "/brain/chat"
-    return "/chat"
+    raw = os.getenv("WIZARD_USE_BRAIN_PREFIX", "1").strip().lower()
+    if raw in {"0", "false", "no"}:
+        return "/chat"
+    return "/brain/chat"
 
 
 def _wizard_timeout() -> float:
@@ -127,10 +127,11 @@ class WizardSession:
         **_ignored: Any,
     ) -> None:
         self.session_name = session_name
-        self.endpoint = (endpoint or _wizard_endpoint()).rstrip("/")
+        self.endpoint = (endpoint or _wizard_endpoint()).rstrip("/").replace("://localhost:", "://127.0.0.1:")
         selected_path = str(chat_path or _wizard_chat_path()).strip()
         self.chat_path = selected_path if selected_path.startswith("/") else f"/{selected_path}"
-        self.timeout_s = timeout_s if timeout_s is not None else _wizard_timeout()
+        is_slow_relay = ":18096" in self.endpoint
+        self.timeout_s = timeout_s if timeout_s is not None else (_wizard_timeout() if is_slow_relay else 2.5)
         self.workdir = Path(workdir).resolve() if workdir else Path.cwd()
         self.meta_role = meta_role
         self.allow_in_freeloader_mode = allow_in_freeloader_mode
@@ -214,10 +215,16 @@ class WizardSession:
         import urllib.request
         import urllib.error
 
-        paths = [self.chat_path]
-        alt = "/chat" if self.chat_path != "/chat" else "/brain/chat"
-        if alt not in paths:
-            paths.append(alt)
+        is_slow_relay = ":18096" in self.endpoint
+        if is_slow_relay:
+            paths = [self.chat_path]
+            alt = "/chat" if self.chat_path != "/chat" else "/brain/chat"
+            if alt not in paths:
+                paths.append(alt)
+        else:
+            paths = ["/chat"]
+            if self.chat_path not in paths and len(text) <= 400:
+                paths.append(self.chat_path)
 
         raw = None
         last_exc = None
@@ -269,6 +276,12 @@ class WizardSession:
         # (same content; alias for clients).  Legacy /neuro/ask returns
         # `answer` only.  Take whichever is non-empty.
         answer = str(data.get("answer") or data.get("reply") or "").strip()
+
+        # Reject untrained neural noise (char_chain chatter like '()*+,-.', xj{}..., or non-alphanumeric noise)
+        if answer:
+            alnum_ratio = sum(c.isalnum() for c in answer) / max(1, len(answer))
+            if alnum_ratio < 0.35 or "xj{}" in answer or answer.startswith(("'()*", "X[]")):
+                answer = ""
 
         # When answer is empty (hypothesis / low confidence / OOG),
         # build a structured fallback so the agent gets SOMETHING.

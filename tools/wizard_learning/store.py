@@ -1,6 +1,7 @@
 """Durable queue and checkpoint-scoped foundation assessments, separate from trading."""
 from __future__ import annotations
 
+from contextlib import closing
 import json
 import os
 import sqlite3
@@ -19,7 +20,7 @@ class LearningStore:
     def __init__(self, path: Path | str | None = None):
         self.path = Path(path or os.getenv("WIZARD_LEARNING_DB", str(ROOT / "data" / "wizard_learning.sqlite3")))
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.connect() as db:
+        with closing(self.connect()) as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS queue (id TEXT PRIMARY KEY, created REAL NOT NULL, kind TEXT NOT NULL,
                     payload TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'queued', error TEXT NOT NULL DEFAULT '');

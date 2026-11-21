@@ -2,19 +2,43 @@ from django.urls import path
 from . import node_update_views, views
 from . import agent_views
 from . import learning_views
+from . import settling_views
 from .self_design_views import WizardSelfDesignView
+
+from .cluster_views import WizardClusterView
 
 app_name = "wizard_chat"
 
 urlpatterns = [
+    path("cluster/", WizardClusterView.as_view(), name="cluster"),
     path("self-design/", WizardSelfDesignView.as_view(), name="self_design"),
     path("learning/", learning_views.WizardLearningView.as_view(), name="learning"),
+    path("settling/", settling_views.WizardSettlingView.as_view(), name="settling"),
+    path("settling/run/", settling_views.WizardSettlingRunView.as_view(), name="settling_run"),
+    path("settling/run", settling_views.WizardSettlingRunView.as_view()),
+    path("cognitive-state/", settling_views.WizardCognitiveStateView.as_view(), name="cognitive_state"),
+    path("cognitive-state", settling_views.WizardCognitiveStateView.as_view()),
+    path("robot-world/", settling_views.WizardRobotWorldBridgeView.as_view(), name="robot_world"),
+    path("robot-world", settling_views.WizardRobotWorldBridgeView.as_view()),
+    path("empirical/", settling_views.WizardEmpiricalCurriculumView.as_view(), name="empirical"),
+    path("empirical/train/", settling_views.WizardEmpiricalTrainView.as_view(), name="empirical_train"),
+    path("empirical/train", settling_views.WizardEmpiricalTrainView.as_view()),
+    path("mesh/generate/", settling_views.WizardProceduralMeshView.as_view(), name="mesh_generate"),
+    path("mesh/generate", settling_views.WizardProceduralMeshView.as_view()),
+    path("deduce/", settling_views.WizardDeductiveReasoningView.as_view(), name="deduce"),
+    path("deduce", settling_views.WizardDeductiveReasoningView.as_view()),
+    path("blueprint/export/", settling_views.WizardBlueprintExportView.as_view(), name="blueprint_export"),
+    path("blueprint/export", settling_views.WizardBlueprintExportView.as_view()),
+    path("kuzu-workbench/", settling_views.WizardKuzuWorkbenchView.as_view(), name="kuzu_workbench"),
+    path("kuzu-workbench", settling_views.WizardKuzuWorkbenchView.as_view()),
     path("message/", views.WizardChatMessageView.as_view(), name="message"),
     path("message", views.WizardChatMessageView.as_view()),
     path("upload/", views.WizardChatUploadView.as_view(), name="upload"),
     path("upload", views.WizardChatUploadView.as_view()),
     path("train/", views.WizardChatTrainView.as_view(), name="train"),
     path("train", views.WizardChatTrainView.as_view()),
+    path("anchored-memories/", views.WizardAnchoredMemoriesView.as_view(), name="anchored_memories"),
+    path("anchored-memories", views.WizardAnchoredMemoriesView.as_view()),
     path("status/", views.WizardChatStatusView.as_view(), name="status"),
     path("status", views.WizardChatStatusView.as_view()),
     path("pools/", views.WizardChatPoolsView.as_view(), name="pools"),

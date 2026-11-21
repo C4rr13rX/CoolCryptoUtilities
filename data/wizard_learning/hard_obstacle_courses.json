@@ -1,0 +1,118 @@
+{
+  "version": "2.1.0",
+  "title": "W1z4rD Hard Cognitive & Software Debugging Obstacle Courses",
+  "description": "Multi-track obstacle courses covering hard polyglot compiler debugging, scientific runtime exceptions, robotics kinematics singularities, ASME Y14.5 GD&T tolerancing, and dynamical systems.",
+  "passing_threshold": 1.0,
+  "tasks": [
+    {
+      "key": "hard_debug_rust_borrow_concurrency",
+      "title": "Rust Concurrency & Closure Borrow Checker (E0382 / E0597)",
+      "category": "compiler_debugging",
+      "prompt": "You are debugging a high-throughput Rust telemetry worker. The compiler fails with error[E0382]: use of moved value: `state` in closure `move |_|`. The worker attempts to spawn multiple tokio tasks that share mutable state across worker threads. Explain the exact memory ownership conflict, identify why simple clone is insufficient for shared mutable state, and provide the correct Rust synchronization pattern.",
+      "error_context": "error[E0382]: use of moved value: `state`\n  --> src/telemetry.rs:42:18\n   |\n38 |     let state = TelemetryState::new();\n   |         ----- move occurs because `state` has type `TelemetryState`, which does not implement the `Copy` trait\n39 |     for _ in 0..num_threads {\n40 |         tokio::spawn(async move {\n   |                      ^^^^^^^^^^\n41 |             state.record_metric(42);\n   |             ----- variable moved due to use in closure\n   |\n   = note: value used here after move",
+      "expected_keywords": ["arc", "mutex", "clone", "borrow", "ownership", "tokio", "thread"],
+      "required_phrases": ["arc", "mutex", "clone"],
+      "diagnostic_feedback": "Recall Rust ownership rules: a standard move into an async closure consumes ownership. For concurrent multi-threaded mutation, the value must be wrapped in Arc<Mutex<T>> (or Arc<tokio::sync::Mutex<T>>) and an explicit clone of the Arc handle must be bound prior to entering each spawned task closure.",
+      "senior_solution": "Wrap the shared state in Arc<Mutex<TelemetryState>> (or Arc<tokio::sync::Mutex<TelemetryState>>). In the thread spawning loop, create a local clone via let state_clone = Arc::clone(&state); and move state_clone into the spawned async closure, acquiring the mutex lock inside the task."
+    },
+    {
+      "key": "hard_debug_cpp_eigen_simd",
+      "title": "C++ Eigen SIMD Vectorization Alignment Fault (SIGSEGV in Operator New)",
+      "category": "compiler_debugging",
+      "prompt": "A C++ robotics simulation program using Eigen::Vector4d crashes with SIGSEGV (segmentation fault) at runtime when instantiating a robot link class, failing on assertion `(reinterpret_cast<size_t>(array) & 0xf) == 0 && 'this assertion is explained here: http://eigen.tuxfamily.org/dox/UnalignedArrayAssert.html'`. Explain why 128-bit SIMD SSE alignment fails with default C++ allocator and state the exact two mandatory code modifications needed for class declarations and STL containers.",
+      "error_context": "test_robot_sim: /usr/include/eigen3/Eigen/src/Core/DenseStorage.h:109: Eigen::internal::plain_array<T, Size, MatrixOrArrayOptions, 16>::plain_array() [with T = double; int Size = 4; int MatrixOrArrayOptions = 0]: Assertion `(reinterpret_cast<size_t>(array) & 0xf) == 0 && \"this assertion is explained here: ...\"' failed.\nAborted (core dumped)",
+      "expected_keywords": ["eigen", "simd", "alignment", "16-byte", "macro", "allocator", "vector"],
+      "required_phrases": ["eigen_make_aligned_operator_new", "aligned_allocator"],
+      "diagnostic_feedback": "Eigen fixed-size vectorizable types require 16-byte (or 32/64-byte for AVX) memory alignment for SSE/AVX vector intrinsics. Default heap allocation in C++ <= 14 does not guarantee 16-byte boundary alignment. Add the EIGEN_MAKE_ALIGNED_OPERATOR_NEW macro to the public section of the class, and use Eigen::aligned_allocator when placing instances into STL containers like std::vector.",
+      "senior_solution": "1) In the public section of any class holding fixed-size vectorizable Eigen members (like Vector4d or Matrix4d), add the macro EIGEN_MAKE_ALIGNED_OPERATOR_NEW. 2) When storing fixed-size Eigen objects or containing classes in STL collections, use Eigen's allocator: std::vector<RobotLink, Eigen::aligned_allocator<RobotLink>>."
+    },
+    {
+      "key": "hard_debug_ros2_rclcpp_lifecycle",
+      "title": "ROS2 rclcpp Circular Lifecycle Node Deadlock & CMake Linker Undefined Reference",
+      "category": "compiler_debugging",
+      "prompt": "In a ROS2 Humble robotic manipulator package, a custom LifecycleNode compiles with undefined reference to `rclcpp_lifecycle::LifecycleNode::LifecycleNode(...)` during CMake build, and when linked, deadlocks during `on_configure` transition when calling a service provided by another unconfigured lifecycle node. How do you resolve both the CMakeLists.txt linker dependency and the lifecycle state transition deadlock?",
+      "error_context": "/usr/bin/ld: CMakeFiles/arm_controller.dir/src/arm_node.cpp.o: in function `ArmController::ArmController(rclcpp::NodeOptions const&)':\narm_node.cpp:(.text+0x14a): undefined reference to `rclcpp_lifecycle::LifecycleNode::LifecycleNode(std::string const&, rclcpp::NodeOptions const&)'\ncollect2: error: ld returned 1 exit status",
+      "expected_keywords": ["ros2", "cmake", "lifecycle", "ament_target_dependencies", "rclcpp_lifecycle", "state", "async"],
+      "required_phrases": ["ament_target_dependencies", "rclcpp_lifecycle"],
+      "diagnostic_feedback": "For the build error: add rclcpp_lifecycle to find_package(ament_cmake REQUIRED COMPONENTS ...) and ament_target_dependencies(arm_controller rclcpp_lifecycle). For the lifecycle deadlock: lifecycle nodes must never make synchronous service calls to peers during on_configure; use asynchronous client calls or orchestrate state transitions via a centralized lifecycle manager.",
+      "senior_solution": "1) In CMakeLists.txt add rclcpp_lifecycle to find_package(...) and declare ament_target_dependencies(arm_controller rclcpp rclcpp_lifecycle), and add <depend>rclcpp_lifecycle</depend> in package.xml. 2) In lifecycle state transitions like on_configure, avoid synchronous blocking calls like wait_for_service() or future.get(); use asynchronous client calls (async_send_request) or wait for on_activate state transition."
+    },
+    {
+      "key": "hard_debug_pytorch_contiguous_grad",
+      "title": "PyTorch Non-Contiguous Tensor View Stride Mismatch in Backward Pass",
+      "category": "scientific_runtime",
+      "prompt": "During training of a multi-head robotics sensor fusion network in PyTorch, the backward pass throws: `RuntimeError: input is not contiguous`. The forward pass performs tensor reshaping via `tensor.transpose(1, 2).view(batch_size, -1)`. What causes this error in memory layout and how is it resolved without altering the intended tensor data?",
+      "error_context": "Traceback (most recent call last):\n  File \"train_sensor_fusion.py\", line 128, in <module>\n    loss.backward()\n  File \"/venv/lib/python3.10/site-packages/torch/_tensor.py\", line 492, in backward\n    torch.autograd.backward(self, gradient, retain_graph, create_graph, inputs=inputs)\nRuntimeError: view size is not compatible with input tensor's size and stride (at least one dimension spans across two contiguous subspaces). Use .reshape(...) or '.contiguous().view(...)'",
+      "expected_keywords": ["pytorch", "stride", "contiguous", "memory", "transpose", "view", "reshape"],
+      "required_phrases": ["contiguous", "stride"],
+      "diagnostic_feedback": "Calling .transpose() or .permute() modifies tensor metadata (dimensions and strides) without reordering the underlying flat storage buffer. Methods like .view() require a contiguous memory block. Call `.contiguous()` before `.view()`, or use `.reshape()` which automatically creates a contiguous copy when necessary.",
+      "senior_solution": "Calling transpose(1, 2) alters tensor dimensions and stride metadata without reordering the underlying memory buffer, making it non-contiguous. Calling .view() requires contiguous storage. Call .contiguous() before .view(): tensor.transpose(1, 2).contiguous().view(batch_size, -1), or use tensor.reshape(batch_size, -1) which handles non-contiguous strides automatically."
+    },
+    {
+      "key": "hard_debug_julia_stiff_diffeq",
+      "title": "Julia DifferentialEquations.jl Stiff ODE Step-Size Collapse & Dynamic Dispatch",
+      "category": "scientific_runtime",
+      "prompt": "A stiff chemical reaction kinetic / robotic viscoelastic system simulated in Julia with `solve(prob, Tsit5())` experiences severe step-size collapse, causing execution time to explode from seconds to hours with warning: `dt <= dtmin. Aborting step`. Additionally, @time reveals millions of heap allocations per second inside the inner derivative function `f(du, u, p, t)`. Identify the required stiff algorithm choice and the exact fix for inner-loop dynamic allocations.",
+      "error_context": "┌ Warning: dt <= dtmin in ODE solver. Aborting step. Stiff system detected?\n└ @ OrdinaryDiffEq ~/.julia/packages/OrdinaryDiffEq/v23.1/src/integrators/integrator_utils.jl:182\n  42.891230 seconds (148.21 M allocations: 7.923 GiB, 18.2% gc time)",
+      "expected_keywords": ["julia", "stiff", "rodas5", "kencarp4", "tsit5", "in-place", "type stability", "allocation"],
+      "required_phrases": ["rodas5", "in-place"],
+      "diagnostic_feedback": "Tsit5() is an explicit Runge-Kutta solver which is numerically unstable for stiff equations, forcing step size dt down to floating point machine epsilon. Switch to an implicit stiff solver such as Rodas5() or KenCarp4(). For allocations, ensure the ODE function is mutating in-place `f(du, u, p, t)` rather than out-of-place `f(u, p, t)`, and avoid global non-const variables to maintain strict type stability.",
+      "senior_solution": "1) Replace the explicit Tsit5() solver with an A-L stable implicit stiff solver like Rodas5() or KenCarp4() to prevent step-size collapse. 2) For zero-allocation inner loops, use the in-place mutating form f(du, u, p, t) instead of out-of-place f(u, p, t), and ensure all variables and parameters have concrete types for strict type stability."
+    },
+    {
+      "key": "hard_debug_threejs_webgl_leak",
+      "title": "Three.js / WebGL GPU Memory Leak During Dynamic Robotic Geometry Updates",
+      "category": "scientific_runtime",
+      "prompt": "In a 3D WebGL robotics digital twin application, the browser tab memory climbs by ~200 MB per minute and eventually crashes with `WebGL: CONTEXT_LOST_WEBGL` when re-rendering moving robotic arm links. Removing old meshes via `scene.remove(mesh)` does not release GPU memory. What is the fundamental lifecycle requirement for WebGL entities in Three.js?",
+      "error_context": "[Violation] 'requestAnimationFrame' handler took 82ms\nWebGL: CONTEXT_LOST_WEBGL: context lost, losing context\nthree.module.js:14282 Uncaught Error: WebGL rendered context lost.",
+      "expected_keywords": ["three.js", "webgl", "dispose", "geometry", "material", "gpu", "memory"],
+      "required_phrases": ["dispose()", "geometry", "material"],
+      "diagnostic_feedback": "In Three.js, Javascript garbage collection does NOT deallocate GPU buffer attributes, shaders, or texture buffers. Calling scene.remove(mesh) only detaches the node from the scene graph. You must explicitly traverse the node hierarchy and invoke .dispose() on mesh.geometry and mesh.material (and material.map/textures).",
+      "senior_solution": "Calling scene.remove(mesh) only removes the object from the scene graph; WebGL GPU buffers are not freed by JavaScript garbage collection. You must explicitly invoke mesh.geometry.dispose() and mesh.material.dispose() (along with any material textures/maps) to free GPU VRAM."
+    },
+    {
+      "key": "hard_robotics_dh_singularity",
+      "title": "Robotic Manipulator Kinematic Singularity & Damped Least-Squares (DLS) Inversion",
+      "category": "robotics_kinematics",
+      "prompt": "A 6-DOF serial robotic manipulator approaches an elbow singularity where the determinant of the Jacobian matrix det(J(theta)) approaches 0. Using standard pseudoinverse J_dagger = J^T (J J^T)^(-1) results in joint velocity commands exceeding physical motor limits (nan / infinite rad/s) causing trajectory deviation. Provide the exact mathematical equation for Damped Least-Squares (Levenberg-Marquardt) Jacobian inverse and explain how the damping factor lambda resolves the singularity.",
+      "error_context": "Controller Error: Joint 3 angular velocity command 4821.4 rad/s exceeds hardware limit 15.7 rad/s.\nMatrix Inversion: det(J * J^T) = 1.42e-14 -> Condition number > 1e12.",
+      "expected_keywords": ["jacobian", "singularity", "damped", "least-squares", "damping", "inversion", "pseudoinverse"],
+      "required_phrases": ["damped least-squares", "damping"],
+      "diagnostic_feedback": "Near kinematic singularities, J * J^T becomes ill-conditioned. Damped Least-Squares (DLS) regularizes the inversion by adding a damping factor lambda: J_DLS = J^T * (J * J^T + lambda^2 * I)^(-1). When det(J) is small, lambda^2 prevents the denominator from vanishing, trading off small tracking error to bound joint velocities.",
+      "senior_solution": "Near kinematic singularities, J * J^T becomes singular and standard pseudoinverse causes infinite joint velocities. Use Damped Least-Squares (DLS): J* = J^T * (J * J^T + lambda^2 * I)^(-1). The damping factor lambda bounds the inverse and prevents joint velocity divergence near singularities."
+    },
+    {
+      "key": "hard_robotics_bldc_thermal_derating",
+      "title": "Actuator Dynamics: BLDC Winding I^2*R Heating & Thermal Time-Constant Derating",
+      "category": "robotics_kinematics",
+      "prompt": "A high-torque direct-drive robotic actuator with phase resistance R = 0.45 Ohms operates with continuous current I = 18 A. Ambient temperature is 25 C and thermal resistance to ambient R_th is 1.8 K/W. Thermal mass C_th is 120 J/K. Calculate: 1) Steady-state copper winding power loss P_loss, 2) Steady-state winding temperature rise Delta_T, 3) Final winding temperature, 4) Thermal time constant tau in seconds, and 5) Maximum allowable continuous current if winding insulation limit is 130 C.",
+      "error_context": "Actuator Telemetry Warning: Motor winding thermistor reports 152.4 C (insulation class F limit 155 C, trip threshold 130 C).",
+      "expected_keywords": ["power", "loss", "temperature", "current", "thermal", "derating", "time constant"],
+      "required_phrases": ["145.8", "216", "11.3"],
+      "diagnostic_feedback": "Use first-principles electro-thermal equations: 1) P_loss = 3/2 * I^2 * R (or I^2 * R for equivalent DC) = 18^2 * 0.45 = 145.8 W. 2) Delta_T = P_loss * R_th = 145.8 * 1.8 = 262.44 K. 3) T_final = 25 + 262.44 = 287.44 C (exceeds limit!). 4) tau = R_th * C_th = 1.8 * 120 = 216 s. 5) For T_max = 130 C, Delta_T_max = 105 C -> P_max = 105 / 1.8 = 58.33 W -> I_max = sqrt(58.33 / 0.45) = 11.38 A.",
+      "senior_solution": "1) Power loss P_loss = I^2 * R = 18^2 * 0.45 = 145.8 W. 2) Temperature rise Delta_T = P_loss * R_th = 145.8 * 1.8 = 262.4 K. 3) Final temperature T_final = 25 + 262.4 = 287.4 C. 4) Thermal time constant tau = R_th * C_th = 1.8 * 120 = 216 seconds. 5) Max allowable continuous current for 130 C limit: P_max = (130 - 25) / 1.8 = 58.33 W; I_max = sqrt(58.33 / 0.45) = 11.39 Amperes."
+    },
+    {
+      "key": "hard_gdt_asme_y14_5_mmc",
+      "title": "ASME Y14.5 GD&T: Datum Reference Frame & Maximum Material Condition (MMC) Bonus Tolerance",
+      "category": "gdt_manufacturing",
+      "prompt": "A precision robotic bearing bore drawing specifies a diameter of 30.00 mm (+0.030 / -0.000 mm). The geometric tolerance callout specifies True Position of diameter 0.05 mm at Maximum Material Condition (MMC) relative to Datum A (mounting face, Flatness 0.01 mm) and Datum B (locating boss, Perpendicularity 0.02 mm). If the manufactured bore measures 30.025 mm, what is: 1) The MMC size of the internal bore, 2) The bonus tolerance, and 3) The total allowable position tolerance?",
+      "error_context": "Quality Control CMM Inspection: Measured Bore Diameter = 30.025 mm. Measured Position Deviation = 0.068 mm. Inspector flagged non-conformance against 0.05 mm base callout.",
+      "expected_keywords": ["asme", "gdt", "mmc", "bonus", "tolerance", "position", "datum", "bore"],
+      "required_phrases": ["30.00", "0.025", "0.075"],
+      "diagnostic_feedback": "For an internal feature of size (hole/bore), Maximum Material Condition (MMC) occurs at the smallest hole limit where maximum metal remains: MMC = 30.000 mm. Bonus tolerance is the departure from MMC: Departure = Actual - MMC = 30.025 - 30.000 = 0.025 mm. Total allowable position tolerance = Base tolerance (0.05) + Bonus (0.025) = 0.075 mm. The 0.068 mm measured deviation conforms!",
+      "senior_solution": "1) For an internal hole/bore, Maximum Material Condition (MMC) is the smallest diameter: 30.000 mm. 2) Bonus tolerance is departure from MMC: 30.025 - 30.000 = 0.025 mm. 3) Total allowable position tolerance = base tolerance at MMC (0.050 mm) + bonus tolerance (0.025 mm) = 0.075 mm. The 0.068 mm measured deviation is within the 0.075 mm limit and conforms."
+    },
+    {
+      "key": "hard_symplectic_hamiltonian_conservation",
+      "title": "Dynamical Systems: Symplectic Integrator Energy & Phase-Space Conservation",
+      "category": "algorithmic_deduction",
+      "prompt": "When simulating an undamped conservative multi-body robotic link system using standard explicit Euler or 4th-order Runge-Kutta (RK4) over 100,000 steps, the total mechanical energy E = T + V continually drifts upward, leading to artificial explosion of momentum. Explain why standard RK4 fails to conserve Hamiltonian energy over long horizons, and formulate the exact position and momentum update equations for the 2nd-order Störmer-Verlet (Leapfrog) symplectic integrator.",
+      "error_context": "Simulation Diagnostics: Step 100,000: Total Energy E = 1842.1 J (Initial E0 = 120.0 J). Energy drift rate dE/dt = +1.72e-2 J/step.",
+      "expected_keywords": ["hamiltonian", "symplectic", "energy", "drift", "verlet", "leapfrog", "momentum", "phase-space"],
+      "required_phrases": ["symplectic", "verlet", "energy"],
+      "diagnostic_feedback": "Standard RK4 and explicit Euler are non-symplectic: their numerical flow does not preserve the differential 2-form dp ^ dq (Poincaré invariant) in Hamiltonian phase space, resulting in systematic secular energy drift over long time steps. Symplectic integrators like Störmer-Verlet conserve a shadow Hamiltonian exactly, guaranteeing bounded energy oscillation without secular drift.",
+      "senior_solution": "Standard RK4 and explicit Euler are non-symplectic: they fail to preserve the symplectic 2-form dp ^ dq and phase space volume, causing secular energy drift over long simulations. The Störmer-Verlet (Leapfrog) symplectic integrator updates: p(t + dt/2) = p(t) + (dt/2)*F(q(t)); q(t + dt) = q(t) + dt*(p(t + dt/2)/m); p(t + dt) = p(t + dt/2) + (dt/2)*F(q(t + dt)), which exactly conserves a shadow Hamiltonian and bounds energy oscillations indefinitely."
+    }
+  ]
+}

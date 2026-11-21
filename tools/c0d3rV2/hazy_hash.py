@@ -142,8 +142,13 @@ class HazyHash:
         """Try Kuzu first; fall back to JSON."""
         try:
             import kuzu  # type: ignore
-            self._db_path.mkdir(parents=True, exist_ok=True)
-            self._db = kuzu.Database(str(self._db_path))
+            if self._db_path.is_dir() or not self._db_path.suffix:
+                self._db_path.mkdir(parents=True, exist_ok=True)
+                db_file = self._db_path / "kuzu.db"
+            else:
+                self._db_path.parent.mkdir(parents=True, exist_ok=True)
+                db_file = self._db_path
+            self._db = kuzu.Database(str(db_file))
             self._conn = kuzu.Connection(self._db)
             self._ensure_schema()
             self._kuzu_ok = True

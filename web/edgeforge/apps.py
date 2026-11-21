@@ -35,14 +35,14 @@ class EdgeforgeConfig(AppConfig):
         def _boot_workers() -> None:
             import time
 
-            time.sleep(3.0)
+            time.sleep(2.0)
             try:
-                from .engine import COORDINATOR
                 from .models import EdgeSearchConfig
+                from .worker_daemon import ensure_external_worker_running
 
                 cfg = EdgeSearchConfig.load()
                 if cfg.enabled:
-                    COORDINATOR.start_background_workers()
+                    ensure_external_worker_running()
             except Exception:
                 pass
 

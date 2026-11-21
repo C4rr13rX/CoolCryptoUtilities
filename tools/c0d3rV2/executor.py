@@ -18,7 +18,7 @@ class Executor:
     DEFAULT_TIMEOUT_S: int = 120
 
     def __init__(self, workdir: Path, timeout_s: int | None = None) -> None:
-        self.workdir = workdir
+        self.workdir = Path(workdir).resolve() if workdir else Path.cwd().resolve()
         self.timeout_s = timeout_s or self.DEFAULT_TIMEOUT_S
 
     # ------------------------------------------------------------------
@@ -27,7 +27,7 @@ class Executor:
 
     def run(self, command: str, *, cwd: Path | None = None) -> tuple[int, str, str]:
         """Execute a command and return (return_code, stdout, stderr)."""
-        effective_cwd = cwd or self.workdir
+        effective_cwd = Path(cwd).resolve() if cwd else self.workdir
         if os.name == "nt":
             return self._run_windows(command, cwd=effective_cwd)
         return self._run_posix(command, cwd=effective_cwd)
@@ -60,10 +60,15 @@ class Executor:
             shell_cmd = ["powershell", "-NoProfile", "-Command", command]
         else:
             shell_cmd = ["cmd", "/c", command]
+        env = dict(os.environ)
+        local_bin = (cwd / "node_modules" / ".bin").resolve()
+        if local_bin.exists():
+            env["PATH"] = str(local_bin) + os.pathsep + env.get("PATH", "")
         try:
             result = subprocess.run(
                 shell_cmd,
                 cwd=str(cwd),
+                env=env,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout_s,

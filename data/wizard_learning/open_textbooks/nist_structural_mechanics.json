@@ -1,0 +1,28 @@
+{
+  "title": "NIST & ASCE 7 Structural Mechanics and Wind Load",
+  "license": "Public Domain / CC-BY",
+  "source": "NIST Building Science Series",
+  "sections": [
+    {
+      "topic": "Wind Velocity Pressure",
+      "equations": [
+        "q_z = 0.613 * K_z * K_zt * K_d * V**2"
+      ],
+      "summary": "Velocity pressure evaluated at height z for wind velocity V."
+    },
+    {
+      "topic": "Design Wind Force",
+      "equations": [
+        "F_wind = q_z * G * C_p * A"
+      ],
+      "summary": "Total lateral wind force on building facade surface area A with gust effect factor G."
+    },
+    {
+      "topic": "Euler Critical Buckling Load",
+      "equations": [
+        "P_cr = (pi**2 * E * I) / (K * L)**2"
+      ],
+      "summary": "Maximum axial compressive load a structural column can carry before elastic buckling occurs."
+    }
+  ]
+}

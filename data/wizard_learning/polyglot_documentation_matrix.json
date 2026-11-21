@@ -1,0 +1,270 @@
+{
+  "title": "Comprehensive Polyglot Language, Go-To Libraries, System Environment, and Version Gotchas Knowledge Matrix",
+  "version": "2026.1",
+  "languages": [
+    {
+      "language": "Python",
+      "versions": {
+        "2.7": "Legacy EOL. Unicode vs bytes confusion (str is bytes, unicode is text), print as statement, integer division 5/2=2.",
+        "3.6": "f-strings introduced, dict ordered by insertion, variable annotations.",
+        "3.8": "Walrus operator `:=`, positional-only parameters `/`.",
+        "3.10": "Structural pattern matching (`match`/`case`), union syntax `X | Y` for types, precise error tracebacks with caret points.",
+        "3.11": "Specializing adaptive interpreter (~25% speedup), ExceptionGroup and `except*`, fine-grained error locations in tracebacks.",
+        "3.12": "Syntactic formalization of f-strings, type parameter syntax (`type Alias[T] = list[T]`), removal of deprecated `distutils` and `asyncio.coroutine`.",
+        "3.13": "Free-threaded CPython (experimental no-GIL build `python3.13t`), JIT compiler base, interactive REPL enhancements."
+      },
+      "goto_libraries": [
+        {"name": "NumPy", "purpose": "N-dimensional array compute, vectorization, BLAS/LAPACK linear algebra bindings"},
+        {"name": "SciPy", "purpose": "Numerical optimization, ODE solvers (solve_ivp), signal processing, spatial KD-trees"},
+        {"name": "SymPy", "purpose": "Symbolic mathematics, analytical calculus, equations solving, LaTeX export"},
+        {"name": "PyTorch", "purpose": "Dynamic neural networks, autograd, GPU/CPU tensor compute, robotics policy learning"},
+        {"name": "FastAPI", "purpose": "Asynchronous REST APIs with Pydantic validation and automatic OpenAPI schemas"},
+        {"name": "rclpy", "purpose": "ROS2 Python client library for robotic nodes, publishers, subscribers, action servers"}
+      ],
+      "environment_and_platform_gotchas": [
+        {
+          "system": "Windows vs Linux / POSIX",
+          "gotcha": "Path separators: Windows uses backslash `\\`, Linux uses `/`. Spawning subprocesses on Windows requires `creationflags=subprocess.CREATE_NO_WINDOW` or shell handling for builtins like `dir`.",
+          "fix": "Always use `pathlib.Path` or `os.path.join`. For subprocesses, pass lists of strings rather than concatenated shell strings."
+        },
+        {
+          "system": "Virtual Environments & Packaging",
+          "gotcha": "ModuleNotFoundError when running outside active venv. Python 3.12+ enforces PEP 668 (externally-managed-environment) preventing system-wide `pip install`.",
+          "fix": "Create local virtual environment with `python -m venv .venv` and run via `.venv/bin/python` or `.venv\\Scripts\\python.exe`."
+        },
+        {
+          "system": "Asyncio Event Loop Lifecycle",
+          "gotcha": "`RuntimeError: This event loop is already running` when nesting `asyncio.run()` inside an already active loop (common in Jupyter, Tornado, or FastAPI).",
+          "fix": "Use `asyncio.create_task()` or `loop.create_task()` within running loops; never call `asyncio.run()` inside an active coroutine."
+        }
+      ],
+      "troubleshooting_and_error_signatures": [
+        {
+          "signature": "ValueError: operands could not be broadcast together with shapes",
+          "root_cause": "Array dimensions mismatch under NumPy broadcasting rules. Trailing dimensions must be equal or one of them must be 1.",
+          "fix": "Reshape array using `arr[:, np.newaxis]` or `arr.reshape(-1, 1)` to align trailing dimensions."
+        },
+        {
+          "signature": "TypeError: 'coroutine' object is not subscriptable / cannot be used in 'await'",
+          "root_cause": "Calling an async function without `await` yields a coroutine object instead of the awaited return value.",
+          "fix": "Prepend `await` to the async call: `result = await fetch_data()`."
+        },
+        {
+          "signature": "RecursionError: maximum recursion depth exceeded in comparison",
+          "root_cause": "Unbounded recursive call without base case or circular `__getattr__` / `__eq__` property evaluation.",
+          "fix": "Provide explicit termination base case or convert recursive loop into iterative stack/queue traversal."
+        }
+      ]
+    },
+    {
+      "language": "C++",
+      "versions": {
+        "C++98/03": "Classic C++: raw pointers, manual new/delete, template basics, std::auto_ptr (deprecated).",
+        "C++11": "Modern C++ revolution: rvalue references, move semantics (`std::move`), `auto`, lambdas, `std::unique_ptr`, `std::shared_ptr`, `constexpr`, `std::thread`.",
+        "C++14": "Generic lambdas, return type deduction for functions, `std::make_unique`, relaxed constexpr.",
+        "C++17": "Structured bindings `auto [x, y] = tuple`, `std::optional`, `std::variant`, `std::string_view`, `if constexpr`, inline variables, filesystem library.",
+        "C++20": "Concepts (`template <typename T> requires ...`), ranges library, coroutines (`co_await`, `co_yield`), modules (`import std;`), `std::span`, designated initializers.",
+        "C++23": "`std::print`, `std::expected` for monadic error handling, multidimensional subscript `operator[]`, `deducing this`."
+      },
+      "goto_libraries": [
+        {"name": "Eigen", "purpose": "High-performance template linear algebra, vector math, geometry transformations"},
+        {"name": "Boost", "purpose": "Asynchronous I/O (Asio), geometry, graphs, multi-index containers"},
+        {"name": "OpenCV", "purpose": "Real-time computer vision, image processing, matrix representations, feature matching"},
+        {"name": "rclcpp", "purpose": "ROS2 C++ client library for low-latency real-time robotics node loops and hardware drivers"},
+        {"name": "fmt", "purpose": "Fast, safe formatting library (foundation of C++20 std::format)"}
+      ],
+      "environment_and_platform_gotchas": [
+        {
+          "system": "Compiler & ABI Compatibility",
+          "gotcha": "C++ ABI breakage across compilers (MSVC vs GCC vs Clang) or mismatched C++ standard flags (`-std=c++14` vs `-std=c++17`). Linker errors `undefined reference to typeinfo for ClassName`.",
+          "fix": "Compile all static libraries and dependencies with identical compiler versions and C++ standard flags (`set(CMAKE_CXX_STANDARD 17)`)."
+        },
+        {
+          "system": "CMake Target Linkage Scope",
+          "gotcha": "Using `target_link_libraries(target library)` without explicit scope (PUBLIC, PRIVATE, INTERFACE) leads to transitive header leaking or missing symbols.",
+          "fix": "Always specify scope: `target_link_libraries(my_robot_node PRIVATE Eigen3::Eigen Boost::system)`."
+        },
+        {
+          "system": "Memory Management & Dangling References",
+          "gotcha": "`std::string_view` referencing a temporary string created in an expression leads to dangling pointers and undefined behavior.",
+          "fix": "Ensure the underlying string outlives the `std::string_view`, or take `const std::string&` if ownership cannot be guaranteed."
+        }
+      ],
+      "troubleshooting_and_error_signatures": [
+        {
+          "signature": "undefined reference to `vtable for MyClass`",
+          "root_cause": "A virtual method was declared in the class header but never implemented in any translation unit (often the destructor).",
+          "fix": "Provide definition for pure/virtual destructor: `virtual ~MyClass() = default;` or define the missing virtual function in `.cpp`."
+        },
+        {
+          "signature": "static assertion failed: YOU_MIXED_MATRICES_OF_DIFFERENT_SIZES",
+          "root_cause": "In Eigen, attempting matrix assignment or multiplication between fixed-size matrices whose dimensions do not match at compile time.",
+          "fix": "Verify Matrix dimensions: `Eigen::Matrix3d` cannot multiply `Eigen::Vector4d`. Use dynamic matrices `MatrixXd` or matching fixed dimensions."
+        },
+        {
+          "signature": "terminate called after throwing an instance of 'std::bad_weak_ptr'",
+          "root_cause": "Calling `shared_from_this()` inside a class constructor before an external `std::shared_ptr` owns the instance.",
+          "fix": "Move initialization that needs `shared_from_this()` into an explicit `init()` method called after `std::make_shared<T>()`."
+        }
+      ]
+    },
+    {
+      "language": "Rust",
+      "versions": {
+        "1.0": "Initial stable release: ownership, affine types, zero-cost abstractions, traits, borrow checker.",
+        "1.31": "Rust 2018 Edition: non-lexical lifetimes (NLL), module path simplification (`use crate::...`), `async`/`await` primitives.",
+        "1.56": "Rust 2021 Edition: disjoint capture in closures, Cargo resolver v2, `IntoIterator` for arrays.",
+        "1.70-1.80+": "`OnceLock` and `IsTerminal` in std, stabilization of `async fn` in traits, direct IP address formatting, performance improvements in rustc."
+      },
+      "goto_libraries": [
+        {"name": "nalgebra", "purpose": "Linear algebra and physics simulation library for 2D/3D transformations and robotics"},
+        {"name": "tokio", "purpose": "Asynchronous event-driven runtime for network and telemetry streaming"},
+        {"name": "serde", "purpose": "High-performance zero-copy serialization and deserialization framework (JSON, CBOR, Bincode)"},
+        {"name": "ndarray", "purpose": "N-dimensional array with slicing and mathematical operations similar to NumPy"},
+        {"name": "burn / candle", "purpose": "Pure Rust deep learning and neural network frameworks"}
+      ],
+      "environment_and_platform_gotchas": [
+        {
+          "system": "Borrow Checker & Aliasing XOR Mutability",
+          "gotcha": "Rust prohibits simultaneous mutable and immutable borrows `&mut T` and `&T`. Attempting to read a vector while pushing to it causes `E0502`.",
+          "fix": "Clone the index/value needed before calling mutable methods, or scope the borrow with an inner block `{ ... }`."
+        },
+        {
+          "system": "Cargo Cross-Compilation & Target Triples",
+          "gotcha": "Linking C dependencies (`*-sys` crates) during cross-compilation fails without target C cross-compiler toolchain installed.",
+          "fix": "Install target toolchain with `rustup target add <target>` and use `cross` or set `CC_<target>` environment variables."
+        }
+      ],
+      "troubleshooting_and_error_signatures": [
+        {
+          "signature": "error[E0502]: cannot borrow `*self` as mutable because it is also borrowed as immutable",
+          "root_cause": "An immutable reference `&self` is held alive while `&mut self` is requested.",
+          "fix": "Finish the immutable borrow before taking the mutable borrow, or copy primitive values out of the struct."
+        },
+        {
+          "signature": "error[E0382]: use of moved value",
+          "root_cause": "Value was moved by passing ownership to another function or assignment, but is referenced again later.",
+          "fix": "Borrow by reference `&value` instead of taking ownership, or implement `#[derive(Clone)]` and call `value.clone()`."
+        },
+        {
+          "signature": "error[E0277]: the trait bound `...: Send` is not satisfied",
+          "root_cause": "Attempting to pass data across a thread boundary or await across a Tokio task with a type holding raw pointers or `Rc`.",
+          "fix": "Replace single-threaded `Rc<RefCell<T>>` with thread-safe `Arc<Mutex<T>>` or `Arc<RwLock<T>>`."
+        }
+      ]
+    },
+    {
+      "language": "JavaScript / TypeScript",
+      "versions": {
+        "ES5 (2009)": "Strict mode (`'use strict'`), standard Array methods (`map`, `filter`, `reduce`), `Object.defineProperty`.",
+        "ES6 / ES2015": "Classes, arrow functions, `let`/`const`, promises, template literals, destructuring, modules (`import`/`export`).",
+        "ES2017-2020": "`async`/`await`, object rest/spread, optional chaining `?.`, nullish coalescing `??`, BigInt, dynamic `import()`.",
+        "ES2022-2024": "Top-level `await`, class private fields (`#field`), `Array.prototype.at()`, `Object.hasOwn()`, RegExp `/v` flag.",
+        "TypeScript 3.x-5.x": "Tuples with optional elements, template literal types, `satisfies` operator, const type parameters, decorator metadata."
+      },
+      "goto_libraries": [
+        {"name": "Three.js", "purpose": "WebGL / WebGPU 3D graphics rendering engine, scene graph, cameras, lighting, materials"},
+        {"name": "Math.js", "purpose": "Extensive math library for matrices, complex numbers, units, and algebraic parsing"},
+        {"name": "Vite", "purpose": "Next-generation frontend tooling and lightning-fast HMR bundler"},
+        {"name": "Node.js", "purpose": "Server-side JavaScript runtime with asynchronous event-driven architecture"}
+      ],
+      "environment_and_platform_gotchas": [
+        {
+          "system": "CommonJS (CJS) vs ECMAScript Modules (ESM)",
+          "gotcha": "`SyntaxError: Cannot use import statement outside a module` when using `import` in a file treated as CommonJS by Node.js.",
+          "fix": "Add `\"type\": \"module\"` to `package.json` or rename file extension to `.mjs`."
+        },
+        {
+          "system": "Browser WebGL Context Loss",
+          "gotcha": "`WebGL: CONTEXT_LOST_WEBGL: loseContext: context lost` when allocating excessive large textures or background tab throttling occurs.",
+          "fix": "Listen for `webglcontextlost` on the canvas, call `event.preventDefault()`, and recreate textures and shaders on `webglcontextrestored`."
+        }
+      ],
+      "troubleshooting_and_error_signatures": [
+        {
+          "signature": "TypeError: Cannot read properties of undefined (reading '...')",
+          "root_cause": "Attempting to access a property or method on a variable that evaluated to `undefined` or `null`.",
+          "fix": "Use optional chaining: `data?.payload?.items?.[0]` or verify initialization before dereference."
+        },
+        {
+          "signature": "UnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block",
+          "root_cause": "A rejected Promise had no `.catch()` handler or enclosing `try/catch` block in an async function.",
+          "fix": "Wrap awaited asynchronous operations in `try { await ... } catch (err) { ... }` or append `.catch(err => ...)`."
+        }
+      ]
+    },
+    {
+      "language": "Julia",
+      "versions": {
+        "1.0": "Initial stable release: multiple dispatch, LLVM JIT compilation, package manager `Pkg`, 1-based indexing.",
+        "1.6": "LTS release: precompilation speedups, compiler latency improvements.",
+        "1.10+": "Package load latency reduction, new parser (`JuliaSyntax.jl`), parallel garbage collection."
+      },
+      "goto_libraries": [
+        {"name": "DifferentialEquations.jl", "purpose": "World-class suite of ODE, SDE, DAE, and boundary-value problem solvers"},
+        {"name": "LinearAlgebra", "purpose": "Standard library linear algebra with BLAS/LAPACK bindings and matrix factorizations"},
+        {"name": "JuMP", "purpose": "Domain-specific modeling language for mathematical optimization (linear, quadratic, conic)"}
+      ],
+      "environment_and_platform_gotchas": [
+        {
+          "system": "1-based Indexing & Column-Major Layout",
+          "gotcha": "Iterating matrices row-by-row causes cache thrashing. Julia matrices are column-major like Fortran, unlike C/Python row-major.",
+          "fix": "Iterate over columns outer, rows inner: `for j in 1:cols, i in 1:rows ...`."
+        },
+        {
+          "system": "Type Stability & Compiler Specialization",
+          "gotcha": "Variables that change type within a function cause the compiler to fall back to dynamic boxed dispatch, destroying performance.",
+          "fix": "Check functions with `@code_warntype` and ensure all variable types are inferrable at compile time."
+        }
+      ],
+      "troubleshooting_and_error_signatures": [
+        {
+          "signature": "MethodError: no method matching (::Function)(...)",
+          "root_cause": "No method matching the exact argument types or argument count is defined for the multi-dispatch function.",
+          "fix": "Inspect candidate methods using `methods(func_name)` and ensure caller argument types match defined signatures."
+        },
+        {
+          "signature": "DimensionMismatch(\"matrix A has dimensions (M, K), matrix B has dimensions (L, N)\")",
+          "root_cause": "Matrix inner dimensions K and L do not match for matrix multiplication `A * B`.",
+          "fix": "Transpose operand if appropriate: `A * B'` or verify matrix construction dimensions."
+        }
+      ]
+    },
+    {
+      "language": "Shell & Terminal",
+      "versions": {
+        "Bash (4.x-5.x)": "Associative arrays, `[[ ... ]]` enhanced test, globstar `**`, pipeline exit status `${PIPESTATUS[@]}`.",
+        "POSIX sh": "Standard minimal shell for Alpine/Docker: no arrays, no `[[ ]]`, strictly standard `[ ]` test.",
+        "PowerShell (5.1-7.x)": "Object pipeline, cross-platform Core 7+, Cmdlet architecture (`Get-Process`, `Invoke-RestMethod`), UTF-8 default in 7+."
+      },
+      "goto_libraries": [
+        {"name": "Docker CLI", "purpose": "Containerized build and runtime isolation for scientific pipelines"},
+        {"name": "Git CLI", "purpose": "Version control, submodule management, cherry-picking, bisecting"}
+      ],
+      "environment_and_platform_gotchas": [
+        {
+          "system": "Windows Line Endings (CRLF) in Linux Scripts",
+          "gotcha": "Running a script with CRLF line endings on Linux causes `/bin/bash^M: bad interpreter: No such file or directory`.",
+          "fix": "Convert line endings to LF using `dos2unix script.sh` or configure git with `core.autocrlf = input`."
+        },
+        {
+          "system": "Exit Code Propagation in Bash Pipelines",
+          "gotcha": "In `cmd1 | cmd2`, the pipeline exit code is only that of `cmd2`. If `cmd1` fails, the error is silenced.",
+          "fix": "Enable strict error handling: `set -euo pipefail`."
+        }
+      ],
+      "troubleshooting_and_error_signatures": [
+        {
+          "signature": "command not found: ...",
+          "root_cause": "The binary is not installed or its containing directory is not present in the system `PATH` variable.",
+          "fix": "Verify installation or append directory to PATH: `export PATH=\"/path/to/bin:$PATH\"`."
+        },
+        {
+          "signature": "Permission denied (publickey) / fatal: Could not read from remote repository",
+          "root_cause": "SSH agent does not have the loaded key, or the public key is not registered with the git host.",
+          "fix": "Start ssh-agent `eval $(ssh-agent -s)` and add key `ssh-add ~/.ssh/id_ed25519`."
+        }
+      ]
+    }
+  ]
+}

@@ -7,6 +7,9 @@
 - Logarithmic spiral iris, smooth vector-shaped pupil, layered star parallax,
   silver glints, and black/white/silver/magenta/purple/pink/blue/rose palette.
   Reduced-motion preferences limit animation.
+- Losing the brain connection eases the lids closed from the currently rendered
+  aperture. Slow motion continues beneath the closed lid. Reconnecting opens
+  the eye directly, while waking from an actual sleep mode uses its own motion.
 - Bounded, validated native vector trajectory protocol and interpolation. Reply
   audio/video playback supplies the eye clock and measured spectrum amplitude.
   Playing an older reply selects that reply's signal. Media discovery stays within

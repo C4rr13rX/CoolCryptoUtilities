@@ -1,0 +1,4 @@
+{"id": "web_001", "category": "online_lookup", "endpoint": "/api/wizard-chat/message/", "question": "Search online for Nikola Tesla", "dynamic": true, "allow_web_lookup": true, "expect_contains": ["Tesla"]}
+{"id": "web_002", "category": "online_lookup", "endpoint": "/api/wizard-chat/message/", "question": "Look up Ada Lovelace", "dynamic": true, "allow_web_lookup": true, "expect_contains": ["Lovelace"]}
+{"id": "web_003", "category": "online_lookup", "endpoint": "/api/wizard-chat/message/", "question": "Search online for Alan Turing", "dynamic": true, "allow_web_lookup": true, "expect_contains": ["Turing"]}
+{"id": "web_004", "category": "online_lookup", "endpoint": "/api/wizard-chat/message/", "question": "Look up Marie Curie", "dynamic": true, "allow_web_lookup": true, "expect_contains": ["Curie"]}

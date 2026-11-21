@@ -1218,6 +1218,15 @@ const ghostProfitDisplay = computed(() => currencyFormatter.format(Number(
   padding-right: 0;
 }
 
+.content:has(.content__viewport--immersive) {
+  padding: 0.5rem 0.85rem 0.6rem;
+  gap: 0.5rem;
+}
+
+.content__body:has(.content__viewport--immersive) {
+  padding: 0.2rem;
+}
+
 .content__viewport > * {
   flex: 1 1 auto;
   width: 100%;

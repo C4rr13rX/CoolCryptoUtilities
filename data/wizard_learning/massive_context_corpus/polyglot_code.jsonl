@@ -1,0 +1,119 @@
+{"id": "code_000", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Python function to compute Fibonacci numbers", "dynamic": true, "expect_contains": ["def fib("]}
+{"id": "code_001", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement Fibonacci in Python", "dynamic": true, "expect_contains": ["def fib("]}
+{"id": "code_002", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Python function for Fibonacci sequence", "dynamic": true, "expect_contains": ["def fib("]}
+{"id": "code_003", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Give me Python Fibonacci code", "dynamic": true, "expect_contains": ["def fib("]}
+{"id": "code_004", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Code a fib function in Python", "dynamic": true, "expect_contains": ["def fib("]}
+{"id": "code_005", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Python function for binary search", "dynamic": true, "expect_contains": ["def binary_search("]}
+{"id": "code_006", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement binary search in Python", "dynamic": true, "expect_contains": ["def binary_search("]}
+{"id": "code_007", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Python binary search algorithm", "dynamic": true, "expect_contains": ["def binary_search("]}
+{"id": "code_008", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Code binary search in Python", "dynamic": true, "expect_contains": ["def binary_search("]}
+{"id": "code_009", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Show me a Python binary search function", "dynamic": true, "expect_contains": ["def binary_search("]}
+{"id": "code_010", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Python function for merge sort", "dynamic": true, "expect_contains": ["def merge_sort("]}
+{"id": "code_011", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement merge sort in Python", "dynamic": true, "expect_contains": ["def merge_sort("]}
+{"id": "code_012", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Python merge sort algorithm", "dynamic": true, "expect_contains": ["def merge_sort("]}
+{"id": "code_013", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write quicksort or merge sort in Python", "dynamic": true, "expect_contains": ["def merge_sort("]}
+{"id": "code_014", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Show me sorting in Python using merge sort", "dynamic": true, "expect_contains": ["def merge_sort("]}
+{"id": "code_015", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Python PID controller", "dynamic": true, "expect_contains": ["class PIDController:"]}
+{"id": "code_016", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement a PID controller in Python", "dynamic": true, "expect_contains": ["class PIDController:"]}
+{"id": "code_017", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Python anti-windup PID controller code", "dynamic": true, "expect_contains": ["class PIDController:"]}
+{"id": "code_018", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Code a discrete PID controller in Python", "dynamic": true, "expect_contains": ["class PIDController:"]}
+{"id": "code_019", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Python function to check if a number is prime", "dynamic": true, "expect_contains": ["def is_prime("]}
+{"id": "code_020", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Python prime checker function", "dynamic": true, "expect_contains": ["def is_prime("]}
+{"id": "code_021", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement is_prime in Python", "dynamic": true, "expect_contains": ["def is_prime("]}
+{"id": "code_022", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Check prime numbers in Python", "dynamic": true, "expect_contains": ["def is_prime("]}
+{"id": "code_023", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Python function for factorial", "dynamic": true, "expect_contains": ["def factorial("]}
+{"id": "code_024", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement factorial in Python", "dynamic": true, "expect_contains": ["def factorial("]}
+{"id": "code_025", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Python iterative factorial function", "dynamic": true, "expect_contains": ["def factorial("]}
+{"id": "code_026", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Calculate factorial in Python code", "dynamic": true, "expect_contains": ["def factorial("]}
+{"id": "code_027", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Python Dijkstra shortest path algorithm", "dynamic": true, "expect_contains": ["def dijkstra("]}
+{"id": "code_028", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement Dijkstra in Python", "dynamic": true, "expect_contains": ["def dijkstra("]}
+{"id": "code_029", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Python shortest path Dijkstra code", "dynamic": true, "expect_contains": ["def dijkstra("]}
+{"id": "code_030", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Graph Dijkstra algorithm in Python", "dynamic": true, "expect_contains": ["def dijkstra("]}
+{"id": "code_031", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Python 1D Kalman filter", "dynamic": true, "expect_contains": ["class ScalarKalmanFilter:"]}
+{"id": "code_032", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement a Kalman filter in Python", "dynamic": true, "expect_contains": ["class ScalarKalmanFilter:"]}
+{"id": "code_033", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Python scalar Kalman filter code", "dynamic": true, "expect_contains": ["class ScalarKalmanFilter:"]}
+{"id": "code_034", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Code a Kalman filter in Python", "dynamic": true, "expect_contains": ["class ScalarKalmanFilter:"]}
+{"id": "code_035", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Python matrix multiplication function", "dynamic": true, "expect_contains": ["def matmul("]}
+{"id": "code_036", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement matrix multiplication in Python", "dynamic": true, "expect_contains": ["def matmul("]}
+{"id": "code_037", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Python matmul function", "dynamic": true, "expect_contains": ["def matmul("]}
+{"id": "code_038", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Multiply two matrices in Python code", "dynamic": true, "expect_contains": ["def matmul("]}
+{"id": "code_039", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Rust function to compute Fibonacci numbers", "dynamic": true, "expect_contains": ["pub fn fib("]}
+{"id": "code_040", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement Fibonacci in Rust", "dynamic": true, "expect_contains": ["pub fn fib("]}
+{"id": "code_041", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Rust Fibonacci code", "dynamic": true, "expect_contains": ["pub fn fib("]}
+{"id": "code_042", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Code fib in Rust", "dynamic": true, "expect_contains": ["pub fn fib("]}
+{"id": "code_043", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Give me a Rust fib function", "dynamic": true, "expect_contains": ["pub fn fib("]}
+{"id": "code_044", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Rust function for binary search", "dynamic": true, "expect_contains": ["pub fn binary_search"]}
+{"id": "code_045", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement binary search in Rust", "dynamic": true, "expect_contains": ["pub fn binary_search"]}
+{"id": "code_046", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Rust generic binary search", "dynamic": true, "expect_contains": ["pub fn binary_search"]}
+{"id": "code_047", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Binary search code in Rust", "dynamic": true, "expect_contains": ["pub fn binary_search"]}
+{"id": "code_048", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Rust function to reverse a string", "dynamic": true, "expect_contains": ["pub fn reverse_str"]}
+{"id": "code_049", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Reverse a string in Rust", "dynamic": true, "expect_contains": ["pub fn reverse_str"]}
+{"id": "code_050", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Rust string reversal function", "dynamic": true, "expect_contains": ["pub fn reverse_str"]}
+{"id": "code_051", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Unicode string reverse in Rust", "dynamic": true, "expect_contains": ["pub fn reverse_str"]}
+{"id": "code_052", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Rust function to check prime numbers", "dynamic": true, "expect_contains": ["pub fn is_prime"]}
+{"id": "code_053", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Prime number check in Rust", "dynamic": true, "expect_contains": ["pub fn is_prime"]}
+{"id": "code_054", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Rust is_prime function", "dynamic": true, "expect_contains": ["pub fn is_prime"]}
+{"id": "code_055", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement primality test in Rust", "dynamic": true, "expect_contains": ["pub fn is_prime"]}
+{"id": "code_056", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Rust struct with serde JSON support", "dynamic": true, "expect_contains": ["Serialize, Deserialize"]}
+{"id": "code_057", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Rust serde JSON struct", "dynamic": true, "expect_contains": ["Serialize, Deserialize"]}
+{"id": "code_058", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Define a serializable Rust struct", "dynamic": true, "expect_contains": ["Serialize, Deserialize"]}
+{"id": "code_059", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Rust JSON data struct", "dynamic": true, "expect_contains": ["Serialize, Deserialize"]}
+{"id": "code_060", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a TypeScript debounce function", "dynamic": true, "expect_contains": ["export function debounce"]}
+{"id": "code_061", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement debounce in TypeScript", "dynamic": true, "expect_contains": ["export function debounce"]}
+{"id": "code_062", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "TypeScript debounce utility", "dynamic": true, "expect_contains": ["export function debounce"]}
+{"id": "code_063", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Type-safe debounce in TypeScript", "dynamic": true, "expect_contains": ["export function debounce"]}
+{"id": "code_064", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a TypeScript interface for an API record", "dynamic": true, "expect_contains": ["export interface ApiRecord"]}
+{"id": "code_065", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "TypeScript user API interface", "dynamic": true, "expect_contains": ["export interface ApiRecord"]}
+{"id": "code_066", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Define a TypeScript interface", "dynamic": true, "expect_contains": ["export interface ApiRecord"]}
+{"id": "code_067", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Strict TypeScript record type", "dynamic": true, "expect_contains": ["export interface ApiRecord"]}
+{"id": "code_068", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a TypeScript async fetch JSON helper", "dynamic": true, "expect_contains": ["export async function fetchJson"]}
+{"id": "code_069", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "TypeScript typed fetch API function", "dynamic": true, "expect_contains": ["export async function fetchJson"]}
+{"id": "code_070", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "HTTP JSON fetcher in TypeScript", "dynamic": true, "expect_contains": ["export async function fetchJson"]}
+{"id": "code_071", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Async fetchJson in TypeScript", "dynamic": true, "expect_contains": ["export async function fetchJson"]}
+{"id": "code_072", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a TypeScript groupBy utility", "dynamic": true, "expect_contains": ["export function groupBy"]}
+{"id": "code_073", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement groupBy in TypeScript", "dynamic": true, "expect_contains": ["export function groupBy"]}
+{"id": "code_074", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "TypeScript array groupBy function", "dynamic": true, "expect_contains": ["export function groupBy"]}
+{"id": "code_075", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a JavaScript debounce helper", "dynamic": true, "expect_contains": ["function debounce"]}
+{"id": "code_076", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement debounce in JavaScript", "dynamic": true, "expect_contains": ["function debounce"]}
+{"id": "code_077", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "JS debounce function", "dynamic": true, "expect_contains": ["function debounce"]}
+{"id": "code_078", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Debounce utility in JavaScript", "dynamic": true, "expect_contains": ["function debounce"]}
+{"id": "code_079", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a JavaScript Fibonacci function", "dynamic": true, "expect_contains": ["function fib"]}
+{"id": "code_080", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement Fibonacci in JavaScript", "dynamic": true, "expect_contains": ["function fib"]}
+{"id": "code_081", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "JS fib function", "dynamic": true, "expect_contains": ["function fib"]}
+{"id": "code_082", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Fibonacci code in JavaScript", "dynamic": true, "expect_contains": ["function fib"]}
+{"id": "code_083", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a JavaScript palindrome checker", "dynamic": true, "expect_contains": ["isPalindrome"]}
+{"id": "code_084", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Check palindrome in JavaScript", "dynamic": true, "expect_contains": ["isPalindrome"]}
+{"id": "code_085", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "JS palindrome function", "dynamic": true, "expect_contains": ["isPalindrome"]}
+{"id": "code_086", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Palindrome test in JavaScript", "dynamic": true, "expect_contains": ["isPalindrome"]}
+{"id": "code_087", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a JavaScript array deduplication helper", "dynamic": true, "expect_contains": ["new Set("]}
+{"id": "code_088", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Remove duplicates in JavaScript", "dynamic": true, "expect_contains": ["new Set("]}
+{"id": "code_089", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "JS unique array function", "dynamic": true, "expect_contains": ["new Set("]}
+{"id": "code_090", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Deduplicate array in JavaScript", "dynamic": true, "expect_contains": ["new Set("]}
+{"id": "code_091", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a SQL query to find top categories by total amount", "dynamic": true, "expect_contains": ["GROUP BY category"]}
+{"id": "code_092", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "SQL top 10 aggregation query", "dynamic": true, "expect_contains": ["GROUP BY category"]}
+{"id": "code_093", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Rank categories in SQL", "dynamic": true, "expect_contains": ["GROUP BY category"]}
+{"id": "code_094", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "SQL query for highest total by category", "dynamic": true, "expect_contains": ["GROUP BY category"]}
+{"id": "code_095", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a SQL left join query between users and orders", "dynamic": true, "expect_contains": ["LEFT JOIN orders"]}
+{"id": "code_096", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "SQL join users and orders", "dynamic": true, "expect_contains": ["LEFT JOIN orders"]}
+{"id": "code_097", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Lifetime spend per user in SQL", "dynamic": true, "expect_contains": ["LEFT JOIN orders"]}
+{"id": "code_098", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Left join summary query in SQL", "dynamic": true, "expect_contains": ["LEFT JOIN orders"]}
+{"id": "code_099", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a SQL query to find duplicate emails", "dynamic": true, "expect_contains": ["HAVING COUNT(*) > 1"]}
+{"id": "code_100", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Find duplicates in SQL", "dynamic": true, "expect_contains": ["HAVING COUNT(*) > 1"]}
+{"id": "code_101", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "SQL duplicate email query", "dynamic": true, "expect_contains": ["HAVING COUNT(*) > 1"]}
+{"id": "code_102", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Detect duplicate rows in SQL", "dynamic": true, "expect_contains": ["HAVING COUNT(*) > 1"]}
+{"id": "code_103", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Go worker pool with goroutines", "dynamic": true, "expect_contains": ["sync.WaitGroup"]}
+{"id": "code_104", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Implement a concurrent worker pool in Go", "dynamic": true, "expect_contains": ["sync.WaitGroup"]}
+{"id": "code_105", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Golang goroutine worker pool", "dynamic": true, "expect_contains": ["sync.WaitGroup"]}
+{"id": "code_106", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Go concurrency pool example", "dynamic": true, "expect_contains": ["sync.WaitGroup"]}
+{"id": "code_107", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Go function to sum integers", "dynamic": true, "expect_contains": ["func Sum("]}
+{"id": "code_108", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Sum a slice in Go", "dynamic": true, "expect_contains": ["func Sum("]}
+{"id": "code_109", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Golang integer sum function", "dynamic": true, "expect_contains": ["func Sum("]}
+{"id": "code_110", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a PowerShell command to list largest files", "dynamic": true, "expect_contains": ["Get-ChildItem"]}
+{"id": "code_111", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "PowerShell top 10 largest files", "dynamic": true, "expect_contains": ["Get-ChildItem"]}
+{"id": "code_112", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "pwsh find biggest files", "dynamic": true, "expect_contains": ["Get-ChildItem"]}
+{"id": "code_113", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write a Bash script to find largest files", "dynamic": true, "expect_contains": ["#!/usr/bin/env bash"]}
+{"id": "code_114", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Bash top 10 largest files", "dynamic": true, "expect_contains": ["#!/usr/bin/env bash"]}
+{"id": "code_115", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Shell script list biggest files in bash", "dynamic": true, "expect_contains": ["#!/usr/bin/env bash"]}
+{"id": "code_116", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Write an HTML CSS status card", "dynamic": true, "expect_contains": ["<section class=\"card\""]}
+{"id": "code_117", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "Responsive HTML card", "dynamic": true, "expect_contains": ["<section class=\"card\""]}
+{"id": "code_118", "category": "polyglot_code", "endpoint": "/api/wizard-chat/message/", "question": "HTML and CSS status card snippet", "dynamic": true, "expect_contains": ["<section class=\"card\""]}

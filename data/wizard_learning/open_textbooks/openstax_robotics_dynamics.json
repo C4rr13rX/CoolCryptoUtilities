@@ -1,0 +1,39 @@
+{
+  "title": "OpenStax University Physics: Robotics Dynamics & Energy",
+  "license": "Creative Commons Attribution 4.0 International (CC BY 4.0)",
+  "source": "https://openstax.org/details/books/university-physics-volume-1",
+  "sections": [
+    {
+      "topic": "Torque and Angular Acceleration",
+      "equations": [
+        "tau = I * alpha",
+        "tau = r * F * sin(theta)"
+      ],
+      "summary": "Net external torque on a rigid body is equal to moment of inertia times angular acceleration."
+    },
+    {
+      "topic": "Kinetic Energy and Work-Energy Theorem",
+      "equations": [
+        "E_k = (1/2) * m * v**2",
+        "E_r = (1/2) * I * omega**2"
+      ],
+      "summary": "Total mechanical kinetic energy consists of translational and rotational components."
+    },
+    {
+      "topic": "Coulomb Friction and Normal Force",
+      "equations": [
+        "F_f = mu * N",
+        "N = m * g * cos(theta)"
+      ],
+      "summary": "Maximum static or kinetic friction opposes relative motion proportional to the normal force."
+    },
+    {
+      "topic": "Actuator Electrical Power and Motor Torque",
+      "equations": [
+        "P_elec = V_supply * I_current",
+        "P_mech = tau * omega"
+      ],
+      "summary": "Mechanical output power equals shaft torque times angular velocity; electrical input is voltage times current."
+    }
+  ]
+}

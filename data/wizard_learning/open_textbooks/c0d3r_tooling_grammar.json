@@ -1,0 +1,42 @@
+{
+  "title": "C0d3rV2 Autonomous Agent Action Grammar",
+  "license": "Apache 2.0 / Public Domain",
+  "description": "Standard deterministic JSON action shapes for C0d3rV2 orchestrator",
+  "rules": [
+    "Emit exactly one parseable JSON object.",
+    "No prose outside JSON fences.",
+    "Actions must be one of: call_tool, final_response."
+  ],
+  "action_templates": {
+    "executor": {
+      "action": "call_tool",
+      "tool": "executor",
+      "params": {
+        "command": "npm test -- --run"
+      }
+    },
+    "file_read": {
+      "action": "call_tool",
+      "tool": "file_read",
+      "params": {
+        "path": "src/simulation/robot.ts"
+      }
+    },
+    "file_write": {
+      "action": "call_tool",
+      "tool": "file_write",
+      "params": {
+        "path": "src/simulation/robot.ts",
+        "content": "..."
+      }
+    },
+    "final_response": {
+      "action": "final_response",
+      "text": "Task completed successfully. All tests passing."
+    },
+    "complete": {
+      "action": "complete",
+      "output": "Task completed successfully. All executed tools succeeded and verified."
+    }
+  }
+}

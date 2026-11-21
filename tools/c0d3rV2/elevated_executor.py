@@ -33,7 +33,7 @@ class ElevatedExecutor(Executor):
         try:
             return elevation.run_elevated(
                 command,
-                cwd=cwd or self.workdir,
+                cwd=Path(cwd).resolve() if cwd else self.workdir,
                 timeout_s=self.timeout_s,
             )
         except elevation.ElevationUnavailable as exc:

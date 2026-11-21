@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "compiled_at": "2026-11-18T17:59:05-05:00",
+  "language": "English",
+  "total_items": 1198,
+  "files": {
+    "time_date_location.jsonl": 90,
+    "context_data_json.jsonl": 220,
+    "polyglot_code.jsonl": 119,
+    "tool_routing.jsonl": 90,
+    "english_qa_paraphrased.jsonl": 675,
+    "online_lookup_cases.jsonl": 4
+  },
+  "corpus_dir": "D:\\Projects\\CoolCryptoUtilities\\data\\wizard_learning\\massive_context_corpus"
+}

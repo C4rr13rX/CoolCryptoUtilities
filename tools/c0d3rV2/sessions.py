@@ -137,11 +137,18 @@ class SessionManager:
 
         if backend in _WIZARD:
             from tools.wizard_session import WizardSession
-            probe = WizardSession.probe(wizard_endpoint)
+            # For C0d3rV2 engineering & code repairs: prefer the dedicated 72.2M terminal
+            # Senior Software Engineer brain on port 18096 if running, falling back to 8090.
+            effective_ep = wizard_endpoint
+            if not effective_ep:
+                senior_probe = WizardSession.probe("http://127.0.0.1:18096")
+                if senior_probe.get("online"):
+                    effective_ep = "http://127.0.0.1:18096"
+            probe = WizardSession.probe(effective_ep)
             if probe["online"]:
                 return WizardSession(
                     session_name="c0d3rv2",
-                    endpoint=wizard_endpoint,
+                    endpoint=effective_ep,
                     chat_path=wizard_chat_path,
                     transcript_dir=transcript_dir,
                     workdir=workdir,

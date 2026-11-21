@@ -42,7 +42,8 @@ class ModelResponseNormalizer:
         "tool": "tool_calls", "tools": "tool_calls", "call_tool": "tool_calls",
         "call_tools": "tool_calls", "function_call": "tool_calls",
         "functions": "tool_calls", "respond": "answer", "response": "answer",
-        "final": "answer", "done": "complete", "completed": "complete",
+        "final": "answer", "final_response": "complete", "final_answer": "answer",
+        "done": "complete", "completed": "complete",
         "finish": "complete", "subtasks": "sub_branches", "branches": "sub_branches",
     }
     _BOOL_TRUE = {"true", "yes", "y", "on", "enabled", "done", "complete", "completed", "pass", "passed", "one", "1"}

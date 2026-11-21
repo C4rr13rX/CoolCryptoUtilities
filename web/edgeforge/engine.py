@@ -440,6 +440,33 @@ class MultiChainMarketCorpus:
         self.last_loaded_at: float = 0.0
         self.total_bars_loaded: int = 0
         self.total_pairs_loaded: int = 0
+        self._bg_loading: bool = False
+
+    def _quick_file_counts(self, chains: Sequence[str], max_pairs_per_chain: int) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for chain in chains:
+            cdir = HISTORICAL_ROOT / chain.strip().lower()
+            if cdir.is_dir():
+                n_files = len(list(cdir.glob("*.json")))
+                counts[chain.strip().lower()] = min(n_files, max_pairs_per_chain)
+            else:
+                counts[chain.strip().lower()] = 0
+        if not self.total_pairs_loaded:
+            self.total_pairs_loaded = sum(counts.values())
+            self.total_bars_loaded = self.total_pairs_loaded * 1700
+        return counts
+
+    def _run_bg_load(self, chains: Sequence[str], max_pairs_per_chain: int, clip_usd: float) -> None:
+        try:
+            self.ensure_loaded(
+                chains=chains,
+                max_pairs_per_chain=max_pairs_per_chain,
+                clip_usd=clip_usd,
+                force=True,
+                blocking=True,
+            )
+        finally:
+            self._bg_loading = False
 
     def ensure_loaded(
         self,
@@ -447,6 +474,7 @@ class MultiChainMarketCorpus:
         max_pairs_per_chain: int = 18,
         clip_usd: float = 2.0,
         force: bool = False,
+        blocking: bool = True,
     ) -> Dict[str, int]:
         with self._lock:
             if (
@@ -455,6 +483,28 @@ class MultiChainMarketCorpus:
                 and (time.time() - self.last_loaded_at) < 600.0
             ):
                 return {ch: len(lst) for ch, lst in self.matrices.items()}
+
+            if not blocking:
+                if self.matrices:
+                    if not self._bg_loading and (time.time() - self.last_loaded_at) >= 600.0:
+                        self._bg_loading = True
+                        threading.Thread(
+                            target=self._run_bg_load,
+                            args=(chains, max_pairs_per_chain, clip_usd),
+                            daemon=True,
+                            name="corpus-bg-load",
+                        ).start()
+                    return {ch: len(lst) for ch, lst in self.matrices.items()}
+
+                if not self._bg_loading:
+                    self._bg_loading = True
+                    threading.Thread(
+                        target=self._run_bg_load,
+                        args=(chains, max_pairs_per_chain, clip_usd),
+                        daemon=True,
+                        name="corpus-bg-load",
+                    ).start()
+                return self._quick_file_counts(chains, max_pairs_per_chain)
 
             new_matrices: Dict[str, List[CompactedPairMatrix]] = {}
             total_bars = 0
@@ -1123,8 +1173,33 @@ def promote_venture_to_pipeline(venture: Any) -> List[str]:
                 existing = []
             existing = [r for r in existing if isinstance(r, dict) and r.get("id") != rule_id]
             existing.insert(0, new_rule)
-            write_json(DISCOVERED_RULES_PATH, existing[:100])
+            write_json(DISCOVERED_RULES_PATH, existing[:500])
         targets_updated.append("discovered_rules.json")
+
+        # Also wire into the high-speed Vectorized Promoted Edge Ensemble
+        ens_path = ROOT / "data" / "promoted_edges_ensemble.json"
+        try:
+            with file_lock(ens_path):
+                ens_list, ens_ok = read_json(ens_path, default=[])
+                if not ens_ok or not isinstance(ens_list, list):
+                    ens_list = []
+                ens_list = [e for e in ens_list if isinstance(e, dict) and e.get("signature") != venture.signature]
+                ens_list.insert(0, {
+                    "signature": venture.signature,
+                    "chain": venture.best_chain,
+                    "symbol": venture.best_symbol,
+                    "formula": venture.formula_human,
+                    "genome": genome_dict,
+                    "net_return": float(venture.net_return_after_fees or 0.0),
+                    "holdout_t": float(venture.holdout_t_stat or 0.0),
+                    "win_rate": float(venture.oos_win_rate or 0.0),
+                    "oos_trades": int(venture.oos_trades or 0),
+                    "net_profit_usd": float(venture.net_profit_usd or 0.0),
+                })
+                write_json(ens_path, ens_list)
+            targets_updated.append("promoted_edges_ensemble.json")
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -1481,9 +1556,29 @@ class EdgeForgeCoordinator:
         lineage.split_reason = reason
         lineage.save(update_fields=["status", "split_reason", "last_heartbeat"])
 
-        # Deterministic rotation index based on worker slot and split count
-        rot_idx = (slot - 1 + new_split_count * 2) % len(SPLIT_ROTATION_COLLECTIONS)
-        col_name, tactic, var_tuple = SPLIT_ROTATION_COLLECTIONS[rot_idx]
+        # Escape stale proportions: Beyond fixed presets, dynamically synthesize novel variance collections indefinitely
+        if new_split_count > len(SPLIT_ROTATION_COLLECTIONS):
+            import hashlib
+            seed_bytes = f"slot_{slot}_split_{new_split_count}".encode("utf-8")
+            h_int = int(hashlib.sha256(seed_bytes).hexdigest(), 16)
+            
+            var_pool = list(ALL_MATH_VARIABLES)
+            dyn_vars = []
+            for i in range(8):
+                idx = (h_int // (31 ** i)) % len(var_pool)
+                v = var_pool[idx]
+                if v not in dyn_vars:
+                    dyn_vars.append(v)
+            while len(dyn_vars) < 6:
+                dyn_vars.append(var_pool[(len(dyn_vars) * 7) % len(var_pool)])
+            
+            tactics = ("polynomial_interaction", "rational_gate", "rapid_money_button", "differential_chaos", "harmonic_resonance")
+            tactic = tactics[(h_int >> 4) % len(tactics)]
+            col_name = f"dyn_var_{tactic[:6]}_{new_split_count}"
+            var_tuple = tuple(dyn_vars)
+        else:
+            rot_idx = (slot - 1 + new_split_count * 2) % len(SPLIT_ROTATION_COLLECTIONS)
+            col_name, tactic, var_tuple = SPLIT_ROTATION_COLLECTIONS[rot_idx]
 
         # Also mix in any high-performing variables recommended by the Research Agent
         boosted = (cfg.custom_agent_directives or {}).get("boosted_variables") or []

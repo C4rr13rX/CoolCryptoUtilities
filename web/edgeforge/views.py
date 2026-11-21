@@ -14,8 +14,12 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+from pathlib import Path
+import threading
+import time
 import zipfile
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 from xml.sax.saxutils import escape as xml_escape
 
 from django.db.models import Count, Max, Sum
@@ -25,6 +29,106 @@ from rest_framework import permissions, status
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+# High-performance asynchronous cache for 435,000+ row SQLite venture counts.
+# Guarantees HTTP GET handlers NEVER block on multi-second table scans.
+_STATUS_CACHE_LOCK = threading.RLock()
+_COUNTS_CACHE_FILE = Path(__file__).resolve().parents[2] / "data" / "edgeforge_counts_cache.json"
+
+def _load_initial_cache() -> Dict[str, Any]:
+    if _COUNTS_CACHE_FILE.is_file():
+        try:
+            loaded = json.loads(_COUNTS_CACHE_FILE.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and loaded.get("profitable_count"):
+                return loaded
+        except Exception:
+            pass
+    return {
+        "cached_at": 0.0,
+        "profitable_count": 0,
+        "skipped_no_profit_count": 0,
+        "promoted_count": 0,
+        "skip_breakdown": [],
+    }
+
+_STATUS_CACHE: Dict[str, Any] = _load_initial_cache()
+_IS_REFRESHING = False
+
+_TOP_VENTURES_LOCK = threading.RLock()
+_TOP_VENTURES_CACHE: List[Dict[str, Any]] = []
+_TOP_VENTURES_CACHED_AT: float = 0.0
+
+_AGENT_PASSES_LOCK = threading.RLock()
+_AGENT_PASSES_CACHE: List[Dict[str, Any]] = []
+_AGENT_PASSES_CACHED_AT: float = 0.0
+
+_AGY_EXE_CACHE: Tuple[Optional[str], float] = (None, 0.0)
+
+
+def _refresh_counts_worker() -> None:
+    global _STATUS_CACHE, _IS_REFRESHING
+    try:
+        profitable_count = StrategyVenture.objects.filter(
+            is_profitable=True, status=StrategyVenture.Status.PROFITABLE
+        ).count()
+        skipped_no_profit_count = StrategyVenture.objects.filter(
+            status=StrategyVenture.Status.COMPLETE_NO_PROFIT
+        ).count()
+        promoted_count = StrategyVenture.objects.filter(
+            is_profitable=True, promoted_to_pipeline=True
+        ).count()
+        skip_breakdown = list(
+            StrategyVenture.objects.filter(status=StrategyVenture.Status.COMPLETE_NO_PROFIT)
+            .values("variable_collection", "skip_reason")
+            .annotate(count=Count("id"))
+            .order_by("-count")[:8]
+        )
+        data = {
+            "cached_at": time.time(),
+            "profitable_count": profitable_count,
+            "skipped_no_profit_count": skipped_no_profit_count,
+            "promoted_count": promoted_count,
+            "skip_breakdown": skip_breakdown,
+        }
+        with _STATUS_CACHE_LOCK:
+            _STATUS_CACHE = data
+        try:
+            _COUNTS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = _COUNTS_CACHE_FILE.with_suffix(".tmp")
+            tmp_path.write_text(json.dumps(data), encoding="utf-8")
+            os.replace(tmp_path, _COUNTS_CACHE_FILE)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    finally:
+        _IS_REFRESHING = False
+
+
+def _get_cached_db_counts(force: bool = False) -> Dict[str, Any]:
+    global _STATUS_CACHE, _IS_REFRESHING
+    now = time.time()
+    with _STATUS_CACHE_LOCK:
+        # Load persisted counts file on cold start or zero
+        if _STATUS_CACHE.get("profitable_count", 0) == 0 and _COUNTS_CACHE_FILE.is_file():
+            try:
+                loaded = json.loads(_COUNTS_CACHE_FILE.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict) and loaded.get("profitable_count"):
+                    _STATUS_CACHE = loaded
+            except Exception:
+                pass
+
+        # Trigger background refresh if stale (> 60s) or missing
+        if force or (now - _STATUS_CACHE["cached_at"]) >= 60.0:
+            if not _IS_REFRESHING:
+                _IS_REFRESHING = True
+                threading.Thread(
+                    target=_refresh_counts_worker,
+                    daemon=True,
+                    name="edgeforge-counts-refresh",
+                ).start()
+
+        return dict(_STATUS_CACHE)
 
 from .engine import (
     ALL_MATH_VARIABLES,
@@ -116,16 +220,32 @@ class EdgeSearchStatusView(APIView):
         cfg = EdgeSearchConfig.load()
         COORDINATOR.ensure_worker_lineages()
 
-        # Auto-start background workers when enabled and not in pytest
+        # Keep EdgeForge GA workers isolated in their own OS subprocess so Waitress's
+        # Python GIL stays 100% free for sub-15ms HTTP serving.
         import os
-        if cfg.enabled and not COORDINATOR.running and "PYTEST_CURRENT_TEST" not in os.environ:
-            COORDINATOR.start_background_workers()
+        from .worker_daemon import ensure_external_worker_running, read_external_worker_state
 
-        chain_counts = CORPUS.ensure_loaded(
-            chains=cfg.chains or SUPPORTED_CHAINS,
-            max_pairs_per_chain=cfg.max_pairs_per_chain,
-            clip_usd=cfg.clip_usd,
-        )
+        ext_state = read_external_worker_state()
+        if cfg.enabled and not ext_state.get("running") and not COORDINATOR.running and "PYTEST_CURRENT_TEST" not in os.environ:
+            ext_state = ensure_external_worker_running()
+
+        if ext_state.get("running") and not COORDINATOR.running:
+            chain_counts = ext_state.get("chains_loaded") or {}
+            total_pairs_loaded = int(ext_state.get("total_pairs_loaded") or 0)
+            total_bars_loaded = int(ext_state.get("total_bars_loaded") or 0)
+            workers_running = True
+            evals_per_min = float(ext_state.get("evaluations_per_min") or 0.0)
+        else:
+            chain_counts = CORPUS.ensure_loaded(
+                chains=cfg.chains or SUPPORTED_CHAINS,
+                max_pairs_per_chain=cfg.max_pairs_per_chain,
+                clip_usd=cfg.clip_usd,
+                blocking=False,
+            )
+            total_pairs_loaded = CORPUS.total_pairs_loaded
+            total_bars_loaded = CORPUS.total_bars_loaded
+            workers_running = bool(COORDINATOR.running or ext_state.get("running"))
+            evals_per_min = COORDINATOR.throughput_per_minute()
 
         active_workers = WorkerLineage.objects.filter(
             status=WorkerLineage.Status.ACTIVE
@@ -134,43 +254,63 @@ class EdgeSearchStatusView(APIView):
             status=WorkerLineage.Status.SPLIT_RETIRED
         ).order_by("-last_heartbeat")[:12]
 
-        profitable_qs = StrategyVenture.objects.filter(
-            is_profitable=True, status=StrategyVenture.Status.PROFITABLE
-        ).order_by("-net_profit_usd", "-holdout_t_stat")
+        db_counts = _get_cached_db_counts()
+        profitable_count = db_counts["profitable_count"]
+        skipped_no_profit_count = db_counts["skipped_no_profit_count"]
+        promoted_count = db_counts["promoted_count"]
+        skip_breakdown = db_counts["skip_breakdown"]
 
-        profitable_count = profitable_qs.count()
-        skipped_no_profit_count = StrategyVenture.objects.filter(
-            status=StrategyVenture.Status.COMPLETE_NO_PROFIT
-        ).count()
+        global _TOP_VENTURES_CACHE, _TOP_VENTURES_CACHED_AT, _AGENT_PASSES_CACHE, _AGENT_PASSES_CACHED_AT, _AGY_EXE_CACHE
+        now = time.time()
 
-        # Compact skip mention for the GA and Agent (never reported as findings)
-        skip_breakdown = list(
-            StrategyVenture.objects.filter(status=StrategyVenture.Status.COMPLETE_NO_PROFIT)
-            .values("variable_collection", "skip_reason")
-            .annotate(count=Count("id"))
-            .order_by("-count")[:8]
-        )
+        # Cache top 100 profitable ventures for 15s to eliminate 0.81s SQLite filesort on 195k rows
+        with _TOP_VENTURES_LOCK:
+            if (now - _TOP_VENTURES_CACHED_AT) >= 15.0 or not _TOP_VENTURES_CACHE:
+                try:
+                    qs = StrategyVenture.objects.filter(
+                        is_profitable=True, status=StrategyVenture.Status.PROFITABLE
+                    ).order_by("-net_profit_usd", "-holdout_t_stat")[:100]
+                    _TOP_VENTURES_CACHE = [_venture_dict(v) for v in qs]
+                    _TOP_VENTURES_CACHED_AT = now
+                except Exception:
+                    pass
+            serialized_profitable = list(_TOP_VENTURES_CACHE)
 
-        recent_agent_passes = [
-            {
-                "id": p.pk,
-                "agent_name": p.agent_name,
-                "trigger_reason": p.trigger_reason,
-                "status": p.status,
-                "skipped_ventures_count": p.skipped_ventures_count,
-                "profitable_ventures_reviewed": p.profitable_ventures_reviewed,
-                "summary": p.summary,
-                "directives_applied": p.directives_applied,
-                "promoted_ventures": p.promoted_ventures,
-                "duration_sec": p.duration_sec,
-                "created_at": p.created_at.isoformat(),
-            }
-            for p in ResearchAgentPass.objects.all()[:10]
-        ]
+        # Cache agent passes for 15s
+        with _AGENT_PASSES_LOCK:
+            if (now - _AGENT_PASSES_CACHED_AT) >= 15.0 or not _AGENT_PASSES_CACHE:
+                try:
+                    _AGENT_PASSES_CACHE = [
+                        {
+                            "id": p.pk,
+                            "agent_name": p.agent_name,
+                            "trigger_reason": p.trigger_reason,
+                            "status": p.status,
+                            "skipped_ventures_count": p.skipped_ventures_count,
+                            "profitable_ventures_reviewed": p.profitable_ventures_reviewed,
+                            "summary": p.summary,
+                            "directives_applied": p.directives_applied,
+                            "promoted_ventures": p.promoted_ventures,
+                            "duration_sec": p.duration_sec,
+                            "created_at": p.created_at.isoformat(),
+                        }
+                        for p in ResearchAgentPass.objects.all()[:10]
+                    ]
+                    _AGENT_PASSES_CACHED_AT = now
+                except Exception:
+                    pass
+            recent_agent_passes = list(_AGENT_PASSES_CACHE)
 
-        from tools.agy_session import resolve_agy_executable
-
-        agy_exe = resolve_agy_executable()
+        # Cache AGY executable path for 60s
+        cached_exe, exe_time = _AGY_EXE_CACHE
+        if (now - exe_time) >= 60.0 or cached_exe is None:
+            try:
+                from tools.agy_session import resolve_agy_executable
+                cached_exe = resolve_agy_executable()
+                _AGY_EXE_CACHE = (cached_exe, now)
+            except Exception:
+                cached_exe = None
+        agy_exe = cached_exe
 
         return Response({
             "config": {
@@ -191,15 +331,16 @@ class EdgeSearchStatusView(APIView):
                 "custom_agent_directives": cfg.custom_agent_directives,
             },
             "runtime": {
-                "workers_running": COORDINATOR.running,
-                "evaluations_per_min": COORDINATOR.throughput_per_minute(),
+                "workers_running": workers_running,
+                "evaluations_per_min": evals_per_min,
+                "isolated_worker_pid": ext_state.get("pid"),
                 "agy_cli_available": agy_exe is not None,
                 "agy_executable": agy_exe or "agy",
             },
             "corpus": {
                 "chains_loaded": chain_counts,
-                "total_pairs_loaded": CORPUS.total_pairs_loaded,
-                "total_bars_loaded": CORPUS.total_bars_loaded,
+                "total_pairs_loaded": total_pairs_loaded,
+                "total_bars_loaded": total_bars_loaded,
                 "supported_chains": list(SUPPORTED_CHAINS),
             },
             "variable_partitions": {
@@ -213,7 +354,7 @@ class EdgeSearchStatusView(APIView):
             "counts": {
                 "profitable_findings": profitable_count,
                 "complete_no_profit_skipped": skipped_no_profit_count,
-                "promoted_to_pipeline": profitable_qs.filter(promoted_to_pipeline=True).count(),
+                "promoted_to_pipeline": promoted_count,
             },
             "skipped_mention": {
                 "note": (
@@ -222,7 +363,7 @@ class EdgeSearchStatusView(APIView):
                 ),
                 "by_collection": skip_breakdown,
             },
-            "findings": [_venture_dict(v) for v in profitable_qs[:100]],
+            "findings": serialized_profitable,
             "research_agent_passes": recent_agent_passes,
         }, status=status.HTTP_200_OK)
 
@@ -270,13 +411,16 @@ class EdgeSearchControlView(APIView):
         if action == "start":
             cfg.enabled = True
             cfg.save(update_fields=["enabled", "updated_at"])
-            state = COORDINATOR.start_background_workers()
+            from .worker_daemon import ensure_external_worker_running
+            state = ensure_external_worker_running()
             return Response({"ok": True, "action": "start", **state})
 
         if action == "stop":
             cfg.enabled = False
             cfg.save(update_fields=["enabled", "updated_at"])
-            state = COORDINATOR.stop_background_workers()
+            from .worker_daemon import stop_external_worker
+            COORDINATOR.stop_background_workers()
+            state = stop_external_worker()
             return Response({"ok": True, "action": "stop", **state})
 
         if action == "step":

@@ -1,0 +1,230 @@
+{
+  "description": "Comprehensive matrix of major open-source scientific and engineering frameworks and languages organized by popularity, with common runtime/compiler errors, crash signatures, and exact drop-in resolutions.",
+  "languages": [
+    {
+      "language": "Python",
+      "popularity_rank": 1,
+      "domains": ["Data Science", "Robotics", "Physics", "Machine Learning", "Aerospace"],
+      "frameworks": [
+        {
+          "name": "NumPy",
+          "license": "BSD-3-Clause",
+          "error_cases": [
+            {
+              "error_signature": "ValueError: operands could not be broadcast together with shapes (4, 3) (4,)",
+              "console_trace": "Traceback (most recent call last):\n  File \"simulate_kinematics.py\", line 42, in step\n    accel_matrix = force_matrix + bias_vector\nValueError: operands could not be broadcast together with shapes (4, 3) (4,)",
+              "category": "DimensionMismatch",
+              "root_cause": "Broadcasting requires alignment from trailing dimensions. A (4,) 1D array cannot broadcast across columns of a (4, 3) matrix.",
+              "exact_fix": "accel_matrix = force_matrix + bias_vector[:, np.newaxis]  # or bias_vector.reshape(-1, 1)"
+            },
+            {
+              "error_signature": "LinAlgError: Singular matrix",
+              "console_trace": "Traceback (most recent call last):\n  File \"control_system.py\", line 88, in compute_gain\n    k_gain = np.linalg.inv(a_matrix) @ b_matrix\nnumpy.linalg.LinAlgError: Singular matrix",
+              "category": "SingularMatrixOrInvertibility",
+              "root_cause": "Matrix has determinant 0 and lacks a unique inverse. Direct inversion fails on rank-deficient or singular matrices.",
+              "exact_fix": "k_gain = np.linalg.pinv(a_matrix) @ b_matrix  # Moore-Penrose pseudoinverse or np.linalg.lstsq"
+            }
+          ]
+        },
+        {
+          "name": "SciPy",
+          "license": "BSD-3-Clause",
+          "error_cases": [
+            {
+              "error_signature": "RuntimeError: Required step size is less than spacing between numbers.",
+              "console_trace": "Traceback (most recent call last):\n  File \"trajectory.py\", line 56, in integrate\n    sol = solve_ivp(dynamics, (0, 10), y0, method='RK45')\nRuntimeError: Required step size is less than spacing between numbers.",
+              "category": "NumericalStiffnessOrIntegrationFailure",
+              "root_cause": "The differential equation is stiff or has extreme gradients. Explicit Runge-Kutta (RK45) decreases step size below float precision limit.",
+              "exact_fix": "sol = solve_ivp(dynamics, (0, 10), y0, method='Radau')  # or method='BDF' for stiff systems"
+            }
+          ]
+        },
+        {
+          "name": "PyTorch",
+          "license": "BSD-3-Clause",
+          "error_cases": [
+            {
+              "error_signature": "RuntimeError: mat1 and mat2 shapes cannot be multiplied (64x128 and 64x256)",
+              "console_trace": "Traceback (most recent call last):\n  File \"robot_policy.py\", line 112, in forward\n    out = self.fc2(self.relu(self.fc1(x)))\nRuntimeError: mat1 and mat2 shapes cannot be multiplied (64x128 and 64x256)",
+              "category": "DimensionMismatch",
+              "root_cause": "Inner matrix dimensions do not match for linear projection (fc2 expects in_features=128, but received 64).",
+              "exact_fix": "self.fc2 = nn.Linear(128, 256)  # Align in_features with prior layer out_features"
+            }
+          ]
+        },
+        {
+          "name": "ROS2 (rclpy)",
+          "license": "Apache-2.0",
+          "error_cases": [
+            {
+              "error_signature": "rclpy.exceptions.RCLError: failed to initialize rcl: rcl already initialized",
+              "console_trace": "Traceback (most recent call last):\n  File \"joint_controller.py\", line 15, in main\n    rclpy.init(args=args)\nrclpy.exceptions.RCLError: failed to initialize rcl: rcl already initialized",
+              "category": "LifecycleInitializationError",
+              "root_cause": "rclpy.init() called multiple times within the same process context without rclpy.shutdown().",
+              "exact_fix": "if not rclpy.ok(): rclpy.init(args=args)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "language": "C++",
+      "popularity_rank": 2,
+      "domains": ["Robotics Control", "Real-Time Systems", "CFD", "Computer Vision"],
+      "frameworks": [
+        {
+          "name": "CMake",
+          "license": "BSD-3-Clause",
+          "error_cases": [
+            {
+              "error_signature": "CMake Error at CMakeLists.txt:24 (target_link_libraries): Cannot specify link libraries for target \"robot_node\" which is not built by this project.",
+              "console_trace": "CMake Error at CMakeLists.txt:24 (target_link_libraries):\n  Cannot specify link libraries for target \"robot_node\" which is not built by this project.\nCall Stack (most recent call first):\n  CMakeLists.txt:12 (add_subdirectory)",
+              "category": "BuildConfigurationOrderError",
+              "root_cause": "target_link_libraries was called before add_executable(robot_node ...) or add_library was declared.",
+              "exact_fix": "Declare add_executable(robot_node src/main.cpp) BEFORE target_link_libraries(robot_node PRIVATE ...)"
+            }
+          ]
+        },
+        {
+          "name": "Eigen",
+          "license": "MPL-2.0",
+          "error_cases": [
+            {
+              "error_signature": "static assertion failed: YOU_MIXED_MATRICES_OF_DIFFERENT_SIZES",
+              "console_trace": "In file included from /usr/include/eigen3/Eigen/Core:297:\n/usr/include/eigen3/Eigen/src/Core/AssignEvaluator.h:861:3: error: static assertion failed: YOU_MIXED_MATRICES_OF_DIFFERENT_SIZES\n  861 |   EIGEN_STATIC_ASSERT_SAME_MATRIX_SIZE(ActualDstTypeCleaned,Src)",
+              "category": "TemplateDimensionMismatch",
+              "root_cause": "Attempted matrix assignment or arithmetic addition between fixed-size matrices of incompatible dimensions (e.g. Matrix3d = Matrix4d).",
+              "exact_fix": "Ensure both operands have identical compile-time template dimensions: Eigen::Matrix<double, 3, 3>"
+            }
+          ]
+        },
+        {
+          "name": "ROS2 (rclcpp)",
+          "license": "Apache-2.0",
+          "error_cases": [
+            {
+              "error_signature": "terminate called after throwing an instance of 'std::bad_weak_ptr' what(): bad_weak_ptr",
+              "console_trace": "terminate called after throwing an instance of 'std::bad_weak_ptr'\n  what(): bad_weak_ptr\nAborted (core dumped) in JointTrajectoryNode::JointTrajectoryNode()",
+              "category": "SharedFromThisInConstructor",
+              "root_cause": "Calling shared_from_this() inside the constructor before the object is managed by a std::shared_ptr.",
+              "exact_fix": "Move timer/subscriber initialization needing shared_from_this() into an explicit post-construction init() method, or call std::make_shared<Node>() before binding."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "language": "Rust",
+      "popularity_rank": 3,
+      "domains": ["Embedded Systems", "Robotics Kinematics", "Safe Systems"],
+      "frameworks": [
+        {
+          "name": "Cargo / rustc",
+          "license": "MIT / Apache-2.0",
+          "error_cases": [
+            {
+              "error_signature": "error[E0502]: cannot borrow `*self` as mutable because it is also borrowed as immutable",
+              "console_trace": "error[E0502]: cannot borrow `*self` as mutable because it is also borrowed as immutable\n  --> src/robot_kinematics.rs:48:9\n   |\n46 |         let joint_angle = self.get_angle(0);\n   |                           ---- immutable borrow occurs here\n47 |\n48 |         self.set_angle(0, joint_angle + 0.1);\n   |         ^^^^ mutable borrow occurs here\n49 |     }",
+              "category": "BorrowCheckerViolation",
+              "root_cause": "Cannot take a mutable borrow `&mut self` while an immutable borrow `&self` is still in active scope.",
+              "exact_fix": "Clone the primitive value (copy semantics) or restrict immutable borrow lifetime: let joint_angle = *self.get_angle(0); self.set_angle(0, joint_angle + 0.1);"
+            },
+            {
+              "error_signature": "error[E0382]: use of moved value: `buffer`",
+              "console_trace": "error[E0382]: use of moved value: `buffer`\n  --> src/sensor_reader.rs:31:24\n   |\n28 |     process_telemetry(buffer);\n   |                       ------ value moved here\n...\n31 |     println!(\"{:?}\", buffer);\n   |                      ^^^^^^ value borrowed here after move",
+              "category": "OwnershipMovedValueError",
+              "root_cause": "Passing `buffer` by value transfers ownership into `process_telemetry`. Subsequent read borrows a moved value.",
+              "exact_fix": "Pass by reference `process_telemetry(&buffer)` or derive/call `buffer.clone()` if consumption is required."
+            }
+          ]
+        },
+        {
+          "name": "nalgebra",
+          "license": "Apache-2.0",
+          "error_cases": [
+            {
+              "error_signature": "mismatched types: expected `Matrix3<f64>`, found `Matrix4<f64>`",
+              "console_trace": "error[E0308]: mismatched types\n  --> src/transform.rs:18:22\n   |\n18 |     let rot: Matrix3<f64> = transform.matrix();\n   |                             ^^^^^^^^^^^^^^^^^^ expected Matrix3, found Matrix4",
+              "category": "TypeDimensionMismatch",
+              "root_cause": "Isometry3 / Transform matrix() produces a 4x4 homogeneous transformation matrix, not a 3x3 rotation matrix.",
+              "exact_fix": "let rot: Matrix3<f64> = transform.rotation.to_rotation_matrix().into_inner();"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "language": "TypeScript / JavaScript",
+      "popularity_rank": 4,
+      "domains": ["Web 3D Simulation", "CAD Viewers", "Telemetry Dashboards"],
+      "frameworks": [
+        {
+          "name": "Three.js",
+          "license": "MIT",
+          "error_cases": [
+            {
+              "error_signature": "TypeError: Cannot read properties of undefined (reading 'elements')",
+              "console_trace": "TypeError: Cannot read properties of undefined (reading 'elements')\n    at Matrix4.multiplyMatrices (three.module.js:3421:28)\n    at Object3D.updateMatrixWorld (three.module.js:9842:12)",
+              "category": "NullOrUndefinedMatrixReference",
+              "root_cause": "Attempting to multiply with an uninstantiated or null Matrix4 object.",
+              "exact_fix": "Ensure all child matrices are instantiated: child.matrix = new THREE.Matrix4(); or call object.updateMatrix() before multiplying."
+            }
+          ]
+        },
+        {
+          "name": "Vite",
+          "license": "MIT",
+          "error_cases": [
+            {
+              "error_signature": "[vite] Internal server error: Failed to resolve import \"three/addons/controls/OrbitControls.js\"",
+              "console_trace": "[vite] Internal server error: Failed to resolve import \"three/addons/controls/OrbitControls.js\" from \"src/viewer.ts\". Does the file exist?\n  Plugin: vite:import-analysis\n  File: D:/Projects/MSRW/src/viewer.ts",
+              "category": "ModuleResolutionError",
+              "root_cause": "Modern three package exports OrbitControls via 'three/examples/jsm/controls/OrbitControls.js' or 'three/addons/controls/OrbitControls.js' requiring three package version >=0.150.",
+              "exact_fix": "import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "language": "Julia",
+      "popularity_rank": 5,
+      "domains": ["Differential Equations", "Optimization", "Quantum Physics"],
+      "frameworks": [
+        {
+          "name": "DifferentialEquations.jl",
+          "license": "MIT",
+          "error_cases": [
+            {
+              "error_signature": "MethodError: no method matching (::ODEFunction)(::Vector{Float64}, ::Float64)",
+              "console_trace": "ERROR: MethodError: no method matching (::ODEFunction)(::Vector{Float64}, ::Float64)\nClosest candidates are: (f)(du, u, p, t) [in-place] or (f)(u, p, t) [out-of-place]",
+              "category": "SignatureArityMismatch",
+              "root_cause": "ODE function signature must be either out-of-place `f(u, p, t)` or in-place `f(du, u, p, t)`. Provided function only took 2 arguments.",
+              "exact_fix": "Define function as: function dynamics(u, p, t) ... end (3 parameters: state, params, time)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "language": "GNU Octave / MATLAB",
+      "popularity_rank": 6,
+      "domains": ["Control Theory", "Signal Processing", "Matrix Algebra"],
+      "frameworks": [
+        {
+          "name": "Control Package",
+          "license": "GPL-3.0-or-later",
+          "error_cases": [
+            {
+              "error_signature": "error: nonconformant arguments (op1 is 2x2, op2 is 3x2)",
+              "console_trace": "error: nonconformant arguments (op1 is 2x2, op2 is 3x2)\nerror: called from\n    lqr at line 64 column 11\n    main_sim at line 14 column 5",
+              "category": "DimensionMismatch",
+              "root_cause": "Linear Quadratic Regulator (lqr) requires state weight matrix Q to be n x n matching system state matrix A (2x2). Q was improperly shaped 3x2.",
+              "exact_fix": "Q = eye(size(A)); % Ensure Q is symmetric positive semi-definite 2x2 matrix"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

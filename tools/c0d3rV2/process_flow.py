@@ -358,9 +358,7 @@ class ProcessFlow:
                         the first turn.
         Returns an OS exit code (0 = clean exit).
         """
-        single_shot = (
-            initial_prompt is not None and not sys.stdin.isatty()
-        )
+        single_shot = initial_prompt is not None
 
         while True:
             # Step 1 ──────────────────────────────────────────────────

@@ -437,37 +437,63 @@ class UnboundedSolver:
     def _attach_binding_analysis(result: dict, question: str) -> None:
         """Attach deterministic closure evidence and reject false closure.
 
-        Older model responses do not contain explicit known/target variables, so
-        they retain compatibility while still receiving equation validation and
-        domain classification. New schema-compliant responses must actually
-        connect their knowns to every target before being called answerable.
+        Enforces mathematical grounding via the Kùzu equation workbench to eliminate
+        hallucinations. An answer cannot be claimed without parseable equations,
+        deterministic variable binding from knowns to targets, and dimensional consistency.
         """
         try:
             from matrix_helpers import assess_binding, classify_domains
         except ModuleNotFoundError:
             from .matrix_helpers import assess_binding, classify_domains
+
         equations = [str(e) for e in (result.get("equations") or [])]
         knowns = [str(v) for v in (result.get("knowns") or [])]
         targets = [str(v) for v in (result.get("targets") or [])]
         dimensions = result.get("dimensions") if isinstance(result.get("dimensions"), dict) else None
+
+        # Anti-hallucination inference: if targets were omitted but equations exist,
+        # infer target variables from single-variable equation outputs (LHS).
+        if not targets and equations:
+            import re
+            for eq in equations:
+                if "=" in eq:
+                    lhs, _ = eq.split("=", 1)
+                    cand = re.findall(r"[A-Za-z_][A-Za-z_0-9]*", lhs)
+                    if len(cand) == 1 and cand[0] not in knowns:
+                        targets.append(cand[0])
+
         analysis = assess_binding(equations=equations, knowns=knowns,
                                   targets=targets, dimensions=dimensions)
         result["binding"] = analysis
         result["domains"] = result.get("domains") or classify_domains(question)
+
         if analysis["rejected_equations"]:
             result.setdefault("anomalies", []).append(
                 "Ignored malformed supplemental equations: "
                 + "; ".join(item["equation"] for item in analysis["rejected_equations"][:3])
             )
-        if result.get("answerable") and (targets and not analysis["bound"]):
-            result["answerable"] = False
-            result.setdefault("anomalies", []).append(
-                "Claimed answer failed equation-matrix closure validation"
-            )
-            result.setdefault("sub_questions", []).extend(
-                f"What validated relation connects the knowns to {target}?"
-                for target in analysis["missing"]
-            )
+
+        # Anti-hallucination rejection
+        if result.get("answerable"):
+            # Condition 1: Must have parseable equations
+            if not analysis.get("parseable_equations"):
+                result["answerable"] = False
+                result.setdefault("anomalies", []).append(
+                    "Hallucination rejection: Claimed answer lacks SymPy-parseable equations to bind the environment."
+                )
+                result.setdefault("sub_questions", []).append(
+                    f"What physical laws and mathematical equations govern: {question[:120]}?"
+                )
+            # Condition 2: Targets must be mathematically bound from knowns
+            elif targets and not analysis["bound"]:
+                result["answerable"] = False
+                result.setdefault("anomalies", []).append(
+                    "Claimed answer failed equation-matrix closure validation: missing targets or dimensional mismatch."
+                )
+                result.setdefault("sub_questions", []).extend(
+                    f"What validated relation connects the knowns to {target}?"
+                    for target in analysis["missing"]
+                )
 
     def _research_and_decompose(self, node: QuestionNode) -> list[str]:
         """
@@ -612,7 +638,17 @@ class UnboundedSolver:
     # ------------------------------------------------------------------
 
     def _matrix_search(self, question: str) -> list[dict]:
-        """Search the equation matrix for equations relevant to a question."""
+        """Search the equation matrix and Kùzu graph workbench for equations relevant to a question."""
+        try:
+            from tools.wizard_learning.kuzu_workbench import get_kuzu_workbench
+            wb = get_kuzu_workbench()
+            if wb.is_available():
+                hits = wb.search_workbench(query=question, limit=20)
+                if hits:
+                    return hits
+        except Exception:
+            pass
+
         try:
             from matrix_helpers import _matrix_search
             result = _matrix_search(question, limit=20)

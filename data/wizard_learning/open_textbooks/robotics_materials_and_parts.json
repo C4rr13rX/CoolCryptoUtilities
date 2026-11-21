@@ -1,0 +1,118 @@
+{
+  "title": "NIST & ASTM Real-World Robotics Materials, Modular Actuators & Terramechanics",
+  "license": "Creative Commons Attribution 4.0 International (CC BY 4.0) & Public Domain",
+  "source": "NIST Materials Science Database / NASA Technical Reports / ISO 1101 / ASTM B348",
+  "sections": [
+    {
+      "topic": "Aerospace Titanium Alloy (Ti-6Al-4V Grade 5)",
+      "material_spec": {
+        "standard": "ASTM B348 / AMS 4928",
+        "density_kg_m3": 4430.0,
+        "yield_strength_mpa": 880.0,
+        "tensile_strength_mpa": 950.0,
+        "youngs_modulus_gpa": 113.8,
+        "shear_modulus_gpa": 44.0,
+        "poissons_ratio": 0.342,
+        "thermal_conductivity_w_m_k": 6.7,
+        "thermal_expansion_1_k": 8.6e-6,
+        "applications": "High-strength robotic chassis, rover wheel rims, robotic manipulator links, harmonic drive flexsplines"
+      },
+      "equations": [
+        "sigma_yield = 880 * 10**6",
+        "E_ti = 113.8 * 10**9",
+        "rho_ti = 4430.0",
+        "sigma_bending = (M_bend * y) / I_area",
+        "safety_factor = sigma_yield / sigma_max"
+      ],
+      "summary": "Ti-6Al-4V Grade 5 offers high strength-to-weight ratio, excellent fatigue resistance, and cryogenic stability for advanced space and industrial robots."
+    },
+    {
+      "topic": "Aerospace Aluminum Alloy (7075-T6)",
+      "material_spec": {
+        "standard": "ASTM B221 / AMS 4045",
+        "density_kg_m3": 2810.0,
+        "yield_strength_mpa": 503.0,
+        "tensile_strength_mpa": 572.0,
+        "youngs_modulus_gpa": 71.7,
+        "poissons_ratio": 0.33,
+        "applications": "Lightweight robot arm booms, structural frames, gearbox housings"
+      },
+      "equations": [
+        "sigma_yield_al = 503 * 10**6",
+        "E_al = 71.7 * 10**9",
+        "rho_al = 2810.0",
+        "delta_L = (F_axial * L) / (A * E_al)"
+      ],
+      "summary": "Zinc-alloyed high-strength aluminum with zinc as primary alloying element; yield strength comparable to steel at one-third the density."
+    },
+    {
+      "topic": "Carbon Fiber Reinforced PEEK Composite (CFRP-PEEK)",
+      "material_spec": {
+        "standard": "ISO 527 / ASTM D3039",
+        "density_kg_m3": 1580.0,
+        "longitudinal_modulus_gpa": 138.0,
+        "tensile_strength_mpa": 2070.0,
+        "applications": "Ultra-lightweight robotic booms, high-frequency delta robot linkages"
+      },
+      "equations": [
+        "rho_cfrp = 1580.0",
+        "E_cfrp = 138.0 * 10**9",
+        "X_tensile = 2070 * 10**6",
+        "omega_natural = (pi / L**2) * sqrt((E_cfrp * I_area) / (rho_cfrp * A))"
+      ],
+      "summary": "Thermoplastic matrix composite providing exceptional specific modulus (E/rho), zero corrosion, and vibration damping."
+    },
+    {
+      "topic": "Permanent Magnet Brushless DC Actuators (BLDC)",
+      "part_spec": {
+        "category": "Modular Actuator",
+        "rotor_magnets": "Sintered NdFeB N52 (Br = 1.45 T, (BH)max = 414 kJ/m^3)",
+        "winding": "Oxygen-Free High Conductivity Copper (sigma = 5.96e7 S/m)",
+        "motor_constants": "Torque constant Kt (N*m/A), Back-EMF constant Ke (V*s/rad), Phase resistance R (ohm)"
+      },
+      "equations": [
+        "tau_motor = K_t * I_armature",
+        "V_terminal = I_armature * R_motor + K_e * omega_motor",
+        "P_mech = tau_motor * omega_motor",
+        "P_loss = I_armature**2 * R_motor",
+        "eta_motor = P_mech / (P_mech + P_loss)"
+      ],
+      "summary": "Electromechanical energy conversion in frameless BLDC motors where shaft torque is linearly proportional to phase current."
+    },
+    {
+      "topic": "Strain Wave Harmonic Drive Reducers",
+      "part_spec": {
+        "category": "Precision Transmission",
+        "components": ["Circular Spline", "Flexspline (Ti-6Al-4V)", "Wave Generator Elliptical Bearing"],
+        "gear_ratios": [50, 80, 100, 120, 160],
+        "backlash_arcmin": 0.1,
+        "efficiency": 0.82
+      },
+      "equations": [
+        "tau_output = N_ratio * eta_gear * tau_motor",
+        "omega_output = omega_motor / N_ratio",
+        "theta_backlash = 0.0"
+      ],
+      "summary": "Zero-backlash strain-wave gearing utilizing elastic deformation of a thin-walled steel or titanium cup."
+    },
+    {
+      "topic": "Bekker-Wong Planetary & Lunar Terramechanics",
+      "material_spec": {
+        "soil_type": "JSC-1A / NU-LIMS Lunar Regolith Simulant",
+        "bulk_density_kg_m3": 1750.0,
+        "cohesion_kpa": 1.0,
+        "internal_friction_deg": 38.0,
+        "kc_pressure_sinkage": 1370.0,
+        "kphi_pressure_sinkage": 814000.0,
+        "n_sinkage_exponent": 1.0
+      },
+      "equations": [
+        "p_sinkage = ((k_c / b_wheel) + k_phi) * z_sink**n_sink",
+        "R_rolling = b_wheel * ((k_c / b_wheel) + k_phi) * (z_sink**(n_sink + 1)) / (n_sink + 1)",
+        "F_traction = (A_contact * c_soil + W_wheel * tan(phi_friction)) * (1.0 - exp(-j_slip / K_shear))",
+        "tau_wheel_req = (R_rolling + F_drawbar) * r_wheel"
+      ],
+      "summary": "Bekker-Wong terramechanics equation calculates soil pressure sinkage, compaction rolling resistance, and net tractive drawbar pull for rover wheels on planetary regolith."
+    }
+  ]
+}

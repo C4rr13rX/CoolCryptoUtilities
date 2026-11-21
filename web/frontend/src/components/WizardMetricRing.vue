@@ -64,7 +64,7 @@ const metrics = computed(() => {
 })
 </script>
 <style scoped>
-.metric-ring { position: absolute; inset: 0; pointer-events: none; border-radius: 50%; }
+.metric-ring { position: absolute; inset: 0; pointer-events: none; border-radius: 50%; z-index: 5; }
 .metric-ring::before { content: ''; position: absolute; inset: 6%; border: 1px solid #ba8fdc18; border-radius: 50%; }
 .metric { position: absolute; width: 10%; height: clamp(20px, 3.5cqw, 30px); transform: translate(-50%, -50%); display: flex; align-items: center; justify-content: center; text-align: center; min-width: 0; pointer-events: auto; color: #7eafff; --glow: #4385ff55; }
 .pink { color: #f39acb; --glow: #ff62bd44; } .red { color: #ff6579; --glow: #ff254866; }

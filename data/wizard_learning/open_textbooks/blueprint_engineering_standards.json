@@ -1,0 +1,57 @@
+{
+  "title": "ASME Y14.5 & ISO 1101 Blueprint Engineering and GD&T Standards",
+  "license": "Creative Commons Attribution 4.0 International (CC BY 4.0) / ASME Open Reference",
+  "source": "ASME Y14.5M Dimensioning and Tolerancing / ISO 1101 Geometrical Product Specifications",
+  "sections": [
+    {
+      "topic": "Orthographic Third-Angle Blueprint Projections",
+      "summary": "Standard engineering drawings require Third-Angle projection views: Front View, Top View, Right Side View, Isometric 3D View, and Detail Section A-A. All views must maintain true scale alignment.",
+      "blueprint_structure": {
+        "projection_system": "Third Angle (ANSI / ASME Y14.3)",
+        "views": ["front", "top", "right_side", "isometric_axonometric", "section_detail"],
+        "dimension_units": "millimeters (mm) or SI",
+        "title_block_fields": [
+          "part_name", "part_number", "revision", "material_callout",
+          "mass_kg", "scale", "tolerances_general", "engineer_author", "date"
+        ]
+      },
+      "equations": [
+        "mass_part = volume_m3 * density_kg_m3",
+        "tolerance_linear = 0.05",
+        "surface_roughness_Ra = 0.8"
+      ]
+    },
+    {
+      "topic": "Geometric Dimensioning and Tolerancing (GD&T)",
+      "summary": "GD&T specifies exact allowable variations in geometry rather than simple plus-minus linear tolerance. Includes Datum references (A: primary mounting plane, B: central bore axis, C: indexing pin hole).",
+      "controls": {
+        "position": "True position tolerance circle relative to datums A, B, C",
+        "flatness": "Allowable surface deviation between two parallel planes",
+        "concentricity": "Coaxiality of revolving motor and gearbox shafts",
+        "perpendicularity": "Squareness of structural columns to mounting flange"
+      },
+      "equations": [
+        "feature_position_dev = 2.0 * sqrt((x_meas - x_true)**2 + (y_meas - y_true)**2)",
+        "is_within_gdt = feature_position_dev <= tol_position"
+      ]
+    },
+    {
+      "topic": "Exportable Vector Blueprint Format Specification (DXF / SVG)",
+      "summary": "Defines deterministic schema for exporting CAD vector blueprints with SVG paths, dimension lines, extension lines, arrowheads, datum indicators, and standard ASME title block.",
+      "export_schema": {
+        "format": "application/svg+xml or dxf",
+        "layers": [
+          "VISIBLE_OUTLINE (continuous black 0.5mm)",
+          "HIDDEN_EDGES (dashed gray 0.25mm)",
+          "CENTER_LINES (dash-dot red 0.25mm)",
+          "DIMENSIONS (solid cyan with arrowheads 0.25mm)",
+          "TITLE_BLOCK (solid black border 0.7mm)"
+        ]
+      },
+      "equations": [
+        "dim_arrow_dx = arrow_len * cos(angle_rad)",
+        "dim_arrow_dy = arrow_len * sin(angle_rad)"
+      ]
+    }
+  ]
+}

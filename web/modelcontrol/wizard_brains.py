@@ -40,7 +40,11 @@ def _read_setting(user, name: str) -> str:
         return ""
 
 
+_SELECTED_BRAIN_CACHE: dict[tuple[Any, str], tuple[float, dict[str, str]]] = {}
+
+
 def _write_plain_setting(user, name: str, value: str) -> None:
+    _SELECTED_BRAIN_CACHE.clear()
     setting, _ = SecureSetting.objects.get_or_create(
         user=user, category=CATEGORY, name=name, defaults={"is_secret": False}
     )
@@ -144,11 +148,20 @@ def get_wizard_brain(user, profile_id: str) -> dict[str, str] | None:
 
 
 def selected_wizard_brain(user, purpose: str) -> dict[str, str]:
+    import time as _time
     if purpose not in SELECTION_KEYS:
         raise ValueError("Unknown Wizard brain selection purpose.")
+    uid = getattr(user, "id", None) if getattr(user, "is_authenticated", False) else None
+    ckey = (uid, purpose)
+    now = _time.time()
+    cached = _SELECTED_BRAIN_CACHE.get(ckey)
+    if cached and (now - cached[0]) < 15.0:
+        return dict(cached[1])
     profiles = list_wizard_brains(user)
     selected_id = _read_setting(user, SELECTION_KEYS[purpose]).strip()
-    return next((item for item in profiles if item["id"] == selected_id), profiles[0])
+    chosen = next((item for item in profiles if item["id"] == selected_id), profiles[0])
+    _SELECTED_BRAIN_CACHE[ckey] = (now, dict(chosen))
+    return dict(chosen)
 
 
 def select_wizard_brain(user, purpose: str, profile_id: str) -> dict[str, str]:
