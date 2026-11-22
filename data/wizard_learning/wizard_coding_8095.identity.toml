@@ -1,0 +1,90 @@
+name = "wizard_coding_8095"
+version = "1.0.0"
+binding_emergence_threshold = 3
+moment_history_window = 256
+min_atom_score = 0.85
+
+[[pools]]
+name = "text"
+id = 1
+prototype = "byte-passthrough"
+atom_encoding_prefix = "t"
+kind = "SensoryInput"
+frame_rate = 1
+recent_atoms_window = 65536
+max_concept_member_count = 16
+concept_emergence_threshold = 4294967295
+decay_rate = 0.00001
+prune_floor = 0.0005
+
+[[pools]]
+name = "image"
+id = 2
+prototype = "byte-passthrough"
+atom_encoding_prefix = "i"
+kind = "SensoryInput"
+frame_rate = 1
+recent_atoms_window = 4096
+max_concept_member_count = 16
+concept_emergence_threshold = 6
+decay_rate = 0.00002
+prune_floor = 0.001
+
+[[pools]]
+name = "audio"
+id = 3
+prototype = "byte-passthrough"
+atom_encoding_prefix = "a"
+kind = "SensoryInput"
+frame_rate = 1
+recent_atoms_window = 4096
+max_concept_member_count = 16
+concept_emergence_threshold = 6
+decay_rate = 0.00002
+prune_floor = 0.001
+
+[[pools]]
+name = "action"
+id = 4
+prototype = "byte-passthrough"
+atom_encoding_prefix = "act"
+kind = "Action"
+frame_rate = 1
+recent_atoms_window = 65536
+max_concept_member_count = 16
+concept_emergence_threshold = 4294967295
+decay_rate = 0.00001
+prune_floor = 0.0005
+
+[[pools]]
+name = "turn"
+id = 5
+prototype = "byte-passthrough"
+atom_encoding_prefix = "turn"
+kind = "Internal"
+frame_rate = 1
+recent_atoms_window = 64
+max_concept_member_count = 4
+concept_emergence_threshold = 4294967295
+decay_rate = 0.001
+prune_floor = 0.01
+
+[fabric]
+cross_pool_lr = 0.15
+max_hops = 2
+hop_decay = 0.85
+cross_pool_concept_lr = 0.20
+
+[eem]
+initial_confidence = 0.5
+validation_success_gain = 0.05
+validation_failure_penalty = 0.10
+
+[annealer]
+history_window = 64
+steps = 64
+temperature_initial = 1.0
+temperature_final = 0.01
+perturbation_scale = 0.15
+similarity_sigma = 1.0
+rng_seed = 12648430

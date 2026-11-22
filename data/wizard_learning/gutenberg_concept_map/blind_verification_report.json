@@ -1,0 +1,188 @@
+{
+  "verified_at_utc": "2026-11-22T09:25:27Z",
+  "gutenberg_concepts_loaded": 25299,
+  "part_a_live_http_8001": {
+    "message_bike_class_ok": true,
+    "message_bike_decoder": "c0d3rv2_compositional_verified",
+    "agent_bike_model_ok": true,
+    "agent_bike_decoder": null,
+    "speech_act_prose_separation_ok": true
+  },
+  "part_b_blind_100_offline_entities": {
+    "total_entities": 100,
+    "ast_and_isolated_exec_passed": 100,
+    "gutenberg_graph_backed_count": 80,
+    "rust_8095_direct_neural_recall_count": 1,
+    "constituent_fault_precondition_verified": 100,
+    "sample_outputs": [
+      {
+        "entity": "barometer",
+        "parts": [
+          "chamber",
+          "regulator_valve",
+          "sensor_element",
+          "graduated_scale"
+        ],
+        "stdout": "{'model_name': 'barometer', 'healthy_parts': ['chamber', 'regulator_valve', 'sensor_element', 'graduated_scale'], 'temperature_c': 92.0, 'pressure_bar': 9.0}"
+      },
+      {
+        "entity": "thermometer",
+        "parts": [
+          "chamber",
+          "regulator_valve",
+          "sensor_element",
+          "graduated_scale"
+        ],
+        "stdout": "{'model_name': 'thermometer', 'healthy_parts': ['chamber', 'regulator_valve', 'sensor_element', 'graduated_scale'], 'temperature_c': 92.0, 'pressure_bar': 9.0}"
+      },
+      {
+        "entity": "microscope",
+        "parts": [
+          "lens"
+        ],
+        "stdout": "{'model_name': 'microscope', 'healthy_parts': ['lens']}"
+      },
+      {
+        "entity": "telescope",
+        "parts": [
+          "objective_lens",
+          "eyepiece_tube"
+        ],
+        "stdout": "{'model_name': 'telescope', 'healthy_parts': ['objective_lens', 'eyepiece_tube']}"
+      },
+      {
+        "entity": "pendulum",
+        "parts": [
+          "chassis_frame",
+          "propulsion_unit",
+          "sensor_element",
+          "graduated_scale"
+        ],
+        "stdout": "{'model_name': 'pendulum', 'healthy_parts': ['chassis_frame', 'propulsion_unit', 'sensor_element', 'graduated_scale'], 'speed_mps': 15.0, 'position_m': 45.0, 'kinetic_energy_j': 1350.0}"
+      },
+      {
+        "entity": "gyroscope",
+        "parts": [
+          "chassis_frame",
+          "propulsion_unit"
+        ],
+        "stdout": "{'model_name': 'gyroscope', 'healthy_parts': ['chassis_frame', 'propulsion_unit'], 'speed_mps': 15.0, 'position_m': 45.0, 'kinetic_energy_j': 1350.0}"
+      }
+    ]
+  },
+  "part_c_multi_hop_concept_paths": {
+    "pairs_tested": 8,
+    "connected_paths_found": 7,
+    "previews": [
+      {
+        "pair": "bicycle <-> locomotive",
+        "hops": 2,
+        "path": [
+          [
+            "bicycle",
+            "is_a",
+            "vehicle"
+          ],
+          [
+            "vehicle",
+            "roget:Journey",
+            "locomotive"
+          ]
+        ]
+      },
+      {
+        "pair": "barometer <-> thermometer",
+        "hops": 1,
+        "path": [
+          [
+            "barometer",
+            "roget:Measurement",
+            "thermometer"
+          ]
+        ]
+      },
+      {
+        "pair": "microscope <-> telescope",
+        "hops": 1,
+        "path": [
+          [
+            "microscope",
+            "roget:Optical Instruments",
+            "telescope"
+          ]
+        ]
+      },
+      {
+        "pair": "hourglass <-> chronometer",
+        "hops": 1,
+        "path": [
+          [
+            "hourglass",
+            "roget:Chronometry",
+            "chronometer"
+          ]
+        ]
+      },
+      {
+        "pair": "lever <-> pulley",
+        "hops": 2,
+        "path": [
+          [
+            "lever",
+            "is_a",
+            "mechanism"
+          ],
+          [
+            "mechanism",
+            "roget:Instrument",
+            "pulley"
+          ]
+        ]
+      },
+      {
+        "pair": "compass <-> magnet",
+        "hops": 3,
+        "path": [
+          [
+            "compass",
+            "acts_by",
+            "make"
+          ],
+          [
+            "make",
+            "encompasses",
+            "charm"
+          ],
+          [
+            "charm",
+            "roget:Motive",
+            "magnet"
+          ]
+        ]
+      },
+      {
+        "pair": "kiln <-> furnace",
+        "hops": 1,
+        "path": [
+          [
+            "kiln",
+            "roget:Furnace",
+            "furnace"
+          ]
+        ]
+      }
+    ]
+  },
+  "part_d_polyglot_and_open_web": {
+    "languages_tested": 6,
+    "passed": 6
+  },
+  "part_e_hard_rust_8095_kill_and_wal_reload": {
+    "killed_process": "KILLED_PID:18488",
+    "port_confirmed_dead_before_relaunch": true,
+    "wal_bytes_before_kill": 348485,
+    "post_restart_raw_rust_sextant_grounded_and_executed": true,
+    "post_restart_raw_rust_bike_grounded_and_executed": true
+  },
+  "elapsed_seconds": 60.11
+}

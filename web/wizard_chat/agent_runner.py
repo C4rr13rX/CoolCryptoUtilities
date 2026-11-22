@@ -754,12 +754,12 @@ def _fast_c0d3r_direct_agent_turn(
         pass
 
     from tools.wizard_learning.fast_conversational_engine import (
-        enqueue_hypothesis_async,
         resolve_fast_wizard_turn,
         synthesize_verified_code,
         train_fast_chat_pair_async,
     )
-    code_pair = synthesize_verified_code(raw)
+    allow_web = bool((runtime_context or {}).get("allow_web_lookup", True))
+    code_pair = synthesize_verified_code(raw, allow_web_lookup=allow_web)
     if code_pair is not None:
         _, py_code = code_pair
         # If user asked for a custom argument like `fib(10)`, `factorial(6)`, or `is_prime(97)`, evaluate that call!
@@ -803,8 +803,7 @@ def _fast_c0d3r_direct_agent_turn(
         train_fast_chat_pair_async(raw, ans, endpoint=wizard_endpoint)
         return ans
 
-    # 5. Fast W1z4rD context-aware / data / polyglot / telemetry / physics / associative resolution (<15ms)
-    allow_web = bool((runtime_context or {}).get("allow_web_lookup", True))
+    # 5. Fast W1z4rD context-aware / data / polyglot / telemetry / physics / associative resolution
     fast_turn = resolve_fast_wizard_turn(
         raw,
         endpoint=wizard_endpoint,
@@ -822,25 +821,9 @@ def _fast_c0d3r_direct_agent_turn(
     except Exception:
         pass
 
-    # 6. Queue ungrounded prompt for background research instead of blocking on 64-step JSON Orchestrator
-    enqueue_hypothesis_async(raw, endpoint=wizard_endpoint)
-    def _bg_agent_gap():
-        try:
-            from tools.wizard_learning.textbook_researcher import get_textbook_researcher
-            get_textbook_researcher().research_and_train_on_gap(raw, initial_reply="[agent-ungrounded]")
-        except Exception:
-            pass
-    threading.Thread(target=_bg_agent_gap, daemon=True).start()
-    return (
-        "**[C0d3rV2 Agent · Ready]** That request isn't grounded in my neural pools yet — I've queued it for "
-        "autonomous background textbook research.\n\n"
-        "For immediate workspace action, try:\n"
-        "- `read <path>` or `list files in <dir>`\n"
-        "- `search workspace for <symbol>`\n"
-        "- `run: <shell command>` or fenced ```` ```python ... ``` ````\n"
-        "- `Write a Python function <name> ... and save to <path.py>`\n"
-        "- `search online for <topic>` or pass inline JSON/CSV data to transform"
-    )
+    # 6. Fall through to the REAL C0d3rV2 ProcessFlow + Orchestrator + ToolRegistry (lines 880+)
+    #    instead of returning a canned dead-end banner!
+    return None
 
 
 def run(

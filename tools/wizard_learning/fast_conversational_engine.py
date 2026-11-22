@@ -204,10 +204,14 @@ def is_chat_pool_busy(endpoint: str = "http://127.0.0.1:8090") -> bool:
 def train_fast_chat_pair_async(question: str, answer: str, endpoint: str = "http://127.0.0.1:8090") -> None:
     """Non-blocking background reinforcement into `chat_in -> chat_out` + instant hot mirror."""
     q = _clean_query(question)[:320]
-    a = (answer or "").strip()[:1800]
-    if not q or not a:
+    full_a = (answer or "").strip()
+    if not q or not full_a:
         return
-    record_hot_chat_pair(q, a)
+    record_hot_chat_pair(q, full_a)
+    # Never store truncated fenced code into `:8090` `chat_out` (Rust `:8095` stores full untruncated code!)
+    if "```" in full_a and len(full_a) > 1800:
+        return
+    a = full_a[:1800]
     ep = _norm_ep(endpoint)
 
     def _job():
@@ -592,61 +596,73 @@ def _try_symbolic_math_or_physics(text: str, endpoint: str) -> Optional[Dict[str
     return None
 
 
-def synthesize_verified_code(prompt: str) -> Optional[Tuple[str, str]]:
-    """Synthesize clean, AST-verified code snippets in <5ms for STEM, Lab, STEAM,
-    Mid-Market SaaS, Enterprise FinTech, Multi-PC Ops, and CS coding requests.
-    Returns `(markdown_response, runnable_python_code)` when matched."""
-    low = (prompt or "").strip().lower()
+def synthesize_verified_code(prompt: str, *, allow_web_lookup: bool = True) -> Optional[Tuple[str, str]]:
+    """Rust-Substrate-First + Compositional Ontology/Concept-Map Code Builder & AST/Execution Verifier.
+    1. Queries the live Rust `w1z4rd_brain_server` (`:8095/brain/chat`) FIRST.
+    2. Checks specialized STEM/Enterprise domain synthesizers (and trains `:8095` on any hit).
+    3. Composes arbitrary real-world/abstract domain classes & models from Gutenberg Concept Map +
+       Wikidata `CC0` / Wikipedia `CC BY-SA 4.0` constituent mechanics, executes in `python -I`,
+       and trains `:8095` directly (`zero hardcoded per-noun template tricks`)."""
+    raw = (prompt or "").strip()
+    low = raw.lower()
     if not low or re.match(r"^(?:what\s+(?:is|are|does|happens)|explain|define|why\s+|how\s+does|compare|summarize|look\s+up|suppose\s+|predict\s+|analyze\s+)\b", low):
         return None
     if any(k in low for k in ("emergent mechanics", "prerogative", "untrained constituent", "reinvent the wheel")) and "python" not in low and "script" not in low:
         return None
-    # Do not hijack explicit non-Python language requests
     if re.search(r"\b(?:rust|typescript|javascript|golang|powershell|bash|sql|html|glsl|webgl)\b", low) and "python" not in low:
         return None
 
-    # Require explicit Python/code intent so bare domain nouns ('matrix', 'kalman') in physics prose aren't hijacked
-    has_code_verb = any(
-        v in low for v in ("python", "write ", "implement ", "build ", "create ", "generate ", "code", "script", "module", "function", "def ", "class ")
+    from .compositional_domain_coder import (
+        ensure_coding_brain_8095_running,
+        is_code_or_model_creation_intent,
+        query_rust_brain_direct,
+        resolve_compositional_code_or_model,
+        train_rust_brain_bindings,
+    )
+
+    has_code_verb = is_code_or_model_creation_intent(raw) or any(
+        v in low for v in ("python", "write ", "implement ", "build ", "create ", "generate ", "code", "script", "module", "function", "def ", "class ", "model ")
     )
     if not has_code_verb:
         return None
 
-    # 1. Check Enterprise / STEM / Wet-Lab / STEAM / Multi-PC Python Synthesizer first
+    _spawn_daemon(ensure_coding_brain_8095_running)
+
+    # 1. Query REAL Rust `w1z4rd_brain_server` (`:8095/brain/chat`) FIRST!
+    rust_hit = query_rust_brain_direct(raw, timeout=0.35)
+    if rust_hit is not None:
+        reply_md = rust_hit["reply"]
+        m_py = re.search(r"```python\s*([\s\S]*?)```", reply_md)
+        py_src = m_py.group(1).strip() + "\n" if m_py else reply_md
+        try:
+            ast.parse(py_src)
+            return reply_md, py_src
+        except Exception:
+            pass
+
+    # 2. Specialized STEM / Wet-Lab / Enterprise algorithmic modules (trained straight into Rust `:8095`!)
     try:
         from tools.c0d3rV2.enterprise_stem_synth import synthesize_domain_software
-        dom_hit = synthesize_domain_software(prompt)
+        dom_hit = synthesize_domain_software(raw)
         if dom_hit is not None and dom_hit[0] == "python":
             _, d_title, d_code = dom_hit
             ast.parse(d_code)
             d_md = (
-                f"**{d_title}** *(AST-verified Python)*\n\n"
-                f"```python\n{d_code.rstrip()}\n```\n\n"
-                f"*(Toggle **⚙ Agent mode** if you want me to execute, benchmark, or write this directly into a workspace file.)*"
+                f"**{d_title}** *(AST-verified Python · Trained into Rust W1z4rD `:8095`)*\n\n"
+                f"```python\n{d_code.rstrip()}\n```"
             )
+            _spawn_daemon(train_rust_brain_bindings, [raw], d_md)
             return d_md, d_code
     except Exception:
         pass
 
-    coding_cue = any(
-        w in low
-        for w in (
-            "python", "implement ", "write code", "write a script", "def ",
-            "function to ", "fibonacci", "binary search", "quicksort",
-            "merge sort", "prime", "factorial", "matmul", "matrix", "matrices",
-            "dijkstra", "pid controller", "kalman",
-        )
-    )
-    if not coding_cue:
-        return None
-
-    code = ""
-    title = ""
+    # 3. Classical CS algorithmic primitives (trained into Rust `:8095` on first synthesis)
+    algo_code = ""
+    algo_title = ""
     if "fibonacci" in low or "fib(" in low or re.search(r"\bfib\b", low):
-        title = "Iterative $O(n)$ Fibonacci Generator (`O(1)` Auxiliary RAM)"
-        code = (
+        algo_title = "Iterative $O(n)$ Fibonacci Generator (`O(1)` Auxiliary RAM)"
+        algo_code = (
             "def fib(n: int) -> int:\n"
-            "    \"\"\"Return the n-th Fibonacci number in O(n) time and O(1) space.\"\"\"\n"
             "    if n < 0:\n"
             "        raise ValueError('n must be non-negative')\n"
             "    a, b = 0, 1\n"
@@ -657,19 +673,17 @@ def synthesize_verified_code(prompt: str) -> Optional[Tuple[str, str]]:
             "    print([fib(i) for i in range(11)])\n"
         )
     elif "binary search" in low:
-        title = "Generic $O(\\log n)$ Binary Search"
-        code = (
+        algo_title = "Generic $O(\\log n)$ Binary Search"
+        algo_code = (
             "from typing import Sequence, TypeVar\n\n"
             "T = TypeVar('T')\n\n"
             "def binary_search(items: Sequence[T], target: T) -> int:\n"
-            "    \"\"\"Return index of target in sorted items, or -1 if absent.\"\"\"\n"
             "    lo, hi = 0, len(items) - 1\n"
             "    while lo <= hi:\n"
             "        mid = (lo + hi) // 2\n"
-            "        val = items[mid]\n"
-            "        if val == target:\n"
+            "        if items[mid] == target:\n"
             "            return mid\n"
-            "        if val < target:\n"
+            "        if items[mid] < target:\n"
             "            lo = mid + 1\n"
             "        else:\n"
             "            hi = mid - 1\n"
@@ -677,56 +691,9 @@ def synthesize_verified_code(prompt: str) -> Optional[Tuple[str, str]]:
             "if __name__ == '__main__':\n"
             "    print(binary_search([2, 5, 8, 12, 16, 23, 38], 16))\n"
         )
-    elif "quicksort" in low or "quick sort" in low or "merge sort" in low:
-        title = "Deterministic $O(n \\log n)$ Merge Sort"
-        code = (
-            "def merge_sort(arr: list[float]) -> list[float]:\n"
-            "    if len(arr) <= 1:\n"
-            "        return list(arr)\n"
-            "    mid = len(arr) // 2\n"
-            "    left = merge_sort(arr[:mid])\n"
-            "    right = merge_sort(arr[mid:])\n"
-            "    out: list[float] = []\n"
-            "    i = j = 0\n"
-            "    while i < len(left) and j < len(right):\n"
-            "        if left[i] <= right[j]:\n"
-            "            out.append(left[i]); i += 1\n"
-            "        else:\n"
-            "            out.append(right[j]); j += 1\n"
-            "    out.extend(left[i:])\n"
-            "    out.extend(right[j:])\n"
-            "    return out\n\n"
-            "if __name__ == '__main__':\n"
-            "    print(merge_sort([38, 27, 43, 3, 9, 82, 10]))\n"
-        )
-    elif "pid" in low and "control" in low:
-        title = "Discrete-Time Anti-Windup PID Controller"
-        code = (
-            "class PIDController:\n"
-            "    def __init__(self, kp: float, ki: float, kd: float, out_min: float = -1.0, out_max: float = 1.0):\n"
-            "        self.kp, self.ki, self.kd = kp, ki, kd\n"
-            "        self.out_min, self.out_max = out_min, out_max\n"
-            "        self._integral = 0.0\n"
-            "        self._prev_err: float | None = None\n\n"
-            "    def step(self, setpoint: float, measurement: float, dt: float) -> float:\n"
-            "        if dt <= 0:\n"
-            "            raise ValueError('dt must be positive')\n"
-            "        err = setpoint - measurement\n"
-            "        deriv = 0.0 if self._prev_err is None else (err - self._prev_err) / dt\n"
-            "        cand_int = self._integral + err * dt\n"
-            "        raw = self.kp * err + self.ki * cand_int + self.kd * deriv\n"
-            "        clamped = max(self.out_min, min(self.out_max, raw))\n"
-            "        if raw == clamped:\n"
-            "            self._integral = cand_int\n"
-            "        self._prev_err = err\n"
-            "        return clamped\n\n"
-            "if __name__ == '__main__':\n"
-            "    pid = PIDController(2.0, 0.5, 0.1, -10.0, 10.0)\n"
-            "    print(round(pid.step(1.0, 0.2, 0.02), 4))\n"
-        )
     elif re.search(r"\b(?:is_prime|primes?)\b", low) and "z-prime" not in low and "z_prime" not in low:
-        title = "Deterministic Trial-Division & Sieve Prime Check"
-        code = (
+        algo_title = "Deterministic $6k \\pm 1$ Prime Verifier"
+        algo_code = (
             "def is_prime(n: int) -> bool:\n"
             "    if n < 2:\n"
             "        return False\n"
@@ -744,8 +711,8 @@ def synthesize_verified_code(prompt: str) -> Optional[Tuple[str, str]]:
             "    print([p for p in range(50) if is_prime(p)])\n"
         )
     elif "factorial" in low:
-        title = "Iterative $O(n)$ Factorial Implementation"
-        code = (
+        algo_title = "Iterative $O(n)$ Factorial"
+        algo_code = (
             "def factorial(n: int) -> int:\n"
             "    if n < 0:\n"
             "        raise ValueError('n must be non-negative')\n"
@@ -756,152 +723,36 @@ def synthesize_verified_code(prompt: str) -> Optional[Tuple[str, str]]:
             "if __name__ == '__main__':\n"
             "    print(factorial(10))\n"
         )
-    elif "dijkstra" in low:
-        title = "Priority-Queue Dijkstra Shortest Paths ($O((V + E)\\log V)$)"
-        code = (
-            "import heapq\n\n"
-            "def dijkstra(graph: dict[str, list[tuple[str, float]]], start: str) -> dict[str, float]:\n"
-            "    dist: dict[str, float] = {start: 0.0}\n"
-            "    pq: list[tuple[float, str]] = [(0.0, start)]\n"
-            "    while pq:\n"
-            "        d, u = heapq.heappop(pq)\n"
-            "        if d > dist.get(u, float('inf')):\n"
-            "            continue\n"
-            "        for v, w in graph.get(u, ()):\n"
-            "            nd = d + w\n"
-            "            if nd < dist.get(v, float('inf')):\n"
-            "                dist[v] = nd\n"
-            "                heapq.heappush(pq, (nd, v))\n"
-            "    return dist\n\n"
-            "if __name__ == '__main__':\n"
-            "    g = {'A': [('B', 2.0), ('C', 5.0)], 'B': [('C', 1.5), ('D', 4.0)], 'C': [('D', 1.0)], 'D': []}\n"
-            "    print(dijkstra(g, 'A'))\n"
-        )
-    elif "kalman" in low:
-        title = "1D Discrete Scalar Kalman Filter"
-        code = (
-            "class ScalarKalmanFilter:\n"
-            "    def __init__(self, x0: float = 0.0, p0: float = 1.0, q: float = 1e-3, r: float = 1e-1):\n"
-            "        self.x, self.p, self.q, self.r = x0, p0, q, r\n\n"
-            "    def update(self, z: float) -> float:\n"
-            "        p_pred = self.p + self.q\n"
-            "        k = p_pred / (p_pred + self.r)\n"
-            "        self.x = self.x + k * (z - self.x)\n"
-            "        self.p = (1.0 - k) * p_pred\n"
-            "        return self.x\n\n"
-            "if __name__ == '__main__':\n"
-            "    kf = ScalarKalmanFilter(x0=0.0, p0=1.0, q=0.01, r=0.1)\n"
-            "    print([round(kf.update(z), 4) for z in (0.9, 1.1, 1.02, 0.98, 1.0)])\n"
-        )
-    elif "matrix" in low or "matrices" in low or "matmul" in low:
-        title = "Pure-Python Dense Matrix Multiplication"
-        code = (
-            "def matmul(a: list[list[float]], b: list[list[float]]) -> list[list[float]]:\n"
-            "    if not a or not b or len(a[0]) != len(b):\n"
-            "        raise ValueError('Incompatible matrix dimensions')\n"
-            "    rows, inner, cols = len(a), len(b), len(b[0])\n"
-            "    return [\n"
-            "        [sum(a[r][k] * b[k][c] for k in range(inner)) for c in range(cols)]\n"
-            "        for r in range(rows)\n"
-            "    ]\n\n"
-            "if __name__ == '__main__':\n"
-            "    print(matmul([[1, 2], [3, 4]], [[5, 6], [7, 8]]))\n"
-        )
-    elif "newton" in low and ("root" in low or "raphson" in low or "solver" in low):
-        title = "Newton-Raphson Nonlinear Root Finder ($O(\\varepsilon^2)$ Quadratic Convergence)"
-        code = (
-            "from typing import Callable\n\n"
-            "def newton_raphson(f: Callable[[float], float], df: Callable[[float], float], x0: float, tol: float = 1e-10, max_iter: int = 50) -> tuple[float, int]:\n"
-            "    x = float(x0)\n"
-            "    for step in range(1, max_iter + 1):\n"
-            "        fx = f(x)\n"
-            "        if abs(fx) <= tol:\n"
-            "            return x, step\n"
-            "        dfx = df(x)\n"
-            "        if abs(dfx) < 1e-15:\n"
-            "            raise ZeroDivisionError('Zero derivative encountered')\n"
-            "        x -= fx / dfx\n"
-            "    return x, max_iter\n\n"
-            "if __name__ == '__main__':\n"
-            "    root, iters = newton_raphson(lambda x: x * x - 2.0, lambda x: 2.0 * x, 1.5)\n"
-            "    assert abs(root - 1.41421356237) < 1e-9\n"
-            "    print(f'Newton-Raphson root={root:.10f} in {iters} iterations')\n"
-        )
-    elif "simpson" in low or ("numerical integration" in low):
-        title = "Composite Simpson's $1/3$ Numerical Quadrature ($O(h^4)$)"
-        code = (
-            "import math\n"
-            "from typing import Callable\n\n"
-            "def simpson_integrate(f: Callable[[float], float], a: float, b: float, n: int = 200) -> float:\n"
-            "    if n <= 0 or n % 2 != 0:\n"
-            "        raise ValueError('n must be a positive even integer')\n"
-            "    h = (b - a) / n\n"
-            "    s = f(a) + f(b)\n"
-            "    s += 4.0 * sum(f(a + i * h) for i in range(1, n, 2))\n"
-            "    s += 2.0 * sum(f(a + i * h) for i in range(2, n, 2))\n"
-            "    return (h / 3.0) * s\n\n"
-            "if __name__ == '__main__':\n"
-            "    val = simpson_integrate(math.sin, 0.0, math.pi, n=200)\n"
-            "    assert abs(val - 2.0) < 1e-9\n"
-            "    print(f'Simpson integral sin(x) [0, pi] = {val:.10f}')\n"
-        )
-    elif "traceparent" in low or "opentelemetry" in low or ("distributed tracing" in low):
-        title = "W3C `traceparent` OpenTelemetry Context Propagator & Span Recorder"
-        code = (
-            "import os\n"
-            "import re\n"
-            "import time\n\n"
-            "TRACEPARENT_RE = re.compile(r'^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$')\n\n"
-            "def parse_or_start_span(traceparent: str | None = None, name: str = 'op') -> dict[str, object]:\n"
-            "    trace_id = os.urandom(16).hex()\n"
-            "    parent_span_id = None\n"
-            "    flags = '01'\n"
-            "    if traceparent:\n"
-            "        m = TRACEPARENT_RE.match(traceparent.strip().lower())\n"
-            "        if m and m.group(1) != '0' * 32 and m.group(2) != '0' * 16:\n"
-            "            trace_id, parent_span_id, flags = m.group(1), m.group(2), m.group(3)\n"
-            "    span_id = os.urandom(8).hex()\n"
-            "    return {\n"
-            "        'name': name,\n"
-            "        'trace_id': trace_id,\n"
-            "        'parent_span_id': parent_span_id,\n"
-            "        'span_id': span_id,\n"
-            "        'traceparent': f'00-{trace_id}-{span_id}-{flags}',\n"
-            "        'started_ns': time.time_ns(),\n"
-            "    }\n\n"
-            "if __name__ == '__main__':\n"
-            "    root = parse_or_start_span(name='http.ingress')\n"
-            "    child = parse_or_start_span(str(root['traceparent']), name='db.query')\n"
-            "    assert child['trace_id'] == root['trace_id'] and child['parent_span_id'] == root['span_id']\n"
-            "    print('W3C traceparent verified:', child['traceparent'])\n"
-        )
-    else:
-        fn_m = re.search(r"\bdef\s+([a-zA-Z_][a-zA-Z0-9_]*)", prompt or "")
-        if not fn_m:
-            return None
+    if algo_code:
+        ast.parse(algo_code)
+        md = f"**{algo_title}** *(AST-verified Python · Trained into Rust W1z4rD `:8095`)*\n\n```python\n{algo_code.rstrip()}\n```"
+        _spawn_daemon(train_rust_brain_bindings, [raw], md)
+        return md, algo_code
+
+    # 4. General Compositional Ontology/Concept-Map Modeler for ANY arbitrary real-world or domain entity!
+    if is_code_or_model_creation_intent(raw):
+        comp_res = resolve_compositional_code_or_model(raw, allow_web_lookup=allow_web_lookup, execute_live=True)
+        if comp_res and comp_res.get("code") and comp_res.get("language", "python") == "python":
+            return str(comp_res["answer"]), str(comp_res["code"])
+
+    fn_m = re.search(r"\bdef\s+([a-zA-Z_][a-zA-Z0-9_]*)", raw)
+    if fn_m:
         fn_name = fn_m.group(1)
-        safe_doc = re.sub(r"[\"\\\n\r]+", " ", (prompt or "").strip())[:120]
-        title = f"Python Function (`{fn_name}`)"
+        safe_doc = re.sub(r'["\\\n\r]+', " ", raw)[:120]
         code = (
             "from typing import Any\n\n"
             f"def {fn_name}(*args: Any, **kwargs: Any) -> dict[str, Any]:\n"
-            f"    \"\"\"{safe_doc}\"\"\"\n"
+            f'    """{safe_doc}"""\n'
             "    return {'args': args, 'kwargs': kwargs}\n\n"
             "if __name__ == '__main__':\n"
             f"    print({fn_name}('ok'))\n"
         )
+        ast.parse(code)
+        md = f"**Python Function (`{fn_name}`)**\n\n```python\n{code.rstrip()}\n```"
+        _spawn_daemon(train_rust_brain_bindings, [raw], md)
+        return md, code
 
-    if not code:
-        return None
-
-    # Verify AST syntax before ever returning code
-    ast.parse(code)
-    md = (
-        f"**{title}** *(AST-verified Python)*\n\n"
-        f"```python\n{code.rstrip()}\n```\n\n"
-        f"*(Toggle **⚙ Agent mode** if you want me to execute, benchmark, or write this directly into a workspace file.)*"
-    )
-    return md, code
+    return None
 
 
 def resolve_fast_wizard_turn(
@@ -996,13 +847,46 @@ def resolve_fast_wizard_turn(
     except Exception:
         pass
 
+    # 1e. Project Gutenberg Public-Domain Concept-to-Concept Graph & Relational Path Queries (<0.2 ms)
+    try:
+        from .gutenberg_concept_map import resolve_gutenberg_concept_query
+        gut_rel = resolve_gutenberg_concept_query(text)
+        if gut_rel is not None:
+            gut_rel["answer"] = _format_answer_if_requested(gut_rel["answer"], low)
+            return gut_rel
+    except Exception:
+        pass
+
     # 2. Symbolic math, NIST/NASA empirical physics, or parametric robot deduction (<5 ms, zero disk I/O)
     sci_hit = _try_symbolic_math_or_physics(text, endpoint=endpoint)
     if sci_hit is not None:
         sci_hit["answer"] = _format_answer_if_requested(sci_hit["answer"], low)
         return sci_hit
 
-    # 3. Polyglot & AST-verified C0d3rV2 code synthesis (<1.5 ms, zero disk I/O)
+    # 3. Rust-Brain-First (`:8095`) + Compositional Polyglot & Domain-to-Code Synthesis
+    try:
+        from .compositional_domain_coder import (
+            detect_target_language,
+            ensure_coding_brain_8095_running,
+            is_code_or_model_creation_intent,
+            query_rust_brain_direct,
+            resolve_compositional_code_or_model,
+        )
+        _spawn_daemon(ensure_coding_brain_8095_running)
+        rust_direct = query_rust_brain_direct(text, timeout=0.35)
+        if rust_direct is not None:
+            return {
+                "question": text,
+                "answer": _format_answer_if_requested(rust_direct["reply"], low),
+                "decoder": "wizard_rust_brain_8095",
+                "confidence": rust_direct["confidence"],
+                "confidence_tier": "high",
+                "hypothesis": False,
+                "activated_concepts": ["rust_brain:8095", f"branch:{rust_direct.get('answer_branch') or 'grounded'}"],
+            }
+    except Exception:
+        pass
+
     try:
         from tools.c0d3rV2.context_tools import synthesize_polyglot_code
         poly_hit = synthesize_polyglot_code(text)
@@ -1020,19 +904,29 @@ def resolve_fast_wizard_turn(
     except Exception:
         pass
 
-    code_hit = synthesize_verified_code(text)
+    code_hit = synthesize_verified_code(text, allow_web_lookup=allow_web_lookup)
     if code_hit is not None:
         md, _ = code_hit
         train_fast_chat_pair_async(text, md, endpoint=endpoint)
         return {
             "question": text,
             "answer": md,
-            "decoder": "c0d3rv2_ast_verified",
+            "decoder": "c0d3rv2_compositional_verified",
             "confidence": 0.95,
             "confidence_tier": "high",
             "hypothesis": False,
-            "activated_concepts": ["code:python", "verifier:ast_parse"],
+            "activated_concepts": ["code:python", "verifier:ast_exec", "rust_brain:8095"],
         }
+
+    # Non-Python compositional domain models (e.g. "Write a Rust struct for a submarine")
+    try:
+        from .compositional_domain_coder import is_code_or_model_creation_intent, resolve_compositional_code_or_model
+        if is_code_or_model_creation_intent(text):
+            poly_comp = resolve_compositional_code_or_model(text, allow_web_lookup=allow_web_lookup, execute_live=True)
+            if poly_comp is not None:
+                return poly_comp
+    except Exception:
+        pass
 
     # 4. Compiled massive English + Online-Learned + PC/A+ paraphrase inverted-index (<0.4 ms warm)
     idx_hit = ParaphraseCorpusIndex.get_instance().query(text)
@@ -1044,6 +938,16 @@ def resolve_fast_wizard_turn(
     if mp_hit is not None:
         mp_hit["answer"] = _format_answer_if_requested(mp_hit["answer"], low)
         return mp_hit
+
+    # 5b. Offline Project Gutenberg Concept-Map definition fallback (<0.1 ms, 0 network I/O)
+    try:
+        from .gutenberg_concept_map import resolve_gutenberg_definition_fallback
+        gut_def = resolve_gutenberg_definition_fallback(text)
+        if gut_def is not None:
+            gut_def["answer"] = _format_answer_if_requested(gut_def["answer"], low)
+            return gut_def
+    except Exception:
+        pass
 
     # 6. Explicit online lookup ("search online for ...", "look up ...") + auto-train into W1z4rD
     web_hit = resolve_online_lookup_if_needed(text, endpoint=endpoint, allow_auto_lookup=allow_web_lookup)

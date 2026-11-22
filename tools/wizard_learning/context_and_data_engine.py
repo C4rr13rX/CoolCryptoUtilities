@@ -745,6 +745,19 @@ def resolve_online_lookup_if_needed(
     # Never leak or delay internal W1z4rD / cluster / workspace questions on external web APIs
     if any(k in low for k in ("our ", "w1z4rd", "wbrain", "c0d3r", "revenir", "pegasus", "39106", "39105", "8090")):
         return None
+
+    # HARD SPEECH-ACT GUARD: Never answer an imperative code/class/model/simulation request
+    # with raw encyclopedia prose! Route to Compositional Ontology-to-Code + Rust :8095 Brain instead!
+    try:
+        from .compositional_domain_coder import (
+            is_code_or_model_creation_intent,
+            resolve_compositional_code_or_model,
+        )
+        if is_code_or_model_creation_intent(raw):
+            return resolve_compositional_code_or_model(raw, allow_web_lookup=bool(allow_auto_lookup or _ONLINE_EXPLICIT_RE.match(raw)))
+    except Exception:
+        pass
+
     is_explicit = bool(_ONLINE_EXPLICIT_RE.match(raw))
     if not is_explicit and not allow_auto_lookup:
         return None
@@ -766,6 +779,17 @@ def resolve_online_lookup_if_needed(
                     "license": learned.get("license", ""),
                 },
             )
+            # Also reinforce declarative fact into the real Rust `w1z4rd_brain_server` (:8095) asynchronously
+            try:
+                import threading as _th
+                from .compositional_domain_coder import train_rust_brain_bindings
+                _th.Thread(
+                    target=train_rust_brain_bindings,
+                    args=([raw, raw.rstrip("?!.")], ans),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
             return {
                 "question": text,
                 "answer": ans,

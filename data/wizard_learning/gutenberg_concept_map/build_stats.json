@@ -1,0 +1,87 @@
+{
+  "compiled_at_utc": "2026-11-21T23:59:13Z",
+  "sources": {
+    "webster_1913_pg29765": {
+      "bytes": 28956350,
+      "sha256": "86fb9c28c32008ea288ca4bcf34f4f0d3d11ccf9e0898294d98b73671497f1d3",
+      "parsed_non_obsolete": 73610
+    },
+    "roget_thesaurus_pg22": {
+      "bytes": 1494120,
+      "sha256": "f4b6f83990ea17e2f31c1dbc96d17474b9afeb2f49d15fe72ec8a4ca39a1715b",
+      "mapped_terms": 53926
+    }
+  },
+  "selected_high_leverage_concepts": 25000,
+  "total_relational_edges": 77843,
+  "output_jsonl_size_mb": 8.09,
+  "rust_8095_anchor_concepts_trained": 2000,
+  "rust_8095_wbrain_tick": 6942,
+  "rust_8095_checkpoint_saved": true,
+  "bicycle_in_selected_graph": true,
+  "bicycle_node_preview": {
+    "concept": "bicycle",
+    "pos": "n.",
+    "domain": "",
+    "definition": "A light vehicle having two wheels one behind the other. It has a saddle seat and is propelled by the rider's feet acting on cranks or levers.",
+    "is_a": [
+      "vehicle"
+    ],
+    "has_part": [
+      "wheel",
+      "seat",
+      "lever",
+      "crank"
+    ],
+    "used_for": [
+      "propelled"
+    ],
+    "roget_classes": [
+      "Vehicle"
+    ],
+    "centrality_in_degree": 3,
+    "leverage_score": 18.936
+  },
+  "barometer_node_preview": {
+    "concept": "barometer",
+    "pos": "n.",
+    "domain": "",
+    "definition": "An instrument for determining the weight or pressure of the atmosphere, and hence for judging of the probable changes of weather, or for ascertaining the height of any ascent.",
+    "is_a": [
+      "instrument"
+    ],
+    "has_part": [],
+    "used_for": [
+      "determining",
+      "judging",
+      "ascertaining"
+    ],
+    "roget_classes": [
+      "Air",
+      "Measurement"
+    ],
+    "centrality_in_degree": 11,
+    "leverage_score": 17.452
+  },
+  "microscope_node_preview": {
+    "concept": "microscope",
+    "pos": "n.",
+    "domain": "",
+    "definition": "An optical instrument, consisting of a lens, or combination of lenses, for making an enlarged image of an object which is too minute to be viewed by the naked eye. Compound microscope, an instrument consisting of a combination of lenses such that the image for",
+    "is_a": [
+      "instrument"
+    ],
+    "has_part": [
+      "len",
+      "lense"
+    ],
+    "used_for": [],
+    "roget_classes": [
+      "Littleness",
+      "Optical Instruments"
+    ],
+    "centrality_in_degree": 4,
+    "leverage_score": 15.45
+  },
+  "elapsed_seconds": 289.69
+}

@@ -208,3 +208,6 @@ data/discovered_rules.json
 brain-data/
 .c0d3r/
 scratch/
+
+data/wizard_learning/rust_coding_brain_8095/
+
